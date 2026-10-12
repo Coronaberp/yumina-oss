@@ -11,7 +11,7 @@ import { resolveSessionWorldSchema } from "../lib/pending-edit.js";
 import { completionRoutes } from "./completions.js";
 import { selectSocialGuidance, type SocialGuidanceEntry } from "../lib/social-reply-prompt.js";
 import { generateSocialReplies, readSocialCompletion } from "../lib/social-generation.js";
-import { resolvePersonaForSession } from "../lib/resolve-persona.js";
+import { freezeSessionPersona } from "../lib/persona-selection.js";
 export const socialSimulatorRoutes = new Hono<AppEnv>();
 socialSimulatorRoutes.use("/*", authMiddleware);
 const running = new Map<string, AbortController>();
@@ -85,7 +85,7 @@ socialSimulatorRoutes.post("/:sessionId/social/generate", async (c) => {
         const lore = ctx.config.profiles.filter(p => job.members.includes(p.id)).map(p => ({
             id: p.id, name: p.name, lore: ctx.schema.entries?.find(e => e.id === p.loreEntryId)?.content?.slice(0, 6000) ?? "",
         }));
-        const persona = await resolvePersonaForSession(ctx.session);
+        const persona = (await freezeSessionPersona(ctx.session.userId, ctx.session.id))?.sessionPersona?.persona ?? null;
         // The creator's Task/Style/world entries ride along with the character
         // sheets; only per-profile lore was forwarded before, so authors could
         // not shape the register at all.

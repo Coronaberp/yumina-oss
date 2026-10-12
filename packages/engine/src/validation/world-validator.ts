@@ -1,4 +1,5 @@
 import type { WorldDefinition } from "../types/index.js";
+import { getStoryValidationIssues } from "../story/progression.js";
 
 export interface WorldWarning {
   type:
@@ -19,6 +20,9 @@ export interface WorldWarning {
  */
 export function validateWorld(world: WorldDefinition): WorldWarning[] {
   const warnings: WorldWarning[] = [];
+  for (const issue of getStoryValidationIssues(world)) {
+    warnings.push({ type: "orphaned-var-ref", severity: "warning", message: issue.message, entityId: issue.entityId, entityName: issue.entityId });
+  }
   const variableIds = new Set(world.variables.map((v) => v.id));
 
   // Track which variables are referenced (for unused-variable check)

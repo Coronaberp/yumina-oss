@@ -8,7 +8,7 @@
  * All communication happens via structured postMessage calls.
  */
 
-import type { Condition, LoreUiBinding, Worldbook, StateChannel } from "@yumina/engine";
+import type { Condition, LoreUiBinding, Worldbook, StateChannel, StoryProgress } from "@yumina/engine";
 import type { TranscriptPosition } from "./chat/transcript-position-types";
 
 export type SandboxMode = "session" | "guest-preview";
@@ -66,6 +66,10 @@ export interface LocalBridgeChannelData {
 // expose a flat shape to creator code.
 
 export interface SandboxState {
+  dialogTheme?: "vn";
+  isImmersive?: boolean;
+  systemFullscreen?: boolean;
+  canSystemFullscreen?: boolean;
   modelFallback?: import("@yumina/shared").ModelFallbackNotice | null;
   variables: Record<string, unknown>;
   globalVariables: Record<string, unknown>;
@@ -76,6 +80,8 @@ export interface SandboxState {
   worldCover: string | null;
   worldId: string;
   sessionId: string;
+  /** Server-owned eligibility to change the session persona during the greeting. */
+  personaSelectable?: boolean;
   /** The raw Yumina account that's logged in. Rarely used by creators — prefer
    *  `user` below, which follows the same persona-vs-account rule as {{user}}. */
   currentUser: { id: string; name?: string; image?: string | null } | null;
@@ -85,10 +91,11 @@ export interface SandboxState {
    *  - Not logged in → { name: "Player", avatar: null }
    *  Creators writing `<img src={user.avatar} />` / `{user.name}` in TSX get the
    *  correct identity without having to branch client-side on persona state. */
-  user: { name: string; avatar: string | null };
+  user: { name: string; avatar: string | null; sprites?: import("@yumina/shared").PersonaSprites };
   messages: Array<Record<string, unknown>>;
   isStreaming: boolean;
   streamingContent: string;
+  streamingTokenCount?: number | null;
   mode: SandboxMode;
   capabilities: SandboxCapabilities;
   /** World lorebook entries (enabled only). Card authors read these to inject
@@ -154,6 +161,10 @@ export interface SandboxState {
   composerSendKey: "enter" | "mod-enter";
   /** Send-failure counter — see UIChannelData.sendFailureNonce. */
   sendFailureNonce: number;
+  /** Authoritative story route/ending progress. */
+  storyProgress: StoryProgress;
+  isCompletingEnding: boolean;
+  endingError: string | null;
 }
 
 // ── Channel data shapes ─────────────────────────────────────────────
@@ -179,6 +190,7 @@ export interface StreamingChannelData {
   isStreaming: boolean;
   content: string;
   reasoning: string;
+  tokenCount?: number | null;
   bg: string | null;
 }
 
@@ -189,10 +201,11 @@ export interface SessionChannelData {
   /** World cover image as an absolute URL (host-resolved), null when unset. */
   worldCover: string | null;
   sessionId: string;
+  personaSelectable?: boolean;
   /** Raw Yumina account. Prefer `user` below for persona-aware rendering. */
   currentUser: { id: string; name?: string; image?: string | null } | null;
   /** Role-played user — same branching as {{user}}: persona if active else account. */
-  user: { name: string; avatar: string | null };
+  user: { name: string; avatar: string | null; sprites?: import("@yumina/shared").PersonaSprites };
   /** World lorebook entries (enabled only). Pushed on session load and when the
    *  world's schema changes. Card authors use these to inject character profiles
    *  into side LLM calls (`api.ai.complete`). */
@@ -203,6 +216,10 @@ export interface SessionChannelData {
 
 /** UI state — changes on user interaction */
 export interface UIChannelData {
+  dialogTheme?: "vn";
+  isImmersive?: boolean;
+  systemFullscreen?: boolean;
+  canSystemFullscreen?: boolean;
   modelFallback?: import("@yumina/shared").ModelFallbackNotice | null;
   pendingChoices: string[];
   error: string | null;
@@ -243,6 +260,9 @@ export interface UIChannelData {
    *  terminally-failed send, including toast-only failures that never set
    *  `error`. The composer restores its swallowed text on change. */
   sendFailureNonce: number;
+  storyProgress: StoryProgress;
+  isCompletingEnding: boolean;
+  endingError: string | null;
 }
 
 /** Map channel names to their data types */
@@ -523,4 +543,22 @@ export function safePostMessage(target: Window, data: unknown, origin: string): 
       // Channel state will be re-pushed on the next update cycle.
     }
   }
+}
+
+/** The parent constructs paths from this fixed action list, never from card input. */
+export function storyhavenMemoryRequest(action: unknown, payload?: unknown): {
+  path: string; method: "GET" | "PATCH" | "POST"; body?: Record<string, unknown>;
+} {
+  if (typeof action !== "string") throw new Error("Unsupported memory action");
+  const actions: Record<string, "GET" | "PATCH" | "POST"> = {
+    status: "GET", settings: "PATCH", fact: "PATCH", forget: "POST",
+    lineage: "POST", override: "POST", reveal: "POST", preview: "POST",
+    clear: "POST", rebuild: "POST", retry: "POST",
+  };
+  if (!Object.hasOwn(actions, action)) throw new Error("Unsupported memory action");
+  if (payload !== undefined && (payload === null || typeof payload !== "object" || Array.isArray(payload))) {
+    throw new Error("Invalid memory request");
+  }
+  return { path: action === "status" ? "" : `/${action}`, method: actions[action]!,
+    ...(action !== "status" ? { body: (payload ?? {}) as Record<string, unknown> } : {}) };
 }

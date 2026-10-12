@@ -418,6 +418,8 @@ describe("PromptBuilder", () => {
       expect(result).toContain("<behavior-rules>");
       expect(result).toContain("[hp | Health]");
       expect(result).toContain("Decrease in combat");
+      expect(result).toContain("After every narrative turn, review the active variables");
+      expect(result).toContain("Do not emit updates for unchanged or read-only variables");
     });
 
     it("falls back to legacy updateHints when behaviorRules is absent", () => {
@@ -2239,6 +2241,17 @@ describe("speaker tag prompt block", () => {
       variables: [createMockVariable({ id: "speaker", type: "string", initial: "" })],
     });
     expect(pb.buildStaticFormatBlock(world)).not.toContain("<speaker-format>");
+  });
+
+  it("requests separate labelled paragraphs when characters take turns", () => {
+    const world = createMockWorld({ entries: [character("Evelia", "@asset:a"), character("Miveth", "@asset:b")] });
+    const block = new PromptBuilder().buildStaticFormatBlock(world);
+    expect(block).toContain("Start a new paragraph whenever the speaker changes");
+    expect(block).toContain("Name: dialogue");
+    expect(block).toContain("Narrator: narration");
+    expect(block).toContain("Do not put different characters' dialogue in the same paragraph");
+    expect(block).toContain("Actions and descriptions belong to Narrator");
+    expect(block).toContain("Do not put action text or emphasis markers inside quoted dialogue");
   });
 });
 

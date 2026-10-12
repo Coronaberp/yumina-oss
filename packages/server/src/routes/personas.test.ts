@@ -16,7 +16,8 @@ before(async () => {
     is_banned boolean, tier text, skip_review boolean)`);
   await db.execute(sql`CREATE TABLE worlds (id text PRIMARY KEY)`);
   await db.execute(sql`CREATE TABLE user_personas (id text PRIMARY KEY, user_id text, name text,
-    avatar_url text, appearance text, personality text, backstory text, entries jsonb NOT NULL DEFAULT '[]'::jsonb, note text, is_active boolean,
+    avatar_url text, appearance text, personality text, backstory text, entries jsonb NOT NULL DEFAULT '[]'::jsonb,
+    sprites jsonb NOT NULL DEFAULT '{}'::jsonb, note text, is_active boolean,
     created_at timestamp, updated_at timestamp)`);
   await db.execute(sql`CREATE TABLE user_world_personas (user_id text REFERENCES "user"(id) ON DELETE CASCADE,
     world_id text REFERENCES worlds(id) ON DELETE CASCADE,
@@ -94,4 +95,16 @@ test("settings and legacy endpoints require authentication", async () => {
       assert.equal((await call(path!, method, method === "PUT" ? { personaId: "A" } : undefined, actor)).status, 401);
     }
   }
+});
+
+test("personal personas save valid expression sprites and reject unsupported slots", async () => {
+  const sprites = { normal: "https://cdn.example/normal.png", smug: "https://cdn.example/smug.png" };
+  const created = await call("/", "POST", { name: "Sprite User", sprites });
+  assert.equal(created.status, 201);
+  const createdData = (await created.json() as { data: { id: string; sprites: unknown } }).data;
+  assert.deepEqual(createdData.sprites, sprites);
+  const updated = await call(`/${createdData.id}`, "PATCH", { sprites: { angry: "https://cdn.example/angry.png" } });
+  assert.equal(updated.status, 200);
+  assert.deepEqual((await updated.json() as { data: { sprites: unknown } }).data.sprites, { angry: "https://cdn.example/angry.png" });
+  assert.equal((await call(`/${createdData.id}`, "PATCH", { sprites: { surprised: "unexpected.png" } })).status, 400);
 });

@@ -290,3 +290,21 @@ test("ordinary DeepSeek chat keeps the account's configured thinking mode", asyn
     mock.restore();
   }
 });
+
+
+test("Strata background calls disable template thinking after profile shaping", async () => {
+  const mock = withMockedFetch([() => Response.json({
+    choices: [{ message: { content: '{"valid":true,"issues":[]}' }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 100, completion_tokens: 8, total_tokens: 108 },
+  })]);
+  try {
+    const provider = new CustomProvider("test-key", "https://api.example.com/v1", {
+      includeBody: { chat_template_kwargs: { enable_thinking: true, other_option: "keep" } },
+    });
+    // Exercise serialization under both hosted and local test environments.
+    // Constructor loopback authorization is covered separately by SSRF tests.
+    Object.assign(provider, { baseUrl: "http://127.0.0.1:8080/v1" });
+    await collect(provider.generateStream({ ...PARAMS, disableReasoning: true, singleAttempt: true, stream: false }));
+    assert.deepEqual(mock.bodies()[0]?.chat_template_kwargs, { enable_thinking: false, other_option: "keep" });
+  } finally { mock.restore(); }
+});

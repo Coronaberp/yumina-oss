@@ -43,8 +43,9 @@ test("central persona selection is a native disabled button; navigation and edit
     await act(async () => button().click());
     assert.deepEqual(selected, ["B"]);
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Next persona"]')!.click());
-    await act(async () => button().click());
-    assert.deepEqual(selected, ["B", null]);
+    assert.equal(button() === null, true, "the next session slot creates a persona instead of disabling it");
+    assert.ok(!dom.window.document.body.textContent?.includes("persona.none"));
+    assert.deepEqual(selected, ["B"]);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

@@ -3,6 +3,7 @@ import { SandboxBridge, type ApiHandler, type StreamHandler } from "./bridge-par
 import type { ChannelDataMap, SandboxMode } from "../../../sandbox/protocol";
 import type { StateChannel } from "@yumina/engine";
 import { SANDBOX_DOC_URL } from "@/lib/sandbox-doc-url";
+import { fetchSandboxAsset } from "./asset-fetch";
 
 const SANDBOX_URL = SANDBOX_DOC_URL;
 
@@ -56,7 +57,8 @@ export function useSandbox(opts: {
 
   useEffect(() => {
     const bridge = new SandboxBridge({
-      onApiCall: (method, args) => onApiCallRef.current(method, args),
+      onApiCall: (method, args) => method === "loadSandboxAsset"
+        ? fetchSandboxAsset(args[0]) : onApiCallRef.current(method, args),
       onStreamCall: (method, args, cbs) => onStreamCallRef.current?.(method, args, cbs),
       onError: (message) => onErrorRef.current?.(message),
       onResize: (height) => onResizeRef.current?.(height),

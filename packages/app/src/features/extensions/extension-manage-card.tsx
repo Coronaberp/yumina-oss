@@ -42,8 +42,8 @@ export function ExtensionManageCard({
       onClick={() => open(extension, "overview")}
       className="flex cursor-pointer items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4 transition-all hover:border-gold/30 hover:bg-white/[0.03]"
     >
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#C9A25E]/25 bg-gradient-to-br from-[#C9A25E]/15 to-white/5">
-        <ExtensionIcon name={extension.icon} className="h-5 w-5 text-[#C9A25E]" />
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gold/25 bg-gradient-to-br from-gold/15 to-white/5">
+        <ExtensionIcon name={extension.icon} className="h-5 w-5 text-gold" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold text-main">{localized.name}</div>
@@ -55,7 +55,7 @@ export function ExtensionManageCard({
         className={
           mode === "installed"
             ? "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-semibold text-white/70 transition-all hover:border-red-400/40 hover:bg-red-400/[0.08] hover:text-red-300 disabled:opacity-40"
-            : "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#C9A25E]/30 bg-[#C9A25E]/[0.08] px-3 py-2 text-xs font-semibold text-[#C9A25E] transition-all hover:bg-[#C9A25E]/[0.15] disabled:opacity-40"
+            : "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gold/30 bg-gold/[0.08] px-3 py-2 text-xs font-semibold text-gold transition-all hover:bg-gold/[0.15] disabled:opacity-40"
         }
       >
         {pending ? (

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import type { ApiKeyMetadata, PromptPostProcessing } from "@yumina/shared";
+import { EndpointCreativitySettings, useEndpointSampling } from "./endpoint-creativity-settings";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, CheckCircle2, XCircle, Loader2, X, Plug, Send, Sliders, Eye, EyeOff } from "lucide-react";
 import { feedback } from "@/lib/feedback";
@@ -10,22 +12,13 @@ import { Select } from "@/components/ui/select";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { useConfigStore } from "@/stores/config";
 import { composeSelectedModelId } from "@/lib/model-id";
+import { ContentEndpointCards, CONTENT_ENDPOINT_TITLES, parseContentEndpointSelection, type ContentEndpointKind, type ContentEndpointSelection } from "./content-endpoint-cards";
+import { useIsLocalEdition } from "@/edition/edition";
+import { OpenRouterProviderSettings } from "./openrouter-provider-settings";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
-type PromptPostProcessing =
-  | "none" | "merge" | "merge_tools" | "semi" | "semi_tools" | "strict" | "strict_tools" | "single";
-
-interface ApiKeyMetadata {
-  models?: string[];
-  includeBody?: Record<string, unknown>;
-  excludeBody?: string[];
-  includeHeaders?: Record<string, string>;
-  promptPostProcessing?: PromptPostProcessing;
-  defaultModel?: string;
-}
-
-interface ApiKeyEntry {
+export interface ApiKeyEntry {
   id: string;
   provider: string;
   label: string;
@@ -49,7 +42,14 @@ const PROVIDERS = [
 /** Common OpenAI-compatible providers that don't have their own dropdown entry.
  *  Clicking a preset fills baseUrl in the New profile form. The user still pastes
  *  their own API key. The stored row is provider="custom" with this baseUrl. */
-const CUSTOM_PRESETS: Array<{ label: string; baseUrl: string }> = [
+const STRATA_LOCAL_BASE_URL = "http://127.0.0.1:8080/v1";
+
+function isStrataLocalBaseUrl(raw: string): boolean {
+  return raw.trim().replace(/\/+$/, "") === STRATA_LOCAL_BASE_URL;
+}
+
+const CUSTOM_PRESETS: Array<{ label: string; baseUrl: string; localOnly?: boolean }> = [
+  { label: "Strata (GPU)", baseUrl: STRATA_LOCAL_BASE_URL, localOnly: true },
   { label: "DeepSeek",     baseUrl: "https://api.deepseek.com/v1" },
   { label: "xAI (Grok)",   baseUrl: "https://api.x.ai/v1" },
   { label: "Mistral",      baseUrl: "https://api.mistral.ai/v1" },
@@ -64,6 +64,25 @@ const CUSTOM_PRESETS: Array<{ label: string; baseUrl: string }> = [
 const POST_PROC_VALUES: PromptPostProcessing[] = [
   "none", "merge", "merge_tools", "semi", "semi_tools", "strict", "strict_tools", "single",
 ];
+
+type EndpointEffort = NonNullable<ApiKeyMetadata["reasoningEffort"]>;
+const ENDPOINT_EFFORTS = ["minimal", "low", "medium", "high"] as const;
+
+function EndpointEffortSelect({ value, onChange, disabled }: {
+  value: EndpointEffort;
+  onChange: (value: EndpointEffort) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation("profile");
+  const label = t("apiKeys.reasoningEffort");
+  return <div>
+    <label className="mb-1 block text-[11px] text-sub/60">{label}</label>
+    <Select aria-label={label} value={value} onValueChange={effort => onChange(effort as EndpointEffort)} disabled={disabled}
+      options={ENDPOINT_EFFORTS.map(effort => ({ value: effort, label: t(`config.reasoningOptions.${effort}`) }))}
+      triggerClassName="profile-overview-input-surface border-white/10" />
+    <p className="mt-1 text-[10px] text-sub/40">{t("apiKeys.reasoningEffortHint")}</p>
+  </div>;
+}
 
 /** Map a post-processing value to its locale subkey suffix (e.g. `merge_tools` → `mergeTools`). */
 const POST_PROC_KEY: Record<PromptPostProcessing, string> = {
@@ -80,6 +99,7 @@ const POST_PROC_KEY: Record<PromptPostProcessing, string> = {
 /** i18next's TFunction has very strict key typing that fights dynamic lookups,
  *  so these helpers accept a loose translator (matching the `t(... as any)`
  *  pattern used elsewhere in this codebase for runtime-built keys). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bridge typed i18next keys to the runtime-built locale keys below.
 type Translator = (k: any) => string;
 
 function postProcOptions(t: Translator): Array<{ value: PromptPostProcessing; label: string; hint: string }> {
@@ -155,11 +175,32 @@ export function ApiKeysSettings() {
   const [activeProvider, setActiveProvider] = useState<string>("custom");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  const [editingEndpoint, setEditingEndpoint] = useState<ContentEndpointKind>("sfw");
+  const [endpoints, setEndpoints] = useState<ContentEndpointSelection | null>(null);
+  const [endpointsLoading, setEndpointsLoading] = useState(true);
+  const [endpointBusy, setEndpointBusy] = useState(false);
+  const [endpointError, setEndpointError] = useState<string | null>(null);
+  const endpointLabel = (key: string, fallback: string) => t(`contentEndpoints.${key}`, { defaultValue: fallback });
 
   const serverActiveKeyId = (profile?.preferences?.activeApiKeyId as string | undefined) ?? null;
   // R1: the Active chip flips before the PATCH lands. `undefined` means "trust the server".
   const [optimisticActiveId, setOptimisticActiveId] = useState<string | null | undefined>(undefined);
-  const activeKeyId = optimisticActiveId !== undefined ? optimisticActiveId : serverActiveKeyId;
+  const activeKeyId = optimisticActiveId !== undefined ? optimisticActiveId : endpoints ? endpoints.sfwApiKeyId : serverActiveKeyId;
+
+  const fetchEndpoints = useCallback(async () => {
+    setEndpointsLoading(true);
+    try {
+      const res = await fetch(`${apiBase}/api/keys/content-endpoints`, { credentials: "include" });
+      const body = await res.json().catch(() => null);
+      const selection = parseContentEndpointSelection(body?.data);
+      if (!res.ok || !selection) {
+        throw new Error("Endpoint settings are unavailable. Make sure the Yumina backend is up to date.");
+      }
+      setEndpoints(selection);
+      setEndpointError(null);
+    } catch (error) { setEndpointError(error instanceof Error ? error.message : "Could not load endpoint settings."); }
+    finally { setEndpointsLoading(false); }
+  }, []);
 
   const fetchKeys = useCallback(async () => {
     try {
@@ -173,7 +214,7 @@ export function ApiKeysSettings() {
     }
   }, []);
 
-  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+  useEffect(() => { void fetchKeys(); void fetchEndpoints(); }, [fetchKeys, fetchEndpoints]);
 
   const profilesForProvider = useMemo(
     () => keys.filter((k) => k.provider === activeProvider),
@@ -214,20 +255,51 @@ export function ApiKeysSettings() {
 
   const setConfig = useConfigStore((s) => s.setConfig);
 
+  const assignEndpoint = async (kind: ContentEndpointKind, id: string | null): Promise<boolean> => {
+    setEndpointBusy(true);
+    setEndpointError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/keys/content-endpoints`, {
+        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [`${kind}ApiKeyId`]: id }),
+      });
+      const body = await res.json().catch(() => null);
+      const selection = parseContentEndpointSelection(body?.data);
+      if (!res.ok || !selection) throw new Error(body?.error ?? "Could not save endpoint settings. Make sure the Yumina backend is up to date.");
+      setEndpoints(selection);
+      if (kind === "sfw") {
+        await useConfigStore.getState().syncFromServer({seedMissing:false});
+        const target = keys.find(row => row.id === id);
+        const model = target?.metadata?.defaultModel;
+        const composed = target && model ? composeSelectedModelId(target.provider, model) : !id ? selection.defaults?.sfw?.model : null;
+        if (composed) setConfig("selectedModel", composed);
+      }
+      await forceFetchProfile();
+      return true;
+    } catch (error) { setEndpointError(error instanceof Error ? error.message : "Could not save endpoint settings."); return false; }
+    finally { setEndpointBusy(false); }
+  };
+
   // R1: flip the chip first, roll back to server truth and offer Retry if the PATCH fails.
   const handleToggleActive: (id: string, currentlyActive: boolean) => Promise<void> = useCallback(
     async (id: string, currentlyActive: boolean) => {
       const nextActiveId = currentlyActive ? null : id;
+      setEndpointBusy(true);
       setOptimisticActiveId(nextActiveId);
       try {
-        const res = await fetch(`${apiBase}/api/users/me`, {
+        const res = await fetch(`${apiBase}/api/keys/content-endpoints`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ preferences: { activeApiKeyId: nextActiveId } }),
+          body: JSON.stringify({ sfwApiKeyId: nextActiveId }),
         });
         if (res.ok) {
+          const { data } = await res.json();
+          const selection = parseContentEndpointSelection(data);
+          if (!selection) throw new Error("Could not save endpoint settings.");
+          setEndpoints(selection);
           await forceFetchProfile();
+          await useConfigStore.getState().syncFromServer({seedMissing:false});
           setOptimisticActiveId(undefined);
           // When activating, push this profile's default model into the global
           // chat-model state so chat actually uses it.
@@ -238,6 +310,8 @@ export function ApiKeysSettings() {
               const composed = composeSelectedModelId(target.provider, dm);
               if (composed) setConfig("selectedModel", composed);
             }
+          } else if (selection.defaults?.sfw?.model) {
+            setConfig("selectedModel", selection.defaults.sfw.model);
           }
           return;
         }
@@ -252,6 +326,8 @@ export function ApiKeysSettings() {
           label: t("action.retry", { ns: "common" }),
           onClick: () => void handleToggleActive(id, currentlyActive),
         });
+      } finally {
+        setEndpointBusy(false);
       }
     },
     [forceFetchProfile, keys, setConfig, t],
@@ -263,17 +339,9 @@ export function ApiKeysSettings() {
       try {
         const res = await fetch(`${apiBase}/api/keys/${entry.id}`, { method: "DELETE", credentials: "include" });
         if (!res.ok) throw new Error("delete failed");
-        if (wasActive) {
-          // Clear active reference upstream
-          await fetch(`${apiBase}/api/users/me`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ preferences: { activeApiKeyId: null } }),
-          });
-          await forceFetchProfile();
-          setOptimisticActiveId(undefined);
-        }
+        // Only the server clears references still pointing at the deleted key.
+        await Promise.all([forceFetchProfile(), fetchEndpoints()]);
+        setOptimisticActiveId(undefined);
       } catch {
         setKeys((prev) => (prev.some((k) => k.id === entry.id) ? prev : insertAt(prev, index, entry)));
         if (wasActive) setOptimisticActiveId(undefined);
@@ -283,7 +351,7 @@ export function ApiKeysSettings() {
         });
       }
     },
-    [forceFetchProfile, t],
+    [forceFetchProfile, fetchEndpoints, t],
   );
 
   // R5(b): the row leaves the list now and the DELETE waits out the undo window,
@@ -325,9 +393,21 @@ export function ApiKeysSettings() {
 
   return (
     <div className="profile-overview-glass profile-overview-glass--soft rounded-2xl p-6 space-y-5">
+      <ContentEndpointCards
+        profiles={keys} selection={endpoints ?? { sfwApiKeyId: serverActiveKeyId, nsfwApiKeyId: null }}
+        loading={loading || endpointsLoading || !endpoints} busy={endpointBusy} error={endpointError}
+        onAssign={(kind, id) => { void assignEndpoint(kind, id); }}
+        onEdit={(kind, id) => {
+          const entry = keys.find(row => row.id === id);
+          if (!entry) return;
+          setEditingEndpoint(kind); setActiveProvider(entry.provider); setCreatingFor(null); setSelectedId(id);
+        }}
+        onCreate={kind => { setEditingEndpoint(kind); setActiveProvider("custom"); setCreatingFor("custom"); setSelectedId(null); }}
+        onRetry={() => { void fetchEndpoints(); }}
+      />
       <div className="flex items-center gap-2">
         <Plug className="h-4 w-4 text-violet-300" />
-        <h3 className="text-sm font-semibold text-main">{t("apiKeys.title")}</h3>
+        <h3 className="text-sm font-semibold text-main">{endpointLabel("profilesTitle", "Endpoint profiles")}</h3>
       </div>
       <p className="-mt-3 text-xs text-sub">
         {t("apiKeys.subtitle")}
@@ -378,6 +458,7 @@ export function ApiKeysSettings() {
             {profilesForProvider.map((k) => {
               const isSelected = selectedId === k.id && !isCreating;
               const isActive = activeKeyId === k.id;
+              const isNsfwActive = endpoints?.nsfwApiKeyId === k.id;
               return (
                 <button
                   key={k.id}
@@ -389,7 +470,8 @@ export function ApiKeysSettings() {
                       : "border-white/10 bg-white/[0.02] text-sub hover:border-white/20 hover:text-main"
                   }`}
                 >
-                  {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.6)]" />}
+                  {isActive && <span role="img" aria-label={endpointLabel("activeSfw", "Active SFW provider")} className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.6)]" />}
+                  {isNsfwActive && <span role="img" aria-label={endpointLabel("activeNsfw", "Active NSFW provider")} className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]" />}
                   <span>{k.label}</span>
                 </button>
               );
@@ -406,13 +488,15 @@ export function ApiKeysSettings() {
       {/* ── Editor ── */}
       {isCreating ? (
         <NewProfileForm
-          key={activeProvider}
+          key={`${activeProvider}-${editingEndpoint}`}
           provider={activeProvider}
+          initialLabel={endpointLabel(`${editingEndpoint}Title`, CONTENT_ENDPOINT_TITLES[editingEndpoint])}
           onCancel={() => setCreatingFor(null)}
           onCreated={async (id) => {
             setCreatingFor(null);
             await fetchKeys();
             setSelectedId(id);
+            await assignEndpoint(editingEndpoint, id);
           }}
         />
       ) : selected ? (
@@ -420,7 +504,10 @@ export function ApiKeysSettings() {
           key={selected.id}
           entry={selected}
           isActive={activeKeyId === selected.id}
-          onToggleActive={() => handleToggleActive(selected.id, activeKeyId === selected.id)}
+          isNsfwActive={endpoints?.nsfwApiKeyId === selected.id}
+          assignmentBusy={endpointBusy || endpointsLoading || !endpoints}
+          onToggleActive={() => void handleToggleActive(selected.id, activeKeyId === selected.id)}
+          onToggleNsfw={() => void assignEndpoint("nsfw", endpoints?.nsfwApiKeyId === selected.id ? null : selected.id)}
           onDelete={() => handleDelete(selected.id)}
           onSaved={async () => { await fetchKeys(); }}
         />
@@ -431,12 +518,14 @@ export function ApiKeysSettings() {
 
 // ─── New Profile Form ────────────────────────────────────────────────
 
-function NewProfileForm({
+export function NewProfileForm({
   provider,
+  initialLabel,
   onCancel,
   onCreated,
 }: {
   provider: string;
+  initialLabel?: string;
   onCancel: () => void;
   onCreated: (id: string) => Promise<void>;
 }) {
@@ -444,10 +533,13 @@ function NewProfileForm({
   const meta = PROVIDERS.find((p) => p.value === provider)!;
   const isCustom = provider === "custom";
   const isOllama = provider === "ollama";
+  const isLocalEdition = useIsLocalEdition();
 
-  const [label, setLabel] = useState("Default");
+  const [label, setLabel] = useState(initialLabel ?? "Default");
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<EndpointEffort>("low");
+  const sampling = useEndpointSampling();
   const [busy, setBusy] = useState(false);
   // R4: creation problems print in the form, next to what caused them.
   const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
@@ -456,10 +548,12 @@ function NewProfileForm({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (sampling.hasInvalid) return;
     setBaseUrlError(null);
     setFormError(null);
     const keyValue = key.trim();
-    if (!keyValue) return;
+    const keylessStrata = isCustom && isStrataLocalBaseUrl(baseUrl);
+    if (!keyValue && !keylessStrata) return;
     // Create is already disabled here, and the help card shows the amber warning.
     if (isOllama && isHostedBrowserOrigin() && isLoopbackUrl(keyValue)) return;
     if (isCustom && !baseUrl.trim()) {
@@ -469,7 +563,7 @@ function NewProfileForm({
     setBusy(true);
     try {
       const body: Record<string, unknown> = {
-        provider, label: label.trim() || "Default", key: keyValue,
+        provider, label: label.trim() || "Default", key: keyValue, reasoningEffort, ...sampling.values,
       };
       if (isCustom) body.baseUrl = baseUrl.trim();
       const res = await fetch(`${apiBase}/api/keys`, {
@@ -522,13 +616,14 @@ function NewProfileForm({
           <div>
             <label className="mb-1 block text-[11px] text-sub/60">{t("apiKeys.quickFill")}</label>
             <div className="flex flex-wrap gap-1.5">
-              {CUSTOM_PRESETS.map((p) => (
+              {CUSTOM_PRESETS.filter((p) => !p.localOnly || isLocalEdition).map((p) => (
                 <button
                   key={p.label}
                   type="button"
                   onClick={() => {
                     setBaseUrl(p.baseUrl);
                     if (label === "Default") setLabel(p.label);
+                    if (p.localOnly) setKey("");
                   }}
                   className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
                     baseUrl === p.baseUrl
@@ -558,6 +653,11 @@ function NewProfileForm({
             <p className="mt-1 text-[10px] text-sub/40">
               {t("apiKeys.customBaseUrlHint")}
             </p>
+            {isStrataLocalBaseUrl(baseUrl) && (
+              <p className="mt-1 text-[10px] text-emerald-200/75">
+                Strata uses the local GPU server and needs no API key. Its image input works when vision is enabled in Strata.
+              </p>
+            )}
           </div>
         </>
       )}
@@ -587,11 +687,13 @@ function NewProfileForm({
         )}
       </div>
 
+      <EndpointEffortSelect value={reasoningEffort} onChange={setReasoningEffort} disabled={busy} />
+      <EndpointCreativitySettings id="new" sampling={sampling} disabled={busy} />
       <FieldError message={formError} />
 
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={busy}>{t("apiKeys.cancel")}</Button>
-        <Button type="submit" size="sm" disabled={busy || (!isOllama && !key.trim()) || (isOllama && (!key.trim() || ollamaLoopbackOnHosted)) || (isCustom && !baseUrl.trim())}>
+        <Button type="submit" size="sm" disabled={busy || sampling.hasInvalid || (!isOllama && !key.trim() && !(isCustom && isStrataLocalBaseUrl(baseUrl))) || (isOllama && (!key.trim() || ollamaLoopbackOnHosted)) || (isCustom && !baseUrl.trim())}>
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("apiKeys.create")}
         </Button>
       </div>
@@ -603,16 +705,24 @@ function NewProfileForm({
 
 type ConnectionState = "idle" | "connecting" | "connected" | "unavailable" | "failed";
 
-function ProfileEditor({
+export function ProfileEditor({
   entry,
   isActive,
+  isNsfwActive,
+  assignmentBusy,
+  manageOnly = false,
   onToggleActive,
+  onToggleNsfw,
   onDelete,
   onSaved,
 }: {
   entry: ApiKeyEntry;
   isActive: boolean;
+  isNsfwActive: boolean;
+  assignmentBusy: boolean;
+  manageOnly?: boolean;
   onToggleActive: () => void;
+  onToggleNsfw: () => void;
   onDelete: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -634,6 +744,12 @@ function ProfileEditor({
   const [keyDraft, setKeyDraft] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [modelInput, setModelInput] = useState(entry.metadata?.defaultModel ?? "");
+  const [openRouterProviders, setOpenRouterProviders] = useState(entry.metadata?.openRouterProviders ?? {});
+  const [contextInput, setContextInput] = useState(entry.metadata?.contextWindow?.toString() ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState(entry.metadata?.reasoningEffort ?? "low");
+  const sampling = useEndpointSampling(entry.metadata);
+  const contextWindow = contextInput.trim() ? Number(contextInput) : null;
+  const invalidContext = contextWindow !== null && (!Number.isSafeInteger(contextWindow) || contextWindow < 512 || contextWindow > 2_000_000);
   const [postProc, setPostProc] = useState<PromptPostProcessing>(
     (entry.metadata?.promptPostProcessing as PromptPostProcessing) ?? "none",
   );
@@ -648,7 +764,7 @@ function ProfileEditor({
   const [testing, setTesting] = useState(false);
   const [testReply, setTestReply] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { setTestReply(null); }, [modelInput, baseUrl, keyDraft, postProc]);
+  useEffect(() => { setTestReply(null); }, [modelInput, baseUrl, keyDraft, postProc, reasoningEffort, sampling.inputs.temperature, sampling.inputs.topP, sampling.inputs.topK]);
 
   // Additional params dialog
   const [paramsOpen, setParamsOpen] = useState(false);
@@ -665,24 +781,27 @@ function ProfileEditor({
   // selectedModel so the chat actually uses what's picked here. Without this,
   // the upper "your model" and lower "available models" would be disconnected.
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || manageOnly) return;
     const trimmed = modelInput.trim();
     if (!trimmed) return;
     const composed = composeSelectedModelId(entry.provider, trimmed);
     if (composed && composed !== selectedModel) {
       setConfig("selectedModel", composed);
     }
-  }, [isActive, modelInput, entry.provider, selectedModel, setConfig]);
+  }, [isActive, manageOnly, modelInput, entry.provider, selectedModel, setConfig]);
 
   // The reverse direction is handled at activate-time inside the toggle handler
   // (see the Active button onClick) — when the user activates a profile, we
   // immediately push its model to selectedModel so chat picks it up.
 
   const dirty =
-    label !== entry.label ||
+    sampling.dirty || label !== entry.label ||
     baseUrl !== (entry.baseUrl ?? "") ||
     keyDraft.length > 0 ||
     modelInput !== (entry.metadata?.defaultModel ?? "") ||
+    contextWindow !== (entry.metadata?.contextWindow ?? null) ||
+    reasoningEffort !== (entry.metadata?.reasoningEffort ?? "low") ||
+    JSON.stringify(openRouterProviders) !== JSON.stringify(entry.metadata?.openRouterProviders ?? {}) ||
     postProc !== ((entry.metadata?.promptPostProcessing as PromptPostProcessing) ?? "none");
 
   const [saving, setSaving] = useState(false);
@@ -692,6 +811,7 @@ function ProfileEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const save = useCallback(async (silent = false) => {
+    if (invalidContext || sampling.hasInvalid) return false;
     setSaving(true);
     setSaveError(null);
     try {
@@ -700,11 +820,14 @@ function ProfileEditor({
       if (isOllama && keyDraft.trim().length > 0 && isHostedBrowserOrigin() && isLoopbackUrl(keyDraft)) {
         return false;
       }
-      const body: Record<string, unknown> = {};
+      const body: Record<string, unknown> = { ...sampling.changes };
       if (label !== entry.label) body.label = label;
       const keyChanged = keyDraft.length > 0;
       if (keyChanged) body.key = keyDraft;
       if (modelInput !== (entry.metadata?.defaultModel ?? "")) body.defaultModel = modelInput;
+      if (contextWindow !== (entry.metadata?.contextWindow ?? null)) body.contextWindow = contextWindow;
+      if (reasoningEffort !== (entry.metadata?.reasoningEffort ?? "low")) body.reasoningEffort = reasoningEffort;
+      if (entry.provider === "openrouter" && JSON.stringify(openRouterProviders) !== JSON.stringify(entry.metadata?.openRouterProviders ?? {})) body.openRouterProviders = openRouterProviders;
       if (isCustom) {
         if (baseUrl !== (entry.baseUrl ?? "")) body.baseUrl = baseUrl;
         if (postProc !== ((entry.metadata?.promptPostProcessing as PromptPostProcessing) ?? "none")) body.promptPostProcessing = postProc;
@@ -737,7 +860,7 @@ function ProfileEditor({
     } finally {
       setSaving(false);
     }
-  }, [entry, label, keyDraft, baseUrl, modelInput, postProc, isCustom, isOllama, onSaved, t]);
+  }, [entry, label, keyDraft, baseUrl, modelInput, contextWindow, invalidContext, reasoningEffort, sampling.hasInvalid, sampling.changes, openRouterProviders, postProc, isCustom, isOllama, onSaved, t]);
 
   const connect = useCallback(async () => {
     // Save any pending changes (esp. baseUrl + new key) before fetching models
@@ -825,13 +948,13 @@ function ProfileEditor({
           className="profile-overview-input-surface flex-1 border-white/10 text-sm font-medium"
           maxLength={64}
         />
-        <button
+        {!manageOnly && <button
           onClick={onDelete}
           className="hover-surface flex h-7 w-7 items-center justify-center rounded-md text-sub/40 hover:text-destructive"
           title={t("apiKeys.deleteProfile")}
         >
           <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        </button>}
       </div>
 
       {/* ── Custom endpoint fields ── */}
@@ -900,18 +1023,24 @@ function ProfileEditor({
       </div>
 
       {isOllama && <OllamaUrlHelp showLoopbackWarning={ollamaLoopbackOnHosted} />}
+      <EndpointEffortSelect value={reasoningEffort} onChange={setReasoningEffort} disabled={testing || saving || connection === "connecting"} />
+      <EndpointCreativitySettings id={entry.id} sampling={sampling} disabled={testing || saving || connection === "connecting"} />
 
       {/* ── Active/inactive status banner (all providers) ── */}
-      {isActive ? (
+      {!manageOnly && (isActive ? (
         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200/90">
           <span className="font-semibold">{t("apiKeys.linkedToChat")}</span> {t("apiKeys.linkedToChatDesc")}
           <span className="ml-1 font-mono text-emerald-100">{selectedModel || t("apiKeys.noneSelected")}</span>.
+        </div>
+      ) : isNsfwActive ? (
+        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-200/90">
+          {isNsfwActive && <p>{t("contentEndpoints.nsfwAssigned", { defaultValue: "This profile is used by Little Idot and by Story for NSFW content." })}</p>}
         </div>
       ) : (
         <div className="rounded-md border border-amber-500/25 bg-amber-500/[0.04] px-3 py-2 text-[11px] text-amber-200/80">
           <span className="font-semibold">{t("apiKeys.notActive")}</span> {t("apiKeys.notActiveDescBefore")}<span className="text-amber-100">{t("apiKeys.setActive")}</span>{t("apiKeys.notActiveDescAfter")}
         </div>
-      )}
+      ))}
 
       {/* ── Model selection (all providers) ── */}
       <div>
@@ -946,6 +1075,47 @@ function ProfileEditor({
           placeholder={t(isCustom ? "apiKeys.manualModelPlaceholder" : "apiKeys.modelIdPlaceholder")}
           className="profile-overview-input-surface border-white/10 font-mono text-xs"
         />
+      </div>
+
+      {entry.provider === "openrouter" && modelInput.trim() && (
+        <OpenRouterProviderSettings
+          key={modelInput.trim()}
+          profileId={entry.id}
+          modelId={modelInput.trim()}
+          selected={openRouterProviders[modelInput.trim()] ?? []}
+          disabled={testing || saving || connection === "connecting"}
+          onChange={providers => setOpenRouterProviders(previous => {
+            const next = { ...previous };
+            if (providers.length) next[modelInput.trim()] = providers;
+            else delete next[modelInput.trim()];
+            return next;
+          })}
+        />
+      )}
+
+      <div>
+        <label htmlFor={`endpoint-context-${entry.id}`} className="mb-1 block text-[11px] text-sub/60">{t("apiKeys.contextWindow", { defaultValue: "Context window (tokens)" })}</label>
+        <Input
+          id={`endpoint-context-${entry.id}`}
+          aria-label={t("apiKeys.contextWindow", { defaultValue: "Context window (tokens)" })}
+          aria-describedby={`endpoint-context-hint-${entry.id}`}
+          aria-invalid={invalidContext}
+          type="number"
+          inputMode="numeric"
+          min={512}
+          max={2_000_000}
+          step={1}
+          value={contextInput}
+          onChange={(e) => setContextInput(e.target.value)}
+          disabled={testing || saving || connection === "connecting"}
+          placeholder={t("apiKeys.contextAutomatic", { defaultValue: "Automatic" })}
+          className="profile-overview-input-surface border-white/10 font-mono text-xs"
+        />
+        <p id={`endpoint-context-hint-${entry.id}`} className={`mt-1 text-[10px] ${invalidContext ? "text-red-300" : "text-sub/40"}`}>
+          {invalidContext
+            ? t("apiKeys.contextInvalid", { defaultValue: "Enter a whole number from 512 to 2,000,000 tokens." })
+            : t("apiKeys.contextHint", { defaultValue: "Total input and output limit for this profile. Story and Little Idot reserve space for replies. Leave blank for automatic detection." })}
+        </p>
       </div>
 
       {isCustom && (
@@ -1015,19 +1185,28 @@ function ProfileEditor({
           <span className="text-[11px] text-amber-300/70">{t(isCustom ? "apiKeys.enterModelFirst" : "apiKeys.clickConnectFirstHint")}</span>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
-          <button
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {!manageOnly && ([
+            { kind: "sfw", assigned: isActive, onClick: onToggleActive },
+            { kind: "nsfw", assigned: isNsfwActive, onClick: onToggleNsfw },
+          ] as const).map(({ kind, assigned, onClick }) => <button
+            key={kind}
             type="button"
-            onClick={onToggleActive}
-            title={isActive ? t("apiKeys.deactivateHint") : t("apiKeys.activateHint")}
-            className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-              isActive
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+            onClick={onClick}
+            aria-pressed={assigned}
+            disabled={assignmentBusy}
+            title={t(`contentEndpoints.${kind}Title`, { defaultValue: CONTENT_ENDPOINT_TITLES[kind] })}
+            className={`flex min-h-[44px] items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-7 ${
+              assigned
+                ? kind === "sfw"
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                  : "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
                 : "border-white/15 bg-white/[0.03] text-sub hover:border-white/25 hover:text-main"
             }`}
           >
-            {isActive ? (<><CheckCircle2 className="h-3 w-3" />{t("apiKeys.active")} <span className="text-emerald-300/60">{t("apiKeys.clickToDeactivate")}</span></>) : t("apiKeys.setActive")}
-          </button>
+            {assigned ? <CheckCircle2 className="h-3 w-3" /> : null}
+            {t(`contentEndpoints.${assigned ? "assigned" : "use"}${kind === "sfw" ? "Sfw" : "Nsfw"}`, { defaultValue: assigned ? CONTENT_ENDPOINT_TITLES[kind] : kind === "nsfw" ? "Use as NSFW" : "Use as SFW" })}
+          </button>)}
           <Button
             type="button"
             size="sm"
@@ -1040,7 +1219,7 @@ function ProfileEditor({
               if (connection === "connecting") return;
               await connect();
             }}
-            disabled={testing || saving || connection === "connecting" || !dirty || ollamaLoopbackOnHosted}
+            disabled={testing || saving || connection === "connecting" || !dirty || invalidContext || sampling.hasInvalid || ollamaLoopbackOnHosted}
           >
             {saving
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1195,7 +1374,7 @@ function AdditionalParamsDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[560px] mx-4 max-h-[80vh] flex flex-col rounded-2xl border border-white/[0.08] bg-[#1A1B20] shadow-2xl animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-[560px] mx-4 max-h-[80vh] flex flex-col rounded-2xl border border-white/[0.08] bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">

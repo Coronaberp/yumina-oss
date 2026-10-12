@@ -77,6 +77,7 @@ export function ImageBatchProposalView({ proposal, interactive, busy, error, est
       <span>{title}</span>
       {batch && <span className="ml-auto tabular-nums text-muted-foreground">{done}/{total}</span>}
     </div>
+    {proposal.acceptanceMessage && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] text-muted-foreground" role="status">{proposal.acceptanceMessage}</p>}
     {proposal.purpose && <p className="mt-1 break-words text-muted-foreground">{proposal.purpose}</p>}
     {pending && <label className="mt-3 flex min-h-8 items-center gap-2 text-muted-foreground">
       <input type="checkbox" checked={chosen.length === selectable.size && selectable.size > 0} disabled={!editable || !selectable.size}
@@ -154,8 +155,7 @@ export function ImageBatchProposalView({ proposal, interactive, busy, error, est
       </p>
       {batch.status === "running" && <p className="mt-1 text-[10px] text-muted-foreground">{t("studio.aiChat.imageBatch.background")}</p>}
       {batch.status === "paused" && <div className="mt-2">
-        <p className="text-[11px] text-muted-foreground">{batch.pauseReason === "STORAGE_LIMIT" ? t("studio.aiChat.imageBatch.pausedStorageNote")
-          : batch.pauseReason === "BATCH_UNAVAILABLE" ? t("studio.aiChat.imageBatch.pausedUnavailableNote")
+        <p className="text-[11px] text-muted-foreground">{batch.pauseReason === "BATCH_UNAVAILABLE" ? t("studio.aiChat.imageBatch.pausedUnavailableNote")
             : batch.pauseReason === "INSUFFICIENT_CREDITS" || batch.pauseReason === "NO_CREDITS" ? t("studio.aiChat.imageBatch.pausedNote")
               : t("studio.aiChat.imageBatch.pausedGenericNote")}</p>
         <button type="button" disabled={busy} onClick={onResume} className={cn(buttonClass, "mt-2 border-border bg-background hover:bg-muted")}>

@@ -7,11 +7,11 @@ import { activeReloadHolds } from "./reload-safety";
 const selection = () => ({ parentFolderId: null, parentLabel: "Root", plan: planFolderImport(["a.txt", "b.txt"].map(name => ({ path: `folder/${name}`, file: new File(["1234567890"], name) }))) });
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
-test("lost commit responses reuse request IDs and retry can reconcile near full quota", async () => {
+test("lost commit responses reuse request IDs and retry without an account storage cap", async () => {
   let used = 0, loseFolderResponse = true, loseFileResponse = true;
   const folders = new Map<string, { id: string }>();
   const files = new Map<string, object>();
-  const store = createAssetImportStore({ storage: () => ({ used, limit: 25 }),
+  const store = createAssetImportStore({
     createFolder: async (_name, _parent, _signal, requestId) => {
       if (!folders.has(requestId)) folders.set(requestId, { id: "folder" });
       if (loseFolderResponse) { loseFolderResponse = false; return null; }
@@ -38,7 +38,7 @@ test("lost commit responses reuse request IDs and retry can reconcile near full 
 test("hiding and unsubscribing preserve byte progress and the entire batch reload hold", async () => {
   let finish!: (value: object) => void;
   let files = 0;
-  const store = createAssetImportStore({ storage: () => ({ used: 0, limit: 100 }), createFolder: async () => ({ id: "folder" }),
+  const store = createAssetImportStore({ createFolder: async () => ({ id: "folder" }),
     upload: async (_file, _type, _folder, _signal, progress, stage) => {
       files++;
       stage("storage"); progress({ fraction: 0.5, loaded: 5, total: 10, bytesPerSecond: 2 });
@@ -64,7 +64,7 @@ test("hiding and unsubscribing preserve byte progress and the entire batch reloa
 test("cancel aborts current request and retry skips successful files and existing folders", async () => {
   const attempts: string[] = [];
   let folders = 0, aborted = false;
-  const store = createAssetImportStore({ storage: () => ({ used: 0, limit: 100 }), createFolder: async () => { folders++; return { id: "folder" }; },
+  const store = createAssetImportStore({ createFolder: async () => { folders++; return { id: "folder" }; },
     upload: async (file, _type, _folder, signal) => {
       attempts.push(file.name);
       if (attempts.length !== 2) return {};
@@ -84,7 +84,7 @@ test("cancel aborts current request and retry skips successful files and existin
 test("owner switch discards late callbacks and cannot corrupt the next owner's task", async () => {
   let finish!: (value: object) => void;
   let count = 0;
-  const store = createAssetImportStore({ storage: () => ({ used: 0, limit: 100 }), createFolder: async () => ({ id: "folder" }),
+  const store = createAssetImportStore({ createFolder: async () => ({ id: "folder" }),
     upload: async (_file, _type, _folder, _signal, progress) => {
       count++;
       if (count === 1) { await new Promise<object>(resolve => { finish = resolve; }); progress({ fraction: 1, loaded: 10, total: 10, bytesPerSecond: 1 }); }
@@ -104,16 +104,13 @@ test("owner switch discards late callbacks and cannot corrupt the next owner's t
   assert.equal(store.getState().task!.status, "complete");
 });
 
-test("quota gate starts no requests and a failed batch can retry only failures", async () => {
-  let limit = 1, calls = 0;
-  const store = createAssetImportStore({ storage: () => ({ used: 0, limit }), createFolder: async () => { calls++; return { id: "folder" }; },
+test("folder uploads start regardless of account storage usage and retry only failed files", async () => {
+  let calls = 0;
+  const store = createAssetImportStore({ createFolder: async () => { calls++; return { id: "folder" }; },
     upload: async () => { calls++; return calls === 2 ? null : {}; } });
   store.getState().select(selection(), "A");
   await store.getState().start();
-  assert.equal(calls, 0);
-  assert.equal(store.getState().task!.quotaExceeded, true);
-  limit = 100;
-  await store.getState().start();
+  assert.equal(calls, 3);
   assert.deepEqual(store.getState().task!.failed, ["folder/a.txt"]);
   await store.getState().start();
   assert.equal(calls, 4);

@@ -308,11 +308,11 @@ export async function restoreStudioCreditPause(scope: StudioCreditScope, claimId
 export async function withStudioCreditClaimTransaction<T>(
   scope: StudioCreditScope,
   claimId: string,
-  work: (tx: StudioCreditTransaction, checkpoint: StudioCreditCheckpoint, workingSchema: Record<string, unknown>) => Promise<{
+  work: (tx: StudioCreditTransaction, checkpoint: StudioCreditCheckpoint, workingSchema: Record<string, unknown>, run: typeof agentRuns.$inferSelect) => Promise<{
     value: T;
     checkpoint: StudioCreditCheckpoint | null;
     status?: "running" | "completed" | "awaiting_credits" | "awaiting_user" | "awaiting_approval" | "error";
-    runUpdates?: Pick<Partial<typeof agentRuns.$inferInsert>, "messages" | "iteration" | "textContent" | "committedTurns" | "pendingToolCalls" | "readToolResults" | "error">;
+    runUpdates?: Pick<Partial<typeof agentRuns.$inferInsert>, "messages" | "iteration" | "textContent" | "committedTurns" | "pendingToolCalls" | "readToolResults" | "error" | "context">;
   }>,
   opts?: {
     /** The caller applies nothing computed from the checkpoint's world (it
@@ -329,7 +329,7 @@ export async function withStudioCreditClaimTransaction<T>(
     if (!run || run.status !== "running" || checkpoint?.claim?.id !== claimId) throw new StudioCreditCheckpointError("CLAIM_LOST");
     const current = await worldState(tx, world);
     if (!opts?.rebase && current.revision !== checkpoint.worldRevision) throw new StudioCreditCheckpointError("STALE_WORLD");
-    const result = await work(tx, checkpoint, current.schema);
+    const result = await work(tx, checkpoint, current.schema, run);
     const status = result.status ?? "running";
     if (status === "awaiting_credits" && !result.checkpoint) throw new StudioCreditCheckpointError("INVALID_CHECKPOINT");
     let nextCheckpoint: StudioCreditCheckpoint | null = null;

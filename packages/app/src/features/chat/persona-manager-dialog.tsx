@@ -1,3 +1,6 @@
+import { personaPresetsSchema } from "@yumina/engine";
+import { resolveImageUrl } from "@/lib/asset-url";
+import { UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -7,7 +10,6 @@ import { useChatStore } from "@/stores/chat";
 import { FieldError } from "@/components/ui/field-error";
 import { usePersonasStore, type Persona } from "@/stores/personas";
 import { createChatPersonaController, PersonaSaveUnconfirmedError } from "@/lib/refresh-chat-persona";
-import { Lock, Unlock } from "lucide-react";
 
 interface PersonaManagerDialogProps {
   open: boolean;
@@ -15,7 +17,7 @@ interface PersonaManagerDialogProps {
   sessionId?: string;
 }
 
-/** A chat selection belongs to this save; following the account is explicit. */
+/** Exactly one selected identity belongs to this save; greeting changes remain available. */
 export function PersonaManagerDialog({ open, onClose, sessionId }: PersonaManagerDialogProps) {
   const { t } = useTranslation("profile");
   const [editingPersona, setEditingPersona] = useState<Persona | null | undefined>(undefined);
@@ -27,9 +29,13 @@ export function PersonaManagerDialog({ open, onClose, sessionId }: PersonaManage
   const [saveError, setSaveError] = useState<string | null>(null);
   const streaming = useChatStore((s) => s.isStreaming);
   const session = useChatStore((s) => s.session);
+  const hasPlayed = useChatStore(s => s.messages.some(m => m.role === "user"));
+  const readOnly = useChatStore(s => s.readOnly);
+  const selectable = !readOnly && !hasPlayed && session?.personaSelectable !== false && !session?.sessionPersona?.started && Number(session?.state?.turnCount ?? 0) === 0;
+  const presetData = personaPresetsSchema.safeParse(session?.world?.schema?.personaPresets ?? []);
+  const presets = presetData.success ? presetData.data : [];
   const saved = session && session.id === sessionId ? session.sessionPersona?.persona : undefined;
-  const locked = session?.id === sessionId && session?.personaLocked === true;
-  const source = usePersonasStore((s) => s.personas.find((p) => locked ? p.id === saved?.id : p.isActive));
+  const source = usePersonasStore((s) => s.personas.find((p) => p.id === saved?.id));
   const fetchPersonas = usePersonasStore((s) => s.fetchPersonas);
   // Only committed selection/public-field changes refresh identity.
   const sourceVersion = source ? JSON.stringify([
@@ -71,7 +77,7 @@ export function PersonaManagerDialog({ open, onClose, sessionId }: PersonaManage
   const previousSource = useRef({ sessionId, sourceVersion });
   useEffect(() => {
     const previous = previousSource.current;
-    if (previous.sessionId === sessionId && previous.sourceVersion !== sourceVersion) {
+    if (selectable && previous.sessionId === sessionId && previous.sourceVersion !== sourceVersion) {
       // The receipt can change the source itself; refresh only real profile edits.
       const committed = useChatStore.getState().session?.sessionPersona?.persona;
       const version = (p: typeof source | typeof committed) => p ? JSON.stringify([
@@ -80,52 +86,37 @@ export function PersonaManagerDialog({ open, onClose, sessionId }: PersonaManage
       if (version(source) !== version(committed)) controller.current?.refresh();
     }
     previousSource.current = { sessionId, sourceVersion };
-  }, [sessionId, sourceVersion]);
-  const select = async (personaId: string | null) => {
-    setPendingName(usePersonasStore.getState().personas.find((p) => p.id === personaId)?.name ?? t("persona.none"));
-    await controller.current?.setLock(true, personaId);
-  };
-  const toggleLock = async () => {
-    setPendingName(locked ? t("persona.session.following") : saved?.name ?? t("persona.none"));
-    await controller.current?.setLock(!locked, saved?.id ?? null);
+  }, [sessionId, sourceVersion, selectable]);
+  const select = async (personaId: string) => {
+    setPendingName(usePersonasStore.getState().personas.find((p) => p.id === personaId)?.name ?? "Player");
+    if (selectable) await controller.current?.select(personaId);
   };
 
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="border-white/10 bg-[#1F1D21] p-6 text-main shadow-2xl shadow-gold/5 sm:max-w-[500px] sm:rounded-3xl">
-          <DialogTitle className="sr-only">{t("persona.title")}</DialogTitle>
-          <p className="text-sm text-muted-foreground">{t("persona.session.current", { name: saved?.name ?? t("persona.none") })}</p>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={locked}
-            disabled={saving || streaming || !sessionId}
-            onClick={() => void toggleLock()}
-            className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors disabled:opacity-60 ${
-              locked ? "border-gold/35 bg-gold/[0.08]" : "border-white/10 bg-white/[0.03] hover:border-white/20"
-            }`}
-          >
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${locked ? "bg-gold/15 text-gold" : "bg-white/5 text-sub"}`}>
-              {locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-main">
-                {t(locked ? "persona.session.locked" : "persona.session.following")}
-              </span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-                {t(locked ? "persona.session.lockedHint" : "persona.session.followingHint")}
-              </span>
-            </span>
-            <span className={`h-5 w-9 rounded-full p-0.5 transition-colors ${locked ? "bg-gold" : "bg-white/15"}`} aria-hidden="true">
-              <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${locked ? "translate-x-4" : "translate-x-0"}`} />
-            </span>
-          </button>
-          <fieldset disabled={saving || streaming || !sessionId} className="min-w-0 disabled:opacity-60">
+        <DialogContent className="border-white/10 bg-card p-6 text-main shadow-2xl shadow-gold/5 sm:max-w-[500px] sm:rounded-3xl max-h-[85dvh] overflow-y-auto">
+          <DialogTitle className="flex items-center gap-3 pr-10"><UserRound aria-hidden="true" />Personas</DialogTitle>
+          {!selectable && <p className="text-sm text-muted-foreground">The greeting has ended. This story keeps its selected persona; start a new story to choose another.</p>}
+          <p className="text-sm text-muted-foreground">{t("persona.session.current", { name: saved?.name ?? "Player" })}</p>
+          {selectable && <p className="text-xs text-muted-foreground">Choose one persona for this story. You can change it until you proceed beyond the greeting.</p>}
+          <fieldset disabled={saving || streaming || !sessionId || !selectable} className="min-w-0 disabled:opacity-60">
             <PersonaCarousel onEdit={(persona) => setEditingPersona(persona)}
-              disabled={saving || streaming || !sessionId}
-              sessionSelection={{ personaId: saved?.id ?? null, hasPersona: !!saved, onSelect: select }} />
+              disabled={saving || streaming || !sessionId || !selectable}
+              sessionSelection={{ personaId: session?.sessionPersona?.selection?.kind === "preset" ? null : saved?.id ?? null, hasPersona: !!saved, onSelect: select }} />
           </fieldset>
+          {presets.length > 0 && <section className="space-y-2">
+            <h3 className="text-sm font-semibold">Creator personas</h3>
+            <div className="max-h-48 space-y-2 overflow-y-auto">
+              {presets.map(preset => <button key={preset.id} type="button" disabled={saving || streaming || !sessionId || !selectable}
+                aria-pressed={session?.sessionPersona?.selection?.kind === "preset" && session.sessionPersona.selection.id === preset.id}
+                onClick={() => { setPendingName(preset.name); void controller.current?.selectPreset(preset.id); }}
+                className="flex w-full items-center gap-3 rounded-xl border border-white/10 p-3 text-left hover:border-gold/40 disabled:opacity-50 aria-pressed:border-gold/50 aria-pressed:bg-gold/10">
+                {preset.avatarUrl ? <img src={resolveImageUrl(preset.avatarUrl) ?? undefined} alt="" className="h-10 w-10 rounded-lg object-cover" /> : <UserRound className="h-5 w-5 text-gold/70" />}
+                <span className="min-w-0"><span className="block truncate text-sm">{preset.name}</span>{preset.backstory && <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">{preset.backstory}</span>}</span>
+              </button>)}
+            </div>
+          </section>}
           {(saving || streaming) && <p role="status" className="text-sm text-muted-foreground">{t(saving ? "persona.session.saving" : "persona.session.streaming", { name: pendingName })}</p>}
           <FieldError message={saveError} />
         </DialogContent>

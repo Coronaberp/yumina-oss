@@ -60,6 +60,7 @@ export function regenerationState(
     }
   }
   result.ruleState = structuredClone(before.ruleState);
+  result.story = structuredClone(before.story);
   // Regeneration replaces a reply within this turn, never advances/rewinds it.
   return result;
 }

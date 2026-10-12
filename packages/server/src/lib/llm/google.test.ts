@@ -78,7 +78,7 @@ for (const stream of [true, false]) {
       assert.equal(url, `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`);
       assert.equal((init.headers as Record<string, string>)["x-goog-api-key"], "test-google-key");
       const body = JSON.parse(init.body as string);
-      assert.deepEqual(body.generationConfig, { maxOutputTokens: 12000, temperature: 1, topP: 1, frequencyPenalty: 0, presencePenalty: 0 });
+      assert.deepEqual(body.generationConfig, { maxOutputTokens: 12000, temperature: 1, topP: 1, frequencyPenalty: 0, presencePenalty: 0, thinkingConfig: { thinkingLevel: 'low' } });
       assert.deepEqual(body.contents, [{ role: "user", parts: [{ text: "Hello" }] }]);
       assert.equal(body.safetySettings.length, 5);
       for (const key of ["frequency_penalty", "presence_penalty", "safety_settings", "messages", "stream", "model", "top_k"]) assert.equal(key in body, false, key);

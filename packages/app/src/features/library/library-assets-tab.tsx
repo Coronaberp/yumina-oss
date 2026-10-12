@@ -277,11 +277,8 @@ export function LibraryAssetsTab({
 
   // Asset counts come from server via folder.assetCount
 
-  // Storage
+  // Storage used
   const usedMB = (storage.used / (1024 * 1024)).toFixed(1);
-  const limitGB = (storage.limit / (1024 * 1024 * 1024)).toFixed(1);
-  const usagePercent =
-    storage.limit > 0 ? (storage.used / storage.limit) * 100 : 0;
   const currentFolder = useMemo(
     () => folders.find((folder) => folder.id === currentFolderId) ?? null,
     [folders, currentFolderId]
@@ -638,19 +635,7 @@ export function LibraryAssetsTab({
             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
               {t("assets.storage")}
             </span>
-            <span className="text-xs font-bold text-foreground">
-              {usedMB} MB
-              <span className="text-muted-foreground font-normal">
-                {" "}
-                / {limitGB} GB
-              </span>
-            </span>
-          </div>
-          <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full"
-              style={{ width: `${Math.min(usagePercent, 100)}%` }}
-            />
+            <span className="text-xs font-bold text-foreground">{usedMB} MB</span>
           </div>
         </div>
       </div>

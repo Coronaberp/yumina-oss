@@ -69,7 +69,8 @@ function suspendTrackedAudioContexts(suspended: boolean): void {
 }
 import { buildComponent } from "../src/features/studio/lib/tsx-component-builder";
 import { useAssetFont } from "../src/lib/asset-font";
-import { originalImageUrl, resolveAssetUrl, resolveAssetRefs } from "../src/lib/asset-url";
+import { originalImageUrl } from "../src/lib/asset-url";
+import { loadSandboxAssetUrl, resolveSandboxAssetRefs, SANDBOX_ASSET_READY_EVENT } from "./asset-bridge";
 import { rewriteSandboxRootSelectors } from "../src/lib/sandbox-style-isolation";
 import {
   classifyTopEdgeSample,
@@ -110,6 +111,8 @@ import { MessageInput } from "./chat/message-input";
 import { makeChatT } from "./chat/i18n";
 import { ModelPickerModal, ModelTrigger } from "./chat/model-picker-modal";
 import { SessionMemoryModal } from "./extensions/session-memory/session-memory-modal";
+import { ContentFlagsModal } from "./chat/content-flags-modal";
+import { OPEN_CONTENT_FLAGS_EVENT } from "./sandbox-context";
 import type { StateChannel } from "@yumina/engine";
 import type { SandboxState } from "./protocol";
 
@@ -259,6 +262,7 @@ function assembleState(channels: ChannelState): SandboxState {
     // Streaming channel
     isStreaming: channels.streaming?.isStreaming ?? false,
     streamingContent: channels.streaming?.content ?? "",
+    streamingTokenCount: channels.streaming?.tokenCount ?? null,
     streamingReasoning: channels.streaming?.reasoning ?? "",
 
     // Session channel
@@ -266,6 +270,7 @@ function assembleState(channels: ChannelState): SandboxState {
     worldCover: channels.session?.worldCover ?? null,
     worldId: channels.session?.worldId ?? "",
     sessionId: channels.session?.sessionId ?? "",
+    personaSelectable: channels.session?.personaSelectable === true,
     currentUser: channels.session?.currentUser ?? null,
     user: channels.session?.user ?? { name: "Player", avatar: null },
     entries: channels.session?.entries ?? [],
@@ -273,6 +278,10 @@ function assembleState(channels: ChannelState): SandboxState {
     worldbooks: channels.session?.worldbooks ?? [],
 
     // UI channel
+    dialogTheme: channels.ui?.dialogTheme,
+    isImmersive: channels.ui?.isImmersive ?? false,
+    systemFullscreen: channels.ui?.systemFullscreen ?? false,
+    canSystemFullscreen: channels.ui?.canSystemFullscreen ?? false,
     canvasMode: "custom",
     mode: channels.ui?.mode ?? "session",
     capabilities: channels.ui?.capabilities ?? {
@@ -282,6 +291,9 @@ function assembleState(channels: ChannelState): SandboxState {
       requiresAuth: false,
     },
     pendingChoices: channels.ui?.pendingChoices ?? [],
+    storyProgress: channels.ui?.storyProgress ?? { status: "playing" },
+    isCompletingEnding: channels.ui?.isCompletingEnding ?? false,
+    endingError: channels.ui?.endingError ?? null,
     error: channels.ui?.error ?? null,
     readOnly: channels.ui?.readOnly ?? false,
     checkpoints: channels.ui?.checkpoints ?? [],
@@ -950,6 +962,18 @@ function MemoryPanelHostMount() {
   return <SessionMemoryModal open={open} onClose={() => setOpen(false)} />;
 }
 
+function ContentFlagsHostMount() {
+  const api = useYumina();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_CONTENT_FLAGS_EVENT, show);
+    return () => window.removeEventListener(OPEN_CONTENT_FLAGS_EVENT, show);
+  }, []);
+  if (!api.sessionId || api.readOnly || !open) return null;
+  return <ContentFlagsModal onClose={() => setOpen(false)} />;
+}
+
 export function ComponentHost() {
   // Per-channel state
   const [channels, setChannels] = useState<ChannelState>({
@@ -986,7 +1010,14 @@ export function ComponentHost() {
 
   // Assemble channel state into a single SandboxState for the API
   const assembledState = useMemo(() => assembleState(channels), [channels]);
-  const api = useMemo(() => buildAPI(assembledState), [assembledState]);
+  const [assetVersion, setAssetVersion] = useState(0);
+  useEffect(() => {
+    const refresh = () => setAssetVersion(version => version + 1);
+    window.addEventListener(SANDBOX_ASSET_READY_EVENT, refresh);
+    return () => window.removeEventListener(SANDBOX_ASSET_READY_EVENT, refresh);
+  }, []);
+  // Refresh SDK consumers' synchronous URLs after the parent sends media bytes.
+  const api = useMemo(() => buildAPI(assembledState), [assembledState, assetVersion]);
 
   // Force the hydration gate open if the initial channel pushes never arrive
   // (an unexpected host) — degrades to pre-gate behavior instead of hanging.
@@ -1597,6 +1628,7 @@ export function ComponentHost() {
         )}
       </div>
       <MemoryPanelHostMount />
+      <ContentFlagsHostMount />
       <ModelFallbackHost />
     </YuminaContext.Provider>
   );
@@ -1665,10 +1697,9 @@ function hardenImageEl(img: HTMLImageElement): void {
     img.setAttribute("referrerpolicy", "no-referrer");
   }
   const src = img.getAttribute("src");
-  if (src && src.startsWith("@asset:") && !img.dataset.yuminaAssetResolved) {
-    img.dataset.yuminaAssetResolved = "1";
-    resolveAssetUrl(src).then((resolved) => {
-      if (resolved !== src) img.src = resolved;
+  if (src && !/^(?:data|blob):/i.test(src)) {
+    loadSandboxAssetUrl(src).then((resolved) => {
+      if (resolved !== src && img.getAttribute("src") === src) img.src = resolved;
     });
   }
   if (!img.dataset.yuminaRetryBound) {
@@ -1676,6 +1707,7 @@ function hardenImageEl(img: HTMLImageElement): void {
     img.addEventListener("error", () => {
       const errSrc = img.getAttribute("src");
       if (!errSrc) return;
+      if (/^(?:data|blob):/i.test(errSrc)) return;
       // An edge-sized picture (message images go through /cdn-cgi/image/) can
       // only fail outright where the transform endpoint does not exist — off
       // Cloudflare, or the feature toggled off — because on-edge failures are
@@ -1699,15 +1731,15 @@ function hardenImageEl(img: HTMLImageElement): void {
 async function resolveAssetOnStyleTag(styleEl: HTMLStyleElement): Promise<void> {
   const cssText = styleEl.textContent ?? "";
   if (!cssText.includes("@asset:")) return;
-  const resolved = await resolveAssetRefs(cssText);
-  if (resolved !== cssText) styleEl.textContent = resolved;
+  const resolved = await resolveSandboxAssetRefs(cssText);
+  if (resolved !== cssText && styleEl.textContent === cssText) styleEl.textContent = resolved;
 }
 
 async function resolveAssetOnStyledEl(el: HTMLElement): Promise<void> {
   const styleAttr = el.getAttribute("style") ?? "";
   if (!styleAttr.includes("@asset:")) return;
-  const resolved = await resolveAssetRefs(styleAttr);
-  if (resolved !== styleAttr) el.setAttribute("style", resolved);
+  const resolved = await resolveSandboxAssetRefs(styleAttr);
+  if (resolved !== styleAttr && el.getAttribute("style") === styleAttr) el.setAttribute("style", resolved);
 }
 
 // ── Subtree fixers (root + descendants) — used for the initial mount scan and

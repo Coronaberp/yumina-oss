@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Camera, Save, Loader2, User, Plus, Trash2 } from "lucide-react";
-import { personaEntriesSchema, MAX_PERSONA_ENTRIES, MAX_PERSONA_ENTRY_TITLE, MAX_PERSONA_ENTRY_CONTENT, MAX_PERSONA_ENTRIES_TOTAL, type PersonaEntry } from "@yumina/shared";
+import { personaEntriesSchema, personaSpriteExpressions, MAX_PERSONA_ENTRIES, MAX_PERSONA_ENTRY_TITLE, MAX_PERSONA_ENTRY_CONTENT, MAX_PERSONA_ENTRIES_TOTAL, type PersonaEntry, type PersonaSpriteExpression, type PersonaSprites } from "@yumina/shared";
 import { FieldError } from "@/components/ui/field-error";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -25,21 +25,27 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   // R4: this modal stays open on failure, so problems print inside it.
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [spriteError, setSpriteError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [sprites, setSprites] = useState<PersonaSprites>({});
   const [appearance, setAppearance] = useState("");
   const [personality, setPersonality] = useState("");
   const [backstory, setBackstory] = useState("");
   const [note, setNote] = useState("");
   const [entries, setEntries] = useState<(PersonaEntry & { key: string })[]>([]);
+  const [uploadingSprite, setUploadingSprite] = useState<PersonaSpriteExpression | null>(null);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const spriteInputRef = useRef<HTMLInputElement>(null);
+  const spriteTarget = useRef<PersonaSpriteExpression | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setName(persona?.name ?? "");
       setAvatarUrl(persona?.avatarUrl ?? null);
+      setSprites(persona?.sprites ? { ...persona.sprites } : {});
       setAppearance(persona?.appearance ?? "");
       setPersonality(persona?.personality ?? "");
       setBackstory(persona?.backstory ?? "");
@@ -48,6 +54,8 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
       setIsSaving(false);
       setUploadingAvatar(false);
       setAvatarError(null);
+      setSpriteError(null);
+      setUploadingSprite(null);
       setFormError(null);
     }
   }, [isOpen, persona]);
@@ -64,6 +72,23 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
       setAvatarError(t("persona.modal.avatarUploadFailed"));
     } finally {
       setUploadingAvatar(false);
+    }
+  };
+
+  const handleSpriteUpload = async (file: File) => {
+    const expression = spriteTarget.current;
+    if (!expression) return;
+    setUploadingSprite(expression);
+    setSpriteError(null);
+    try {
+      const asset = await uploadAsset(file, "image");
+      if (!asset) return;
+      setSprites(current => ({ ...current, [expression]: asset.url }));
+    } catch {
+      setSpriteError(t("persona.modal.spriteUploadFailed"));
+    } finally {
+      setUploadingSprite(null);
+      spriteTarget.current = null;
     }
   };
 
@@ -89,6 +114,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
         appearance: appearance.trim() || null,
         personality: personality.trim() || null,
         backstory: backstory.trim() || null,
+        sprites,
         note: note.trim() || null,
         entries: parsedEntries.data,
       };
@@ -115,17 +141,17 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl gap-0 overflow-hidden border-white/10 bg-[#1F1D21] p-0 text-main shadow-2xl shadow-gold/5 sm:rounded-3xl [&>button:last-child]:hidden">
+      <DialogContent data-vn-dialog-surface="structured" className="z-[120] max-w-2xl gap-0 overflow-hidden border-white/10 bg-[#1F1D21] p-0 text-main shadow-2xl shadow-gold/5 sm:rounded-3xl [&>button:last-child]:hidden">
         <DialogTitle className="sr-only">
           {isEditing ? t("persona.modal.editTitle") : t("persona.modal.createTitle")}
         </DialogTitle>
 
         {/* Header — matches EditProfileModal pattern */}
-        <div className="relative flex items-center justify-between overflow-hidden border-b border-white/5 bg-transparent p-6">
-          <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-gold/10 blur-3xl" />
+        <div data-vn-dialog-header="" className="relative flex items-center justify-between overflow-hidden border-b border-white/5 bg-transparent p-6">
+          <div className="persona-editor-decoration absolute -right-10 -top-10 h-40 w-40 rounded-full bg-gold/10 blur-3xl" />
 
           <div className="relative z-10">
-            <h2 className="flex items-center gap-2 text-2xl font-black text-main">
+            <h2 data-vn-dialog-title="" className="flex items-center gap-2 text-2xl font-black text-main">
               <User className="h-5 w-5 text-gold" />
               {isEditing ? t("persona.modal.editTitle") : t("persona.modal.createTitle")}
             </h2>
@@ -144,7 +170,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!name.trim() || isSaving}
+              disabled={!name.trim() || isSaving || uploadingAvatar || uploadingSprite !== null}
               className="h-10 rounded-xl border border-gold/30 bg-gold/15 px-6 font-bold text-gold transition-all hover:bg-gold/25 disabled:opacity-50"
             >
               {isSaving ? (
@@ -166,12 +192,12 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
         )}
 
         {/* Content */}
-        <div className="relative max-h-[75vh] overflow-y-auto bg-transparent p-8">
+        <div data-vn-dialog-body="" className="relative max-h-[75vh] overflow-y-auto bg-transparent p-8">
           <div className="relative z-10 space-y-8 animate-in fade-in duration-300">
 
             {/* Identity Section — Avatar + Name */}
             <section>
-              <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-[#2A272B]/50 p-6 transition-all hover:border-gold/30">
+              <div className="persona-editor-card group relative overflow-hidden rounded-2xl border border-white/10 bg-[#2A272B]/50 p-6 transition-all hover:border-gold/30">
                 <div className="relative z-10 flex flex-col items-center gap-6 md:flex-row md:items-start">
                   {/* Avatar */}
                   <div className="flex flex-col items-center gap-3">
@@ -260,7 +286,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
 
             {/* Character Details Section */}
             <section>
-              <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-[#2A272B]/50 p-6 transition-all hover:border-gold/30">
+              <div className="persona-editor-card group relative overflow-hidden rounded-2xl border border-white/10 bg-[#2A272B]/50 p-6 transition-all hover:border-gold/30">
                 <div className="relative z-10 space-y-6">
                   {/* Appearance */}
                   <div className="space-y-2">
@@ -309,6 +335,33 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
                       className="min-h-[120px] w-full resize-none rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm leading-relaxed text-white shadow-sm placeholder:text-sub/50 transition-all focus-visible:border-gold/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold/50"
                     />
                   </div>
+                  <section aria-label="VN stage sprites" className="space-y-3">
+                    <div>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-sub">{t("persona.modal.spriteExpressions")}</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-sub/70">{t("persona.modal.spriteExpressionsHint")}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {personaSpriteExpressions.map(expression => {
+                        const label = expression[0]!.toUpperCase() + expression.slice(1);
+                        const preview = resolveImageUrl(sprites[expression]);
+                        return <article key={expression} className="overflow-hidden rounded-xl border border-white/10 bg-black/10">
+                          <div className="flex h-36 items-center justify-center bg-black/15 p-2">
+                            {preview ? <img src={preview} alt={`${label} sprite`} className="h-full max-w-full object-contain" /> : <User className="h-8 w-8 text-sub/30" />}
+                          </div>
+                          <div className="space-y-2 border-t border-white/5 p-2">
+                            <p className="text-center text-xs font-semibold text-sub">{label}</p>
+                            <Button type="button" variant="outline" aria-label={`Upload ${expression} sprite`} disabled={uploadingSprite !== null} onClick={() => { spriteTarget.current = expression; spriteInputRef.current?.click(); }} className="h-9 w-full px-2 text-xs">
+                              {uploadingSprite === expression ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Camera className="mr-1 h-3.5 w-3.5" />}
+                              {preview ? t("persona.modal.spriteReplace") : t("persona.modal.spriteUpload")}
+                            </Button>
+                            {preview && <Button type="button" variant="ghost" aria-label={`Remove ${expression} sprite`} disabled={uploadingSprite !== null} onClick={() => setSprites(current => { const next = { ...current }; delete next[expression]; return next; })} className="h-8 w-full px-2 text-xs text-sub hover:text-destructive">{t("persona.modal.spriteRemove")}</Button>}
+                          </div>
+                        </article>;
+                      })}
+                    </div>
+                    <input ref={spriteInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" className="hidden" aria-label="VN sprite image file" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void handleSpriteUpload(file); }} />
+                    <FieldError message={spriteError} />
+                  </section>
                 </div>
               </div>
             </section>

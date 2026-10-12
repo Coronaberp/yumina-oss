@@ -18,6 +18,16 @@ function toolTurn(step: number, resultChars: number): ChatMessage[] {
 }
 
 describe("agent context window", () => {
+  it("honors an endpoint history budget smaller than the model family default", () => {
+    const messages: ChatMessage[] = [{ role: "user", content: "Update the current character." }];
+    for (let step = 0; step < 12; step++) messages.push(...toolTurn(step, 4000));
+    messages.push({ role: "user", content: "Now adjust her greeting." });
+    const windowed = buildWindowedMessages(messages, "custom/qwen3.8", 6000);
+    assert.ok(windowed.length < messages.length);
+    assert.equal(windowed.at(-1)!.content, "Now adjust her greeting.");
+    const characters = windowed.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0);
+    assert.ok(characters / 4 <= 6000);
+  });
   it("never opens the kept window on a tool result whose tool_calls turn was summarized away", () => {
     // Strict OpenAI-compatible endpoints (DeepSeek official) reject that with
     // "Messages with role 'tool' must be a response to a preceding message

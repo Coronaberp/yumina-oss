@@ -55,15 +55,19 @@ test("mobile page wrappers release their clipped height without releasing dialog
   assert.equal(dom.window.getComputedStyle(pane).height, "100%", "desktop/editor keep their pane");
 });
 
-test("admin document keeps its workspace color instead of inheriting Discover wallpaper", (t) => {
+test("admin document paints the selected canvas while plain workspaces keep their color", (t) => {
   const dom = new JSDOM(`<style>${styles}</style>`);
   t.after(() => dom.window.close());
   const root = dom.window.document.documentElement;
   root.setAttribute("data-mobile-app-canvas", "plain");
   root.setAttribute("data-mobile-page-scroll", "admin-main");
   const style = dom.window.getComputedStyle(root);
-  assert.equal(style.getPropertyValue("--reading-canvas-color").trim(), "#111214");
+  assert.equal(style.getPropertyValue("--reading-canvas-color").trim(), "#141312");
   assert.equal(style.backgroundImage, "none");
+  root.setAttribute("data-mobile-app-canvas", "wallpaper");
+  const wallpaperStyle = dom.window.getComputedStyle(root);
+  assert.notEqual(wallpaperStyle.backgroundImage, "none");
+  assert.match(wallpaperStyle.getPropertyValue("--reading-canvas-image"), /starry-night-bg\.jpg/);
 });
 
 test("mobile inbox has no tinted pane ending above the document safe area", (t) => {

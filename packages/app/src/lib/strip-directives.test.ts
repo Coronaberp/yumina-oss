@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripDirectives, stripDirectivesForSandbox } from "./strip-directives";
 
+test("streaming text hides variable-update wrappers as well as their state directives", () => {
+  const raw = 'The clerk waits.\n<Variable-updates>\n[time-period: set "9:10 AM"]\n</Variable-updates>';
+  assert.equal(stripDirectives(raw).trim(), "The clerk waits.");
+  assert.equal(stripDirectivesForSandbox('[speaker: Clerk]\n' + raw).trim(), '[speaker: Clerk]\nThe clerk waits.');
+});
+
 test("stripDirectives removes a completed speaker tag like any other directive", () => {
   assert.equal(stripDirectives("[speaker: Balder] The forge roars. [hp: -1]"), " The forge roars. ");
 });

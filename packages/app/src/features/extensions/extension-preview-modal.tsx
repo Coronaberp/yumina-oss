@@ -149,7 +149,7 @@ function ExtensionPreviewContent({
         aria-modal="true"
         aria-label={localized.name}
         tabIndex={-1}
-        className="relative flex w-full max-w-[820px] flex-col overflow-hidden rounded-[1.75rem] border border-white/[0.08] bg-[#1F1D21] shadow-[0_32px_80px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.03)] animate-in fade-in zoom-in-95 duration-200"
+        className="relative flex w-full max-w-[820px] flex-col overflow-hidden rounded-[1.75rem] border border-white/[0.08] bg-card shadow-[0_32px_80px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.03)] animate-in fade-in zoom-in-95 duration-200"
         style={{
           maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 5rem)",
         }}
@@ -160,8 +160,8 @@ function ExtensionPreviewContent({
             className="relative flex items-center gap-5 overflow-hidden px-5 pt-7 pb-5 sm:px-7"
             style={{ minHeight: "clamp(150px, 22vh, 210px)" }}
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-[#2A272B] via-[#1F1D21] to-[#8C642A]/20" />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#1F1D21] via-transparent to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-br from-accent via-card to-earth/20" />
+            <div className="absolute inset-0 bg-gradient-to-t from-card via-transparent to-transparent" />
 
             {/* Close button */}
             <div className="absolute top-3 right-3 z-10 md:top-4 md:right-4">
@@ -175,8 +175,8 @@ function ExtensionPreviewContent({
             </div>
 
             {/* Icon tile */}
-            <div className="relative z-[1] flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-[#C9A25E]/30 bg-gradient-to-br from-[#C9A25E]/20 to-white/5 shadow-[0_0_30px_rgba(201,162,94,0.12)]">
-              <ExtensionIcon name={extension.icon} className="h-9 w-9 text-[#C9A25E]" />
+            <div className="relative z-[1] flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-gold/30 bg-gradient-to-br from-gold/20 to-white/5 shadow-[0_0_30px_rgba(212,194,146,0.12)]">
+              <ExtensionIcon name={extension.icon} className="h-9 w-9 text-gold" />
             </div>
 
             {/* Title + meta */}
@@ -186,7 +186,7 @@ function ExtensionPreviewContent({
                   {localized.tags.slice(0, 4).map((tag) => (
                     <span
                       key={tag}
-                      className="rounded-full bg-[#C9A25E]/90 px-2.5 py-0.5 text-[10px] font-bold text-[#121212] shadow-[0_2px_10px_rgba(201,162,94,0.3)]"
+                      className="rounded-full bg-gold/90 px-2.5 py-0.5 text-[10px] font-bold text-primary-foreground shadow-[0_2px_10px_rgba(212,194,146,0.3)]"
                     >
                       {tag}
                     </span>
@@ -194,7 +194,7 @@ function ExtensionPreviewContent({
                 </div>
               )}
               <h1
-                className="mb-1 text-[1.6rem] font-serif font-black leading-tight tracking-wide text-[#FFF5D6] sm:text-[1.8rem]"
+                className="mb-1 text-[1.6rem] font-serif font-black leading-tight tracking-wide text-foreground sm:text-[1.8rem]"
                 style={{ textShadow: "0 4px 20px rgba(0,0,0,0.8)" }}
               >
                 {localized.name}
@@ -205,7 +205,7 @@ function ExtensionPreviewContent({
               {/* Ratings and download counts are hosted marketplace metadata. */}
               {reviewsEnabled && (
               <div className="flex items-center gap-4 text-xs">
-                <span className="flex items-center gap-1.5 text-[#C9A25E]">
+                <span className="flex items-center gap-1.5 text-gold">
                   <Star className="h-3.5 w-3.5 fill-current" />
                   <span className="font-semibold">
                     {reviewsBag.ratingData.reviewCount > 0
@@ -230,13 +230,13 @@ function ExtensionPreviewContent({
                 key={tabKey}
                 onClick={() => setTab(tabKey)}
                 className={`relative -mb-px py-3 text-sm font-semibold transition-colors ${
-                  tab === tabKey ? "text-[#C9A25E]" : "text-white/45 hover:text-white/70"
+                  tab === tabKey ? "text-gold" : "text-white/45 hover:text-white/70"
                 }`}
               >
                 {tabKey === "overview"
                   ? t("detail.about")
                   : t("detail.reviewsWithCount", { count: reviewsBag.commentCount })}
-                {tab === tabKey && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full bg-[#C9A25E]" />}
+                {tab === tabKey && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full bg-gold" />}
               </button>
             ))}
           </div>
@@ -248,7 +248,7 @@ function ExtensionPreviewContent({
             <div className="space-y-6">
               <div className="space-y-3">
                 {paragraphs.map((p, i) => (
-                  <p key={i} className="text-sm leading-relaxed text-[#D1CEC6]">
+                  <p key={i} className="text-sm leading-relaxed text-sub">
                     {p}
                   </p>
                 ))}
@@ -264,9 +264,9 @@ function ExtensionPreviewContent({
                     {explanations.map((ex, i) => (
                       <div
                         key={i}
-                        className="rounded-2xl border border-[#C9A25E]/15 bg-gradient-to-br from-[#C9A25E]/[0.06] to-transparent p-4"
+                        className="rounded-2xl border border-gold/15 bg-gradient-to-br from-gold/[0.06] to-transparent p-4"
                       >
-                        <div className="mb-1.5 text-sm font-semibold text-[#FFF5D6]">{ex.title}</div>
+                        <div className="mb-1.5 text-sm font-semibold text-foreground">{ex.title}</div>
                         <p className="text-xs leading-relaxed text-white/65">{ex.body}</p>
                       </div>
                     ))}
@@ -280,14 +280,14 @@ function ExtensionPreviewContent({
         </div>
 
         {/* ═══ CTA footer ═══ */}
-        <div className="flex shrink-0 items-center gap-3 border-t border-white/[0.06] bg-[#1A1820] px-5 py-4 sm:px-7">
+        <div className="flex shrink-0 items-center gap-3 border-t border-white/[0.06] bg-muted px-5 py-4 sm:px-7">
           <button
             onClick={handlePrimary}
             disabled={pending}
             className={
               status === "installed"
                 ? "inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.03] px-5 py-3 text-sm font-bold text-white/80 transition-all hover:border-red-400/40 hover:bg-red-400/[0.08] hover:text-red-300 disabled:opacity-40"
-                : "inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#C9A25E] to-[#B8913D] px-5 py-3 text-sm font-bold text-[#1A1A22] transition-all hover:shadow-[0_0_24px_rgba(201,162,94,0.35)] disabled:opacity-40"
+                : "inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-gold to-primary-pressed px-5 py-3 text-sm font-bold text-primary-foreground transition-all hover:shadow-[0_0_24px_rgba(212,194,146,0.35)] disabled:opacity-40"
             }
           >
             {pending ? (

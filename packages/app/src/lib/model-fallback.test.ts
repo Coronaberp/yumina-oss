@@ -12,11 +12,22 @@ test("existing users ask by default; automatic retries stop after one backup", (
   assert.equal(fallbackDecision({ ...auto, mode: "stop" }, "official", null, "hermes", false).status, "stopped");
 });
 
-test("automatic private fallback cannot carry authorization across API keys", () => {
+test("the saved backup profile can differ from the active key, including an inherited primary", () => {
   const policy = { ...DEFAULT_MODEL_FALLBACK_POLICY, mode: "auto" as const, privateModel: "backup", privateKeyId: "key1" };
   assert.equal(fallbackDecision(policy, "private", "key1", "original", false).autoRetry, true);
-  assert.equal(fallbackDecision(policy, "private", "key2", "original", false).autoRetry, false);
-  assert.equal(fallbackDecision(policy, "private", null, "original", false).autoRetry, false);
+  assert.equal(fallbackDecision(policy, "private", "key2", "original", false).autoRetry, true);
+  assert.equal(fallbackDecision(policy, "private", null, "original", false).autoRetry, true);
+  assert.equal(fallbackDecision(policy, "private", "key2", "original", false).suggestedKeyId, "key1");
+  assert.equal(fallbackDecision(policy, "private", "key2", "original", true).autoRetry, false);
+  assert.equal(fallbackDecision({ ...policy, privateKeyId: null }, "private", "key2", "original", false).autoRetry, false);
+});
+
+test("the same model on another profile is a valid backup and is recorded", () => {
+  const policy = { ...DEFAULT_MODEL_FALLBACK_POLICY, mode: "auto" as const, privateModel: "same", privateKeyId: "backup" };
+  assert.equal(fallbackDecision(policy, "private", "primary", "same", false).autoRetry, true);
+  assert.equal(fallbackDecision(policy, "private", "backup", "same", false).autoRetry, false);
+  const retry = { requestedModel: "same", reason: "capacity" as const, automatic: true, attemptedFallback: true, providerChanged: true };
+  assert.deepEqual(fallbackRecord(retry, "same"), { requestedModel: "same", reason: "capacity", automatic: true, providerChanged: true });
 });
 
 test("the synced preference is validated as an atomic policy", () => {

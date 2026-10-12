@@ -35,7 +35,7 @@ function toBase64Url(input: string): string {
  * Idempotent: already-resolved `http(s)`/`/cdn`/`data:`/`blob:` values pass
  * through unchanged, so resolving twice (server + here) is safe.
  * - null/empty            → undefined (lets <img>/Avatar fall back)
- * - http(s):// | /cdn/... → as-is
+ * - http(s):// | /cdn/... | /vn-assets/... → as-is
  * - data: | blob:         → as-is (local previews)
  * - @asset:{uuid}         → `/cdn/{uuid}`
  * - bare {uuid}           → `/cdn/{uuid}`
@@ -48,6 +48,7 @@ export function resolveImageUrl(
   if (
     ref.startsWith("http") ||
     ref.startsWith("/cdn") ||
+    ref.startsWith("/vn-assets/") ||
     ref.startsWith("data:") ||
     ref.startsWith("blob:")
   ) {

@@ -43,6 +43,7 @@ import { ReportDialog } from "@/components/report-dialog";
 import { usePlayWithLanguage } from "@/hooks/use-play-with-language";
 import { escapeHtml } from "@/lib/markdown";
 import { WorldDescription } from "@/components/world-description";
+import { PublishedCardShowcase } from "@/components/card-showcase";
 import { isOwnTranslationSource } from "@/lib/fork-attribution";
 import { VariantDownloadPicker } from "@/components/variant-download-picker";
 import { VariantForkPicker } from "@/components/variant-fork-picker";
@@ -96,6 +97,7 @@ export function LibraryDetailPanelDesktop({
   const [sessionExportOpen, setSessionExportOpen] = useState(false);
   const [sharePickerOpen, setSharePickerOpen] = useState(false);
   const [shareSession, setShareSession] = useState<{ id: string; title: string; worldId: string } | null>(null);
+  const [lockPending, setLockPending] = useState(false);
   const navigateToStory = useStoryNavigation();
   const { openWorldPreview } = useOpenWorldPreview();
   const { features } = useEdition();
@@ -109,6 +111,7 @@ export function LibraryDetailPanelDesktop({
     historyInteraction: "play-click",
   });
   const deleteWorld = useWorldsStore((s) => s.deleteWorld);
+  const setEditingLocked = useWorldsStore((s) => s.setEditingLocked);
   const isFavorited = useFavoritesStore(s => s.isFavorited);
   const toggleFavorite = useFavoritesStore(s => s.toggleFavorite);
   // Subscribe to the `favorites` array (not just the `isFavorited` function
@@ -123,8 +126,14 @@ export function LibraryDetailPanelDesktop({
 
   const isOriginalAuthor = !!userId && selectedItem.creatorId === userId && !selectedItem.sourceWorldId;
   const isOrphanedFork = !!selectedItem.sourceWorldId && selectedItem.sourceWorldTakenDown === true;
-  const canEditDirectly = !isOrphanedFork && (isProject || isOriginalAuthor);
-  const canDelete = !!userId && selectedItem.creatorId === userId;
+  const allWorlds = useWorldsStore((s) => s.worlds);
+  const currentWorld = allWorlds.find((world) => world.id === selectedItem.id);
+  const editingLocked = currentWorld?.editingLocked ?? selectedItem.editingLocked === true;
+  const canManageLock = !!userId && selectedItem.creatorId === userId;
+  const canInspectLocked = editingLocked && (selectedItem.sharedInLibrary || canManageLock);
+  const lockedOwner = editingLocked && canManageLock;
+  const canEditDirectly = !lockedOwner && !isOrphanedFork && (isProject || isOriginalAuthor);
+  const canDelete = !lockedOwner && !!userId && selectedItem.creatorId === userId;
   const canViewCreatorAnalytics = true;
 
   // Resolve "Based on X by Y" attribution. Prefer the server-attached
@@ -134,7 +143,6 @@ export function LibraryDetailPanelDesktop({
   // server deploy where the new fields aren't shipping yet — still
   // render correctly. /api/worlds returns all published worlds the user
   // can see, so the original is typically in `allWorlds`.
-  const allWorlds = useWorldsStore((s) => s.worlds);
   const sourceWorldEntry = selectedItem.sourceWorldId
     ? allWorlds.find((w) => w.id === selectedItem.sourceWorldId) ?? null
     : null;
@@ -162,6 +170,16 @@ export function LibraryDetailPanelDesktop({
         search: { worldId: undefined, view: undefined, assetId: undefined },
         replace: true,
       });
+    }
+  }
+
+  async function handleToggleEditingLock() {
+    if (lockPending || !canManageLock) return;
+    setLockPending(true);
+    try {
+      await setEditingLocked(selectedItem.id, !editingLocked);
+    } finally {
+      setLockPending(false);
     }
   }
 
@@ -528,7 +546,24 @@ export function LibraryDetailPanelDesktop({
                     <Play fill="currentColor" size={24} />
                     {t("detail.play")}
                   </button>
-                  {canEditDirectly ? (
+                  {canManageLock && (
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleEditingLock()}
+                      disabled={lockPending}
+                      aria-label={editingLocked ? "Unlock card" : "Lock card"}
+                      aria-busy={lockPending || undefined}
+                      className="library-detail-secondary-action inline-flex h-14 items-center gap-2 rounded-lg border border-white/12 bg-white/[0.035] px-5 text-base font-semibold text-foreground transition-colors hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {lockPending ? <Loader2 size={20} className="animate-spin" aria-hidden="true" /> : <Lock size={20} aria-hidden="true" />}
+                      {editingLocked ? "Unlock card" : "Lock card"}
+                    </button>
+                  )}
+                  {canInspectLocked ? (
+                    <button onClick={() => handleEdit()} className="library-detail-secondary-action flex h-14 items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-5 text-base font-semibold text-foreground transition-colors hover:bg-primary/20">
+                      <Lock size={20} /> View editor (read-only)
+                    </button>
+                  ) : lockedOwner ? null : canEditDirectly ? (
                     <button
                       onClick={() => handleEdit()}
                       className="library-detail-secondary-action flex h-14 items-center gap-2 rounded-lg bg-[#3B82F6] px-8 text-lg font-bold text-white/90 shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all hover:scale-105 hover:bg-[#3B82F6]/85"
@@ -703,6 +738,8 @@ export function LibraryDetailPanelDesktop({
                 {t("detail.noDescriptionYet")}
               </p>
             )}
+            <PublishedCardShowcase worldId={selectedItem.id} showcase={selectedItem.cardShowcase ?? selectedItem.schema?.cardShowcase}
+              name={selectedItem.name} description={selectedItem.description ?? ""} cover={selectedItem.thumbnailUrl} className="mb-6 overflow-hidden rounded-xl" />
             <div className="clouded-glass-inset mb-6 rounded-lg p-4">
               <h3 className="text-sm font-bold text-muted-foreground mb-2">
                 {t("detail.developmentStatus")}
@@ -768,6 +805,8 @@ export function LibraryDetailPanelDesktop({
                   )}
                 </div>
 
+                <PublishedCardShowcase worldId={selectedItem.id} showcase={selectedItem.cardShowcase ?? selectedItem.schema?.cardShowcase}
+                  name={selectedItem.name} description={selectedItem.description ?? ""} cover={selectedItem.thumbnailUrl} className="overflow-hidden rounded-xl" />
                 {tags && tags.length > 0 && (
                   <div className="border-t border-white/8 pt-5">
                     <div className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground/70">

@@ -99,12 +99,13 @@ export function CostEstimateInfo({ className }: { className?: string }) {
         <div
           ref={contentRef}
           id={contentId}
+          data-vn-dialog-surface="compact"
           role="dialog"
           aria-labelledby={titleId}
           tabIndex={-1}
           onClick={(event) => event.stopPropagation()}
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width, visibility: position.ready ? "visible" : "hidden" }}
-          className="z-[10000] rounded-2xl border border-white/[0.08] bg-[#1a1b20] p-4 text-left shadow-[0_24px_64px_rgba(0,0,0,0.6)] focus:outline-none"
+          className="z-[10000] rounded-2xl border border-white/[0.08] bg-card p-4 text-left shadow-[0_24px_64px_rgba(0,0,0,0.6)] focus:outline-none"
         >
           <p id={titleId} className="mb-2 text-[12px] font-bold text-gold/85">{t("modelBrowser.costHelpTitle")}</p>
           <p className="text-[11px] leading-relaxed text-white/60">{t("modelBrowser.costHelpBody")}</p>

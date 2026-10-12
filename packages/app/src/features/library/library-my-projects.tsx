@@ -61,7 +61,9 @@ export function LibraryMyProjects({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [lockPendingId, setLockPendingId] = useState<string | null>(null);
   const deleteWorld = useWorldsStore((s) => s.deleteWorld);
+  const setEditingLocked = useWorldsStore((s) => s.setEditingLocked);
   const navigate = useNavigate();
 
   const apiBase = import.meta.env.VITE_API_URL || "";
@@ -80,6 +82,16 @@ export function LibraryMyProjects({
     playWithLanguage(item);
   }, [playWithLanguage]);
 
+  async function toggleEditingLock(item: WorldItem) {
+    if (lockPendingId) return;
+    setLockPendingId(item.id);
+    try {
+      await setEditingLocked(item.id, !item.editingLocked);
+    } finally {
+      setLockPendingId(null);
+    }
+  }
+
   async function handleDelete() {
     if (!confirmDeleteItem) return;
     if (confirmDeleteItem.isPublished && deleteConfirmText !== confirmDeleteItem.name) return;
@@ -91,6 +103,7 @@ export function LibraryMyProjects({
   }
 
   function toggleSelect(id: string, next: boolean) {
+    if (next && worlds.find((world) => world.id === id)?.editingLocked) return;
     setSelectedIds((prev) => {
       const s = new Set(prev);
       if (next) s.add(id);
@@ -104,15 +117,18 @@ export function LibraryMyProjects({
     setSelectedIds(new Set());
   }
 
-  const publishedSelectedCount = Array.from(selectedIds).filter((id) => {
+  const unlockedSelectedIds = Array.from(selectedIds).filter((id) =>
+    !worlds.find((world) => world.id === id)?.editingLocked
+  );
+  const publishedSelectedCount = unlockedSelectedIds.filter((id) => {
     const w = worlds.find((x) => x.id === id);
     return !!w?.isPublished;
   }).length;
 
   async function handleBulkDelete() {
-    if (selectedIds.size === 0 || publishedSelectedCount > 0) return;
+    if (unlockedSelectedIds.length === 0 || publishedSelectedCount > 0) return;
     setBulkDeleting(true);
-    const ids = Array.from(selectedIds);
+    const ids = unlockedSelectedIds;
     const results = await Promise.allSettled(ids.map((id) => deleteWorld(id)));
     const failed = results.filter((r) => r.status === "rejected").length;
     const success = ids.length - failed;
@@ -243,10 +259,10 @@ export function LibraryMyProjects({
         <div className="flex items-center gap-2">
           <BulkActionsBar
             active={bulkMode}
-            selectedCount={selectedIds.size}
+            selectedCount={unlockedSelectedIds.length}
             totalCount={sorted.length}
             onToggle={() => (bulkMode ? exitBulkMode() : setBulkMode(true))}
-            onSelectAll={() => setSelectedIds(new Set(sorted.map((w) => w.id)))}
+            onSelectAll={() => setSelectedIds(new Set(sorted.filter((w) => !w.editingLocked).map((w) => w.id)))}
             onClear={() => setSelectedIds(new Set())}
             onDelete={() => setConfirmBulkDelete(true)}
           />
@@ -301,13 +317,16 @@ export function LibraryMyProjects({
                 <div key={item.id} className="flex flex-col">
                   <LibraryGameCard
                     item={item}
+                    editingLocked={item.editingLocked}
+                    onToggleEditingLock={() => void toggleEditingLock(item)}
+                    lockPending={lockPendingId === item.id}
                     onClick={() => onSelectItem(item)}
                     status="draft"
                     onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                     onPlay={() => handlePlay(item)}
-                    onDelete={() => setConfirmDeleteItem(item)}
+                    onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                     selectable={bulkMode}
-                    selected={selectedIds.has(item.id)}
+                    selected={selectedIds.has(item.id) && !item.editingLocked}
                     onSelectChange={(s) => toggleSelect(item.id, s)}
                   />
                   {sourceName && (
@@ -336,13 +355,16 @@ export function LibraryMyProjects({
               <div key={item.id} className="flex flex-col">
                 <LibraryGameCard
                   item={item}
+                  editingLocked={item.editingLocked}
+                  onToggleEditingLock={() => void toggleEditingLock(item)}
+                  lockPending={lockPendingId === item.id}
                   onClick={() => onSelectItem(item)}
                   status="pending_review"
                   onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                   onPlay={() => handlePlay(item)}
-                  onDelete={() => setConfirmDeleteItem(item)}
+                  onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                   selectable={bulkMode}
-                  selected={selectedIds.has(item.id)}
+                  selected={selectedIds.has(item.id) && !item.editingLocked}
                   onSelectChange={(s) => toggleSelect(item.id, s)}
                 />
               </div>
@@ -364,13 +386,16 @@ export function LibraryMyProjects({
               <div key={item.id} className="flex flex-col">
                 <LibraryGameCard
                   item={item}
+                  editingLocked={item.editingLocked}
+                  onToggleEditingLock={() => void toggleEditingLock(item)}
+                  lockPending={lockPendingId === item.id}
                   onClick={() => onSelectItem(item)}
                   status="rejected"
                   onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                   onPlay={() => handlePlay(item)}
-                  onDelete={() => setConfirmDeleteItem(item)}
+                  onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                   selectable={bulkMode}
-                  selected={selectedIds.has(item.id)}
+                  selected={selectedIds.has(item.id) && !item.editingLocked}
                   onSelectChange={(s) => toggleSelect(item.id, s)}
                 />
               </div>
@@ -413,13 +438,16 @@ export function LibraryMyProjects({
                 <div key={item.id} className="flex flex-col">
                   <LibraryGameCard
                     item={item}
+                    editingLocked={item.editingLocked}
+                    onToggleEditingLock={() => void toggleEditingLock(item)}
+                    lockPending={lockPendingId === item.id}
                     onClick={() => onSelectItem(item)}
                     status="published"
                     onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                     onPlay={() => handlePlay(item)}
-                    onDelete={() => setConfirmDeleteItem(item)}
+                    onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                     selectable={bulkMode}
-                    selected={selectedIds.has(item.id)}
+                    selected={selectedIds.has(item.id) && !item.editingLocked}
                     onSelectChange={(s) => toggleSelect(item.id, s)}
                   />
                   {sourceName && (

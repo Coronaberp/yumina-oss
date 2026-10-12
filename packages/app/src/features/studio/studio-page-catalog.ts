@@ -1,14 +1,14 @@
 import {
   BookOpen,
-  Code,
   Cog,
-  FolderOpen,
+  Image,
   LayoutGrid,
+  Palette,
   MessageCircle,
   MessageSquare,
   Music,
-  Package,
-  PanelRight,
+  Users,
+  Play,
   Variable,
   Zap as ZapIcon,
   type LucideIcon,
@@ -40,19 +40,29 @@ export const PANEL_MENU_GROUPS = [
   {
     labelKey: "studio.groups.display",
     items: [
-      { id: "code-view", labelKey: "studio.panels.frontEndCode", icon: Code },
+      { id: "custom-ui", labelKey: "sections.customUI", icon: LayoutGrid },
       { id: "audio", labelKey: "studio.panels.audio", icon: Music },
-      { id: "assets", labelKey: "studio.panels.assets", icon: FolderOpen },
+    ],
+  },
+  {
+    labelKey: "shell.groups.visualNovel",
+    items: [
+      { id: "vn-sprites", labelKey: "sections.vnSprites", icon: Users },
+      { id: "vn-backgrounds", labelKey: "sections.vnBackgrounds", icon: Image },
+    ],
+  },
+  {
+    labelKey: "shell.groups.publish",
+    items: [
+      { id: "character-showcase", labelKey: "sections.characterShowcase", icon: Palette },
     ],
   },
   {
     labelKey: "studio.groups.others",
     items: [
       { id: "overview", labelKey: "studio.panels.overview", icon: Cog },
-      { id: "sidebar", labelKey: "studio.panels.previewControls", icon: PanelRight },
-      { id: "canvas", labelKey: "studio.panels.canvas", icon: LayoutGrid },
       { id: "ai-chat", labelKey: "studio.panels.aiAssistant", icon: MessageSquare },
-      { id: "marketplace", labelKey: "studio.panels.marketplace", icon: Package },
+      { id: "playtest", labelKey: "studio.panels.playtest", icon: Play },
     ],
   },
 ] as const satisfies ReadonlyArray<{
@@ -62,6 +72,11 @@ export const PANEL_MENU_GROUPS = [
 
 export function getAddPagePickerPanelId(groupId: string) {
   return `${STUDIO_ADD_PAGE_PICKER_COMPONENT}::${groupId}`;
+}
+
+/** Saved workspaces use the current editor sections when reopening old panels. */
+export function migrateStudioPanelId(id: string): string {
+  return ({ "code-view": "custom-ui", canvas: "custom-ui", assets: "vn-sprites", sidebar: "custom-ui" } as Record<string, string>)[id] ?? id;
 }
 
 function createPanelInstanceId(panelId: string) {

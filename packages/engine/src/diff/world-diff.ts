@@ -1,7 +1,7 @@
 import type { WorldDefinition } from "../types/index.js";
 
 export type WorldChangeKind =
-  | "entry" | "variable" | "rule" | "reaction" | "audio" | "customUI" | "meta";
+  | "entry" | "variable" | "rule" | "reaction" | "audio" | "route" | "ending" | "customUI" | "meta";
 
 export interface WorldFieldChange {
   field: string;
@@ -46,6 +46,8 @@ const COLLECTIONS: CollectionSpec[] = [
   { kind: "rule",     get: (w) => (w.rules as unknown as Row[]) ?? [],       fields: ["name", "enabled"] },
   { kind: "reaction", get: (w) => (w.reactions as unknown as Row[]) ?? [],   fields: ["name"] },
   { kind: "audio",    get: (w) => (w.audioTracks as unknown as Row[]) ?? [], fields: ["name", "url"] },
+  { kind: "route",    get: (w) => (w.routes as unknown as Row[]) ?? [], fields: ["name", "enabled", "priority", "guidance", "conditions", "conditionLogic", "lockOnEntry"] },
+  { kind: "ending",   get: (w) => (w.endings as unknown as Row[]) ?? [], fields: ["name", "enabled", "priority", "routeIds", "conditions", "conditionLogic", "allowUnconditional", "outcome", "mode", "prose", "guidance"] },
 ];
 
 const META_FIELDS = ["name", "description"] as const;
@@ -116,6 +118,12 @@ export function diffWorldSchemas(
   }
   for (const name of Object.keys(prevFiles)) {
     if (!(name in nextFiles)) changes.push({ kind: "customUI", op: "removed", id: name, name });
+  }
+
+  const prevStructured = prev.settings?.storyStructureEnabled ?? true;
+  const nextStructured = next.settings?.storyStructureEnabled ?? true;
+  if (prevStructured !== nextStructured) {
+    changes.push({ kind: "meta", op: "modified", id: "settings.storyStructureEnabled", name: "Story structure", ...(detail ? { fields: [{ field: "storyStructureEnabled", before: String(prevStructured), after: String(nextStructured) }] } : {}) });
   }
 
   // meta scalars

@@ -99,7 +99,7 @@ export function FullscreenFloatingControls({
           <button
             onPointerDown={onInteractionStart}
             onClick={onFullscreen}
-            className="flex h-11 w-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-0 text-[0.9rem] font-semibold text-primary-foreground shadow-[0_10px_26px_rgba(0,0,0,0.32),0_0_18px_rgba(201,162,94,0.16)] transition-all hover:-translate-y-px hover:bg-primary-hover hover:text-primary-foreground sm:w-auto sm:px-3.5"
+            className="flex h-11 w-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-0 text-[0.9rem] font-semibold text-primary-foreground shadow-[0_10px_26px_rgba(0,0,0,0.32),0_0_18px_rgba(212,194,146,0.16)] transition-all hover:-translate-y-px hover:bg-primary-hover hover:text-primary-foreground sm:w-auto sm:px-3.5"
             title={fullscreenLabel}
             aria-label={fullscreenLabel}
           >

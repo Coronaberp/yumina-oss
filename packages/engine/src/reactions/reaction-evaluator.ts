@@ -34,6 +34,38 @@ const EMPTY_RESULT: ReactionEvalResult = {
   contextMessages: [],
 };
 
+/** Cross threshold + k * repeatEvery (k >= 0), using the variable as the clock. */
+function crossesThreshold(
+  oldValue: number,
+  newValue: number,
+  threshold: number,
+  direction: unknown,
+  repeatEvery?: unknown,
+): boolean {
+  if (![oldValue, newValue, threshold].every(Number.isFinite)) return false;
+  if (repeatEvery !== undefined &&
+      (typeof repeatEvery !== "number" || !Number.isFinite(repeatEvery) || repeatEvery <= 0)) return false;
+
+  let risingBoundary = threshold;
+  let fallingBoundary = threshold;
+  if (typeof repeatEvery === "number") {
+    let cycle = Math.floor((oldValue - threshold) / repeatEvery);
+    // Division can round across an integer for fractional clocks. Compare the
+    // actual authored boundaries before choosing the nearest one on each side.
+    if (threshold + cycle * repeatEvery > oldValue) cycle--;
+    else if (threshold + (cycle + 1) * repeatEvery <= oldValue) cycle++;
+    const boundary = threshold + cycle * repeatEvery;
+    fallingBoundary = cycle >= 0 ? boundary : Number.NaN;
+    risingBoundary = cycle >= 0 && boundary === oldValue
+      ? boundary : threshold + Math.max(0, cycle + 1) * repeatEvery;
+  }
+  const rises = oldValue <= risingBoundary && newValue > risingBoundary;
+  const drops = oldValue >= fallingBoundary && newValue < fallingBoundary;
+  if (direction === "rises-above") return rises;
+  if (direction === "drops-below") return drops;
+  return rises || drops;
+}
+
 /**
  * Evaluates reactions against a GameEvent.
  *
@@ -218,18 +250,7 @@ export class ReactionEvaluator {
     const newVal = event.newValue;
     if (typeof oldVal !== "number" || typeof newVal !== "number") return false;
 
-    const direction = match.direction?.value;
-    if (direction === "rises-above") {
-      return oldVal <= threshold && newVal > threshold;
-    }
-    if (direction === "drops-below") {
-      return oldVal >= threshold && newVal < threshold;
-    }
-    // No direction specified — fire on either crossing
-    return (
-      (oldVal <= threshold && newVal > threshold) ||
-      (oldVal >= threshold && newVal < threshold)
-    );
+    return crossesThreshold(oldVal, newVal, threshold, match.direction?.value, match.repeatEvery?.value);
   }
 
   /** Legacy trigger matching — preserves full keyword/turn-count/variable-crossed behavior */
@@ -271,13 +292,8 @@ export class ReactionEvaluator {
         const newVal = event.newValue;
         if (typeof oldVal !== "number" || typeof newVal !== "number") return false;
         if (trigger.threshold === undefined) return false;
-        if (trigger.direction === "rises-above") {
-          return oldVal <= trigger.threshold && newVal > trigger.threshold;
-        }
-        if (trigger.direction === "drops-below") {
-          return oldVal >= trigger.threshold && newVal < trigger.threshold;
-        }
-        return false;
+        if (trigger.direction !== "rises-above" && trigger.direction !== "drops-below") return false;
+        return crossesThreshold(oldVal, newVal, trigger.threshold, trigger.direction, trigger.repeatEvery);
       }
 
       default:

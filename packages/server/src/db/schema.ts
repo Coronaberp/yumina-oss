@@ -96,6 +96,16 @@ export const user = pgTable("user", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [index("user_last_active_at_idx").on(t.lastActiveAt.desc().nullsLast())]);
 
+/** Reusable custom UI source snapshots owned by one account. */
+export const userCustomUiPresets = pgTable("user_custom_ui_presets", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  entryFile: text("entry_file").notNull(),
+  files: jsonb("files").notNull().$type<Record<string, string>>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("user_custom_ui_presets_owner_idx").on(t.userId), check("user_custom_ui_presets_name_length", sql`char_length(${t.name}) BETWEEN 1 AND 50`)]);
+
 /** Durable increments awaiting the batched lifetime-counter update. */
 export const playtimeLifetimePending = pgTable("playtime_lifetime_pending", {
   userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
@@ -251,6 +261,7 @@ export const worlds = pgTable("worlds", {
   status: text("status").notNull().default("draft"),
   isNsfw: boolean("is_nsfw").default(false),
   allowEdit: boolean("allow_edit").default(true),
+  editingLocked: boolean("editing_locked").notNull().default(false),
   // Governs custom APIs (BYOK) independently of allowEdit (forking). When false,
   // non-creators are forced onto official keys so the hidden lorebook can't leak
   // via a player's BYOK provider logs. See messages.ts / completions.ts gates.
@@ -376,6 +387,7 @@ export const playSessions = pgTable("play_sessions", {
   sessionPersona: jsonb("session_persona").$type<import("../lib/session-persona.js").SessionPersona>(),
   /** Explicit opt-in. Historical session_persona snapshots stay unlocked. */
   personaLocked: boolean("persona_locked").notNull().default(false),
+  personaControlMode: text('persona_control_mode').$type<import('@yumina/shared').PersonaControlMode>().notNull().default('player'),
   state: jsonb("state").notNull().$type<Record<string, unknown>>().default({}),
   stateGuardEnabled: boolean("state_guard_enabled").notNull().default(true),
   stateGuardModel: text("state_guard_model"),
@@ -511,6 +523,7 @@ export const messages = pgTable("messages", {
   errorMessage: text("error_message"),
   stateChanges: jsonb("state_changes").$type<Record<string, unknown>>(),
   stateValidation: jsonb("state_validation").$type<import("@yumina/shared").StateValidationAudit>(),
+  contentFlags: jsonb("content_flags").$type<import("@yumina/shared").ContentFlagAudit>(),
   swipes: jsonb("swipes")
     .$type<
       Array<{
@@ -519,7 +532,11 @@ export const messages = pgTable("messages", {
          *  swipes leave this undefined and the UI hides the "view raw"
          *  toggle when it equals `content`. */
         rawContent?: string;
+        choices?: string[];
+        /** Provider-returned thinking for optional display, excluded from model input. */
+        reasoningContent?: string;
         stateValidation?: import("@yumina/shared").StateValidationAudit;
+        contentFlags?: import("@yumina/shared").ContentFlagAudit;
         stateChanges?: Record<string, unknown>;
         stateSnapshot?: Record<string, unknown>;
         /** State before this reply, for replacement rather than cumulative regeneration. */
@@ -814,6 +831,27 @@ export const assetReferences = pgTable("asset_references", {
     .references(() => userAssets.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+/** Private, per-user artwork source credentials; never included in public preferences. */
+export const userDanbooruSettings = pgTable("user_danbooru_settings", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  username: text("username").notNull().default(""),
+  encryptedKey: text("encrypted_key"), keyIv: text("key_iv"), keyTag: text("key_tag"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  check("danbooru_key_parts", sql`(${table.encryptedKey} IS NULL AND ${table.keyIv} IS NULL AND ${table.keyTag} IS NULL) OR (${table.encryptedKey} IS NOT NULL AND ${table.keyIv} IS NOT NULL AND ${table.keyTag} IS NOT NULL)`),
+  check("danbooru_credential_pair", sql`(${table.username} = '') = (${table.encryptedKey} IS NULL)`),
+]);
+
+/** Keeps artist/post attribution alongside an imported owned image. */
+export const danbooruAssetSources = pgTable("danbooru_asset_sources", {
+  assetId: text("asset_id").primaryKey().references(() => userAssets.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  postId: bigint("post_id", { mode: "number" }).notNull(),
+  metadata: jsonb("metadata").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [index("danbooru_asset_sources_user_idx").on(table.userId), check("danbooru_positive_post", sql`${table.postId} > 0`)]);
 
 // Private session media never shares the public user_assets/CDN namespace.
 export const sessionMediaFiles = pgTable("session_media", {
@@ -2223,6 +2261,7 @@ export const userPersonas = pgTable(
     personality: text("personality"),
     backstory: text("backstory"),
     entries: jsonb("entries").$type<import("@yumina/shared").PersonaEntry[]>().notNull().default([]),
+    sprites: jsonb("sprites").$type<import("@yumina/shared").PersonaSprites>().notNull().default({}),
     // Private, user-only label to tell same-named personas apart.
     // NEVER injected into prompts — keep out of buildPersonaSystemMessage
     // (messages.ts) and applyPersonaMetadata (persona-metadata.ts).
@@ -3575,3 +3614,26 @@ export const inviteRaceUserHistory = pgTable("invite_race_user_history", {
   tickets: integer("tickets").notNull(),
   estimateUsd: numeric("estimate_usd", { precision: 10, scale: 2 }).notNull(),
 }, (t) => [primaryKey({ columns: [t.eventId, t.roundNo, t.userId, t.at] })]);
+
+// User-configured image generation profiles, provenance and confirmation replay.
+export const userImageGenerationSettings = pgTable('user_image_generation_settings', {
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(), enabled: boolean('enabled').notNull().default(false), baseUrl: text('base_url').notNull(),
+  workflow: text('workflow').notNull().default(''), model: text('model').notNull().default(''),
+  encryptedKey: text('encrypted_key'), keyIv: text('key_iv'), keyTag: text('key_tag'), updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.userId, t.provider] }),
+  check('image_generation_provider_check', sql`${t.provider} IN ('comfyui','forgeneo')`),
+  check('image_generation_key_parts_check', sql`(${t.encryptedKey} IS NULL AND ${t.keyIv} IS NULL AND ${t.keyTag} IS NULL) OR (${t.encryptedKey} IS NOT NULL AND ${t.keyIv} IS NOT NULL AND ${t.keyTag} IS NOT NULL)`)]);
+export const userImageGenerationPreferences = pgTable('user_image_generation_preferences', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }), activeProvider: text('active_provider').notNull().default('comfyui'),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, t => [check('image_generation_active_provider_check', sql`${t.activeProvider} IN ('comfyui','forgeneo')`)]);
+export const generatedImageSources = pgTable('generated_image_sources', {
+  assetId: text('asset_id').primaryKey().references(() => userAssets.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), provider: text('provider').notNull(), metadata: jsonb('metadata').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, t => [index('generated_image_sources_user_idx').on(t.userId), check('generated_image_provider_check', sql`${t.provider} IN ('comfyui','openai','forgeneo','codex')`)]);
+export const imageGenerationRequests = pgTable('image_generation_requests', {
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), requestId: text('request_id').notNull(), state: text('state').notNull(),
+  assetId: text('asset_id').references(() => userAssets.id, { onDelete: 'set null' }), createdAt: timestamp('created_at').notNull().defaultNow(), updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.userId, t.requestId] }), check('image_generation_request_state_check', sql`${t.state} IN ('pending','succeeded','failed')`)]);

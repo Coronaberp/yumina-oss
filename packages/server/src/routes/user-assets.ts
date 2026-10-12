@@ -2,7 +2,7 @@ import { userAssetFilters } from "../lib/user-asset-filters.js";
 import { detachGenerationAsset } from "../lib/generation/asset-receipts.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import { eq, and, sql, isNull, ilike, desc } from "drizzle-orm";
+import { eq, and, sql, isNull, ilike, desc, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { userAssets, assetFolders, user, worldFolderBindings, worlds } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -13,14 +13,13 @@ import {
   headObject,
   copyObject,
   storageKind,
+  getObjectBuffer,
+  putObject,
 } from "../lib/s3.js";
 import type { AppEnv } from "../lib/types.js";
 import { normalizeAssetMimeType } from "../lib/asset-mime.js";
-import { PLANS } from "../lib/plan-config.js";
-import { ensureWallet } from "../lib/credit-service.js";
-import { resolveEffectivePlanWithEventEntitlements } from "../lib/event-plan-entitlements.js";
 import { env } from "../lib/env.js";
-import { resizeUploadedImageInBackground } from "../lib/image-resize.js";
+import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
 import { uploadOperationId, validUploadRequestId } from "../lib/asset-upload-operation.js";
 import { sessionMedia } from "../lib/session-media.js";
 import { mediaRows, mediaPrefix } from "../lib/session-media-service.js";
@@ -37,11 +36,10 @@ function isAssetType(value: string | undefined): value is AssetType {
   return !!value && (ASSET_TYPES as readonly string[]).includes(value);
 }
 
-// Absolute origin for CDN URLs. Derived from BETTER_AUTH_URL (e.g. https://yumina.io)
-// rather than c.req.url because Railway terminates TLS at the edge and the internal
-// request arrives over plain HTTP — using c.req.url would emit http://yumina.io
-// URLs, which the browser blocks as mixed content on the https page.
+// On-disk assets follow the browser origin, including HTTPS tunnels to a local
+// HTTP server. Hosted CDN links retain their configured absolute origin.
 function getCdnOrigin(): string {
+  if (storageKind() === "local") return "";
   return env.BETTER_AUTH_URL || "http://localhost:3000";
 }
 
@@ -152,12 +150,6 @@ const ACTIVE_CONTENT_TYPES = new Set([
   "application/xml",
   "application/xhtml",
 ]);
-
-async function getUserStorageLimit(userId: string): Promise<number> {
-  const wallet = await ensureWallet(userId);
-  const effectivePlan = await resolveEffectivePlanWithEventEntitlements(userId, wallet.plan);
-  return PLANS[effectivePlan].storageCap;
-}
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
@@ -470,13 +462,11 @@ userAssetRoutes.post("/upload-url", async (c) => {
     if (existing) return c.json({ data: { asset: { ...existing, url: `${getCdnOrigin()}/cdn/${existing.id}`, key: existing.url } } });
   }
 
-  // Check total user storage against plan limit
-  const storageLimit = await getUserStorageLimit(currentUser.id);
-  if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0)) {
+  if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0 || body.sizeBytes > 2_147_483_647)) {
     return c.json({ error: "Invalid file size" }, 400);
   }
   if (storageKind() === "s3" && await sessionMedia.isReady()) {
-    if (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes! < 1 || body.sizeBytes! > Math.min(storageLimit, 2_147_483_647)) {
+    if (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes! < 1) {
       return c.json({ error: "A valid file size is required. Refresh the app and try again." }, 400);
     }
     const prepared = await db.transaction(async (tx) => {
@@ -497,12 +487,8 @@ userAssetRoutes.post("/upload-url", async (c) => {
           return { key: pending.temp_key, expiresAt: pending.expires_at };
         }
       }
-      const usage = await sessionMedia.usage(currentUser.id, tx);
-      if (usage.used + usage.reserved + body.sizeBytes! > storageLimit) {
-        return { error: "Storage limit reached", status: 413 as const };
-      }
       const [rate] = await mediaRows<{count:number;bytes:string}>(tx,sql`SELECT count(*)::int AS count,COALESCE(sum(input_bytes),0)::text AS bytes FROM session_media_uploads WHERE user_id=${currentUser.id} AND created_at>now()-interval '1 hour'`);
-      if ((rate?.count ?? 0) >= 60 || Number(rate?.bytes ?? 0) + body.sizeBytes! > Math.max(128 * 1024 * 1024, storageLimit * 2)) {
+      if ((rate?.count ?? 0) >= 60 || Number(rate?.bytes ?? 0) + body.sizeBytes! > 128 * 1024 * 1024) {
         return { error: "Upload limit reached", status: 429 as const };
       }
       const id = crypto.randomUUID();
@@ -517,15 +503,6 @@ userAssetRoutes.post("/upload-url", async (c) => {
     if ("error" in prepared && prepared.error) return c.json({ error: prepared.error }, prepared.status!);
     const expiresIn = Math.max(1, Math.min(600, Math.floor((Date.parse(prepared.expiresAt!) - Date.now()) / 1000)));
     return c.json({ data: { key: prepared.key!, uploadUrl: await generateUploadUrl(prepared.key!, contentType, {contentLength: body.sizeBytes!, expiresIn}) } });
-  }
-
-  const usage = await sessionMedia.usage(currentUser.id);
-  const totalUsed = usage.used + usage.reserved;
-  if (totalUsed + (body.sizeBytes ?? 0) > storageLimit || totalUsed >= storageLimit) {
-    const limitLabel = storageLimit >= 1024 * 1024 * 1024
-      ? `${(storageLimit / (1024 * 1024 * 1024)).toFixed(0)} GB`
-      : `${(storageLimit / (1024 * 1024)).toFixed(0)} MB`;
-    return c.json({ error: `Storage limit reached (${limitLabel}). Upgrade your plan for more space.` }, 400);
   }
 
   const safeName = sanitizeFilename(body.filename);
@@ -598,7 +575,7 @@ userAssetRoutes.post("/", async (c) => {
     return c.json({ error: "Invalid asset key for request" }, 400);
   }
   const registeredKey = privatePipeline ? `users/${currentUser.id}/registered/${createHash("sha256").update(body.key).digest("hex")}` : body.key;
-  const existingCondition = and(eq(userAssets.userId, currentUser.id), body.requestId ? eq(userAssets.id, id) : eq(userAssets.url, registeredKey));
+  const existingCondition = and(eq(userAssets.userId, currentUser.id), body.requestId ? eq(userAssets.id, id) : inArray(userAssets.url, [registeredKey, losslessWebpKey(registeredKey)]));
   // A committed upload remains retryable after its temporary object is cleaned.
   const [reconciled] = await db.select().from(userAssets).where(existingCondition).limit(1);
   if (reconciled) {
@@ -612,7 +589,6 @@ userAssetRoutes.post("/", async (c) => {
   if (normalizeAssetMimeType(body.filename, inspected.contentType) !== mimeType) {
     return c.json({ error: "Uploaded content type does not match" }, 400);
   }
-  const storageLimit = await getUserStorageLimit(currentUser.id);
   const settled = await db.transaction(async (tx) => {
     await sessionMedia.lockOwner(tx, currentUser.id);
     const [existing] = await tx.select().from(userAssets).where(existingCondition).limit(1);
@@ -621,17 +597,16 @@ userAssetRoutes.post("/", async (c) => {
     if (privatePipeline && (!reservation || reservation.status !== 'pending' || reservation.metadata.purpose !== 'creative-asset' || reservation.metadata.type !== body.type || reservation.metadata.operationId !== (body.requestId ? id : undefined) || reservation.filename !== body.filename || reservation.content_type !== mimeType || Number(reservation.input_bytes) !== inspected.contentLength)) {
       return { error: "Upload reservation expired or does not match", status: 409 as const };
     }
-    const usage = await sessionMedia.usage(currentUser.id, tx);
-    if (usage.used + usage.reserved - Number(reservation?.input_bytes ?? 0) + inspected.contentLength > storageLimit) {
-      return { error: "Storage limit reached", status: 413 as const };
-    }
     // The verified copy is immutable to callers holding the original PUT URL.
     if (privatePipeline) {
       await copyObject(body.key, registeredKey, inspected.etag!, inspected);
     }
+    const stored = body.type === "image"
+      ? await optimizeUploadedImage({ key: registeredKey, filename: body.filename, mimeType, sizeBytes: inspected.contentLength }, { read: getObjectBuffer, write: putObject })
+      : { key: registeredKey, filename: body.filename, mimeType, sizeBytes: inspected.contentLength };
     const [inserted] = await tx.insert(userAssets).values({
-      id, userId: currentUser.id, type: body.type as AssetType, filename: body.filename,
-      url: registeredKey, sizeBytes: inspected.contentLength, mimeType, folderId,
+      id, userId: currentUser.id, type: body.type as AssetType, filename: stored.filename,
+      url: stored.key, sizeBytes: stored.sizeBytes, mimeType: stored.mimeType, folderId,
     }).returning();
     if (reservation) await tx.execute(sql`UPDATE session_media_uploads SET status='complete',reserved_bytes=0 WHERE id=${reservation.id}`);
     return { asset: inserted!, inserted: true };
@@ -639,11 +614,9 @@ userAssetRoutes.post("/", async (c) => {
   if ("error" in settled) return c.json({ error: settled.error }, settled.status);
   const result = settled.asset;
 
-  // Cap oversized image masters in place — new uploads only, same URL + format,
-  // transparency preserved. Fire-and-forget: never blocks the upload response.
-  if (settled.inserted && body.type === "image") {
-    resizeUploadedImageInBackground(result!.url, mimeType, result!.id);
-  }
+  // Converted metadata is already committed; a retry reconciles by ID/key even
+  // if the original staging object has been removed.
+  if (settled.inserted && result.url !== registeredKey) await deleteObject(registeredKey).catch(() => {});
 
   const origin = getCdnOrigin();
 
@@ -689,7 +662,7 @@ userAssetRoutes.get("/", async (c) => {
     url: `${origin}/cdn/${row.id}`,
   }));
 
-  // Private session images and creative assets share the account storage cap.
+  // Report stored bytes without imposing an account-level storage allowance.
   const totalUsed = (await sessionMedia.usage(currentUser.id)).used;
   const [matchingCount] = await db.select({ total: sql<number>`count(*)::int` })
     .from(userAssets).where(and(...conditions));
@@ -697,7 +670,7 @@ userAssetRoutes.get("/", async (c) => {
 
   return c.json({
     data: withUrls,
-    storage: { used: totalUsed, limit: await getUserStorageLimit(currentUser.id) },
+    storage: { used: totalUsed, limit: null },
     total,
     limit,
     offset,

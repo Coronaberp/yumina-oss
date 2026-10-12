@@ -1,7 +1,7 @@
 import { ChatAssetPicker } from "./chat-asset-picker";
 import { readChatAsset } from "@/lib/chat-asset-input";
 import { chatImageCopy as chatInputCopy } from "@/lib/chat-image-input";
-import type { ChatImageAttachment, ChatImageInput } from "@yumina/shared";
+import { personaSpriteExpressions, type ChatImageAttachment, type ChatImageInput } from "@yumina/shared";
 import { toast } from "sonner";
 import { savePreferredProvider } from "@/lib/provider-switch";
 import { notePlayInteraction } from "./play-interaction";
@@ -26,10 +26,15 @@ import { GameRoomConnection } from "./game-room-connection";
 import { slimMessages } from "./slim-messages";
 import { scopeStorageKey, writeWorldStorage } from "./world-storage";
 import { createSideCallStreamReader } from "./side-call-stream";
+import { visibleSessionVariables } from "./visible-variables";
+import { currentStatusFiles } from "@/features/editor/lib/status-template-upgrade";
+import { upgradeVnLoadingFiles } from "./vn-loading-progress";
+import vnLoadingSource from "../../../../../interfaces/vn/loading-status.tsx?raw";
 import { isCompiledValid, type CompiledRoot } from "@/features/studio/lib/compiled-format";
 import { absoluteImageUrl } from "@/lib/asset-url";
 import type { YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
-import type { Condition, LoreUiBinding, Worldbook, StateChannel } from "@yumina/engine";
+import type { Condition, LoreUiBinding, Worldbook, StateChannel, StoryProgress } from "@yumina/engine";
+import { storyhavenMemoryRequest } from "@/../sandbox/protocol";
 import type {
   VariablesChannelData,
   MessagesChannelData,
@@ -105,6 +110,7 @@ const SESSION_CAPABILITIES: SandboxCapabilities = {
 };
 
 interface WorldRendererProps {
+  dialogTheme?: "vn";
   /** Entry file name */
   entryFile: string | undefined;
   /** Virtual file system: filename → TSX code */
@@ -131,7 +137,7 @@ interface WorldRendererProps {
   /** Persona-aware user. Same branching as {{user}}: persona if active, else account.
    *  Used by the sandbox `useYumina().user` API. If absent, falls back to account-only
    *  derived from `api.currentUser`. */
-  user?: { name: string; avatar: string | null };
+  user?: { name: string; avatar: string | null; sprites?: import("@yumina/shared").PersonaSprites };
   /** Additional CSS class */
   className?: string;
   /** Whether this renderer is the visible/active session. When false, we pause all
@@ -163,6 +169,7 @@ interface WorldRendererProps {
 }
 
 export function WorldRenderer({
+  dialogTheme,
   entryFile,
   files: incomingFiles,
   precompiled,
@@ -193,7 +200,10 @@ export function WorldRenderer({
   });
   useEffect(() => { setModelPickerOpen(false); }, [sessionId, isActive]);
   const modelFallback = useChatStore((s) => s.modelFallback?.sessionId === sessionId ? s.modelFallback : null);
-  const files=useMemo(()=>adaptOncinGalleryFiles(worldId,incomingFiles),[worldId,incomingFiles]);
+  const files = useMemo(() => {
+    const adapted = adaptOncinGalleryFiles(worldId, incomingFiles);
+    return adapted ? upgradeVnLoadingFiles(currentStatusFiles(adapted), vnLoadingSource) : adapted;
+  }, [worldId, incomingFiles]);
   const bgmVolume = useAudioStore((s) => s.bgmVolume);
   const sfxVolume = useAudioStore((s) => s.sfxVolume);
   const router = useRouter();
@@ -214,6 +224,14 @@ export function WorldRenderer({
   const composerSendKey = useUiStore((s) => s.composerSendKey ?? "enter");
   const uiFontSize = useUiStore((s) => s.fontSize ?? "default");
   const uiFontScale = FONT_SIZE_SCALE[uiFontSize] ?? 1;
+  const isImmersive = useUiStore((s) => s.theaterMode);
+  const [systemFullscreen, setSystemFullscreen] = useState(() => Boolean(document.fullscreenElement));
+  const canSystemFullscreen = Boolean(document.fullscreenEnabled && document.documentElement.requestFullscreen);
+  useEffect(() => {
+    const update = () => setSystemFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, []);
   // The player's own machine as a model source. Subscribed field by field
   // rather than as one object so the selectors stay reference-stable; the UI
   // channel effect below re-pushes on any of them changing, which is what puts
@@ -288,6 +306,19 @@ export function WorldRenderer({
       };
 
       switch (method) {
+        case "getVisibleVariables": {
+          const sid = sessionIdRef.current;
+          if (mode !== "session" || !sid || !capabilities.canUseSessionApis || (currentApi as YuminaAPI & { readOnly?: boolean }).readOnly) return Promise.resolve({});
+          return (async () => {
+            const response = await fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}`, {
+              credentials: "include", cache: "no-store", signal: AbortSignal.timeout(20_000),
+            });
+            if (!response.ok) throw new Error("Current stats could not be loaded");
+            const { data } = await response.json();
+            if (data?.id !== sid || sessionIdRef.current !== sid) return {};
+            return visibleSessionVariables(data);
+          })();
+        }
         case "social.get": case "social.action": case "social.generate": {
           const sid = sessionIdRef.current;
           if (!sid) return Promise.resolve({ error: "No active session" });
@@ -470,12 +501,20 @@ export function WorldRenderer({
               store.updateMessage(swipeMsgId, {
                 content: data.content,
                 activeSwipeIndex: data.activeSwipeIndex,
+                contentFlags: data.contentFlags ?? null,
                 stateValidation: Object.hasOwn(data, "stateValidation") ? data.stateValidation : store.messages.find((message) => message.id === swipeMsgId)?.swipes?.[data.activeSwipeIndex]?.stateValidation ?? null,
               });
+              if (Array.isArray(data.choices) && store.messages.at(-1)?.id === swipeMsgId) store.setPendingChoices(data.choices);
             }
             if (data.state && data.stateRestored !== false) {
               const vars = (data.state as Record<string, unknown>)?.variables;
               if (vars) store.setGameState(vars as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>);
+              const { useChatStore } = await import("@/stores/chat");
+              useChatStore.setState(current => current.session?.id === sid ? {
+                storyProgress: (data.state.story ?? { status: "playing" }) as StoryProgress,
+                endingError: null,
+                session: { ...current.session, state: data.state },
+              } : {});
             }
             return data;
           }).catch(() => ({}));
@@ -486,6 +525,12 @@ export function WorldRenderer({
         case "toggleImmersive":
           (window as any).__yuminaToggleImmersive?.();
           return;
+        case "toggleSystemFullscreen":
+          if (document.fullscreenElement) return document.exitFullscreen();
+          if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+            return document.documentElement.requestFullscreen();
+          }
+          return Promise.reject(new Error("Browser fullscreen is unavailable."));
         case "getPersonaProfile": {
           const currentSessionId = sessionIdRef.current;
           return import("@/lib/persona-profile").then(({ readPersonaProfile }) =>
@@ -705,6 +750,26 @@ export function WorldRenderer({
           import("@/stores/chat").then(m => m.useChatStore.getState().continueLastMessage());
           return;
         }
+        case "generateChoices": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session" || useChatStore.getState().session?.id !== sid) throw new Error("No active session");
+          return useChatStore.getState().generateChoices(args[0] as string);
+        }
+        case "retryPendingReply": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session" || useChatStore.getState().session?.id !== sid) throw new Error("No active session");
+          return useChatStore.getState().retryPendingReply(args[0] as string);
+        }
+        case "completeEnding": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session" || useChatStore.getState().session?.id !== sid) throw new Error("No active session");
+          return useChatStore.getState().completeEnding();
+        }
+        case "retryEnding": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session" || useChatStore.getState().session?.id !== sid) throw new Error("No active session");
+          return useChatStore.getState().retryEnding();
+        }
         case "loadEarlierMessages": {
           const sid = sessionIdRef.current;
           if (!sid) return Promise.resolve(false);
@@ -741,7 +806,7 @@ export function WorldRenderer({
         case "saveCheckpoint": {
           const sid = sessionIdRef.current;
           if (!sid) return Promise.resolve(undefined);
-          return import("@/stores/chat").then(m => m.useChatStore.getState().saveCheckpoint());
+          return import("@/stores/chat").then(m => m.useChatStore.getState().saveCheckpoint(args[0] as string | undefined));
         }
         case "loadCheckpoints": {
           const sid = sessionIdRef.current;
@@ -766,7 +831,7 @@ export function WorldRenderer({
           const store = useChatStore.getState();
           if (store.modelFallback?.sessionId !== sessionIdRef.current) return null;
           if (typeof args[0] !== "string" || typeof args[1] !== "string") return null;
-          store.resolveModelFallback(args[0], args[1], args[2] === true);
+          store.resolveModelFallback(args[0], args[1], args[2] === true, typeof args[3] === "boolean" ? args[3] : undefined);
           return null;
         }
         case "cancelModelFallback": {
@@ -820,6 +885,66 @@ export function WorldRenderer({
           if (!sid || mode !== "session") return Promise.reject(new Error("No active session"));
           return import("@/lib/state-guard-settings").then(({ requestStateGuardSettings }) =>
             requestStateGuardSettings(sid, method === "setStateGuardSettings" ? args[0] as Partial<import("@yumina/shared").StateGuardSettings> : undefined));
+        }
+        case "getContentFlags":
+        case "retryContentFlag": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session") return Promise.reject(new Error("No active session"));
+          const retry = method === "retryContentFlag";
+          if (retry && typeof args[0] !== "string") return Promise.reject(new Error("Choose a message to classify"));
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/content-flags${retry ? "/retry" : ""}`, {
+            method: retry ? "POST" : "GET", credentials: "include",
+            ...(retry ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messageId: args[0] }) } : {}),
+          }).then(async response => {
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error ?? "Content flag request failed");
+            return result.data;
+          });
+        }
+        case 'getPersonaControlMode':
+        case 'setPersonaControlMode': {
+          const sid = sessionIdRef.current;
+          const write = method === 'setPersonaControlMode';
+          if (!sid || mode !== 'session' || !capabilities.canUseSessionApis || (write && (currentApi as YuminaAPI & { readOnly?: boolean }).readOnly)) return Promise.reject(new Error('No editable session'));
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/persona-control`, {
+            method: write ? 'PATCH' : 'GET', credentials: 'include',
+            ...(write ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: args[0] }) } : {}),
+            signal: AbortSignal.timeout(20_000),
+          }).then(async response => {
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error ?? 'Could not update persona control');
+            return result.data.mode;
+          });
+        }
+        case "classifyPlayerExpression": {
+          const sid = sessionIdRef.current;
+          const choice = args[0];
+          if (!sid || mode !== "session" || !capabilities.canUseSessionApis
+            || (currentApi as YuminaAPI & { readOnly?: boolean }).readOnly || typeof choice !== "string") {
+            return Promise.resolve("normal");
+          }
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/player-expression`, {
+            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ choice }), signal: AbortSignal.timeout(120_000),
+          }).then(async response => {
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error ?? "Player expression classification failed");
+            const expression = result.data?.expression;
+            return personaSpriteExpressions.includes(expression) ? expression : "normal";
+          }).catch(() => "normal");
+        }
+        case "storyhavenMemory": {
+          const sid = sessionIdRef.current;
+          if (!sid || mode !== "session") return Promise.reject(new Error("No active session"));
+          const request = storyhavenMemoryRequest(args[0], args[1]);
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/memory/storyhaven${request.path}`, {
+            method: request.method, credentials: "include",
+            ...(request.body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(request.body) } : {}),
+          }).then(async (response) => {
+            if (!response.ok) throw new Error("Memory request failed");
+            const result = await response.json();
+            return result.data ?? result;
+          });
         }
         case "getSessionMemory":
         case "saveSessionMemory":
@@ -1187,7 +1312,7 @@ export function WorldRenderer({
           return { error: `unknown_method:${method}` };
       }
     },
-    [i18n, navigateToStory, router, mode, capabilities.canSendMessage, capabilities.canPersistSession],
+    [i18n, navigateToStory, router, mode, capabilities.canSendMessage, capabilities.canPersistSession, capabilities.canUseSessionApis],
   );
 
   // ── Streaming API call handler (LLM completions) ──
@@ -1732,10 +1857,11 @@ export function WorldRenderer({
       isStreaming: api.isStreaming ?? false,
       content: api.streamingContent ?? "",
       reasoning: (api as any).streamingReasoning ?? "",
+      tokenCount: api.streamingTokenCount ?? null,
       bg: null, // Streaming bg is handled via variables
     };
     pushIfChanged("streaming", data);
-  }, [api.isStreaming, api.streamingContent, (api as any).streamingReasoning]);
+  }, [api.isStreaming, api.streamingContent, api.streamingTokenCount, (api as any).streamingReasoning]);
 
   // Push session channel (rarely changes)
   useEffect(() => {
@@ -1766,6 +1892,7 @@ export function WorldRenderer({
       worldName: api.worldName,
       worldCover: api.worldCover ?? null,
       sessionId: isOncinGalleryWorld(worldId) ? oncinGallerySessionKey(sessionId,mediaShareId) : sessionId,
+      personaSelectable: api.personaSelectable === true,
       // Resolved here as well as in chat-view: this effect IS the sandbox
       // boundary, so any caller that hands us a raw S3 key or relative ref
       // still pushes a fetchable absolute URL across the bridge.
@@ -1789,7 +1916,7 @@ export function WorldRenderer({
       worldbooks: worldbooks ?? [],
     };
     pushIfChanged("session", data);
-  }, [worldId, sessionId, mediaShareId, api.worldName, api.worldCover, api.currentUser, user, entries, loreUiBindings, worldbooks]);
+  }, [worldId, sessionId, mediaShareId, api.worldName, api.worldCover, api.personaSelectable, api.currentUser, user, entries, loreUiBindings, worldbooks]);
 
   // Push UI channel. Intentionally left without a dependency array: it carries
   // ~15 small fields (pendingChoices, model picker, checkpoints, volumes, …),
@@ -1799,7 +1926,14 @@ export function WorldRenderer({
   // worth it for a cheap stringify. The expensive channel (messages) is gated above.
   useEffect(() => {
     const data: UIChannelData = {
+      dialogTheme,
+      isImmersive,
+      systemFullscreen,
+      canSystemFullscreen,
       pendingChoices: (api as any).pendingChoices ?? [],
+      storyProgress: (api as any).storyProgress ?? { status: "playing" },
+      isCompletingEnding: (api as any).isCompletingEnding ?? false,
+      endingError: (api as any).endingError ?? null,
       error: (api as any).error ?? null,
       readOnly: (api as any).readOnly ?? false,
       checkpoints: (api as any).checkpoints ?? [],

@@ -1,3 +1,5 @@
+import { upgradePersonaWorld } from "../world/persona-runtime-upgrade.js";
+import { upgradeStatusWorld } from "../world/status-visualizations-upgrade.js";
 import type { RootComponent, WorldDefinition } from "../types/index.js";
 
 /**
@@ -19,31 +21,33 @@ import type { RootComponent, WorldDefinition } from "../types/index.js";
  *
  * Current version: 21.0.0
  */
-export function migrateWorldDefinition(raw: WorldDefinition): WorldDefinition {
+export function migrateWorldDefinition(raw: WorldDefinition, options: { preserveStatusSources?: boolean } = {}): WorldDefinition {
+  // Historical comparisons must show the files that existed at that time.
+  const currentWorld = (world: WorldDefinition) => options.preserveStatusSources ? normalizeEntryRoles(world) : upgradePersonaWorld(upgradeStatusWorld(normalizeEntryRoles(world)));
   const version = raw.version ? parseFloat(raw.version) : 0;
 
   if (version >= 21.0) {
-    return normalizeEntryRoles(raw);
+    return currentWorld(raw);
   }
 
   if (version >= 20.0) {
-    return normalizeEntryRoles(migrateV20ToV21(raw));
+    return currentWorld(migrateV20ToV21(raw));
   }
 
   if (version >= 19.0) {
-    return normalizeEntryRoles(migrateV20ToV21(migrateV19ToV20(raw)));
+    return currentWorld(migrateV20ToV21(migrateV19ToV20(raw)));
   }
 
   if (version >= 18.0) {
-    return normalizeEntryRoles(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(raw))));
+    return currentWorld(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(raw))));
   }
 
   if (version >= 17.0) {
-    return normalizeEntryRoles(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(migrateV17ToV18(raw)))));
+    return currentWorld(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(migrateV17ToV18(raw)))));
   }
 
   // Pre-v17 worlds should not exist in the DB anymore.
-  return normalizeEntryRoles(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(migrateV17ToV18({ ...raw, version: "17.0.0" })))));
+  return currentWorld(migrateV20ToV21(migrateV19ToV20(migrateV18ToV19(migrateV17ToV18({ ...raw, version: "17.0.0" })))));
 }
 
 const CORE_WORLDBOOK_KEY = "\u0000core";
@@ -402,7 +406,7 @@ export function makeDefaultRootComponent(worldId: string): RootComponent {
   };
 }
 
-/** Normalize legacy role aliases (personality → character, lore → system). */
+/** Normalize personality aliases while preserving lore identity for memory indexing. */
 function normalizeEntryRoles(raw: WorldDefinition): WorldDefinition {
   let changed = false;
 
@@ -411,8 +415,6 @@ function normalizeEntryRoles(raw: WorldDefinition): WorldDefinition {
 
     if (role === "personality") {
       role = "character";
-    } else if (role === "lore") {
-      role = "system";
     }
 
     // `keywords` and `enabled` are schema-defaulted, but migration runs BEFORE

@@ -1,3 +1,4 @@
+import { LoreMemoryFields } from "../components/lore-memory-fields";
 import { useState, useRef, useMemo, useCallback, useEffect, memo } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -1407,6 +1408,11 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                 </div>
                 )}
 
+                {(selected.role === "lore" || selected.role === "custom") && (
+                  <LoreMemoryFields key={selected.id} value={selected.memory}
+                    onChange={(memory) => updateEntry(selected.id, { memory })}
+                    entries={worldDraft.entries.filter((entry) => entry.id !== selected.id).map(({ id, name }) => ({ id, name }))} />
+                )}
                 {/* Content */}
                 <div className="space-y-3">
                   <label className="text-sm font-bold text-foreground">

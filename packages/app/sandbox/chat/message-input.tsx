@@ -1,3 +1,4 @@
+import { displayPersonaText } from "../../src/lib/persona-profile";
 import { readChatImages, pastedImageFiles, chatImageCopy } from "../../src/lib/chat-image-input";
 import { PLAY_MODELS, type ChatImageInput } from "@yumina/shared";
 import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
@@ -16,6 +17,7 @@ import {
   ListTree,
   Loader2,
   Check,
+  ShieldCheck,
 } from "lucide-react";
 import {
   useYumina,
@@ -27,6 +29,7 @@ import { ModelTrigger } from "./model-picker-modal";
 import { makeChatT } from "./i18n";
 import { SlotOutlet, useToolMenuCount } from "../extensions/registry";
 import { ComposerToolMenu, useIsNarrow } from "./composer-tool-menu";
+import { StoryMemoryLauncher } from './story-memory-launcher';
 import { postToParentWindow, wrapMessage } from "../protocol";
 import {
   clampComposerMessage,
@@ -60,7 +63,8 @@ export function MessageInput() {
     navigate,
   } = api;
   const t = useMemo(() => makeChatT(api.language), [api.language]);
-  const generationBlocked = isStreaming || !!api.modelFallback;
+  const storyBlocked = api.storyProgress?.status === "ending-ready" || api.storyProgress?.status === "completed" || !!api.isCompletingEnding;
+  const generationBlocked = isStreaming || !!api.modelFallback || storyBlocked;
   const canSendMessage = api.capabilities?.canSendMessage !== false
     && api.mode !== "guest-preview";
 
@@ -131,7 +135,7 @@ export function MessageInput() {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const isNarrow = useIsNarrow(toolbarRef, 520);
   const toolMenuCount = useToolMenuCount();
-  const collapseTools = isNarrow && toolMenuCount > 0;
+  const collapseTools = isNarrow && (toolMenuCount > 0 || !!api.sessionId);
   // Stash of the text we just sent, so a failed send can restore it to the
   // composer (creator feedback 2026-05-31: "don't swallow my message").
   const lastSentRef = useRef<string | null>(null);
@@ -423,13 +427,13 @@ export function MessageInput() {
     return () => window.clearTimeout(t);
   }, [isStreaming, api.error]);
 
-  if (readOnly || !canSendMessage) return null;
+  if (readOnly || (!canSendMessage && !storyBlocked)) return null;
 
   return (
     <div className="play-composer-shell shrink-0">
       <div className="play-composer-inner w-full min-w-0">
         {/* Choice buttons */}
-        {pendingChoices.length > 0 && !isStreaming && (
+        {pendingChoices.length > 0 && !isStreaming && !storyBlocked && (
           <div className="play-choice-row mb-2 flex flex-wrap items-center gap-1.5">
             {pendingChoices.map((choice, i) => (
               <button
@@ -437,7 +441,7 @@ export function MessageInput() {
                 onClick={() => handleChoiceClick(choice)}
                 className="play-choice-chip rounded-lg border border-border/50 bg-accent px-3 py-1.5 text-xs font-medium text-foreground/80 transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
               >
-                {choice}
+                {displayPersonaText(choice, api.user?.name)}
               </button>
             ))}
             <button
@@ -545,6 +549,7 @@ export function MessageInput() {
                      (which inflates text but not rem/px boxes) scales the whole
                      row with the text. ~45px rows at 16px type. */
                   <div className="absolute bottom-full left-0 z-50 mb-1 min-w-[230px] overflow-hidden rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
+                    {api.sessionId && !api.readOnly && <button type="button" onClick={() => { setActionsOpen(false); api.showContentFlags(); }} className="flex w-full items-center gap-3 rounded-md px-3.5 py-[0.65em] text-base text-foreground/80 transition-colors hover:bg-accent"><ShieldCheck className="h-[1.15em] w-[1.15em]" />Content flags</button>}
                     <button
                       onClick={handleContinue}
                       className="flex w-full items-center gap-3 rounded-md px-3.5 py-[0.65em] text-base text-foreground/80 transition-colors hover:bg-accent"
@@ -697,6 +702,7 @@ export function MessageInput() {
               ) : (
                 <>
                   <ModelTrigger onClick={openModelPicker} />
+                  <StoryMemoryLauncher />
                   {/* Installed extensions' composer contributions (e.g. the
                       session-memory Context button) — see sandbox/extensions/. */}
                   <SlotOutlet point="chat.composer.toolbar" />

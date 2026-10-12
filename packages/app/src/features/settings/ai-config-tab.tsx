@@ -8,13 +8,15 @@ import { useCreditStore } from "@/edition/slots.state";
 import { GlobalPrompts } from "@/features/configs/global-prompts";
 import { Select } from "@/components/ui/select";
 import { NumberInput } from "@/components/ui/number-input";
+import { DEFAULT_MEMORY_RECALL_TOKENS, MAX_MEMORY_RECALL_TOKENS } from "@yumina/shared";
 import { ModelFallbackSettings } from "@/features/settings/model-fallback-settings";
 
 /** The dial a player actually turns. 16,000 is the default and the advice. */
 const SUGGESTED_STORY_MEMORY = 16_000;
 const STORY_MEMORY_PRESETS = [8_000, 16_000, 32_000, 64_000] as const;
 /** Rungs for the hard ceiling, shown only when the plan allows more. */
-const OVERALL_PRESETS = [64_000, 128_000, 200_000] as const;
+const OVERALL_PRESETS = [8_192, 32_768, 64_000, 128_000, 200_000, 512_000, 1_000_000] as const;
+const RECALL_PRESETS = [1_000, 4_000, 8_000, 16_000] as const;
 
 export function AiConfigTab() {
   const { t } = useTranslation("profile");
@@ -24,6 +26,7 @@ export function AiConfigTab() {
     maxTokens,
     maxContext,
     storyMemory,
+    memoryBudgetTokens,
     temperature,
     topP,
     frequencyPenalty,
@@ -66,14 +69,15 @@ export function AiConfigTab() {
 
   // Story memory never rides the plan ladder: every tier may set it freely,
   // bounded only by the overall limit in force.
-  // An uncapped plan reports contextMax = 2,000,000, which no model window
-  // reaches; the practical ceiling is the schema's 200,000. Without this the
-  // default 200,000 reads as a self-imposed limit on a plan that has none.
-  const overallCeiling = Math.min(contextMax, 200_000);
-  const storyMemoryMax = overallCeiling;
+  // Prompt input and recent history have separate schema bounds. The server
+  // applies the selected provider's model window and output reservation.
+  const overallCeiling = contextMax;
+  const storyMemoryMax = Math.min(contextMax, 200_000);
   // New accounts inherit 16K; older accounts retain their effective window.
   // This display metadata must never become an explicit saved preference.
-  const storyMemoryValue = storyMemory ?? Math.min(maxContext, profile?.defaultStoryMemory ?? overallCeiling);
+  const storyMemoryValue = storyMemory ?? Math.min(maxContext, profile?.defaultStoryMemory ?? storyMemoryMax);
+  const [recallMemoryDraft, setRecallMemoryDraft] = useState<number | "">("");
+  const recallMemoryValue = memoryBudgetTokens ?? recallMemoryDraft;
   const atOverallMax = maxContext >= overallCeiling;
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -105,17 +109,10 @@ export function AiConfigTab() {
         <ModelFallbackSettings />
         <div className="profile-overview-glass profile-overview-glass--soft rounded-2xl p-6">
           <div className="space-y-6">
-            {/* Two dials, not one (owner 2026-09-22).
-                STORY MEMORY is the only one anybody should touch: how much of
-                the conversation stays word for word. It is the same on every
-                plan, because a model loses the thread long before the ceiling
-                does — 16,000 is the suggestion and the default.
-                OVERALL LIMIT is the hard ceiling on a whole request. It sits
-                second, defaults to as high as the plan allows, and exists for
-                the rare world that wants it lower.
-                The world's lorebook is carried by the PLAN and is not part of
-                either number. */}
-            <div className="border-b border-white/5 pb-6">
+            {/* Recent conversation and recalled facts have separate budgets.
+                Prompt context covers the complete request. Existing defaults
+                remain unchanged until the player edits a value. */}
+            <div id="settings-target-story-context" className="border-b border-white/5 pb-6">
               <div className="mb-3 flex items-center justify-between">
                 <label className="text-sm font-semibold text-main">{t("config.storyMemory")}</label>
                 <span className="text-xs text-sub tabular-nums">{storyMemoryValue.toLocaleString()} tokens</span>
@@ -164,7 +161,7 @@ export function AiConfigTab() {
             </div>
 
             {/* Overall limit — the ceiling on one request, lorebook included. */}
-            <div className="border-b border-white/5 pb-6">
+            <div id="settings-target-prompt-context" className="border-b border-white/5 pb-6">
               <div className="mb-3 flex items-center justify-between">
                 <label className="text-sm font-semibold text-main">{t("config.overallLimit")}</label>
                 <div className="flex items-center gap-2">
@@ -175,7 +172,7 @@ export function AiConfigTab() {
                     </span>
                   )}
                   <span className="text-xs text-sub tabular-nums">
-                    {atOverallMax ? t("config.overallUncapped") : `${maxContext.toLocaleString()} tokens`}
+                    {maxContext.toLocaleString()} tokens
                   </span>
                 </div>
               </div>
@@ -206,9 +203,49 @@ export function AiConfigTab() {
                   </button>
                 ))}
               </div>
+              <NumberInput
+                commitOnBlur
+                aria-label={t("config.overallLimit")}
+                min={4096}
+                max={overallCeiling}
+                step={1024}
+                value={maxContext}
+                onChange={(value) => setConfig("maxContext", Math.max(4096, Math.min(overallCeiling, Math.floor(Number(value) || 4096))))}
+                className={themedNumberInputClass}
+              />
               <p className="text-xs text-sub">
                 {contextCapped ? t("config.overallLimitCapped") : t("config.overallLimitDesc")}
               </p>
+            </div>
+
+            <div id="settings-target-memory-context" className="border-b border-white/5 pb-6">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <label className="text-sm font-semibold text-main">{t("config.recallMemory")}</label>
+                <span className="text-xs text-sub tabular-nums">{memoryBudgetTokens === null ? t("config.recallMemoryAuto") : `${recallMemoryValue.toLocaleString()} tokens`}</span>
+              </div>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => { setRecallMemoryDraft(""); setConfig("memoryBudgetTokens", null); }} className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${memoryBudgetTokens === null ? "border-gold/50 bg-gold/10 text-action-primary" : "border-white/[0.07] bg-white/[0.02] text-sub hover:bg-white/[0.05]"}`}>{t("config.recallMemoryAuto")}</button>
+                {RECALL_PRESETS.map(preset => <button key={preset} type="button" onClick={() => setConfig("memoryBudgetTokens", preset)} className={`rounded-lg border px-3 py-1.5 text-xs tabular-nums transition-colors ${recallMemoryValue === preset ? "border-gold/50 bg-gold/10 text-action-primary" : "border-white/[0.07] bg-white/[0.02] text-sub hover:bg-white/[0.05]"}`}>{preset.toLocaleString()}</button>)}
+              </div>
+              <NumberInput
+                commitOnBlur={memoryBudgetTokens !== null}
+                aria-label={t("config.recallMemory")}
+                min={1}
+                max={MAX_MEMORY_RECALL_TOKENS}
+                step={100}
+                value={recallMemoryValue}
+                placeholder={t("config.recallMemoryAuto")}
+                onChange={value => memoryBudgetTokens === null ? setRecallMemoryDraft(value) : setConfig("memoryBudgetTokens", value === "" ? null : Math.max(1, Math.min(MAX_MEMORY_RECALL_TOKENS, Math.floor(Number(value) || DEFAULT_MEMORY_RECALL_TOKENS))))}
+                onBlur={() => {
+                  if (memoryBudgetTokens === null && recallMemoryDraft !== "") {
+                    setConfig("memoryBudgetTokens", Math.max(1, Math.min(MAX_MEMORY_RECALL_TOKENS, Math.floor(Number(recallMemoryDraft) || DEFAULT_MEMORY_RECALL_TOKENS))));
+                    setRecallMemoryDraft("");
+                  }
+                }}
+                onKeyDown={event => { if (event.key === "Enter" && memoryBudgetTokens === null) event.currentTarget.blur(); }}
+                className={themedNumberInputClass}
+              />
+              <p className="mt-2 text-xs text-sub">{t("config.recallMemoryDesc")}</p>
             </div>
 
             {/* Response Length */}

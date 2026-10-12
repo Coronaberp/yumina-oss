@@ -10,6 +10,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { EntityPreview } from "./entity-preview";
+import { isStatusVisualizationTool } from "../lib/status-visualization-tools";
+import { StatusProposalPreview } from "@/features/editor/components/status-proposal-preview";
 import type { ToolCall, ToolResult, ProposalStatus } from "../lib/types";
 import { isReadTool } from "../lib/types";
 
@@ -80,7 +82,7 @@ export function ProposalCard({ toolCalls, toolResults, status, onApprove, onReje
           {writeToolCalls.map((tc, i) => (
             <div key={tc.id || i} className="space-y-1">
               <EntityPreview toolCall={tc} />
-              {onInspectChange && (
+              {isStatusVisualizationTool(tc.function.name, (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })()) ? <StatusProposalPreview toolCall={tc} /> : onInspectChange && (
                 <button
                   type="button"
                   onClick={() => onInspectChange(tc)}

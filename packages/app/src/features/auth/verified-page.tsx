@@ -44,7 +44,7 @@ export function VerifiedPage() {
   if (verifyError) {
     return (
       <AuthLayout wide>
-        <div className="rounded-2xl border border-white/[0.08] bg-[#212124]/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
+        <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
           <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-full bg-amber-500/10 ring-1 ring-amber-500/20">
             <svg
               className="h-10 w-10 text-amber-400"
@@ -61,16 +61,16 @@ export function VerifiedPage() {
             </svg>
           </div>
 
-          <h1 className="mb-2 text-2xl font-bold text-[#E6E4DD]">
+          <h1 className="mb-2 text-2xl font-bold text-foreground">
             {t("verified.failedTitle")}
           </h1>
-          <p className="mb-8 text-sm text-[#B9B6AE] leading-relaxed">
+          <p className="mb-8 text-sm text-sub leading-relaxed">
             {t("verified.failedDescription")}
           </p>
 
           <button
             onClick={() => navigate({ to: "/login" })}
-            className="mt-2 w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-[#181818] shadow-[0_0_20px_rgba(201,162,94,0.15)] transition-all hover:bg-[#F0C24A] hover:shadow-[0_0_30px_rgba(201,162,94,0.25)] active:scale-[0.98]"
+            className="mt-2 w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-primary-foreground shadow-[0_0_20px_rgba(212,194,146,0.15)] transition-all hover:bg-primary-hover hover:shadow-[0_0_30px_rgba(212,194,146,0.25)] active:scale-[0.98]"
           >
             {t("verified.backToLogin")}
           </button>
@@ -81,7 +81,7 @@ export function VerifiedPage() {
 
   return (
     <AuthLayout wide>
-        <div className="rounded-2xl border border-white/[0.08] bg-[#212124]/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
+        <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
           {/* Animated checkmark */}
           <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/10 ring-1 ring-emerald-500/20">
             <svg
@@ -105,18 +105,18 @@ export function VerifiedPage() {
             </svg>
           </div>
 
-          <h1 className="mb-8 text-2xl font-bold text-[#E6E4DD]">
+          <h1 className="mb-8 text-2xl font-bold text-foreground">
             {t("verified.title")}
           </h1>
 
           {/* Progress ring / redirect notice */}
-          <p className="text-xs text-[#B9B6AE]/50">
+          <p className="text-xs text-sub/50">
             {t("verified.redirecting", { seconds: countdown })}
           </p>
 
           <button
             onClick={continueOn}
-            className="mt-6 w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-[#181818] shadow-[0_0_20px_rgba(201,162,94,0.15)] transition-all hover:bg-[#F0C24A] hover:shadow-[0_0_30px_rgba(201,162,94,0.25)] active:scale-[0.98]"
+            className="mt-6 w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-primary-foreground shadow-[0_0_20px_rgba(212,194,146,0.15)] transition-all hover:bg-primary-hover hover:shadow-[0_0_30px_rgba(212,194,146,0.25)] active:scale-[0.98]"
           >
             {t("verified.continue")}
           </button>

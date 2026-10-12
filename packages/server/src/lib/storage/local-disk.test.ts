@@ -150,6 +150,24 @@ describe("LocalDiskStorage", () => {
       await storage.putObject("worlds/r/song.bin", Buffer.from("hello world"), "audio/mpeg");
     });
 
+    test("declines conditional ranges when sidecar metadata cannot pin the file version", async () => {
+      const key = "worlds/r/replaced.bin";
+      await storage.putObject(key, Buffer.from("old bytes"), "application/octet-stream");
+      const original = await storage.headObject(key);
+      // Simulate the interval between replacing the data and its sidecar.
+      const replacement = path.join(root, "replacement.tmp");
+      fs.writeFileSync(replacement, "new bytes");
+      fs.renameSync(replacement, storage.resolvePath(key));
+      assert.equal((await storage.headObject(key)).etag, original.etag);
+      await assert.rejects(
+        () => storage.getObject(key, { range: "bytes=0-2", ifMatch: `"${original.etag}"` }),
+        (err: unknown) => err instanceof StorageError && status(err) === 412,
+      );
+      const full = await storage.getObject(key);
+      assert.equal(full.contentRange, null);
+      assert.equal((await readAll(full.body)).toString(), "new bytes");
+    });
+
     test("bytes=2-5", async () => {
       const got = await storage.getObject("worlds/r/song.bin", { range: "bytes=2-5" });
       assert.equal((await readAll(got.body)).toString(), "llo ");
@@ -221,10 +239,13 @@ describe("LocalDiskStorage", () => {
   });
 
   describe("upload tokens", () => {
-    test("generateUploadUrl mints a verifiable token on the public origin", async () => {
+    test("generateUploadUrl follows the browser origin and keeps its signed token valid", async () => {
       const url = await storage.generateUploadUrl("worlds/w1/gallery/a.png", "image/png");
-      assert.ok(url.startsWith(`${ORIGIN}/storage/upload?token=`), url);
-      const token = new URL(url).searchParams.get("token")!;
+      assert.ok(url.startsWith("/storage/upload?token="));
+      for (const origin of [ORIGIN, "http://192.168.88.9:3000", "https://vn.storyhaven.dev"]) {
+        assert.equal(new URL(url, origin).origin, origin);
+      }
+      const token = new URL(url, ORIGIN).searchParams.get("token")!;
       assert.deepEqual(storage.verifyUploadToken(token), { key: "worlds/w1/gallery/a.png", contentType: "image/png" });
     });
 

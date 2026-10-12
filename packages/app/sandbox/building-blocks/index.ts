@@ -24,5 +24,5 @@ export { MessageInput } from "../chat/message-input";
 export { ModelPickerModal, ModelTrigger } from "../chat/model-picker-modal";
 
 // Session memory — same modal as the official chat composer Context button.
-// Requires the session-memory-summary extension (api.memorySummaryEnabled).
+// Story memory is built in; legacy summary controls use the installed extension.
 export { SessionMemoryModal } from "../extensions/session-memory/session-memory-modal";

@@ -20,14 +20,14 @@
  *  vs message send vs regenerate. */
 
 import type { GameStateManager } from "@yumina/engine";
-import type { PersonaEntry } from "@yumina/shared";
+import type { PersonaEntry, PersonaSprites } from "@yumina/shared";
 import type { SessionPersona } from "./session-persona.js";
 
 /** The committed write carries everything needed to update chat identity. */
 export function personaIdentityReceipt(id: string, binding: { personaLocked: boolean; sessionPersona: SessionPersona }, account: AccountLike) {
   const state = { metadata: {} as Record<string, unknown> };
   applyPersonaMetadataToState(state, binding.sessionPersona.persona, account);
-  return { id, ...binding, state };
+  return { id, ...binding, personaSelectable: !binding.sessionPersona.started, state };
 }
 
 export interface ActivePersonaLike {
@@ -37,6 +37,7 @@ export interface ActivePersonaLike {
   personality?: string | null;
   backstory?: string | null;
   entries?: PersonaEntry[];
+  sprites?: PersonaSprites | null;
 }
 
 export interface AccountLike {

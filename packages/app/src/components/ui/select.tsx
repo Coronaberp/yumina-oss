@@ -15,7 +15,7 @@ export interface SelectOption {
   icon?: React.ReactNode;
 }
 
-export interface SelectProps {
+export interface SelectProps extends Pick<React.ComponentPropsWithoutRef<typeof DropdownMenuTrigger>, 'id' | 'aria-label' | 'aria-labelledby' | 'title'> {
   value: string;
   onValueChange: (value: string) => void;
   options: SelectOption[];
@@ -35,12 +35,14 @@ export function Select({
   triggerClassName,
   contentClassName,
   disabled,
+  ...triggerProps
 }: SelectProps) {
   const selectedOption = options.find((opt) => opt.value === value);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        {...triggerProps}
         disabled={disabled}
         className={cn(
           "flex w-full items-center justify-between rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground shadow-inner transition-all hover:bg-accent focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50",

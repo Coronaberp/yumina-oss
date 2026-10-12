@@ -153,6 +153,8 @@ export async function headObject(key: string): Promise<{
   contentType: string;
   contentLength: number;
   etag: string | null;
+  contentEncoding?: string;
+  decodedLength?: number;
 }> {
   if (useLocal()) return getLocalDiskStorage().headObject(key);
   const response = await getClient().send(new HeadObjectCommand({
@@ -163,6 +165,9 @@ export async function headObject(key: string): Promise<{
     contentType: response.ContentType ?? "application/octet-stream",
     contentLength: response.ContentLength ?? 0,
     etag: response.ETag?.replace(/^\"|\"$/g, "") ?? null,
+    contentEncoding: response.ContentEncoding,
+    decodedLength: Number.isSafeInteger(Number(response.Metadata?.['decoded-size'])) && Number(response.Metadata?.['decoded-size']) > 0
+      ? Number(response.Metadata?.['decoded-size']) : undefined,
   };
 }
 
@@ -171,7 +176,7 @@ export async function headObject(key: string): Promise<{
  * `body` is an SDK stream for S3 or a Node `Readable` for local disk; both
  * consumers (`cdn.ts`, event-proof reads) already branch on `instanceof Readable`.
  */
-export async function getObject(key: string, opts?: { range?: string; signal?: AbortSignal }): Promise<{
+export async function getObject(key: string, opts?: { range?: string; ifMatch?: string; signal?: AbortSignal }): Promise<{
   body: GetObjectCommandOutput["Body"] | Readable;
   contentType: string;
   contentLength: number | undefined;
@@ -188,6 +193,7 @@ export async function getObject(key: string, opts?: { range?: string; signal?: A
     // so audio/video seeks fetch only the requested slice. S3 answers ranged
     // GETs with 206 + ContentRange; un-ranged behavior is unchanged.
     ...(opts?.range ? { Range: opts.range } : {}),
+    ...(opts?.ifMatch ? { IfMatch: opts.ifMatch } : {}),
   });
   const response = await getClient().send(command, { abortSignal: opts?.signal });
   return {

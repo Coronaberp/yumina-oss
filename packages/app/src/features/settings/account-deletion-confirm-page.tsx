@@ -185,7 +185,7 @@ export function AccountDeletionConfirmPage({ token }: { token: string }) {
           <Link
             to="/login"
             search={{ returnTo: "/delete-account" }}
-            className="mt-5 inline-flex rounded-xl bg-gold px-5 py-2.5 text-sm font-bold text-[#181818] transition-colors hover:bg-[#F0C24A]"
+            className="mt-5 inline-flex rounded-xl bg-gold px-5 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary-hover"
           >
             {t("account.deleteAccount.signIn")}
           </Link>
@@ -213,7 +213,7 @@ export function AccountDeletionConfirmPage({ token }: { token: string }) {
 
   return (
     <AuthLayout wide>
-      <div className="rounded-3xl border border-red-500/25 bg-[#212124]/95 p-5 shadow-2xl shadow-black/40 sm:p-7">
+      <div className="rounded-3xl border border-red-500/25 bg-card/95 p-5 shadow-2xl shadow-black/40 sm:p-7">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/15 text-red-400">
           <TriangleAlert className="h-6 w-6" />
         </div>
@@ -319,7 +319,7 @@ function StatusCard({
   children?: ReactNode;
 }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-[#212124]/95 p-7 text-center shadow-2xl shadow-black/40">
+    <div className="rounded-3xl border border-white/10 bg-card/95 p-7 text-center shadow-2xl shadow-black/40">
       <h1 className="text-xl font-black text-main">{title}</h1>
       <p className="mt-2 text-sm leading-relaxed text-sub">{description}</p>
       {children}

@@ -24,7 +24,8 @@ import {
 } from "@/components/session-modal-styles";
 import { useSession } from "@/lib/auth-client";
 import { getCachedSessions, setCachedSessions } from "@/lib/session-picker-cache";
-import { WorldPersonaIconMenu } from "@/features/chat/world-persona-menu";
+import { StoryPersonaPicker } from "@/features/personas/story-persona-picker";
+import type { PersonaSelection } from "@yumina/shared";
 import { usePersonasStore } from "@/stores/personas";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
@@ -46,7 +47,7 @@ export interface SessionPickerModalProps {
   open: boolean;
   onClose: () => void;
   onSelectSession: (sessionId: string) => void;
-  onCreateSession: (worldId: string) => void;
+  onCreateSession: (worldId: string, personaSelection?: PersonaSelection) => void;
   world: {
     id: string;
     name: string;
@@ -98,6 +99,7 @@ function SessionPickerModalImpl({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showVersionPicker, setShowVersionPicker] = useState(false);
   const [newSessionVersionId, setNewSessionVersionId] = useState<string>(world.id);
+  const [personaSelection, setPersonaSelection] = useState<PersonaSelection>({ kind: "account" });
   const [showAllLanguages, setShowAllLanguages] = useState(false);
   const selectionBlocked = usePersonasStore((s) => s.savingSelection || s.selectionFailed);
   const selectionFailed = usePersonasStore((s) => s.selectionFailed);
@@ -261,7 +263,7 @@ function SessionPickerModalImpl({
         return !prev;
       });
     } else {
-      onCreateSession(world.id);
+      onCreateSession(world.id, personaSelection);
     }
   };
 
@@ -270,28 +272,29 @@ function SessionPickerModalImpl({
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center">
       <div
+        data-vn-dialog-backdrop=""
         className={SESSION_MODAL_BACKDROP_CLASS}
         onClick={onClose}
       />
 
       <div
         ref={contentRef}
+        data-vn-dialog-surface="structured"
         role="dialog"
         aria-modal="true"
         aria-label="Session picker"
         tabIndex={-1}
         className={`${SESSION_MODAL_SURFACE_CLASS} max-w-[28rem]`}
       >
-        <div className="flex items-center justify-between px-5 pb-4 pt-5">
+        <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pb-4 pt-5">
           <div>
-            <h2 className="text-[0.95rem] font-semibold text-foreground">{world.name}</h2>
+            <h2 data-vn-dialog-title="" className="text-[0.95rem] font-semibold text-foreground">{world.name}</h2>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
-            {/* Per-world persona pin — only rendered for users who have personas */}
-            <WorldPersonaIconMenu worldId={showVersionPicker ? newSessionVersionId : world.id} disabled={!!creating} />
             <button
               type="button"
               onClick={onClose}
+              data-vn-dialog-close=""
               aria-label="Close"
               className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:bg-white/5 hover:text-muted-foreground"
             >
@@ -300,6 +303,7 @@ function SessionPickerModalImpl({
           </div>
         </div>
 
+        <div className="mx-5 pb-4"><StoryPersonaPicker worldId={showVersionPicker ? newSessionVersionId : world.id} value={personaSelection} onChange={setPersonaSelection} disabled={!!creating} /></div>
         <div className="mx-5 h-px bg-white/[0.06]" />
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
@@ -532,7 +536,7 @@ function SessionPickerModalImpl({
             type="button"
             onClick={showVersionPicker ? () => {
               if (usePersonasStore.getState().savingSelection || usePersonasStore.getState().selectionFailed) return;
-              setShowVersionPicker(false); onCreateSession(newSessionVersionId);
+              setShowVersionPicker(false); onCreateSession(newSessionVersionId, personaSelection);
             } : handleNewSessionClick}
             disabled={creating || selectionBlocked}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/90 px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary disabled:opacity-50"

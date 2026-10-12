@@ -58,6 +58,7 @@ export interface EditionInfo {
   features: EditionFeatures;
   auth: {
     mode: "single-user" | "multi-user";
+    emailPassword: boolean;
     /** Social providers that are configured (env has id + secret). */
     socialProviders: string[];
   };

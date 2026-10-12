@@ -89,13 +89,9 @@ export interface PresignedAssetUploadConfig {
   signal?: AbortSignal;
   onStage?: (stage: AssetUploadStage) => void;
   onReconciled?: () => void;
-  /**
-   * When set, a raster image (not GIF/SVG) is downscaled to at most this many
-   * pixels on its longest edge and re-encoded as JPEG before upload. Use for
-   * cover / banner images shown as cards so a creator's full-size original
-   * (we saw 8 MB) isn't served as a "thumbnail". Fails soft to the original.
-   */
+  /** @deprecated Images now retain their dimensions and use lossless server compression. */
   resizeImageMaxDimension?: number;
+  /** @deprecated Uploads never use lossy canvas encoding. */
   resizeImageQuality?: number;
   onProgress?: (progress: UploadProgress) => void;
 }
@@ -368,64 +364,6 @@ export async function isAnimatedImageFile(file: Blob): Promise<boolean | null> {
   }
 }
 
-/**
- * Downscale a raster image (not GIF/SVG) to at most `maxDimension` px on its
- * longest edge and re-encode as JPEG, in the browser via canvas. Stops a
- * creator's full-size original (we saw 8 MB) from being stored as a card
- * "thumbnail". Fails SOFT — any non-image, decode failure, missing canvas, or a
- * re-encode that isn't actually smaller returns the ORIGINAL file untouched, so
- * the worst case is exactly today's behavior.
- */
-async function downscaleImageFile(file: File, maxDimension: number, quality: number): Promise<File> {
-  if (
-    typeof document === "undefined" ||
-    typeof createImageBitmap === "undefined" ||
-    !file.type.startsWith("image/") ||
-    file.type === "image/gif" ||
-    file.type === "image/svg+xml"
-  ) {
-    return file;
-  }
-
-  let bitmap: ImageBitmap;
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-  } catch {
-    return file; // decode unsupported/failed → upload the original untouched
-  }
-
-  try {
-    const longest = Math.max(bitmap.width, bitmap.height);
-    const scale = Math.min(1, maxDimension / longest);
-    // Already within bounds and not heavy → leave it (preserves small PNGs/alpha).
-    if (scale >= 1 && file.size <= 600 * 1024) return file;
-
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return file;
-    // White matte: flattening any transparency to JPEG would otherwise go black.
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(bitmap, 0, 0, w, h);
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality),
-    );
-    if (!blob || blob.size >= file.size) return file; // no real win → keep original
-
-    const baseName = file.name.replace(/\.[^./\\]+$/, "") || "image";
-    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
-  } catch {
-    return file;
-  } finally {
-    bitmap.close?.();
-  }
-}
-
 async function uploadAssetWithPresignedUrlUnguarded<T>({
   file: inputFile,
   preferredType,
@@ -442,19 +380,15 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   signal,
   onStage,
   onReconciled,
-  resizeImageMaxDimension,
-  resizeImageQuality,
   onProgress,
 }: PresignedAssetUploadConfig): Promise<T> {
   const f = fetchImpl ?? fetch;
   signal?.throwIfAborted();
   onStage?.("prepare");
-  // Preserve animations and inconclusive inspections; only proven stills may
-  // pass through the canvas, which would otherwise keep just the first frame.
+  // Preserve source pixels for lossless server compression. Animation detection
+  // still marks covers for progressive animation display.
   const animated = (await isAnimatedImageFile(inputFile)) !== false;
-  const file = resizeImageMaxDimension && !animated
-    ? await downscaleImageFile(inputFile, resizeImageMaxDimension, resizeImageQuality ?? 0.82)
-    : inputFile;
+  const file = inputFile;
   const { type: resolvedType, contentType } = getUploadMetadata(file, preferredType);
 
   // Warn (but don't block) on large files

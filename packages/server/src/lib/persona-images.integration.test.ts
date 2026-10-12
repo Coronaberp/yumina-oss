@@ -18,7 +18,7 @@ async function fixture() {
   return { uid, sessions, cleanup: () => db.delete(user).where(eq(user.id, uid)) };
 }
 
-test("game persona selection isolates saves, includes explicit none, follows profile only on unlock", async () => {
+test("game persona selection isolates saves and rejects disabling without changing global defaults", async () => {
   const f = await fixture();
   const other = await fixture();
   try {
@@ -35,10 +35,10 @@ test("game persona selection isolates saves, includes explicit none, follows pro
     assert.equal((await setSessionPersona(f.uid, other.sessions[0]!.id, b!.id)).error, "Session not found");
     assert.equal((await setSessionPersona(f.uid, f.sessions[0]!.id, foreign!.id)).error, "Persona not found");
     await setAccountPersona(f.uid, b!.id);
-    assert.equal((await resolvePersonaForSession(await session(f.sessions[1]!.id)))?.id, b!.id);
-    await setSessionPersona(f.uid, f.sessions[0]!.id, null);
-    assert.equal(await resolvePersonaForSession(await session(f.sessions[0]!.id)), null);
-    await setSessionPersonaLock(f.uid, f.sessions[0]!.id, false);
+    assert.equal((await resolvePersonaForSession(await session(f.sessions[1]!.id)))?.id, a!.id);
+    assert.ok((await setSessionPersona(f.uid, f.sessions[0]!.id, null)).error);
+    assert.equal((await resolvePersonaForSession(await session(f.sessions[0]!.id)))?.id, b!.id);
+    assert.ok((await setSessionPersonaLock(f.uid, f.sessions[0]!.id, false)).error);
     assert.equal((await resolvePersonaForSession(await session(f.sessions[0]!.id)))?.id, b!.id);
   } finally { await f.cleanup(); await other.cleanup(); }
 });

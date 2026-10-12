@@ -55,7 +55,11 @@ export type ChatMessage =
 export interface GenerateParams {
   /** Stable, namespaced conversation identity for upstream routing; never sent in the body. */
   conversationId?: string;
+  /** Stable server run identity for native tool turns and scoped cancellation. */
+  generationId?: string;
   model: string;
+  /** Server-owned admin defaults must survive custom body shaping unchanged. */
+  lockModel?: boolean;
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
@@ -70,6 +74,8 @@ export interface GenerateParams {
   responseFormat?: { type: "json_object" };
   /** Tool definitions for function calling */
   tools?: ToolDefinition[];
+  /** Complete host tool catalog for providers that retain a native turn across iterations. */
+  availableTools?: ToolDefinition[];
   /** Controls how the model uses tools */
   toolChoice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
   /** Reasoning effort level for thinking models (none/low/medium/high) */

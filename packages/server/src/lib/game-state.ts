@@ -1,4 +1,4 @@
-import { GameStateManager, deepEqual } from "@yumina/engine";
+import { GameStateManager, deepEqual, resolveStoryProgress } from "@yumina/engine";
 import type { GameState, WorldDefinition } from "@yumina/engine";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -9,10 +9,10 @@ export function normalizeGameState(
   worldDef: WorldDefinition,
   state: unknown
 ): GameState {
-  return new GameStateManager(
+  return resolveStoryProgress(worldDef, new GameStateManager(
     worldDef,
     (isRecord(state) ? state : {}) as unknown as GameState
-  ).getSnapshot();
+  ).getSnapshot(), { selectEnding: false });
 }
 
 export function mergeGameStatePatch(
@@ -51,6 +51,8 @@ export function mergeGameStatePatch(
       ...patchMetadata,
     },
     ruleState: normalizedCurrentState.ruleState,
+    // Story progression is engine-owned; a UI state patch cannot forge route, ending, or completion state.
+    story: normalizedCurrentState.story,
   };
 
   if (worldDef.systems?.includes("kochuu-survival-v1")) {

@@ -69,6 +69,7 @@ interface SandboxedYuminaAPI {
   worldName: string;
   worldId: string;
   sessionId: string;
+  personaSelectable: boolean; // Server permits persona selection during the untouched greeting
   
   // User identity
   currentUser: { id: string; name?: string; image?: string | null } | null;
@@ -144,11 +145,13 @@ navigate(path: string): void;
 ### Checkpoints
 
 ```typescript
-saveCheckpoint(): Promise<void>;
-loadCheckpoints(): Promise<void>;
+saveCheckpoint(name?: string): Promise<void>;
+loadCheckpoints(): Promise<Array<{ id: string; name: string; messageCount: number; createdAt: string }>>;
 restoreCheckpoint(checkpointId: string): Promise<void>;
 deleteCheckpoint(checkpointId: string): Promise<void>;
 ```
+
+Checkpoint names are trimmed before saving. Omitting the name chooses `Checkpoint #n`, using the lowest positive number whose name is not already saved in this session. `loadCheckpoints()` returns the current saved list and also updates `api.checkpoints`.
 
 ### AI Completions
 
@@ -392,3 +395,17 @@ export default function App() {
   );
 }
 ```
+
+## Status visualizations
+
+The VN interface's **UI options → Visualizations** controls the player's Status sheet. Fields bind to declared game variables and update from confirmed state. Select text/numbers, resource bars, attribute segments, effect badges, inventory slots, icon gauges, layered resource bars, status chips, relationship pips, XP rings or scene badges.
+
+Gauges have quarter, half and full shapes with the configured icon in the center. All numeric displays support fixed bounds or a maximum bound to another variable, including nested JSON properties. Pips have heart, star and diamond shapes and 1–20 icons. XP rings can bind a separate numeric level: only a level increase triggers the brief glow. Scene badges infer weather or time-of-day icons from their value, or use the configured field icon.
+
+Item arrays support names, quantities and optional icons: `[{"name":"Potion","quantity":2,"icon":"✦"}]`. Status chips additionally support a numeric `remaining`, `expiresIn` or `turns`; values of 1 or fewer pulse once as ending soon. Inventory slots highlight additions and animate quantity changes. Existing bars, segments, badges and text also have finite change animations. All motion respects the player's system reduced-motion preference.
+
+Category tabs use the ordered `groups` list in `status-config.ts`: each category has a stable `id` and an editable `label`. The editor can add, rename and remove categories, and fields select a category by ID. Removing a category moves its fields to Overview when present, otherwise the first remaining category. Older configs without `groups` retain Overview, Character and Inventory.
+
+The settings are stored as a literal JSON `statusConfig` export in `status-config.ts`. The creator agent can edit this file using its existing custom-UI tools. The visual editor and runtime use the same normalizer and renderer. Older cards using the shipped status files upgrade automatically in the editor, play mode and Studio agent; saving an edited card persists those updated files. Saved configuration, assets, overlays and game values are retained. Authored status components are preserved and require integrating new display formats in Code.
+
+For built-in displays, the agent edits only the data configuration. Writes or deletes targeting shipped `status-data.ts`, `status-gauge.tsx` and `status-widgets.tsx` are rejected; these implementations are maintained by Yumina. Custom authored modules remain editable.

@@ -171,6 +171,8 @@ export function ModelBrowser({
   const showLoadingState = loading && activeModels.length === 0;
   const isOfficialMode = !expectedSourceKey.startsWith("private:");
   const activeKeyId = (profile?.preferences?.activeApiKeyId as string | undefined) ?? null;
+  const adminDefaultModel = useConfigStore(s => s.adminDefaultModel);
+  const defaultModelLocked = !!adminDefaultModel && !selectionOnly && !studioMode;
 
   useEffect(() => {
     if (open && (!privateOnly || !isOfficialMode)) fetchModels();
@@ -248,6 +250,7 @@ export function ModelBrowser({
 
   const handleSelect = (modelId: string) => {
     if (selecting) return;
+    if (defaultModelLocked && modelId !== adminDefaultModel) return;
     // Picking one model means "use this one": leave mix mode, or the pool keeps
     // answering and the pill keeps saying "Mix" whichever source it came from.
     // (selectionOnly / privateOnly pickers choose for something else and leave the story's mix alone.)
@@ -277,7 +280,7 @@ export function ModelBrowser({
   // Phones can't run a model; they only see this source when the account is
   // already on a model its computer runs.
   const sourceLocked = privateOnly || (selectionOnly && !allowProviderSwitch);
-  const offerLocal = (!sourceLocked || allowLocalSelection) && !studioMode && (!isLikelyPhone() || isLocalModelId(selectedModel));
+  const offerLocal = !defaultModelLocked && (!sourceLocked || allowLocalSelection) && !studioMode && (!isLikelyPhone() || isLocalModelId(selectedModel));
   const showLocal = offerLocal && localView && !showMix;
   const chooseSource = (value: "official" | "private" | "local") => {
     if (value === "local") { setLocalView(true); return; }
@@ -314,10 +317,11 @@ export function ModelBrowser({
   return createPortal(
     <>
       <div className="fixed inset-0 z-[1200] flex items-center justify-center" onClick={onClose}>
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <div data-vn-dialog-backdrop="" className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       <div
         onClick={(e) => e.stopPropagation()}
+        data-vn-dialog-kind="model" data-vn-dialog-surface="structured"
         role="dialog"
         ref={dialogRef}
         tabIndex={-1}
@@ -325,11 +329,11 @@ export function ModelBrowser({
         aria-busy={selecting || undefined}
         aria-label={t("modelBrowser.title")}
         className={cn("relative z-10 flex flex-col overflow-hidden border border-white/[0.08] shadow-2xl shadow-black/40 outline-none animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200", expandedOfficial
-          ? "h-[min(800px,calc(100dvh-2rem))] w-[min(540px,calc(100vw-1rem))] rounded-[22px] bg-[#1b1a1e]"
+          ? "h-[min(800px,calc(100dvh-2rem))] w-[min(540px,calc(100vw-1rem))] rounded-[22px] bg-card"
           : showLocal
             // Same width and corners as the official sheet, so switching source doesn't jump.
-            ? "max-h-[min(800px,calc(100dvh-2rem))] w-[min(540px,calc(100vw-1rem))] rounded-[22px] bg-[#1b1a1e]"
-            : "w-[min(440px,calc(100vw-2rem))] max-h-[min(600px,calc(100dvh-4rem))] rounded-2xl bg-[#1a1b1e]")}
+            ? "max-h-[min(800px,calc(100dvh-2rem))] w-[min(540px,calc(100vw-1rem))] rounded-[22px] bg-card"
+            : "w-[min(440px,calc(100vw-2rem))] max-h-[min(600px,calc(100dvh-4rem))] rounded-2xl bg-card")}
       >
         {selecting && <div aria-hidden="true" className="absolute inset-x-0 top-0 z-20 h-0.5 animate-pulse bg-primary" />}
         {showLocal ? (
@@ -353,7 +357,7 @@ export function ModelBrowser({
             onSelect={handleSelect}
             onClose={onClose}
             providerSwitch={compactProviderSwitch}
-            onMixMode={selectionOnly ? undefined : () => {
+            onMixMode={(selectionOnly || defaultModelLocked) ? undefined : () => {
               const store = useConfigStore.getState();
               if (store.modelPool.length === 0) store.addToPool(selectedModel);
               setShowMix(true);
@@ -385,7 +389,7 @@ export function ModelBrowser({
             onGoToSettings={() => { if (onOpenSettings) onOpenSettings(); else { onClose(); navigate({ to: "/app/settings", hash: "ai-config" }); } }}
             providerSwitch={allowLocalSelection ? compactProviderSwitch : providerSwitch}
             usageNote={usageNote}
-            onMixMode={(selectionOnly || privateOnly) ? undefined : () => {
+            onMixMode={(selectionOnly || privateOnly || defaultModelLocked) ? undefined : () => {
               const store = useConfigStore.getState();
               if (store.modelPool.length === 0) store.addToPool(selectedModel);
               setShowMix(true);
@@ -527,7 +531,7 @@ function MixConfigView({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <button
             onClick={onBack}
@@ -536,7 +540,7 @@ function MixConfigView({
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div>
-            <h2 className="text-sm font-bold text-white">{t("modelMix.title")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{t("modelMix.title")}</h2>
             <p className="text-[11px] text-white/40">
               {modelPool.length}/{MAX_POOL_SIZE}
             </p>
@@ -544,7 +548,7 @@ function MixConfigView({
         </div>
         <div className="flex items-center gap-1">
           <CostEstimateInfo />
-          <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
+          <button data-vn-dialog-close="" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -788,14 +792,14 @@ function OfficialView({
     <>
       <div className="flex shrink-0 items-center gap-2 px-[17px] pb-3 pt-4 max-[390px]:gap-1.5 max-[390px]:px-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[11px] bg-gold/10 text-gold max-[390px]:h-7 max-[390px]:w-6"><Sparkles aria-hidden="true" className="h-4 w-4" /></span>
-        <h2 className="mr-auto min-w-0 truncate text-base font-semibold text-white max-[390px]:text-sm">{t("modelBrowser.compactTitle")}</h2>
+        <h2 data-vn-dialog-title="" className="mr-auto min-w-0 truncate text-base font-semibold text-white max-[390px]:text-sm">{t("modelBrowser.compactTitle")}</h2>
         {providerSwitch}
         {onMixMode && <button type="button" onClick={onMixMode} aria-label={t("modelMix.title")} title={t("modelMix.title")} className={cn("flex h-8 w-7 shrink-0 items-center justify-center rounded-lg text-white/55 hover:bg-white/5 hover:text-white [@media(pointer:coarse)]:h-11", isMixActive && "bg-gold/10 text-gold")}><Shuffle className="h-4 w-4" /></button>}
-        <button type="button" onClick={onClose} aria-label={t("modelBrowser.closePicker")} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-lg text-white/55 hover:bg-white/5 hover:text-white [@media(pointer:coarse)]:h-11"><X className="h-4 w-4" /></button>
+        <button data-vn-dialog-close="" type="button" onClick={onClose} aria-label={t("modelBrowser.closePicker")} className="flex h-8 w-7 shrink-0 items-center justify-center rounded-lg text-white/55 hover:bg-white/5 hover:text-white [@media(pointer:coarse)]:h-11"><X className="h-4 w-4" /></button>
       </div>
       {isMixActive && onMixMode && <button type="button" onClick={onMixMode} className="flex shrink-0 items-center gap-2 px-4 pb-2 text-xs text-gold"><Shuffle className="h-3.5 w-3.5" />{t("modelBrowser.mixPool")} · {t("modelBrowser.mixPoolCount", {count:modelPool.length})}<ChevronDown className="ml-auto h-3.5 w-3.5 -rotate-90" /></button>}
       <div className="flex shrink-0 gap-2 px-[17px] pb-2.5 max-[390px]:px-3">
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-[#242228] px-2.5 focus-within:border-purple-300/40">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-popover px-2.5 focus-within:border-primary/40">
           <Search className="h-4 w-4 shrink-0 text-white/45" />
           <input value={query} onChange={e => {setQuery(e.target.value); if(e.target.value) setActiveTier("all");}} aria-label={t("modelBrowser.searchPlaceholder")} placeholder={t("modelBrowser.searchPlaceholder")} className="h-10 min-w-0 w-full bg-transparent text-[13px] text-white outline-none placeholder:text-white/40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:text-base" />
         </label>
@@ -991,17 +995,17 @@ function PrivateView({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-400/10">
             <Sparkles className="h-4 w-4 text-slate-300" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">{t("modelBrowser.title")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{t("modelBrowser.title")}</h2>
             <p className="text-[11px] text-white/40">{t("modelBrowser.sourcePrivate")}</p>
           </div>
         </div>
-        <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
+        <button data-vn-dialog-close="" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -1133,17 +1137,17 @@ function StudioView({
 
   return (
     <>
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
             <Sparkles className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">{t("modelBrowser.title")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{t("modelBrowser.title")}</h2>
             <p className="text-[11px] text-white/40">{t("modelBrowser.studioSubtitle")}</p>
           </div>
         </div>
-        <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
+        <button data-vn-dialog-close="" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
           <X className="h-4 w-4" />
         </button>
       </div>

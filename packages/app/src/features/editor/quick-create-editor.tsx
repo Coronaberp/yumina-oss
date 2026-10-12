@@ -1,3 +1,6 @@
+import { StoryStructureTabs } from "./components/story-structure-tabs";
+import { LoreMemoryFields } from "./components/lore-memory-fields";
+import { GreetingNameField } from "./components/greeting-name-field";
 import { useStoryNavigation } from "@/hooks/use-story-navigation";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -788,6 +791,7 @@ function ScrollBody({ archetype, onOpenFullEditor }: { archetype: "chat" | "worl
       {isChat && <DialogueStyleSection />}
       <SettingsSection archetype={archetype} />
       <GreetingSection archetype={archetype} />
+      <StoryStructureTabs />
       <DescriptionSection archetype={archetype} />
       <AdvancedPromoCard onOpenFullEditor={onOpenFullEditor} />
       <MoreDisclosure onOpenFullEditor={onOpenFullEditor} />
@@ -1377,7 +1381,7 @@ function SettingsSection({ archetype }: { archetype: "chat" | "world" }) {
   );
 }
 
-/* ─── Greeting section: numbered tabs, one per opening.
+/* ─── Greeting section: named tabs, one per opening.
  *
  * The runtime has always supported multiple openings (PromptBuilder emits one
  * swipe per enabled greeting entry, each carrying its own initialVariables and
@@ -1504,7 +1508,7 @@ function GreetingSection({ archetype }: { archetype: "chat" | "world" }) {
                 : "bg-card/40 text-muted-foreground hover:bg-accent hover:text-foreground"
             )}
           >
-            {t("simple.greeting.tab", { n: i + 1 })}
+            <span className="max-w-[12rem] truncate" title={greetings[i]?.name}>{greetings[i]?.name.trim() || t("simple.greeting.tab", { n: i + 1 })}</span>
             {i === 0 && multi && (
               <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-emerald-300/80">
                 {t("simple.greeting.defaultBadge")}
@@ -1520,6 +1524,8 @@ function GreetingSection({ archetype }: { archetype: "chat" | "world" }) {
           {t("simple.greeting.add")}
         </button>
       </div>
+
+      {active && <div className="mb-3"><GreetingNameField greeting={active} onCommit={(name) => updateEntry(active.id, { name })} /></div>}
 
       <textarea
         value={active?.content ?? ""}
@@ -1948,6 +1954,7 @@ function SettingEntryCard({
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { t } = useTranslation("editor") as { t: (key: string, opts?: Record<string, unknown>) => string };
+  const linkedEntries = useEditorStore((store) => store.worldDraft.entries);
   const templatePlaceholder = useTemplateContentPlaceholder(entry);
   const keywordTriggered = entry.alwaysSend === false && (entry.keywords?.length ?? 0) > 0;
   return (
@@ -1996,6 +2003,8 @@ function SettingEntryCard({
               className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-amber-400/30"
             />
           </div>
+          <LoreMemoryFields key={entry.id} value={entry.memory} onChange={(memory) => onUpdate({ memory })}
+            entries={linkedEntries.filter((item) => item.id !== entry.id).map(({ id, name }) => ({ id, name }))} />
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               {t("simple.settings.entryContent")}

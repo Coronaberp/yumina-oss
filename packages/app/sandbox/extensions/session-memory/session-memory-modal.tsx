@@ -2,10 +2,14 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AlertCircle, Brain, Check, FileText, Layers3, Loader2, Pencil, Pin, RefreshCw, Save, Settings2, Trash2, X } from "lucide-react";
 import type { SessionMemoryPayload, SessionMemoryUsageSummary, SessionSummaryCompactionMetadata, SessionSummaryImplementation, SessionSummaryLanguage, SessionSummaryPayload } from "@yumina/shared";
 import { SESSION_SUMMARY_LANGUAGES, SESSION_SUMMARY_LANGUAGE_ENDONYMS } from "@yumina/shared";
+import { StoryhavenMemoryInspector } from "./storyhaven-memory-inspector";
 import { useYumina } from "../../sandbox-context";
 import { pickLang } from "../../chat/i18n";
 import { ModelPickerModal, ModelTrigger } from "../../chat/model-picker-modal";
 import { SandboxPlatformOverlay } from "../../platform-overlay-portal";
+import { focusGuardDialog as focusDialog, installGuardFocusScope as installDialogFocusScope } from "../state-update-guard/focus";
+import { SESSION_MEMORY_MODAL_STYLES } from "./session-memory-modal-styles";
+import { MemorySelect } from "./memory-select";
 
 const DEFAULT_CONTEXT_MODEL = "google/gemini-2.5-flash-lite";
 // The zero-cost play model (see @yumina/shared YUMINA_MODELS "Yumina Free").
@@ -130,11 +134,12 @@ function MemoryTextView({ text }: { text: string }) {
 interface SessionMemoryModalProps {
   open: boolean;
   onClose: () => void;
+  initialTab?: ContextTab;
 }
 
-type ContextTab = "systems" | "memory" | "localdev" | "summaryception";
+type ContextTab = "systems" | "memory" | "localdev" | "summaryception" | "storyhaven";
 
-export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
+export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: SessionMemoryModalProps) {
   const api = useYumina();
   const zh = pickLang(api.language) === "zh";
   const tt = (en: string, cn: string) => (zh ? cn : en);
@@ -197,7 +202,7 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
   // One language for all three summarizers — the server keeps a single
   // column, so whichever payload comes back last is still authoritative.
   const [languageDraft, setLanguageDraft] = useState<SessionSummaryLanguage>("auto");
-  const [contextTab, setContextTab] = useState<ContextTab>("systems");
+  const [contextTab, setContextTab] = useState<ContextTab>(api.memorySummaryEnabled ? initialTab : "storyhaven");
   // Read-only by default; the editable fields only appear after pressing Edit.
   const [editingMemory, setEditingMemory] = useState(false);
   const [editingSummary, setEditingSummary] = useState(false);
@@ -228,9 +233,19 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
   const memoryText = memoryToText(payload?.memory);
   const hasAnyMemory = memoryText.trim().length > 0;
   const pinnedText = payload?.pinned ?? "";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const pickerOpen = memoryModelPickerOpen || summaryModelPickerOpen || summaryceptionModelPickerOpen;
+  const pickerOpenRef = useRef(pickerOpen);
+  pickerOpenRef.current = pickerOpen;
 
   useEffect(() => {
     if (!open) return;
+    if (!api.memorySummaryEnabled) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     setDismissedSummaryError(null);
@@ -256,7 +271,7 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
       })
       .catch((err) => setError(err instanceof Error ? err.message : tt("Failed to load the memory panel", "加载记忆面板失败")))
       .finally(() => setLoading(false));
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, api.memorySummaryEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Leaving a tab discards any in-progress edit on it (back to read-only).
   useEffect(() => {
@@ -266,14 +281,19 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
   }, [contextTab]);
 
   useEffect(() => {
-    if (!open) return;
-    const handler = (event: KeyboardEvent) => {
-      if (memoryModelPickerOpen || summaryModelPickerOpen || summaryceptionModelPickerOpen) return;
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [memoryModelPickerOpen, open, onClose, summaryModelPickerOpen, summaryceptionModelPickerOpen]);
+    if (!open || !dialogRef.current) return;
+    const dialog = dialogRef.current;
+    const removeScope = installDialogFocusScope(dialog.ownerDocument,
+      // The dropdown owns Escape and keyboard focus until its popup closes.
+      () => (pickerOpenRef.current || dialogRef.current?.querySelector('[data-memory-select-menu]')) ? null : dialogRef.current,
+      () => closeRef.current());
+    focusDialog(dialog);
+    return removeScope;
+  }, [open]);
+
+  useEffect(() => {
+    if (open && !pickerOpen && dialogRef.current) focusDialog(dialogRef.current);
+  }, [open, pickerOpen]);
 
   // ── Live status refresh ──────────────────────────────────────────────
   // Memory + summary status is tracked server-side and flips updating→idle in
@@ -1027,50 +1047,53 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
   return (
     <>
       <SandboxPlatformOverlay>
+        <style>{SESSION_MEMORY_MODAL_STYLES}</style>
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center pt-[calc(env(safe-area-inset-top,0px)+2.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]"
+          ref={dialogRef}
+          className="yumina-memory-dialog"
           onClick={onClose}
           role="dialog"
           aria-modal="true"
-          aria-label={tt("Memory & Summary", "记忆与摘要")}
+          aria-label={tt("Memory", "记忆")}
         >
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <div className="yumina-memory-backdrop" />
         <div
           onClick={(e) => e.stopPropagation()}
-          className="relative z-10 flex max-h-[min(760px,calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-4rem))] w-[min(840px,calc(100vw-1rem))] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#17181b]/95 shadow-2xl shadow-black/45 backdrop-blur-xl"
+          className="yumina-memory-surface"
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-4 py-3">
-            <div className="flex items-center gap-2">
-              <div className="text-primary">
-                <Brain className="h-4 w-4" />
-              </div>
-              <div>
-                <h2 className="flex items-center gap-2 text-sm font-bold text-white">
-                  {tt("Memory & Summary", "记忆与摘要")}
-                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200/80" title={tt("Experimental; may miss details.", "测试中，可能遗漏细节。")}>{tt("Beta", "测试版")}</span>
-                </h2>
-              </div>
+          <div className="yumina-memory-header">
+            <div className="yumina-memory-heading">
+              <Brain />
+              <h2>
+                {tt("Memory", "记忆")}
+              </h2>
             </div>
             <button
               onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-white/35 transition-colors hover:bg-white/5 hover:text-white/70"
+              className="yumina-memory-close"
+              aria-label={tt("Close memory", "关闭记忆")}
               title={tt("Close", "关闭")}
             >
-              <X className="h-4 w-4" />
+              <X />
             </button>
           </div>
 
-          <div className="shrink-0 border-b border-white/[0.06] px-3 py-2">
-            <div className="grid grid-cols-4 gap-1">
-              {renderTabButton({ tab: "systems", icon: <Settings2 className="h-3.5 w-3.5" />, label: tt("Settings", "设置") })}
-              {renderTabButton({ tab: "memory", icon: <Brain className="h-3.5 w-3.5" />, label: tt("Memory", "记忆") })}
-              {renderTabButton({ tab: "localdev", icon: <FileText className="h-3.5 w-3.5" />, label: tt("Summary", "摘要") })}
-              {renderTabButton({ tab: "summaryception", icon: <Layers3 className="h-3.5 w-3.5" />, label: tt("Layers", "分层") })}
+          {api.memorySummaryEnabled && <div className="yumina-memory-tabs">
+            <div className={api.memorySummaryEnabled ? "grid grid-cols-3 gap-1 sm:grid-cols-5" : "grid grid-cols-1 gap-1"}>
+              {api.memorySummaryEnabled && renderTabButton({ tab: "systems", icon: <Settings2 className="h-3.5 w-3.5" />, label: tt("Settings", "设置") })}
+              {renderTabButton({ tab: "storyhaven", icon: <Brain className="h-3.5 w-3.5" />, label: tt("Story memory", "故事记忆") })}
+              {api.memorySummaryEnabled && <>
+                {renderTabButton({ tab: "memory", icon: <Brain className="h-3.5 w-3.5" />, label: tt("Memory", "记忆") })}
+                {renderTabButton({ tab: "localdev", icon: <FileText className="h-3.5 w-3.5" />, label: tt("Summary", "摘要") })}
+                {renderTabButton({ tab: "summaryception", icon: <Layers3 className="h-3.5 w-3.5" />, label: tt("Layers", "分层") })}
+              </>}
             </div>
-          </div>
+          </div>}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {loading ? (
+          <div className="yumina-memory-content">
+            {contextTab === "storyhaven" ? (
+              <StoryhavenMemoryInspector key={api.sessionId} api={api.storyhavenMemory} language={api.language} />
+            ) : loading ? (
               <div className="flex items-center justify-center py-16 text-white/40">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 {tt("Loading…", "加载中…")}
@@ -1097,20 +1120,14 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
                         <div className="min-w-0">
                           <p className="text-[11px] font-semibold text-white/72">{tt("Summary language", "纪要语言")}</p>
                         </div>
-                        <select
+                        <MemorySelect
                           value={languageDraft}
-                          onChange={(e) => handleSelectLanguage(e.target.value as SessionSummaryLanguage)}
-                          className="h-8 shrink-0 rounded-lg border border-white/[0.1] bg-black/40 px-2.5 text-[11px] font-medium text-white/80 outline-none transition-colors hover:border-white/20 focus:border-primary/50"
-                          aria-label={tt("Summary language", "纪要语言")}
-                        >
-                          {SESSION_SUMMARY_LANGUAGES.map((code) => (
-                            <option key={code} value={code} className="bg-[#17181b] text-white">
-                              {code === "auto"
+                          onValueChange={(value) => handleSelectLanguage(value as SessionSummaryLanguage)}
+                          label={tt("Summary language", "纪要语言")}
+                          options={SESSION_SUMMARY_LANGUAGES.map(code => ({ value: code, label: code === "auto"
                                 ? tt("Auto (story language)", "自动（故事语言）")
-                                : SESSION_SUMMARY_LANGUAGE_ENDONYMS[code]}
-                            </option>
-                          ))}
-                        </select>
+                                : SESSION_SUMMARY_LANGUAGE_ENDONYMS[code] }))}
+                        />
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-white/42">
                         {tt("Applies to future updates. Names stay unchanged.", "对后续更新生效，专有名称保持原文。")}
@@ -1591,7 +1608,7 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] px-5 py-3">
+          {contextTab !== "storyhaven" && contextTab !== "systems" && <div className="yumina-memory-footer">
             {contextTab === "memory" ? (
               <button
                 onClick={handleClear}
@@ -1717,7 +1734,7 @@ export function SessionMemoryModal({ open, onClose }: SessionMemoryModalProps) {
                 )
               )}
             </div>
-          </div>
+          </div>}
         </div>
         </div>
       </SandboxPlatformOverlay>

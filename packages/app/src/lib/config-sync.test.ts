@@ -61,12 +61,52 @@ async function reset() {
   // by design, so it has to be flushed successfully before the next case.
   await useConfigStore.getState().flushPendingPush();
   calls.length = 0;
-  useConfigStore.setState({ pinnedModels: [], pinnedPrivateModels: [] });
+  useConfigStore.setState({ pinnedModels: [], pinnedPrivateModels: [], adminDefaultModel: null });
 }
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Longer than the store's 800ms push debounce. */
 const PUSH_SETTLE_MS = 1000;
+
+test("prompt and recalled-memory lengths sync independently and persist across devices", async () => {
+  await reset();
+  useConfigStore.getState().setConfig("maxContext", 123456);
+  useConfigStore.getState().setConfig("memoryBudgetTokens", 4096);
+  await useConfigStore.getState().flushPendingPush();
+  const patch = calls.find(call => call.method === "PUT")?.body as Record<string, unknown>;
+  assert.equal(patch.maxContext, 123456);
+  assert.equal(patch.memoryBudgetTokens, 4096);
+  remoteConfig = { maxContext: 65432, memoryBudgetTokens: 8000 };
+  await useConfigStore.getState().syncFromServer({ seedMissing: false });
+  assert.equal(useConfigStore.getState().maxContext, 65432);
+  assert.equal(useConfigStore.getState().memoryBudgetTokens, 8000);
+  useConfigStore.getState().setConfig("memoryBudgetTokens", null);
+  await useConfigStore.getState().flushPendingPush();
+  assert.equal(useConfigStore.getState().memoryBudgetTokens, null);
+});
+
+test("an inherited admin default replaces stale selections and cannot be changed or mixed locally", async () => {
+  await reset();
+  useConfigStore.getState().setConfig("selectedModel", "custom/stale-local-choice");
+  remoteConfig = {selectedModel:"custom/admin-model",adminDefaultModel:"custom/admin-model",mixMode:false,modelPool:[]};
+  await useConfigStore.getState().syncFromServer({seedMissing:false});
+  assert.equal(useConfigStore.getState().selectedModel,"custom/admin-model");
+  useConfigStore.getState().setConfig("selectedModel","custom/client-override");
+  useConfigStore.getState().setConfig("mixMode",true);
+  useConfigStore.getState().addToPool("custom/client-override");
+  assert.equal(useConfigStore.getState().selectedModel,"custom/admin-model");
+  assert.equal(useConfigStore.getState().mixMode,false);
+  assert.deepEqual(useConfigStore.getState().modelPool,[]);
+  calls.length = 0;
+  await useConfigStore.getState().flushPendingPush();
+  assert.ok(!calls.some(call=>call.method==='PUT'),'stale edits must not be retried against the locked default');
+  remoteConfig = {selectedModel:"custom/personal-profile-model"};
+  await useConfigStore.getState().syncFromServer({seedMissing:false});
+  useConfigStore.getState().setConfig("selectedModel","custom/personal-choice");
+  assert.equal(useConfigStore.getState().selectedModel,"custom/personal-choice");
+  assert.equal(useConfigStore.getState().adminDefaultModel,null);
+  await useConfigStore.getState().flushPendingPush();
+});
 
 test("pinModel reports refusal when the list is full instead of doing nothing", async () => {
   await reset();

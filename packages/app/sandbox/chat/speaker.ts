@@ -15,10 +15,13 @@
  */
 import {
   displayCharacterName,
+  characterIdentifiers,
+  canonicalCharacterName,
   NARRATOR_SPEAKER,
   parseLeadingSpeakerTag,
   isPartialLeadingSpeakerTag,
 } from "@yumina/engine";
+import { dialogueSpans, plainDialogue, speechAttribution } from "./dialogue-spans";
 
 export { displayCharacterName, isPartialLeadingSpeakerTag };
 
@@ -27,6 +30,8 @@ export interface SpeakerEntry {
   role?: string;
   enabled?: boolean;
   portrait?: string | null;
+  player?: boolean;
+  playerName?: string;
 }
 
 export interface Speaker {
@@ -47,7 +52,7 @@ function escapeRegExp(s: string): string {
 
 function toSpeaker(e: SpeakerEntry): Speaker {
   return {
-    name: displayCharacterName(e.name),
+    name: e.player ? e.playerName || "You" : displayCharacterName(e.name),
     portrait: typeof e.portrait === "string" && e.portrait.length > 0 ? e.portrait : null,
   };
 }
@@ -72,10 +77,8 @@ export function resolveSpeaker(
   const tag = parseLeadingSpeakerTag(rawContent);
   if (tag.speaker === NARRATOR_SPEAKER) return null;
   if (tag.speaker) {
-    const wanted = tag.speaker.toLowerCase();
-    const hit =
-      characters.find((c) => displayCharacterName(c.name).toLowerCase() === wanted) ??
-      characters.find((c) => c.name.trim().toLowerCase() === wanted);
+    const wanted = canonicalCharacterName(characters.map(c => displayCharacterName(c.name)), displayCharacterName(tag.speaker));
+    const hit = characters.find(c => displayCharacterName(c.name) === wanted);
     if (hit) return toSpeaker(hit);
     // Unknown name: fall through and let the text decide.
   }
@@ -87,12 +90,14 @@ export function resolveSpeaker(
 
   const text = tag.text;
   const firstLine = (text.trimStart().split("\n")[0] ?? "").trim();
+  const identifiers = characterIdentifiers(characters.map(c => displayCharacterName(c.name)))
+    .filter(({ name }) => candidates.some(c => displayCharacterName(c.name) === name));
   let best: SpeakerEntry | null = null;
   let bestName = "";
-  for (const c of candidates) {
-    const name = displayCharacterName(c.name);
+  for (const { name, identifier } of identifiers) {
+    const c = candidates.find(c => displayCharacterName(c.name) === name)!;
     const marker = new RegExp(
-      `^\\s*(?:\\*\\*|【|\\[|「|\\()?\\s*${escapeRegExp(name)}\\s*(?:\\*\\*|】|\\]|」|\\))?\\s*[:：]`,
+      `^\\s*(?:\\*\\*|【|\\[|「|\\()?\\s*${escapeRegExp(identifier)}\\s*(?:\\*\\*|】|\\]|」|\\))?\\s*[:：]`,
       "i",
     );
     if (marker.test(firstLine) && name.length > bestName.length) {
@@ -104,9 +109,9 @@ export function resolveSpeaker(
 
   const sentence = firstSentence(text).toLowerCase();
   let bestIdx = Number.POSITIVE_INFINITY;
-  for (const c of candidates) {
-    const name = displayCharacterName(c.name);
-    const idx = sentence.indexOf(name.toLowerCase());
+  for (const { name, identifier } of identifiers) {
+    const c = candidates.find(c => displayCharacterName(c.name) === name)!;
+    const idx = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(identifier)}(?![\\p{L}\\p{N}])`, "iu").exec(sentence)?.index ?? -1;
     if (idx === -1) continue;
     if (idx < bestIdx || (idx === bestIdx && name.length > bestName.length)) {
       best = c;
@@ -115,4 +120,157 @@ export function resolveSpeaker(
     }
   }
   return best ? toSpeaker(best) : null;
+}
+
+export interface SpeakerSection {
+  speaker: Speaker | null;
+  /** Original prose, including separators, so splitting never discards text. */
+  text: string;
+  /** Prose to render, with an explicit `Name:` label moved into the header. */
+  content: string;
+}
+
+/** Split the display text, never the raw provider output: display rules and
+ * server-side thinking/directive filtering must remain authoritative. Raw
+ * output supplies only the legacy leading speaker tag for the first section. */
+export function splitSpeakerSections(
+  entries: ReadonlyArray<SpeakerEntry> | null | undefined,
+  content: string,
+  rawContent = content,
+): SpeakerSection[] {
+  const contentTag = parseLeadingSpeakerTag(content);
+  content = contentTag.text;
+  if (!content.trim()) return [];
+  const characters = (entries ?? []).filter(
+    e => e.role === "character" && e.enabled !== false && displayCharacterName(e.name).length > 0,
+  ).slice().sort((a, b) => displayCharacterName(b.name).length - displayCharacterName(a.name).length);
+  const prefix = "^(\\s*)(?:\\*\\*|\\*|__|_|【|\\[|「|\\()?";
+  const suffix = "(?:\\*\\*|\\*|__|_|】|\\]|」|\\))?\\s*[:：][\\t ]*";
+  const identifiers = characterIdentifiers(characters.map(e => displayCharacterName(e.name)));
+  const npc = { name: "NPC", portrait: null };
+  const labels = [
+    { pattern: new RegExp(`${prefix}Narrator${suffix}`, "i"), speaker: null },
+    ...identifiers.map(({ name, identifier }) => ({
+      pattern: new RegExp(`${prefix}${escapeRegExp(identifier)}${suffix}`, "i"),
+      speaker: toSpeaker(characters.find(e => displayCharacterName(e.name) === name)!),
+    })),
+    { pattern: new RegExp(`${prefix}NPC${suffix}`, "i"), speaker: npc },
+  ];
+  const isIndentedCode = (text: string) => /^(?:[\t ]*\r?\n)*(?: {4}|\t)/.test(text);
+  const explicitLabel = (text: string) => {
+    if (isIndentedCode(text)) return null;
+    for (const label of labels) {
+      const match = label.pattern.exec(text);
+      if (match) return { speaker: label.speaker, content: match[1]! + text.slice(match[0].length) };
+    }
+    return null;
+  };
+  const rawTag = parseLeadingSpeakerTag(rawContent);
+  const tag = rawTag.speaker ? rawTag : contentTag;
+  const taggedName = tag.speaker ? canonicalCharacterName(characters.map(e => displayCharacterName(e.name)), displayCharacterName(tag.speaker)) : null;
+  const taggedCharacter = taggedName ? characters.find(e => displayCharacterName(e.name) === taggedName) : undefined;
+  const hasInitialSpeaker = !!tag.speaker;
+  const initialSpeaker = taggedCharacter ? toSpeaker(taggedCharacter) : tag.speaker && tag.speaker !== NARRATOR_SPEAKER ? npc : null;
+
+  // Only cut outside fenced blocks. Retain the whole message when raw HTML
+  // containers are present; a split must not leave unbalanced DOM fragments.
+  const cuts = new Set([0]);
+  let offset = 0;
+  let blankStart: number | undefined;
+  let fence: { char: string; length: number } | null = null;
+  for (const line of content.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line.trimEnd());
+    if (fence) {
+      if (marker && marker[1]![0] === fence.char && marker[1]!.length >= fence.length && !marker[2]!.trim()) fence = null;
+      offset += line.length;
+      continue;
+    }
+    if (/^ {0,3}<(?:!--|\/?(?:div|table|section|article|details|ul|ol|form|p|pre|script|style)\b)/i.test(line)) {
+      return [{ speaker: hasInitialSpeaker ? initialSpeaker : resolveSpeaker(entries, content), text: content, content }];
+    }
+    if (!line.trim()) {
+      blankStart ??= offset;
+    } else {
+      if (blankStart !== undefined) {
+        if (blankStart > 0) cuts.add(blankStart);
+        blankStart = undefined;
+      } else if (offset > 0 && explicitLabel(line)) {
+        cuts.add(offset);
+      }
+      if (marker) fence = { char: marker[1]![0]!, length: marker[1]!.length };
+    }
+    offset += line.length;
+  }
+  const starts = [...cuts].sort((a, b) => a - b);
+  const sections: SpeakerSection[] = [];
+  const names = characters.map(e => displayCharacterName(e.name));
+  const paragraphCharacter = (text: string) => {
+    if (isIndentedCode(text)) return undefined;
+    const found = identifiers.find(({ identifier }) => new RegExp(
+      `${prefix}${escapeRegExp(identifier)}(?=$|[\\s:：,，.!?。！？]|['’]s\\b|\\*|_|】|\\]|」|\\))`, "i",
+    ).test(text));
+    return found ? characters.find(e => displayCharacterName(e.name) === found.name) : undefined;
+  };
+  const append = (speaker: Speaker | null, text: string, content: string) => {
+    const previous = sections.at(-1);
+    if (previous && previous.speaker?.name === speaker?.name && previous.speaker?.portrait === speaker?.portrait) {
+      previous.text += text;
+      previous.content += content;
+    } else sections.push({ speaker, text, content });
+  };
+  for (let i = 0; i < starts.length; i++) {
+    const text = content.slice(starts[i], starts[i + 1] ?? content.length);
+    const label = explicitLabel(text);
+    const prose = label?.content ?? text;
+    const named = paragraphCharacter(prose);
+    let context = label ? label.speaker : named ? toSpeaker(named) : i === 0 && hasInitialSpeaker ? initialSpeaker : characters.length === 1 ? toSpeaker(characters[0]!) : null;
+    const spans = isIndentedCode(prose) ? [{ kind: "literal" as const, text: prose, end: prose.length }] : dialogueSpans(prose);
+    let previousDialogueEnd = 0;
+    let pendingText = "";
+    let pendingContent = "";
+    for (let j = 0; j < spans.length; j++) {
+      const span = spans[j]!;
+      let source = span.text;
+      if (j === 0 && label) {
+        const gap = /^\s*/.exec(prose)![0].length;
+        source = text.slice(0, gap + text.length - prose.length) + source.slice(gap);
+      }
+      if (!span.text.trim()) {
+        pendingText += source; pendingContent += span.text; continue;
+      }
+      let resolved: Speaker | null = null;
+      if (span.kind === "dialogue") {
+        const preceding = prose.slice(previousDialogueEnd, span.end - span.text.length);
+        // Use only the adjacent prose clause, so an earlier sentence naming
+        // a speaker cannot take ownership of a later unattributed quotation.
+        const adjacent = preceding.slice(Math.max(...[".", "!", "?", "\n"].map(boundary => preceding.lastIndexOf(boundary))) + 1).replace(/^[\s*_]+/, "");
+        const before = speechAttribution(adjacent, names);
+        const attribution = before.matched ? before : speechAttribution(prose.slice(span.end), names);
+        if (!label && attribution.matched) {
+          const attributed = characters.find(e => displayCharacterName(e.name) === attribution.name);
+          context = attributed ? toSpeaker(attributed) : null;
+        }
+        resolved = label ? label.speaker : context;
+        if (!resolved && !(label && !label.speaker) && !(i === 0 && tag.speaker === NARRATOR_SPEAKER)) resolved = npc;
+        previousDialogueEnd = span.end;
+      } else if (span.kind === "action") {
+        // Bold text under an explicit dialogue label remains emphasized
+        // speech; single-asterisk stage directions remain narration.
+        if (label && /^(?:\*\*|__)/.test(span.text)) resolved = label.speaker;
+        const actor = paragraphCharacter(span.text);
+        if (!label && actor) context = toSpeaker(actor);
+      } else if (span.kind === "text" && (label || (i === 0 && hasInitialSpeaker))) {
+        // Plain `Name: dialogue` remains compatible. Unlabelled prose and
+        // all italic actions are narrator text, even in one-character worlds.
+        resolved = label ? label.speaker : initialSpeaker;
+      }
+      append(resolved, pendingText + source, pendingContent + (span.kind === "dialogue" ? plainDialogue(span.text) : span.text));
+      pendingText = ""; pendingContent = "";
+    }
+    if (pendingText) {
+      const previous = sections.at(-1);
+      if (previous) { previous.text += pendingText; previous.content += pendingContent; }
+    }
+  }
+  return sections;
 }

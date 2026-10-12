@@ -6,6 +6,7 @@ import { generationJobs } from "../../db/schema.js";
 import type { ChatMessage, ToolCall } from "../llm/types.js";
 import type { ToolResult } from "./index.js";
 import { buildToolResultMessages } from "./tool-results.js";
+import type { StudioImageReference, StudioImageTarget } from "../studio-image-references.js";
 
 /**
  * `generate_image` is a control tool: the model proposes, the creator confirms
@@ -16,9 +17,44 @@ import { buildToolResultMessages } from "./tool-results.js";
 export const IMAGE_TOOL_NAME = "generate_image";
 
 export type ImageAspect = (typeof SMART_IMAGE_ASPECTS)[number];
+export type StudioImageWorkflowChoice = "anima" | "krea" | "codex";
+
+export function defaultStudioImageWorkflow(options: {
+  requested?: StudioImageWorkflowChoice; contentRating: "sfw" | "nsfw"; hasReferences: boolean;
+  imageKind: "sprite" | "background" | "image"; available: { anima: boolean; krea: boolean; codex: boolean };
+  activeSource?: "comfyui" | "forgeneo" | "codex"; animaPreferred?: boolean;
+}): StudioImageWorkflowChoice | undefined {
+  if (options.requested) return options.requested;
+  if (options.contentRating === "nsfw") return options.available.krea ? "krea" : undefined;
+  if (options.animaPreferred && options.available.anima && ["sprite", "background"].includes(options.imageKind)) return "anima";
+  if (options.hasReferences) return options.available.codex ? "codex" : options.available.krea ? "krea" : undefined;
+  if (options.activeSource === "codex" && options.available.codex) return "codex";
+  if (options.activeSource === "comfyui" && options.available.anima) return "anima";
+  if (options.available.codex) return "codex";
+  return undefined;
+}
 
 export interface ImageProposal {
   prompt: string;
+  referenceImages?: StudioImageReference[];
+  target?: StudioImageTarget;
+  styleInstructions?: string;
+  unassignedReason?: string;
+  /** Configured personal generator; absent keeps the platform flow. */
+  source?: "comfyui" | "forgeneo" | "codex";
+  imageWorkflow?: "anima" | "krea" | "codex";
+  contentRating?: "sfw" | "nsfw";
+  imageKind?: "sprite" | "background" | "image";
+  transparent?: boolean;
+  /** Server-selected local Anima workflow and creator's per-request checkpoint. */
+  animaEnabled?: boolean;
+  animaModel?: string;
+  animaModels?: Array<{ name: string; nsfwCapable: boolean }>;
+  workflowOptions?: { anima: boolean; krea: boolean; codex: boolean };
+  seedMode?: "random" | "fixed";
+  seed?: number;
+  cfg?: number;
+  steps?: number;
   /** What the picture is for, in the creator's words — shown on the card. */
   purpose?: string;
   /** Which generator to run. The assistant chooses; an unknown value falls back
@@ -42,6 +78,45 @@ export function normalizeImageProposal(raw: unknown): ImageProposal | null {
   const r = raw as Record<string, unknown>;
   const prompt = typeof r.prompt === "string" ? r.prompt.trim().slice(0, MAX_PROMPT) : "";
   if (!prompt) return null;
+  let referenceImages: StudioImageReference[] | undefined;
+  if (r.referenceImages !== undefined) {
+    if (!Array.isArray(r.referenceImages) || r.referenceImages.length > 5 || r.referenceImages.some(ref =>
+      !ref || typeof ref.key !== "string" || typeof ref.url !== "string" || typeof ref.name !== "string"
+      || (ref.assetRef !== undefined && typeof ref.assetRef !== "string")
+      || (ref.role !== undefined && !["identity", "environment", "style", "creator"].includes(ref.role))
+      || (ref.origin !== undefined && !["upload", "manual", "automatic"].includes(ref.origin)))) return null;
+    referenceImages = r.referenceImages.map(ref => ({ key: ref.key, url: ref.url, name: ref.name,
+      ...(typeof ref.assetRef === "string" ? { assetRef: ref.assetRef } : {}),
+      ...(typeof ref.role === "string" ? { role: ref.role as StudioImageReference["role"] } : {}),
+      ...(typeof ref.origin === "string" ? { origin: ref.origin as StudioImageReference["origin"] } : {}) }));
+  }
+  const legacyOpenAI = r.source === "openai";
+  const source = r.source === "codex" ? "codex" : r.source === "comfyui" ? "comfyui" : r.source === "forgeneo" || legacyOpenAI ? "forgeneo" : undefined;
+  const imageKind = r.imageKind === "background" || r.imageKind === "image" ? r.imageKind : "sprite";
+  if (r.transparent === true && imageKind !== "sprite") return null;
+  if (source) {
+    const imageWorkflow = r.imageWorkflow === "anima" || r.imageWorkflow === "krea" || r.imageWorkflow === "codex"
+      ? r.imageWorkflow : source === "codex" ? "codex" : source === "comfyui" && r.animaEnabled === true ? "anima" : undefined;
+    const seedMode = r.seedMode === "fixed" ? "fixed" : "random";
+    const seed = typeof r.seed === "number" && Number.isInteger(r.seed) && r.seed >= 0 && r.seed <= Number.MAX_SAFE_INTEGER ? r.seed : undefined;
+    const contentRating = r.contentRating === "nsfw" ? "nsfw" : "sfw";
+    const transparent = imageKind === "sprite" && r.transparent === true;
+    const cfg = typeof r.cfg === "number" && Number.isFinite(r.cfg) ? Math.min(8, Math.max(0.5, r.cfg)) : 1;
+    const steps = typeof r.steps === "number" && Number.isInteger(r.steps) ? Math.min(20, Math.max(1, r.steps)) : 8;
+    const workflowOptions = r.workflowOptions && typeof r.workflowOptions === "object" ? r.workflowOptions as ImageProposal["workflowOptions"] : undefined;
+    return { prompt, source, imageKind, model: source === "codex" ? "GPT-6.1 Sol · xhigh" : legacyOpenAI ? "Forge Neo" : typeof r.model === "string" ? r.model.slice(0, 120) : source,
+      ...(imageWorkflow ? { imageWorkflow } : {}), contentRating, transparent,
+      ...(typeof r.animaModel === "string" && /^[\p{L}\p{N} _().+-]{1,180}\.safetensors$/iu.test(r.animaModel) ? { animaModel: r.animaModel } : {}),
+      ...(r.animaEnabled === true ? { animaEnabled: true } : {}),
+      ...(Array.isArray(r.animaModels) ? { animaModels: r.animaModels.filter((model): model is { name: string; nsfwCapable: boolean } =>
+        !!model && typeof model === "object" && typeof model.name === "string" && typeof model.nsfwCapable === "boolean").slice(0, 200) } : {}),
+      ...(workflowOptions ? { workflowOptions } : {}), seedMode, ...(seed !== undefined ? { seed } : {}), cfg, steps,
+      ...(referenceImages?.length ? { referenceImages } : {}),
+      ...(r.target && typeof r.target === "object" ? { target: r.target as StudioImageTarget } : {}),
+      ...(typeof r.styleInstructions === "string" ? { styleInstructions: r.styleInstructions.slice(0, 5000) } : {}),
+      ...(typeof r.unassignedReason === "string" ? { unassignedReason: r.unassignedReason.slice(0, 300) } : {}),
+      ...(typeof r.purpose === "string" ? { purpose: r.purpose.trim().slice(0, 200) } : {}), aspectRatio: "1:1", batchSize: 1 };
+  }
   // Resolve the model first: everything else is narrowed against IT, not against
   // the union the schema advertises. A model rejects a ratio it does not know,
   // and the creator would only find out after confirming the card.
@@ -60,7 +135,7 @@ export function normalizeImageProposal(raw: unknown): ImageProposal | null {
   const modelReason = typeof r.modelReason === "string" && r.modelReason.trim()
     ? r.modelReason.trim().slice(0, 160) : undefined;
   return { prompt, purpose, model, ...(modelReason ? { modelReason } : {}),
-    aspectRatio: aspect, ...(resolution ? { resolution } : {}), batchSize };
+    aspectRatio: aspect, ...(resolution ? { resolution } : {}), ...(r.imageKind ? { imageKind } : {}), batchSize };
 }
 
 export function imageToolMessages(call: ToolCall, result: Omit<ToolResult, "tool_call_id" | "name">): ChatMessage[] {

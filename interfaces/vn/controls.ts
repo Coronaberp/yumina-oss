@@ -1,0 +1,17 @@
+// Exact control paths extracted from the supplied vn.svg.
+export const controls = {
+  "log": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"40 40 40 40\"><g><path d=\"M48 49 H72 V66 H59 L52 73 V66 H48Z\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /><path d=\"M53 55 H67 M53 60 H63\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /></g></svg>",
+  "hide": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"1498 40 40 40\"><g><path d=\"M1504 60 Q1518 45 1532 60 Q1518 75 1504 60Z\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /><circle cx=\"1518\" cy=\"60\" r=\"4\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" /><path d=\"M1505 48 L1531 72\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /></g></svg>",
+  "skip": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"1604 40 40 40\"><g><path d=\"M1613 49 L1629 60 L1613 71Z\" fill=\"#c8b17e\" stroke=\"none\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /><rect x=\"1632\" y=\"49\" width=\"3.5\" height=\"22\" fill=\"#c8b17e\" /></g></svg>",
+  "auto": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"1710 40 40 40\"><g><path d=\"M1739 55 A11 11 0 1 0 1738 68 M1739 48 V55 H1732\" fill=\"none\" stroke=\"#c8b17e\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /><path d=\"M1727 56 L1735 61 L1727 66Z\" fill=\"#c8b17e\" stroke=\"none\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /></g></svg>",
+  "menu": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"1816 40 40 40\"><g><circle cx=\"1821\" cy=\"60\" r=\"2.5\" fill=\"#c8b17e\" /><circle cx=\"1836\" cy=\"60\" r=\"2.5\" fill=\"#c8b17e\" /><circle cx=\"1851\" cy=\"60\" r=\"2.5\" fill=\"#c8b17e\" /></g></svg>"
+};
+
+export const choiceIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="1466 660 28 34"><circle cx="1480" cy="677" r="14" fill="#eadfc9" fill-opacity="1" /><circle cx="1474" cy="676" r="1.7" fill="#3b2e20" /><circle cx="1480" cy="676" r="1.7" fill="#3b2e20" /><circle cx="1486" cy="676" r="1.7" fill="#3b2e20" /><path d="M1471 686 l-2 6 8-4Z" fill="#eadfc9" fill-opacity="1" /></svg>';
+
+// Generic portraits extracted from log_vn.svg.
+export const fallbacks = {
+  "gold": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"95 131 42 42\"><circle cx=\"116\" cy=\"152\" r=\"21\" fill=\"#463725\" stroke=\"#d5bb83\" stroke-opacity=\".5\" stroke-width=\"1\" /><circle cx=\"116\" cy=\"146.0\" r=\"5\" fill=\"#d5bb83\" /><path d=\"M106 164.0 A10 10 0 0 1 126 164.0 Z\" fill=\"#d5bb83\" /></svg>",
+  "mauve": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"95 275 42 42\"><circle cx=\"116\" cy=\"296\" r=\"21\" fill=\"#443344\" stroke=\"#cfb0ca\" stroke-width=\"1\" stroke-opacity=\".5\" /><circle cx=\"116\" cy=\"290.0\" r=\"5\" fill=\"#cfb0ca\" /><path d=\"M106 308.0 A10 10 0 0 1 126 308.0 Z\" fill=\"#cfb0ca\" /></svg>",
+  "sage": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"95 282 42 42\"><circle cx=\"116\" cy=\"303\" r=\"21\" fill=\"#2e3e35\" stroke=\"#a8c4b0\" stroke-opacity=\".5\" stroke-width=\"1\" /><circle cx=\"116\" cy=\"297.0\" r=\"5\" fill=\"#a8c4b0\" /><path d=\"M106 315.0 A10 10 0 0 1 126 315.0 Z\" fill=\"#a8c4b0\" /></svg>"
+};

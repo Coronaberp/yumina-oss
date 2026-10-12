@@ -18,12 +18,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "node scripts/sync-status-templates.mjs && tsup",
+    "dev": "node scripts/sync-status-templates.mjs && tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@yumina/shared": "workspace:*",
     "js-tiktoken": "^1.0.21",
     "zod": "^3.24"
   },

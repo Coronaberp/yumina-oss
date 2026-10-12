@@ -51,7 +51,7 @@ interface UserAssetState {
   uploading: boolean;
   uploadingCount: number;
   uploadProgress: UploadProgress | null;
-  storage: { used: number; limit: number };
+  storage: { used: number; limit: number | null };
   page: number;
   total: number;
   pageSize: number;
@@ -84,7 +84,7 @@ export const useUserAssetStore = create<UserAssetState>((set, get) => ({
   uploading: false,
   uploadingCount: 0,
   uploadProgress: null,
-  storage: { used: 0, limit: 100 * 1024 * 1024 },
+  storage: { used: 0, limit: null },
   page: 1,
   total: 0,
   pageSize: PAGE_SIZE,
@@ -439,7 +439,7 @@ export const useUserAssetStore = create<UserAssetState>((set, get) => ({
       uploading: false,
       uploadingCount: 0,
       uploadProgress: null,
-      storage: { used: 0, limit: 100 * 1024 * 1024 },
+      storage: { used: 0, limit: null },
       page: 1,
       total: 0,
     });

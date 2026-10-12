@@ -5,7 +5,7 @@ import { authMiddleware } from "../middleware/auth.js";
 import { rateLimitMiddleware } from "../middleware/rate-limit.js";
 import { db, readOwn } from "../db/index.js";
 import { userPersonas, userWorldPersonas } from "../db/schema.js";
-import { MAX_PERSONA_NAME, MAX_PERSONA_APPEARANCE, MAX_PERSONA_PERSONALITY, MAX_PERSONA_BACKSTORY, MAX_PERSONA_NOTE } from "@yumina/shared";
+import { MAX_PERSONA_NAME, MAX_PERSONA_APPEARANCE, MAX_PERSONA_PERSONALITY, MAX_PERSONA_BACKSTORY, MAX_PERSONA_NOTE, personaSpritesSchema } from "@yumina/shared";
 
 import { setAccountPersona } from "../lib/resolve-persona.js";
 import { personaEntriesSchema } from "@yumina/shared";
@@ -70,7 +70,10 @@ personaRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"),
     backstory?: string;
     note?: string;
     entries?: unknown;
+    sprites?: unknown;
   }>();
+
+  if (Object.keys(body).some(key => !["name", "avatarUrl", "appearance", "personality", "backstory", "note", "entries", "sprites"].includes(key))) return c.json({ error: "Personas contain identity details only; status values are not allowed" }, 400);
 
   if (!body.name?.trim()) {
     return c.json({ error: "Name is required" }, 400);
@@ -93,6 +96,8 @@ personaRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"),
 
   const entries = personaEntriesSchema.safeParse(body.entries ?? []);
   if (!entries.success) return c.json({ error: "Invalid persona entries" }, 400);
+  const sprites = personaSpritesSchema.safeParse(body.sprites === undefined ? {} : body.sprites);
+  if (!sprites.success) return c.json({ error: "Invalid persona sprites" }, 400);
 
   // Check if user has any personas — if not, make this one active
   const existing = await db
@@ -113,6 +118,7 @@ personaRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"),
       backstory: body.backstory ?? null,
       note: body.note ?? null,
       entries: entries.data,
+      sprites: sprites.data,
       isActive: isFirst,
     })
     .returning();
@@ -132,7 +138,10 @@ personaRoutes.patch("/:id", authMiddleware, async (c) => {
     backstory?: string | null;
     note?: string | null;
     entries?: unknown;
+    sprites?: unknown;
   }>();
+
+  if (Object.keys(body).some(key => !["name", "avatarUrl", "appearance", "personality", "backstory", "note", "entries", "sprites"].includes(key))) return c.json({ error: "Personas contain identity details only; status values are not allowed" }, 400);
 
   if (body.name !== undefined && !body.name.trim()) {
     return c.json({ error: "Name cannot be empty" }, 400);
@@ -158,6 +167,11 @@ personaRoutes.patch("/:id", authMiddleware, async (c) => {
     const entries = personaEntriesSchema.safeParse(body.entries);
     if (!entries.success) return c.json({ error: "Invalid persona entries" }, 400);
     updates.entries = entries.data;
+  }
+  if (body.sprites !== undefined) {
+    const sprites = personaSpritesSchema.safeParse(body.sprites);
+    if (!sprites.success) return c.json({ error: "Invalid persona sprites" }, 400);
+    updates.sprites = sprites.data;
   }
   if (body.name !== undefined) updates.name = body.name.trim();
   if (body.avatarUrl !== undefined) updates.avatarUrl = body.avatarUrl;

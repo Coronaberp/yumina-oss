@@ -17,16 +17,20 @@ import type {
   Condition,
   Worldbook,
   LoreUiBinding,
+  StoryRoute,
+  StoryEnding,
 } from "@yumina/engine";
 import type { EventPattern, EventMatchCondition, VariableActivation } from "@yumina/engine";
-import { deriveSectionDefaults, deriveSectionDefaultsForEntry, isVariableBoundEntry, estimateTokens } from "@yumina/engine";
+import { deriveSectionDefaults, deriveSectionDefaultsForEntry, isVariableBoundEntry, estimateTokens, isManagedStatusHelper, installStatusLayoutFiles, storyRouteSchema, storyEndingSchema, getStoryValidationIssues, readCardShowcase, updateCardShowcase } from "@yumina/engine";
 import crypto from "crypto";
+import { nameGeneratorProfilesSchema } from "@yumina/shared";
 import { parseToolArgs } from "./parse-tool-args.js";
 import { toStringArray, computeLorebookHealth, LOREBOOK_BUDGETS } from "./context-resolver.js";
 import { assertNoInlineDataUris as assertNoInlineDataUrisShared, scanTextForInlineDataUris } from "../asset-validation.js";
 import { validateTsx, formatTsxIssue } from "./tsx-validate.js";
 import { resolveUniqueMatch, nearestRegion } from "./fuzzy-match.js";
 import { analyzeRootUiReachability, rootUiConnectionNote } from "./root-ui-reachability.js";
+import { applyVnAssetOperation, parseVnAssetOperations } from "./vn-asset-tools.js";
 
 /** Find up to 3 IDs similar to the given ID (prefix or substring match) for error hints */
 function suggestSimilarIds(target: string, allIds: string[]): string {
@@ -41,7 +45,7 @@ function suggestSimilarIds(target: string, allIds: string[]): string {
 
 export interface SchemaChange {
   action: "create" | "update" | "delete";
-  entityType: "entry" | "variable" | "rule" | "behavior" | "customUI" | "audio" | "settings" | "worldbook" | "loreBinding";
+  entityType: "entry" | "variable" | "rule" | "behavior" | "route" | "ending" | "customUI" | "audio" | "settings" | "worldbook" | "loreBinding";
   id?: string;
   data?: Record<string, unknown>;
 }
@@ -170,6 +174,12 @@ export function executeReadEntities(
 
   for (const id of ids) {
     // Search across all entity types
+    const route = (world.routes ?? []).find((item) => item.id === id);
+    if (route) { results[id] = { ...route, _type: "route" }; continue; }
+
+    const ending = (world.endings ?? []).find((item) => item.id === id);
+    if (ending) { results[id] = { ...ending, _type: "ending" }; continue; }
+
     const entry = world.entries.find((e) => e.id === id);
     if (entry) { results[id] = { ...entry, _type: "entry" }; continue; }
 
@@ -228,6 +238,7 @@ export function executeReadEntities(
     if (audio) { results[id] = { ...audio, _type: "audio" }; continue; }
 
     // Special IDs
+    if (id === "card-showcase") { results[id] = { _type: "cardShowcase", ...readCardShowcase(world.cardShowcase) }; continue; }
     if (id === "settings") { results[id] = { ...world.settings, _type: "settings" }; continue; }
     results[id] = null;
   }
@@ -491,6 +502,20 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
   const ruleIds = world.rules.map((r) => r.id);
   const customUIIds = (world.customUI ?? []).map((c) => c.id);
   const audioIds = (world.audioTracks ?? []).map((a) => a.id);
+  const routeIds = (world.routes ?? []).map((route) => route.id);
+  const endingIds = (world.endings ?? []).map((ending) => ending.id);
+
+  // Use the same eligibility validation as runtime, including route bindings,
+  // condition variable/valueRef paths and enabled ending completeness.
+  for (const issue of getStoryValidationIssues(world)) {
+    issues.push({
+      severity: "error",
+      code: "story-definition-invalid",
+      entity: { type: routeIds.includes(issue.entityId) ? "route" : "ending", id: issue.entityId },
+      message: issue.message,
+      fix: "Read the route/ending and repair its variable/route references or required ending content. Keep incomplete endings disabled; allowUnconditional must be explicit for endings without conditions.",
+    });
+  }
 
   // ── Duplicate-ID check (cross-type) ──
   const allIds: { id: string; type: string }[] = [
@@ -500,6 +525,8 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
     ...ruleIds.map((id) => ({ id, type: "rule" })),
     ...customUIIds.map((id) => ({ id, type: "customUI" })),
     ...audioIds.map((id) => ({ id, type: "audio" })),
+    ...routeIds.map((id) => ({ id, type: "route" })),
+    ...endingIds.map((id) => ({ id, type: "ending" })),
   ];
   const seen = new Map<string, string>();
   for (const { id, type } of allIds) {
@@ -932,6 +959,7 @@ export function executeAnalyzeTokenCost(world: WorldDefinition): TokenCostReport
 export function executeApplyChanges(
   world: WorldDefinition,
   changes: SchemaChange[],
+  options: { replayHistoricalChanges?: boolean } = {},
 ): ApplyChangesResult {
   // Deep clone so we don't mutate the input
   const draft: WorldDefinition = JSON.parse(JSON.stringify(world));
@@ -940,7 +968,7 @@ export function executeApplyChanges(
 
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]!;
-    const result = applySingleChange(draft, change, i);
+    const result = applySingleChange(draft, change, i, options.replayHistoricalChanges);
     results.push(result);
     if (result.status === "error") {
       hasError = true;
@@ -1002,6 +1030,7 @@ function applySingleChange(
   draft: WorldDefinition,
   change: SchemaChange,
   index: number,
+  replayHistoricalChanges = false,
 ): ChangeResult {
   const id = change.id ?? (change.action === "create" ? crypto.randomUUID() : "");
   const data = change.data ?? {};
@@ -1016,7 +1045,47 @@ function applySingleChange(
         return applyBehaviorChange(draft, change.action, id, data, index);
       case "rule":
         return applyRuleChange(draft, change.action, id, data, index);
+      case "route":
+        return applyStoryCollectionChange(draft, "routes", storyRouteSchema, change.action, id, data, index);
+      case "ending":
+        return applyStoryCollectionChange(draft, "endings", storyEndingSchema, change.action, id, data, index);
       case "customUI":
+        if (data.card_showcase_operation !== undefined) {
+          draft.cardShowcase = updateCardShowcase(draft.cardShowcase, data.card_showcase_operation as { html?: string; css?: string });
+          return { index, action: change.action, entityType: "customUI", id: "card-showcase", status: "success", note: "Updated Publish → Character showcase on the public card profile." };
+        }
+        if (data.character_showcase_css_operation !== undefined) {
+          throw new Error("Character showcase now styles the published card profile. Read card-showcase and use write_card_showcase or write_character_showcase_css without characterId.");
+        }
+        if (data.status_visualization_operation !== undefined) {
+          const root = draft.rootComponent;
+          if (!root) return { index, action: change.action, entityType: "customUI", id, status: "error", error: "Select the VN interface with a Status sheet before customizing Visualizations." };
+          const files = installStatusLayoutFiles(root.files);
+          if (!files["status-sheet.tsx"]?.includes('from "./status-layout"') || !files["status-layout.tsx"]) {
+            return { index, action: change.action, entityType: "customUI", id, status: "error", error: "This card needs the standard Status sheet connection before customizing Visualizations. Preserve its menu and Back action." };
+          }
+          root.files = files;
+          const result = data.status_visualization_operation === "edit"
+            ? applyEditCustomUI(draft, "status-layout.tsx", data, index)
+            : applyRootComponentWrite(draft, change.action, "status-layout.tsx", data, index);
+          if (result.status === "success" && !/export\s+default\b/.test(root.files["status-layout.tsx"]!)) {
+            return { ...result, status: "error", error: "The Visualizations layout must export a default React component accepting { config, variables, preview }." };
+          }
+          return result.status === "success" ? { ...result, note: "Updated UI options → Visualizations. The right Status sheet and Back action are preserved." } : result;
+        }
+        if (!replayHistoricalChanges && draft.rootComponent && isManagedStatusHelper(draft.rootComponent.files, rootFileTarget(draft.rootComponent, id) ?? id)) {
+          return { index, action: change.action, entityType: "customUI", id, status: "error", error: "This built-in Status renderer is maintained by Yumina. Use write_status_visualization or edit_status_visualization for a custom layout in UI options → Visualizations; configure status-config.ts for fields and built-in widgets. Preserve the Status sheet and Back action." };
+        }
+        if (data.vn_asset_operation !== undefined) {
+          const changed = applyVnAssetOperation(draft, data.vn_asset_operation);
+          return { index, action: change.action, entityType: "customUI", id: changed.filename, status: "success", note: changed.note };
+        }
+        if (data.vn_asset_operations !== undefined) {
+          const operations = data.vn_asset_operations as unknown[];
+          const changed = operations.map(operation => applyVnAssetOperation(draft, operation));
+          return { index, action: change.action, entityType: "customUI", id: "vn-assets", status: "success",
+            note: `Applied ${changed.length} validated asset assignments in one batch.` };
+        }
         // Route edit_custom_ui (search-replace) vs write_custom_ui (full replace)
         if (data.old_code !== undefined && data.new_code !== undefined) {
           return applyEditCustomUI(draft, id, data, index);
@@ -1036,6 +1105,37 @@ function applySingleChange(
   } catch (e) {
     return { index, action: change.action, entityType: change.entityType, id, status: "error", error: e instanceof Error ? e.message : "Unknown error" };
   }
+}
+
+function applyStoryCollectionChange<T extends StoryRoute | StoryEnding>(
+  draft: WorldDefinition,
+  collection: "routes" | "endings",
+  schema: typeof storyRouteSchema | typeof storyEndingSchema,
+  action: string,
+  id: string,
+  data: Record<string, unknown>,
+  index: number,
+): ChangeResult {
+  const base = { index, action, entityType: collection === "routes" ? "route" : "ending", id };
+  const current = (draft[collection] ?? []) as T[];
+  const found = current.findIndex((item) => item.id === id);
+  if (action === "delete") {
+    if (found < 0) return { ...base, status: "error", error: `${collection === "routes" ? "Route" : "Ending"} not found: "${id}"` };
+    current.splice(found, 1);
+    if (collection === "routes") draft.routes = current as StoryRoute[];
+    else draft.endings = current as StoryEnding[];
+    return { ...base, status: "success" };
+  }
+  if (action !== "create" && action !== "update") return { ...base, status: "error", error: `Unknown action: ${action}` };
+  if (action === "update" && found < 0) return { ...base, status: "error", error: `${collection === "routes" ? "Route" : "Ending"} not found: "${id}"` };
+  const input = action === "create" && found >= 0 ? { ...current[found], ...data, id } : action === "update" ? { ...current[found], ...data, id } : { ...data, id };
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) return { ...base, status: "error", error: `Invalid ${collection === "routes" ? "route" : "ending"}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}` };
+  if (found >= 0) current[found] = parsed.data as T;
+  else current.push(parsed.data as T);
+  if (collection === "routes") draft.routes = current as StoryRoute[];
+    else draft.endings = current as StoryEnding[];
+  return { ...base, status: "success" };
 }
 
 // ── Entry CRUD ──
@@ -1601,6 +1701,11 @@ function ensureRootComponent(draft: WorldDefinition): void {
 // ── Root Component Write ──
 // Transparently handles write_custom_ui calls for worlds with rootComponent.
 
+function rootFileTarget(root: NonNullable<WorldDefinition["rootComponent"]>, id: string): string | undefined {
+  if (!id.includes(".")) return root.entryFile;
+  return id in root.files || /\.(?:tsx?|jsx?)$/i.test(id) ? id : undefined;
+}
+
 function applyRootComponentWrite(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
   const base = { index, action, entityType: "customUI", id };
 
@@ -1648,12 +1753,8 @@ function applyRootComponentWrite(draft: WorldDefinition, action: string, id: str
 
   // Determine target file: if id looks like a filename in the virtual FS, write to that file.
   // Otherwise write to the entry file (default behavior).
-  const isFilename = id.includes(".");
-  const targetFile = (isFilename && id in draft.rootComponent.files)
-    ? id                              // existing file like "homepage.tsx"
-    : isFilename && id.endsWith(".tsx")
-      ? id                            // new file like "helpers.tsx" — will be created
-      : draft.rootComponent.entryFile; // default: write to entry file
+  const targetFile = rootFileTarget(draft.rootComponent, id);
+  if (!targetFile) return { ...base, status: "error", error: `Unsupported source filename: "${id}". Use .ts, .tsx, .js or .jsx.` };
 
   if (tsxCode !== undefined) {
     draft.rootComponent.files[targetFile] = tsxCode;
@@ -1697,14 +1798,9 @@ function applyEditCustomUI(draft: WorldDefinition, id: string, data: Record<stri
   const rc = draft.rootComponent;
 
   // Resolve target file: if id is an existing filename use it directly; if it
-  // ends with .tsx but doesn't exist yet, create it; non-filename IDs address
-  // the entry file (so "root-component" or a UUID resolves sensibly).
-  const isFilename = id.includes(".");
-  const targetFile = (isFilename && id in rc.files)
-    ? id
-    : isFilename && id.endsWith(".tsx")
-      ? id
-      : rc.entryFile;
+  // source filenames stay separate; non-filename IDs address the entry file.
+  const targetFile = rootFileTarget(rc, id);
+  if (!targetFile) return { ...base, status: "error", error: `Unsupported source filename: "${id}". Use .ts, .tsx, .js or .jsx.` };
   const existingCode = rc.files[targetFile];
   if (!existingCode) {
     return { ...base, status: "error", error: `File not found: "${targetFile}" in rootComponent. Available: [${Object.keys(rc.files).join(", ")}]` };
@@ -1831,6 +1927,13 @@ function applySettingsChange(draft: WorldDefinition, data: Record<string, unknow
   if (!draft.settings) draft.settings = {} as WorldDefinition["settings"];
   const s = draft.settings;
 
+  if (data.nameGeneratorProfiles !== undefined) {
+    const parsed = nameGeneratorProfilesSchema.safeParse(data.nameGeneratorProfiles);
+    if (!parsed.success) return { ...base, status: "error", error: `Invalid naming profiles: ${parsed.error.message}` };
+    s.nameGeneratorProfiles = parsed.data;
+  }
+
+  if (data.storyStructureEnabled !== undefined) s.storyStructureEnabled = data.storyStructureEnabled as boolean;
   if (data.maxTokens !== undefined) s.maxTokens = data.maxTokens as number;
   if (data.temperature !== undefined) s.temperature = data.temperature as number;
   if (data.playerName !== undefined) s.playerName = data.playerName as string;
@@ -2090,6 +2193,8 @@ export function resolveEntityType(
   world: WorldDefinition,
   id: string,
 ): SchemaChange["entityType"] | null {
+  if ((world.routes ?? []).some((item) => item.id === id)) return "route";
+  if ((world.endings ?? []).some((item) => item.id === id)) return "ending";
   if (world.entries.find((e) => e.id === id)) return "entry";
   if (world.variables.find((v) => v.id === id)) return "variable";
   if ((world.reactions ?? []).find((r) => r.id === id)) return "behavior";
@@ -2105,6 +2210,8 @@ export function resolveEntityType(
 }
 
 const TOOL_TO_ENTITY_TYPE: Record<string, SchemaChange["entityType"]> = {
+  write_route: "route",
+  write_ending: "ending",
   write_entry: "entry",
   write_variable: "variable",
   write_behavior: "behavior",
@@ -2157,6 +2264,33 @@ export function toolCallsToSchemaChanges(
       continue;
     }
 
+    if (name === "edit_vn_assets") {
+      try {
+        const operations = parseVnAssetOperations(args);
+        const operation = operations[0]!;
+        results.push({ toolCallId: tc.id, toolName: name, change: {
+          action: "update", entityType: "customUI", id: operations.length > 1 || Array.isArray(args.operations) ? "vn-assets"
+            : operation.action === "reorder" ? "vn-asset-order.json" : operation.kind === "sprites" ? "sprites.ts" : "scenes.ts",
+          data: operations.length === 1 && !(Array.isArray(args.operations)) ? { vn_asset_operation: operations[0] }
+            : { vn_asset_operations: operations },
+        } });
+      } catch (error) {
+        results.push({ toolCallId: tc.id, toolName: name, error: error instanceof Error ? error.message : "Invalid VN asset operation." });
+      }
+      continue;
+    }
+
+    if (name === "write_route" || name === "write_ending") {
+      const id = typeof args.id === "string" ? args.id.trim() : "";
+      if (!id) {
+        results.push({ toolCallId: tc.id, toolName: name, error: `${name} requires a non-empty 'id' string` });
+        continue;
+      }
+      const { id: _id, ...data } = args;
+      results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType: name === "write_route" ? "route" : "ending", id, data } });
+      continue;
+    }
+
     if (name === "delete_entities") {
       const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
       if (ids.length === 0) {
@@ -2191,6 +2325,30 @@ export function toolCallsToSchemaChanges(
         continue;
       }
       results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType: "loreBinding", id: slotId, data: args } });
+      continue;
+    }
+
+    if (name === "write_character_showcase_css" || name === "write_card_showcase") {
+      if (args.characterId !== undefined || (args.html === undefined && args.css === undefined)
+        || (name === "write_character_showcase_css" && (args.html !== undefined || typeof args.css !== "string"))
+        || (args.html !== undefined && typeof args.html !== "string")
+        || (args.css !== undefined && typeof args.css !== "string")) {
+        results.push({ toolCallId: tc.id, toolName: name, error: "Provide HTML and/or CSS strings for the published card profile. Character IDs are not supported." });
+        continue;
+      }
+      const patch = { ...(name === "write_card_showcase" && args.html !== undefined ? { html: args.html } : {}), ...(args.css !== undefined ? { css: args.css } : {}) };
+      results.push({ toolCallId: tc.id, toolName: name, change: { action: "update", entityType: "customUI", id: "card-showcase", data: { card_showcase_operation: patch } } });
+      continue;
+    }
+    if (name === "write_status_visualization" || name === "edit_status_visualization") {
+      const editing = name === "edit_status_visualization";
+      if (editing ? typeof args.old_code !== "string" || typeof args.new_code !== "string" : typeof args.layoutCode !== "string" || !args.layoutCode.trim()) {
+        results.push({ toolCallId: tc.id, toolName: name, error: editing ? "old_code and new_code are required" : "layoutCode is required" });
+        continue;
+      }
+      results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType: "customUI", id: "status-layout.tsx", data: editing
+        ? { status_visualization_operation: "edit", old_code: args.old_code, new_code: args.new_code }
+        : { status_visualization_operation: "write", tsxCode: args.layoutCode } } });
       continue;
     }
 

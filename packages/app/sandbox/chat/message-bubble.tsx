@@ -14,8 +14,10 @@
 import React, { useState, useRef, useLayoutEffect, useMemo } from "react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { extractResponseChoices, stripGameStateDump, stripVariableUpdateTags } from "@yumina/engine";
 import { useYumina } from "../sandbox-context";
 import { renderMessage, renderMarkdown } from "./markdown";
+import { displayPersonaText } from "../../src/lib/persona-profile";
 import { MessageRendererBoundary } from "./message-renderer-boundary";
 import {
   isContentBlockedError,
@@ -24,7 +26,7 @@ import {
   FALLBACK_MODEL_ID,
 } from "./i18n";
 import type { SandboxMessage } from "./types";
-import { resolveSpeaker, stripLeadingSpeakerTag, isPartialLeadingSpeakerTag } from "./speaker";
+import { resolveSpeaker, splitSpeakerSections, stripLeadingSpeakerTag, isPartialLeadingSpeakerTag } from "./speaker";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -39,6 +41,8 @@ function trimFixed(n: number, digits: number): string {
 
 const DIR_STANDARD =
   /\[([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
+const DIR_VAR_WRAPPER =
+  /\[\s*var:\s*[\w\p{L}\p{N}.$-]+\s+(?:set|add|subtract|multiply|append|toggle|\+|-|\*)\s*(?:"(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/giu;
 const DIR_AUDIO =
   /\[audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\]/gu;
 const DIR_JSON =
@@ -49,10 +53,11 @@ const DIR_STRUCTURAL_XML =
 const DIR_TRAILING = /\[[\w\p{L}\p{N}.$-]+:[^\]]*$/u;
 
 function stripDirectives(text: string): string {
-  return text
+  return stripVariableUpdateTags(text)
     .replace(DIR_UPDATE_VAR, "")
     .replace(DIR_AUDIO, "")
     .replace(DIR_JSON, "")
+    .replace(DIR_VAR_WRAPPER, "")
     .replace(DIR_STANDARD, "")
     .replace(DIR_STRUCTURAL_XML, "")
     .replace(DIR_TRAILING, "");
@@ -115,7 +120,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   const t = useMemo(() => makeChatT(api.language), [api.language]);
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
-  const rawContent = isStreaming ? (streamingContent ?? "") : message.content;
+  const rawContent = isUser || isSystem ? message.content
+    : stripGameStateDump(extractResponseChoices(isStreaming ? (streamingContent ?? "") : message.content).text);
   // The leading speaker tag is stripped server-side for stored content, but
   // a live stream is raw — peel it before the generic directive strip (which
   // cannot match a multi-word name).
@@ -124,7 +130,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   const holdingSpeakerTag = isStreaming && isPartialLeadingSpeakerTag(rawContent);
   const displayContent = isStreaming
     ? holdingSpeakerTag ? "" : stripDirectives(stripLeadingSpeakerTag(rawContent))
-    : rawContent;
+    : isUser || isSystem ? rawContent : stripVariableUpdateTags(rawContent.replace(DIR_VAR_WRAPPER, ""));
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -163,7 +169,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
     !isUser && !isStreaming && !isSystem
       ? activeSwipe?.rawContent ?? null
       : null;
-  const hasRawOutput = !!rawOutput && rawOutput !== message.content;
+  const hasRawOutput = !!rawOutput && rawOutput !== displayContent;
   const creditCost =
     typeof activeSwipe?.creditCost === "number"
       ? activeSwipe.creditCost
@@ -178,7 +184,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
         : null;
 
   // User label
-  const userLabel = t("you");
+  const userLabel = api.user?.name || "Player";
 
   // Which character's face goes above this bubble. Reads the world's entries
   // straight from the sandbox API (pushed by the host with portraits already
@@ -194,6 +200,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
     () => (isUser || isSystem ? null : resolveSpeaker(api.entries, speakerSource)),
     [api.entries, isUser, isSystem, speakerSource],
   );
+  const sections = useMemo(
+    () => (isUser || isSystem ? [] : splitSpeakerSections([...(api.entries || []), ...["{{user}}", "You", "Player", api.user?.name].filter((name): name is string => !!name && !(api.entries || []).some(e => e.name === name && e.role === "character")).map(name => ({ name, role: "character", player: true, playerName: api.user?.name ? `${api.user.name} (You)` : "You", portrait: api.user?.avatar || null }))], displayContent, speakerSource)),
+    [api.entries, api.user?.name, api.user?.avatar, displayContent, isUser, isSystem, speakerSource],
+  );
+  const useSpeakerSections = !isUser && !RendererComp && !isEditing;
 
   // Auto-resize edit textarea
   useLayoutEffect(() => {
@@ -230,7 +241,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
 
   // ── Thinking section ─────────────────────────────────────────────
 
-  const showThinking = isStreaming && !!streamingReasoning;
+  const rawThinking = isStreaming
+    ? streamingReasoning
+    : message.swipes?.[activeSwipeIdx]?.reasoningContent;
+  const thinkingContent = rawThinking ? displayPersonaText(rawThinking, api.user?.name) : rawThinking;
+  const showThinking = !isUser && !isSystem && !!thinkingContent;
 
   // ── Metadata ─────────────────────────────────────────────────────
 
@@ -254,7 +269,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
       <div className={cn("w-full min-w-0", isUser && "play-user-message-shell")}>
         {/* Name label — a character portrait + name when the world says who is
             speaking, otherwise the plain role label on role changes. */}
-        {speaker ? (
+        {!useSpeakerSections && (speaker ? (
           <div className="play-message-speaker mb-1.5 flex items-center gap-2">
             {speaker.portrait && (
               <img
@@ -279,7 +294,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
               {isUser ? userLabel : t("narrator")}
             </p>
           )
-        )}
+        ))}
 
         {/* Attachment thumbnails */}
         {message.attachments && message.attachments.length > 0 && (
@@ -299,6 +314,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
         {showThinking && (
           <div className="mb-2">
             <button
+              type="button"
+              aria-expanded={thinkingExpanded}
               onClick={() => setThinkingExpanded(!thinkingExpanded)}
               className="flex items-center gap-1.5 text-xs text-muted-foreground/60 transition-colors hover:text-muted-foreground/80"
             >
@@ -314,7 +331,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
               </svg>
               <span className="italic">
                 {t("thinking")}
-                {!displayContent && (
+                {isStreaming && !displayContent && (
                   <span className="ml-1 inline-flex">
                     <span className="animate-pulse">...</span>
                   </span>
@@ -323,7 +340,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
             </button>
             {thinkingExpanded && (
               <div className="mt-1.5 ml-4.5 border-l-2 border-muted-foreground/15 pl-3 text-xs leading-relaxed text-muted-foreground/50 whitespace-pre-wrap">
-                {streamingReasoning}
+                {thinkingContent}
               </div>
             )}
           </div>
@@ -443,6 +460,41 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                   variables={variables ?? {}}
                 />
               </MessageRendererBoundary>
+            </div>
+          ) : useSpeakerSections ? (
+            <div onClick={handleClick}>
+              {sections.map((section, index) => (
+                <div
+                  key={index}
+                  className="play-message-section mb-4 last:mb-0"
+                  data-speaker={section.speaker?.name ?? "narrator"}
+                >
+                  {section.speaker ? (
+                    <div className="play-message-speaker mb-1.5 flex items-center gap-2">
+                      {section.speaker.portrait && (
+                        <img
+                          src={section.speaker.portrait}
+                          alt=""
+                          draggable={false}
+                          className="h-8 w-8 shrink-0 rounded-full border border-border object-cover"
+                        />
+                      )}
+                      <p className="play-message-role text-xs font-medium text-primary/70">
+                        {section.speaker.name}
+                      </p>
+                    </div>
+                  ) : (showRoleLabel || index > 0) && (
+                    <p className="play-message-role mb-1 text-xs font-medium text-primary/70">
+                      {t("narrator")}
+                    </p>
+                  )}
+                  <div dangerouslySetInnerHTML={{
+                    // Section spacing replaces the original paragraph gap;
+                    // keep indentation inside the actual prose/code intact.
+                    __html: renderMessage(section.content.replace(/^(?:[\t ]*\r?\n)+/, "")),
+                  }} />
+                </div>
+              ))}
             </div>
           ) : (
             <div

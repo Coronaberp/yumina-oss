@@ -48,7 +48,7 @@ export interface EditionInfo {
   edition: EditionName;
   release: string | null;
   features: EditionFeatures;
-  auth: { mode: "single-user" | "multi-user"; socialProviders: string[] };
+  auth: { mode: "single-user" | "multi-user"; emailPassword: boolean; socialProviders: string[] };
   storage: { kind: "s3" | "local" | "none" };
 }
 
@@ -84,7 +84,7 @@ export const DEFAULT_EDITION_INFO: EditionInfo = {
   edition: BUILD_EDITION,
   release: import.meta.env?.VITE_APP_RELEASE ?? null,
   features: allFeatures(!IS_LOCAL_BUILD),
-  auth: { mode: IS_LOCAL_BUILD ? "single-user" : "multi-user", socialProviders: [] },
+  auth: { mode: IS_LOCAL_BUILD ? "single-user" : "multi-user", emailPassword: true, socialProviders: [] },
   storage: { kind: IS_LOCAL_BUILD ? "local" : "s3" },
 };
 

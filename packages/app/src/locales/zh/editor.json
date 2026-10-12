@@ -1,4 +1,15 @@
 {
+  "visualNovel": {
+    "move": "移动 {{name}} — {{variant}}",
+    "dragHint": "拖动手柄调整卡片顺序。保存卡片以保留顺序。",
+    "settingsChanged": "卡片或图片设置已更改。请重试。",
+    "backgroundCollection": "背景集合",
+    "globalBackgrounds": "全局",
+    "openingBackgrounds": "开场：{{name}}",
+    "openingNumber": "开场 {{number}}",
+    "globalBackgroundsHint": "所有开场共用。编辑某个开场的背景不会改变此集合。",
+    "openingBackgroundsHint": "选择此开场时使用。相同场景优先使用此集合，其他场景使用全局背景。"
+  },
   "twoTapConfirm": "再点一次确认",
   "shell": {
     "namePlaceholder": "为你的世界命名...",
@@ -21,7 +32,8 @@
       "content": "内容",
       "presentation": "表现",
       "publish": "发布",
-      "creation": "AI 创作"
+      "creation": "AI 创作",
+      "story": "Story"
     },
     "switchSimple": "简单模式",
     "versionHistoryMenu": "版本历史",
@@ -39,12 +51,14 @@
     "worldbooks": "世界书",
     "variables": "变量",
     "behaviors": "行为",
-    "customUI": "自定义 UI",
+    "customUI": "界面选项",
     "audio": "音频",
     "assets": "资源",
     "overview": "概览",
     "bundles": "资源包",
-    "aiGeneration": "AI 生成"
+    "aiGeneration": "AI 生成",
+    "routes": "Routes",
+    "endings": "Endings"
   },
   "kb": {
     "listTitle": "本卡的知识库",
@@ -121,6 +135,9 @@
     "mapBooks": "世界书"
   },
   "firstMessage": {
+    "nameLabel": "开场白名称",
+    "namePlaceholder": "例如：学院入学",
+    "nameHint": "显示在路线选择器中。",
     "title": "开场白",
     "description": "玩家开始新会话时显示的开场消息。添加多条问候语供玩家滑动选择。",
     "addGreeting": "添加问候语",
@@ -142,7 +159,7 @@
     "noInitialVars": "这个开场白没有预设变量——使用默认值。",
     "true": "真",
     "false": "假",
-    "dragHint": "拖拽数字可调整顺序"
+    "dragHint": "拖拽开场白可调整顺序"
   },
   "entries": {
     "unnamed": "未命名",
@@ -433,8 +450,8 @@
     }
   },
   "components": {
-    "title": "自定义 UI",
-    "description": "自定义 TSX 组件，用于消息和全屏应用 UI",
+    "title": "界面选项",
+    "description": "选择玩家界面布局并自定义状态面板。",
     "addComponent": "添加组件",
     "surfaceMessage": "消息",
     "surfaceApp": "应用",
@@ -476,6 +493,7 @@
     "toolLoreSlot": "界面触发点：出现时让绑定知识进入 AI，不会把正文显示给玩家",
     "tabCode": "代码",
     "tabBindings": "绑定",
+    "tabVisualizations": "可视化",
     "bindingsEmpty": "在 TSX 里放置界面触发点，此处会自动为每个触发点创建知识条目。",
     "bindingsHint": "这里绑定的是「给 AI 看的隐藏知识」，不会直接显示给玩家。界面触发点出现时，对应知识才会进入 AI 提示词。",
     "bindingsGoToCode": "去写自定义 UI 代码 →",
@@ -510,7 +528,9 @@
     "htmlCode": "HTML",
     "htmlPlaceholder": "<div>HTML 内容</div>\n<script>window.yumina.onChange(function() { ... });</script>",
     "markdownCode": "Markdown",
-    "markdownPlaceholder": "# 标题\n\n在此输入 Markdown 内容..."
+    "markdownPlaceholder": "# 标题\n\n在此输入 Markdown 内容...",
+    "tabLayouts": "布局",
+    "tabAdvanced": "高级"
   },
   "audio": {
     "title": "音频",
@@ -1145,7 +1165,7 @@
       "overview": "概览",
       "previewControls": "预览控制",
       "canvas": "画布",
-      "aiAssistant": "AI 助手",
+      "aiAssistant": "Little Idot",
       "playtest": "测试",
       "marketplace": "资源市场"
     },
@@ -1156,6 +1176,9 @@
     },
     "aiChat": {
       "imageProposal": {
+        "configuredProviderNote": "使用你已配置的图片服务器。",
+        "comfySpriteNote": "生成后移除绿色背景，保存为透明 PNG。",
+        "forgeNeoSpriteNote": "生成后会移除绿色背景，并保存为透明 PNG。",
         "title": "助手想生成一张图",
         "promptLabel": "画面描述（可以改）",
         "aspect": "画面比例",
@@ -1222,6 +1245,9 @@
         "balanceUnknown": "暂未取得余额，请刷新状态。"
       },
       "resizeInput": "调整输入框大小",
+      "outputLanguage": "输出语言",
+      "outputLanguageHint": "Little Idot 回复和摘要使用的语言。从下一次回复开始生效。",
+      "languageSaveFailed": "无法保存输出语言，请重试。",
       "conversations": "对话",
       "newConversation": "新建对话",
       "clearChat": "清除聊天",
@@ -1300,7 +1326,6 @@
           "skipped": "已跳过",
           "binding_failed": "绑定失败"
         },
-        "pausedStorageNote": "素材存储空间不足，请清理素材后继续。",
         "pausedUnavailableNote": "生图服务暂时不可用，已完成的图片已保存。",
         "pausedGenericNote": "任务暂时暂停，已完成的图片已保存。稍后继续。"
       }

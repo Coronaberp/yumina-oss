@@ -61,6 +61,46 @@ test("executeReadEntities finds behaviors in reactions array", () => {
   assert.equal((result.results["dmg-calc"] as Record<string, unknown>)._type, "behavior");
 });
 
+test("Studio route and ending tools read, upsert, validate, and delete creator definitions", () => {
+  const world = makeWorld();
+  const calls = [
+    toolCall("write_route", { id: "route-a", name: "Route A", guidance: "Stay focused." }),
+    toolCall("write_ending", { id: "ending-a", name: "Ending A", outcome: "Saved", mode: "authored", prose: "The end." }),
+  ];
+  const parsed = toolCallsToSchemaChanges(calls, world);
+  assert.equal(parsed[0]?.change?.entityType, "route");
+  assert.equal(parsed[1]?.change?.entityType, "ending");
+  const applied = executeApplyChanges(world, parsed.flatMap((item) => item.change ? [item.change] : []));
+  assert.equal(applied.success, true);
+  assert.deepEqual(worldDefinitionSchema.parse(applied.world).routes?.[0]?.id, "route-a");
+  assert.equal((executeReadEntities(applied.world, ["route-a"]).results["route-a"] as Record<string, unknown>)._type, "route");
+  assert.equal((executeReadEntities(applied.world, ["ending-a"]).results["ending-a"] as Record<string, unknown>)._type, "ending");
+
+  const update = executeApplyChanges(applied.world, [{ action: "update", entityType: "route", id: "route-a", data: { guidance: "Updated." } }]);
+  assert.equal(update.success, true);
+  assert.equal(update.world.routes?.[0]?.guidance, "Updated.");
+  const invalid = executeApplyChanges(update.world, [{ action: "create", entityType: "ending", id: "bad-ending", data: { mode: "mystery" } }]);
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.world.endings?.some((item) => item.id === "bad-ending"), false);
+
+  assert.equal(resolveEntityType(update.world, "route-a"), "route");
+  assert.equal(resolveEntityType(update.world, "ending-a"), "ending");
+  const deletes = toolCallsToSchemaChanges([toolCall("delete_entities", { ids: ["route-a", "ending-a"] })], update.world);
+  assert.deepEqual(deletes.map((item) => item.change?.entityType), ["route", "ending"]);
+  const deleted = executeApplyChanges(update.world, deletes.flatMap((item) => item.change ? [item.change] : []));
+  assert.equal(deleted.success, true);
+  assert.deepEqual(deleted.world.routes, []);
+  assert.deepEqual(deleted.world.endings, []);
+});
+
+test("Studio update_settings accepts storyStructureEnabled", () => {
+  const world = makeWorld();
+  const parsed = toolCallsToSchemaChanges([toolCall("update_settings", { storyStructureEnabled: false })], world);
+  const applied = executeApplyChanges(world, parsed.flatMap((item) => item.change ? [item.change] : []));
+  assert.equal(applied.success, true);
+  assert.equal(applied.world.settings.storyStructureEnabled, false);
+});
+
 // ── executeReadEntities: offset_lines / limit_lines pagination ──
 
 test("executeReadEntities slices TSX with offset_lines + limit_lines", () => {

@@ -23,7 +23,8 @@ import { playSessions, worlds } from "../db/schema.js";
 import { recordUsageLog } from "../lib/usage-log.js";
 import { registerStream } from "../lib/stream-registry.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { resolveProviderForModel } from "../lib/resolve-provider.js";
+import { resolveStoryProviderForModel } from "../lib/story-provider.js";
+import { prepareContentRoutedRequest, ContentRoutingError } from "../lib/story-content-routing.js";
 import {
   checkSideCallRateLimit,
   acquireConcurrency,
@@ -106,7 +107,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
   // Pull worldId in the same query so a later includeLorebook resolution
   // doesn't need a second round-trip.
   const [session] = await db
-    .select({ id: playSessions.id, userId: playSessions.userId, worldId: playSessions.worldId })
+    .select({ id: playSessions.id, userId: playSessions.userId, worldId: playSessions.worldId, sessionPersona: playSessions.sessionPersona, state: playSessions.state })
     .from(playSessions)
     .where(and(eq(playSessions.id, sessionId), eq(playSessions.userId, currentUser.id)));
 
@@ -130,13 +131,58 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     .where(eq(worlds.id, session.worldId));
   const isProtectedWorld = worldRow?.allowCustomApi === false && worldRow.creatorId !== currentUser.id;
 
-  const model = body.model ?? DEFAULT_MODEL;
-  const resolved = await resolveProviderForModel(currentUser.id, model, { forceOfficial: isProtectedWorld, allowRetiredForAccessCheck: true });
+  // ── Optional lorebook injection ──
+  // When the caller opts in, pull the world schema and prepend a system message
+  // assembled from enabled entries. This mirrors what the main chat's
+  // PromptBuilder does, but in stripped-down form (no chat-history depth, no
+  // post-history zone) since side calls own their own message list.
+  const lorebookSystem = await resolveLorebookSystemMessage(
+    body.includeLorebook,
+    session.worldId,
+    providerMessages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content.filter(p => p.type === "text").map(p => p.text).join("\n") })),
+  );
+
+  // ── Build provider messages ──
+  if (lorebookSystem) {
+    // Merge with caller's leading system message if present, otherwise prepend.
+    // Keeps role count the same and lets caller-supplied instructions sit
+    // closer to the user message (lower precedence collision risk).
+    if (providerMessages[0]?.role === "system") {
+      providerMessages[0] = {
+        role: "system",
+        content: `${lorebookSystem}\n\n${providerMessages[0].content}`,
+      };
+    } else {
+      providerMessages.unshift({ role: "system", content: lorebookSystem });
+    }
+  }
+
+  if (providerMessages.length === 0) {
+    return c.json({ error: "No valid messages after filtering" }, 400);
+  }
+
+  let model = body.model ?? DEFAULT_MODEL;
+  let resolved = await resolveStoryProviderForModel(currentUser.id, model, { forceOfficial: isProtectedWorld, allowRetiredForAccessCheck: true });
   if (!resolved) {
     if (isProtectedWorld) {
       return c.json({ error: "This world requires the official Yumina API. Switch to it before playing this world.", code: "PROTECTED_WORLD" }, 403);
     }
     return c.json({ error: "No API key available for this model" }, 400);
+  }
+
+  model = resolved.model;
+  const savedPersonaName = (session.state?.metadata as Record<string, unknown> | undefined)?.personaName;
+  try {
+    const routed = await prepareContentRoutedRequest({ userId: currentUser.id, protectedWorld: isProtectedWorld,
+      playerNames: [session.sessionPersona?.persona?.name, typeof savedPersonaName === "string" ? savedPersonaName : undefined],
+      selected: { resolved, model }, messages: providerMessages, maxTokens: Math.min(body.maxTokens ?? DEFAULT_MAX_TOKENS, MAX_MAX_TOKENS) });
+    model = routed.model;
+    resolved = { ...routed.resolved, model };
+    providerMessages = routed.messages;
+  } catch (error) {
+    if (error instanceof ContentRoutingError) return c.json({ error: error.message, code: error.code }, error.status);
+    if (error instanceof Error && error.name === "ImageModelError") return c.json({ error: error.message, code: "IMAGE_MODEL_REQUIRED" }, 400);
+    throw error;
   }
 
   if (!resolved.isByok && RETIRED_PLAY_MODEL_IDS.has(model)) {
@@ -167,36 +213,6 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     if (!(PLANS[walletCheck.wallet.plan] ?? PLANS.free).unlimited) {
       walletBalance = walletCheck.balance;
     }
-  }
-
-  // ── Optional lorebook injection ──
-  // When the caller opts in, pull the world schema and prepend a system message
-  // assembled from enabled entries. This mirrors what the main chat's
-  // PromptBuilder does, but in stripped-down form (no chat-history depth, no
-  // post-history zone) since side calls own their own message list.
-  const lorebookSystem = await resolveLorebookSystemMessage(
-    body.includeLorebook,
-    session.worldId,
-    providerMessages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content.filter(p => p.type === "text").map(p => p.text).join("\n") })),
-  );
-
-  // ── Build provider messages ──
-  if (lorebookSystem) {
-    // Merge with caller's leading system message if present, otherwise prepend.
-    // Keeps role count the same and lets caller-supplied instructions sit
-    // closer to the user message (lower precedence collision risk).
-    if (providerMessages[0]?.role === "system") {
-      providerMessages[0] = {
-        role: "system",
-        content: `${lorebookSystem}\n\n${providerMessages[0].content}`,
-      };
-    } else {
-      providerMessages.unshift({ role: "system", content: lorebookSystem });
-    }
-  }
-
-  if (providerMessages.length === 0) {
-    return c.json({ error: "No valid messages after filtering" }, 400);
   }
 
   // ── Preflight cost gate (mirrors the main chat's pre-flight affordability gate) ──

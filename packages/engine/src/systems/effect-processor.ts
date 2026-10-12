@@ -1,6 +1,7 @@
 import type { Effect, AudioEffect } from "../types/index.js";
 import type { ReactionEffect, GameEvent } from "../events/types.js";
 import type { GameStateManager } from "../state/game-state-manager.js";
+import { resolveStageProgression } from "./stage-progression.js";
 
 /**
  * Result of processing @ system effects from reactions.
@@ -39,6 +40,9 @@ export interface SystemEffectResult {
 
   /** Context messages from ai:context events */
   contextMessages: Array<{ message: string; role: string }>;
+
+  /** Declarative stage ladders resolved against live variables and action events. */
+  progressionEvents?: GameEvent[];
 }
 
 /**
@@ -67,6 +71,7 @@ export function processSystemEffects(effects: ReactionEffect[]): SystemEffectRes
     variableToggles: [],
     notifications: [],
     contextMessages: [],
+    progressionEvents: [],
   };
 
   for (const effect of effects) {
@@ -208,6 +213,9 @@ function processSetEffect(
 
 function processEmitEffect(event: GameEvent, result: SystemEffectResult): void {
   switch (event.type) {
+    case "progression:resolve":
+      result.progressionEvents!.push(event);
+      break;
     case "audio:play":
       if (typeof event.trackId === "string") {
         result.audioEffects.push({
@@ -251,6 +259,7 @@ function processEmitEffect(event: GameEvent, result: SystemEffectResult): void {
 export function applySystemEffects(
   stateManager: GameStateManager,
   systemResult: SystemEffectResult,
+  events: GameEvent[] = [],
 ): Array<{ variableId: string; oldValue: unknown; newValue: unknown }> {
   // Apply directives
   for (const directive of systemResult.directives) {
@@ -286,5 +295,10 @@ export function applySystemEffects(
   }
 
   // Apply variable effects
-  return stateManager.applyEffects(systemResult.variableEffects);
+  const changes = stateManager.applyEffects(systemResult.variableEffects);
+  const actionEvents = [...events, ...changes.map(change => ({ type: "state:changed", ...change }))];
+  for (const event of systemResult.progressionEvents ?? []) {
+    changes.push(...stateManager.applyEffects(resolveStageProgression(event, stateManager.getSnapshot(), actionEvents)));
+  }
+  return changes;
 }

@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { memoryRecallBudgetSchema } from "../memory-context.js";
 import { aiGenerationConfigSchema } from '../ai-generation.js';
+import { isStudioOutputLanguage } from '../studio-language.js';
 import {
   MAX_DISPLAY_NAME_LENGTH,
   MAX_USERNAME_LENGTH,
@@ -32,7 +34,11 @@ export const updateProfileSchema = z.object({
     .optional(),
   birthYear: z.number().int().min(1900).max(new Date().getFullYear()).nullable().optional(),
   featuredWorldId: z.string().nullable().optional(),
-  preferences: z.record(z.unknown()).optional(),
+  preferences: z.record(z.unknown()).superRefine((preferences, ctx) => {
+    if ('studioOutputLanguage' in preferences && !isStudioOutputLanguage(preferences.studioOutputLanguage)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['studioOutputLanguage'], message: 'Choose a supported Studio output language' });
+    }
+  }).optional(),
 });
 
 export type UpdateProfileSchema = z.infer<typeof updateProfileSchema>;
@@ -45,6 +51,7 @@ export const aiConfigSchema = z.object({
   // every other setting — and nothing reached the account. Turns never read
   // this copy; they get the dial per request and treat non-numbers as unset.
   storyMemory: aiGenerationConfigSchema.shape.storyMemory.unwrap().nullable().optional(),
+  memoryBudgetTokens: memoryRecallBudgetSchema.nullable().optional(),
   selectedModel: z.string().min(1).max(200).optional(),
   modelFallback: z.object({
     mode: z.enum(["ask", "auto", "stop"]),

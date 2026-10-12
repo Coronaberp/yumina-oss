@@ -13,6 +13,7 @@
 
 import DOMPurify from "dompurify";
 import { parseImageEmbeds, renderImageEmbedHtml } from "@yumina/engine";
+import { capitalizeSentenceStarts } from "./sentence-case";
 
 // ── HTML embed types ───────────────────────────────────────────────
 
@@ -251,6 +252,7 @@ export function renderMessage(raw: string): string {
  *   7. Restore image embeds
  *   8. Restore html iframe embeds from ```html``` blocks
  *   9. Sanitize with DOMPurify
+ *  10. Capitalize visible sentence starts, preserving code and embeds
  */
 function renderMessageUncached(raw: string): string {
   const codeBlocks: string[] = [];
@@ -328,7 +330,8 @@ function renderMessageUncached(raw: string): string {
     return embed ? renderHtmlEmbedHtml(embed) : "";
   });
 
-  html = DOMPurify.sanitize(html, {
+  const rendered = DOMPurify.sanitize(html, {
+    RETURN_DOM: true,
     ALLOWED_TAGS: [
       "span",
       "div",
@@ -359,9 +362,10 @@ function renderMessageUncached(raw: string): string {
       "sandbox",
       "loading",
     ],
-  });
+  }) as HTMLBodyElement;
 
-  return html;
+  capitalizeSentenceStarts(rendered);
+  return rendered.innerHTML;
 }
 
 /**

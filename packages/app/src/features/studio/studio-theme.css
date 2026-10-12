@@ -1,3 +1,21 @@
+.studio-markdown{min-width:0;overflow-wrap:anywhere;line-height:1.65}
+.studio-markdown p{margin:.65em 0}
+.studio-markdown h1,.studio-markdown h2,.studio-markdown h3,.studio-markdown h4,.studio-markdown h5,.studio-markdown h6{font-weight:600;line-height:1.4;margin:1.1em 0 .45em}
+.studio-markdown h1{font-size:1.5em}.studio-markdown h2{font-size:1.3em}.studio-markdown h3{font-size:1.15em}
+.studio-markdown ul,.studio-markdown ol{padding-left:1.5em;margin:.65em 0}
+.studio-markdown ul{list-style:disc}.studio-markdown ol{list-style:decimal}.studio-markdown li{margin:.3em 0}
+.studio-markdown blockquote{border-left:2px solid var(--color-primary);padding-left:1em;margin:.8em 0;color:var(--color-muted-foreground)}
+.studio-markdown a{color:var(--color-primary);text-decoration:underline;text-underline-offset:2px}
+.studio-markdown pre{max-width:100%;overflow-x:auto;white-space:pre;background:var(--color-muted);padding:12px;border-radius:8px;margin:.8em 0}
+.studio-markdown code{font-family:monospace;background:var(--color-muted);border-radius:3px;padding:.1em .3em}.studio-markdown pre code{padding:0;background:none}
+.studio-markdown img{max-width:100%;height:auto;border-radius:8px}
+.studio-markdown hr{border-color:var(--color-border);margin:1em 0}
+.studio-markdown-table{max-width:100%;overflow-x:auto;margin:.8em 0;overscroll-behavior-x:contain}
+.studio-markdown table{border-collapse:collapse;min-width:100%;width:max-content;max-width:none}
+.studio-markdown th,.studio-markdown td{border:1px solid var(--color-border);padding:.55em .75em;vertical-align:top;max-width:280px;white-space:normal;overflow-wrap:anywhere}
+.studio-markdown th{font-weight:600;background:var(--color-muted);text-align:left}
+.studio-markdown [align=center]{text-align:center}.studio-markdown [align=right]{text-align:right}
+
 /* Dockview theme — maps Yumina dark theme to dockview CSS variables.
    We use !important on every variable to guarantee our overrides survive
    production CSS-chunk reordering (Vite may place dockview.css after this). */
@@ -16,14 +34,14 @@
   /* ── Active group tabs ────────────────────────────── */
   --dv-activegroup-visiblepanel-tab-background-color: rgba(255,255,255,0.05) !important;
   --dv-activegroup-hiddenpanel-tab-background-color: transparent !important;
-  --dv-activegroup-visiblepanel-tab-color: #E6E4DD !important;
-  --dv-activegroup-hiddenpanel-tab-color: #8E8A84 !important;
+  --dv-activegroup-visiblepanel-tab-color: var(--color-foreground) !important;
+  --dv-activegroup-hiddenpanel-tab-color: var(--color-text-muted) !important;
 
   /* ── Inactive group tabs ──────────────────────────── */
   --dv-inactivegroup-visiblepanel-tab-background-color: transparent !important;
   --dv-inactivegroup-hiddenpanel-tab-background-color: transparent !important;
-  --dv-inactivegroup-visiblepanel-tab-color: #8E8A84 !important;
-  --dv-inactivegroup-hiddenpanel-tab-color: #6B6864 !important;
+  --dv-inactivegroup-visiblepanel-tab-color: var(--color-text-muted) !important;
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--color-text-disabled) !important;
 
   /* ── Separators & dividers ────────────────────────── */
   --dv-separator-border: transparent !important;
@@ -33,7 +51,7 @@
   --dv-tabs-container-scrollbar-color: rgba(255, 255, 255, 0.1) !important;
 
   /* ── Drag & drop ──────────────────────────────────── */
-  --dv-drag-over-background-color: rgba(201, 162, 94, 0.1) !important;
+  --dv-drag-over-background-color: rgba(212, 194, 146, 0.1) !important;
   --dv-drag-over-border-color: var(--color-gold) !important;
 
   /* ── Focus / outlines ─────────────────────────────── */
@@ -105,14 +123,14 @@
   border: 1px solid transparent;
   border-radius: 9999px;
   background: transparent;
-  color: #8E8A84;
+  color: var(--color-text-muted);
   transition: all 0.2s ease;
 }
 
 .dockview-theme-yumina .studio-tab-add-button:hover {
   background-color: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.08);
-  color: #E6E4DD;
+  color: var(--color-foreground);
 }
 
 .dockview-theme-yumina .dv-horizontal > .dv-sash-container > .dv-sash {
@@ -133,7 +151,7 @@
   opacity: 0.78;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.04),
-    0 0 18px rgba(201, 162, 94, 0.18);
+    0 0 18px rgba(212, 194, 146, 0.18);
   transition:
     background-color 0.18s ease,
     box-shadow 0.18s ease,
@@ -166,7 +184,7 @@
   opacity: 1;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 0 22px rgba(201, 162, 94, 0.28);
+    0 0 22px rgba(212, 194, 146, 0.28);
 }
 
 .dockview-theme-yumina .dv-horizontal > .dv-sash-container > .dv-sash:not(.disabled):hover::after,

@@ -1,5 +1,7 @@
 import type { Effect, AudioEffect } from "../types/index.js";
-import type { ParseResult } from "./response-parser.js";
+import { ResponseParser, type ParseResult } from "./response-parser.js";
+import { normalizeChoices } from "./response-choices.js";
+import { stripZeroWidthSpaces } from "./text-normalization.js";
 
 /**
  * Parses JSON-format LLM responses.
@@ -18,7 +20,7 @@ import type { ParseResult } from "./response-parser.js";
 export class StructuredResponseParser {
   /** Strip markdown code fences (```json ... ``` or ``` ... ```) if present. */
   private stripCodeFence(text: string): string {
-    const trimmed = text.trim();
+    const trimmed = stripZeroWidthSpaces(text).trim();
     const match = trimmed.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
     return match ? match[1]! : trimmed;
   }
@@ -43,6 +45,7 @@ export class StructuredResponseParser {
    * Falls back to returning the raw text as cleanText if parsing fails.
    */
   parse(text: string): ParseResult {
+    text = stripZeroWidthSpaces(text);
     const trimmed = this.stripCodeFence(text);
     let parsed: Record<string, unknown>;
     try {
@@ -56,7 +59,9 @@ export class StructuredResponseParser {
       parsed = repaired;
     }
 
-    const cleanText = typeof parsed.narrative === "string" ? parsed.narrative : "";
+    const presentation = new ResponseParser().parse(typeof parsed.narrative === "string" ? parsed.narrative : "", undefined, []);
+    const cleanText = presentation.cleanText;
+    const choices = normalizeChoices(parsed.choices) ?? presentation.choices;
 
     // Convert stateChanges to Effect[]
     const effects: Effect[] = [];
@@ -110,7 +115,7 @@ export class StructuredResponseParser {
       }
     }
 
-    return { cleanText, effects, audioEffects };
+    return { cleanText, effects, audioEffects, ...(presentation.speaker ? { speaker: presentation.speaker } : {}), ...(choices !== undefined ? { choices } : {}) };
   }
 
   /**

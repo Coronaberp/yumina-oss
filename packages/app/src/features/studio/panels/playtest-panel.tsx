@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import { useChatStore } from "@/stores/chat";
 import { ChatView } from "@/features/chat/chat-view";
+import { confirmPreflightWarnings, preflightIssueSummary, runStudioPreflight } from "../lib/preflight";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -96,6 +97,17 @@ export function PlaytestPanel(_props: IDockviewPanelProps) {
           setStatus("error");
           return null;
         }
+      }
+
+      const preflight = await runStudioPreflight(serverWorldId);
+      if (preflight.blockingErrors.length) {
+        setError(`Fix these preflight errors before playtesting:\n${preflightIssueSummary(preflight.blockingErrors)}`);
+        setStatus("error");
+        return null;
+      }
+      if (!confirmPreflightWarnings(preflight.warnings, "playtesting")) {
+        setStatus("idle");
+        return null;
       }
 
       const res = await fetch(`${apiBase}/api/sessions`, {

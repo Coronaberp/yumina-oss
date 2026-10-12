@@ -1,3 +1,4 @@
+import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
 import { parseUnsupportedParam, stripParamFromBody } from "./param-fallback.js";
@@ -10,7 +11,7 @@ const OPENAI_BASE = "https://api.openai.com/v1";
  *  (temperature, top_p, frequency_penalty, presence_penalty). They expect
  *  `max_completion_tokens` and run with default sampling. */
 function isReasoningModel(id: string): boolean {
-  return /^o[1-9]/.test(id) || id.startsWith("gpt-5");
+  return /^o[1-9]/.test(id) || /^gpt-[5-9]/.test(id);
 }
 
 /** Build the chat-completion request body for OpenAI. Centralizes the rules
@@ -38,6 +39,8 @@ function buildOpenAIBody(model: string, params: GenerateParams, opts: { stream: 
     if (params.topP !== undefined) body.top_p = params.topP;
     if (params.frequencyPenalty !== undefined) body.frequency_penalty = params.frequencyPenalty;
     if (params.presencePenalty !== undefined) body.presence_penalty = params.presencePenalty;
+  } else if (!params.disableReasoning) {
+    body.reasoning_effort = params.reasoningEffort ?? "low";
   }
 
   if (params.responseFormat) body.response_format = { type: params.responseFormat.type };
@@ -81,7 +84,7 @@ export class OpenAIProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      yield { type: "error", content: `OpenAI error (${response.status}): ${error}` };
+      yield { type: "error", content: `OpenAI error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 
@@ -243,7 +246,7 @@ export class OpenAIProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text().catch(() => "");
-      yield { type: "error", content: `OpenAI error (${response.status}): ${error}` };
+      yield { type: "error", content: `OpenAI error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 

@@ -6,12 +6,23 @@
 //   current-scene (string)    — scene ID from SCENES object
 //   current-period (string)   — "morning" | "afternoon" | "evening" | "night"
 //   segments (json)           — AI-generated dialogue segments (parsed from AI responses)
-//   [char]-emotion (string)   — per-character emotion state: "normal"|"happy"|"sad"|"angry"|"shy"|"surprised"
+//   [char]-emotion (string)   — per-character emotion state: "normal"|"happy"|"sad"|"angry"|"shy"|"smug"|"surprised"
 //   [char]-affinity (number)  — optional relationship tracking
 //
 // How it works:
-//   1. AI writes narrative in response, includes [SCENE:id] and [SPEAKER:name:emotion] markers
-//   2. This component parses those markers from the variables.segments JSON array
+//   1. AI prefixes EVERY spoken passage with [SPEAKER:Name:emotion], and actions with
+//      [SPEAKER:Narrator:normal] plus *italics*. Actions use exact character names.
+//      Undefined characters use [SPEAKER:NPC:emotion:male|female:stable-id].
+//      In segments, supply speaker: "NPC", gender: "male" or "female", npcId: "stable-id".
+//      The visible name remains NPC. Omit gender when unknown; never guess it from a name.
+//      Player references in generated text use the literal double-brace user token.
+//      A playable turn also includes [CHOICES: ["Action one", "Action two"]] with
+//      2–4 real options; never generate the custom "..." button or act for the player.
+//   2. The engine stores choices on the assistant swipe. This example consumes a
+//      variables.segments array ({ speaker, emotion, text }); it does not convert
+//      response markers into segments or render choice controls automatically.
+//      Use the built-in VN interface for parsed messages and the custom-choice modal,
+//      or wire the adapter and api.pendingChoices when adapting this scene example.
 //   3. Renders background (with day/night variants), character sprite, and dialogue box
 //   4. Map overlay shows available locations as clickable landmarks
 
@@ -52,17 +63,21 @@ export default function VNSceneEngine({ variables, metadata, worldName }) {
       name: "Sakura",
       color: "#f472b6",
       sprites: {
-        normal: null, happy: null, sad: null, angry: null, shy: null, surprised: null
+        normal: null, happy: null, sad: null, angry: null, shy: null, smug: null, surprised: null
       }
     },
     kaito: {
       name: "Kaito",
       color: "#818cf8",
       sprites: {
-        normal: null, happy: null, sad: null, angry: null, shy: null, surprised: null
+        normal: null, happy: null, sad: null, angry: null, shy: null, smug: null, surprised: null
       }
     }
   };
+
+  // Uploaded transparent NPC cutouts, keyed by image ID within each gender pool.
+  // A vn-npc-sprites JSON variable can override these authored pools.
+  var NPC_SPRITES = { male: {}, female: {} };
 
   // ─── MAP LANDMARKS ───
   // Positions are percentages (top, left) on the map overlay
@@ -101,9 +116,48 @@ export default function VNSceneEngine({ variables, metadata, worldName }) {
   } catch (e) { segments = []; }
 
   var segment = segments[currentIdx] || null;
-  var speakerId = segment ? (segment.speaker || "").toLowerCase() : "";
-  var speakerChar = CHARACTERS[speakerId] || null;
+  var speakerName = segment && typeof segment.speaker === "string" ? segment.speaker.trim() : "";
+  var speakerId = speakerName.toLowerCase();
+  function displayName(name) { return name.trim().replace(/^[^:：]{1,12}[:：]\s*(.+)$/s, "$1"); }
+  function namedCharacter(characters, name) {
+    var key = displayName(name).toLowerCase();
+    var exact = characters.find(function(character) { return displayName(character.name).toLowerCase() === key; });
+    if (exact) return exact;
+    var matches = characters.filter(function(character) {
+      var full = displayName(character.name);
+      var qualifier = /\s*\(([^()]+)\)\s*$/.exec(full);
+      var base = full.replace(/\s*\([^()]+\)\s*$/, "").trim();
+      var aliases = [base].concat(base.split(/\s+/), qualifier ? [qualifier[1].trim()].concat(qualifier[1].trim().split(/\s+/)) : []);
+      return aliases.some(function(alias) { return alias.toLowerCase() === key; });
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+  var speakerChar = Object.prototype.hasOwnProperty.call(CHARACTERS, speakerId) ? CHARACTERS[speakerId] : namedCharacter(Object.values(CHARACTERS), speakerName);
+  var definedSpeaker = namedCharacter((api.entries || []).filter(function(entry) { return entry.role === "character" && entry.enabled !== false; }), speakerName);
+  var isNarration = speakerId === "narrator" || segment?.kind === "narration";
+  var speakerLabel = isNarration ? "" : definedSpeaker ? displayName(definedSpeaker.name) : speakerChar ? speakerChar.name : "NPC";
   var emotion = segment ? (segment.emotion || "normal") : "normal";
+  var npcGender = typeof segment?.gender === "string" ? segment.gender.trim().toLowerCase() : "";
+  var npcId = typeof segment?.npcId === "string" ? segment.npcId.trim().toLowerCase() : "unknown";
+  var npcSprite = null;
+  if (!isNarration && !definedSpeaker && !speakerChar && (npcGender === "male" || npcGender === "female")) {
+    var pools = variables["vn-npc-sprites"] ?? NPC_SPRITES;
+    try { if (typeof pools === "string") pools = JSON.parse(pools); } catch (e) { pools = null; }
+    var pool = pools?.[npcGender];
+    if (pool && typeof pool === "object" && !Array.isArray(pool)) {
+      var seed = (api.sessionId || api.worldId || "vn") + ":npc:" + npcGender + ":" + (npcId || "unknown");
+      var selected = null, highest = -1;
+      Object.entries(pool).forEach(function(pair) {
+        var id = pair[0], ref = pair[1];
+        if (typeof ref !== "string" || !ref.trim()) return;
+        var score = 2166136261;
+        for (var char of seed + ":" + id) score = Math.imul(score ^ char.codePointAt(0), 16777619) >>> 0;
+        if (score > highest || (score === highest && id < selected.id)) { highest = score; selected = { id: id, ref: ref }; }
+      });
+      if (selected) npcSprite = api.resolveAssetUrl(selected.ref);
+    }
+  }
+  var sprite = speakerChar ? speakerChar.sprites[emotion] || speakerChar.sprites.normal : npcSprite;
 
   // ─── BACKGROUND ───
   var bgUrl = scene.assets ? scene.assets[timeOfDay] : null;
@@ -134,11 +188,11 @@ export default function VNSceneEngine({ variables, metadata, worldName }) {
       <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 50%, rgba(0,0,0,0.6) 100%)" }} />
 
       {/* Character sprite */}
-      {speakerChar && speakerChar.sprites[emotion] && (
+      {sprite && (
         <img
-          src={speakerChar.sprites[emotion]}
+          src={sprite}
           style={{ position: "absolute", bottom: "10%", left: "50%", transform: "translateX(-50%)", maxHeight: "70%", objectFit: "contain", pointerEvents: "none" }}
-          alt={speakerChar.name}
+          alt={speakerLabel}
         />
       )}
 
@@ -149,9 +203,9 @@ export default function VNSceneEngine({ variables, metadata, worldName }) {
           background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
           padding: "20px 24px", borderTop: "2px solid " + (speakerChar?.color || "#888")
         }}>
-          {speakerChar && (
-            <div style={{ fontSize: 14, fontWeight: 700, color: speakerChar.color, marginBottom: 6 }}>
-              {speakerChar.name}
+          {speakerLabel && (
+            <div aria-label="Speaker" style={{ fontSize: 14, fontWeight: 700, color: speakerChar?.color || "#c5a464", marginBottom: 6 }}>
+              {speakerLabel}
             </div>
           )}
           <div style={{ fontSize: 16, color: "#e0e0e0", lineHeight: 1.7 }}>

@@ -1,3 +1,5 @@
+import { maskPresentationLiterals, presentationLiteralRanges, isPresentationLiteral } from "./presentation-literals.js";
+
 /**
  * Filters out tag blocks that some models leak into their text output: reasoning blocks
  * (e.g., Gemini 2.5 Flash Lite emitting <fiction-mode>...</fiction-mode>) and structural
@@ -49,6 +51,7 @@ export class ThinkingTagFilter {
   private blockTag = "";
   /** Accumulates content inside the block so we can detect the closing tag */
   private closeBuffer = "";
+  private visiblePrefix = "";
 
   push(chunk: string): string {
     let output = "";
@@ -59,7 +62,7 @@ export class ThinkingTagFilter {
 
       switch (this.state) {
         case "normal":
-          if (ch === "<") {
+          if (ch === "<" && !isPresentationLiteral(presentationLiteralRanges(this.visiblePrefix + output + ch), this.visiblePrefix.length + output.length)) {
             this.state = "in_tag";
             this.tagBuffer = "<";
           } else {
@@ -71,7 +74,7 @@ export class ThinkingTagFilter {
           this.tagBuffer += ch;
           if (ch === ">") {
             // Tag complete — check if it's a thinking open tag
-            const match = this.tagBuffer.match(/^<([\w-]+)>$/i);
+            const match = this.tagBuffer.match(/^<([\w-]+)\s*>$/i);
             if (match && SUPPRESSED_TAGS.has(match[1]!.toLowerCase())) {
               this.state = "in_block";
               this.blockTag = match[1]!.toLowerCase();
@@ -93,7 +96,7 @@ export class ThinkingTagFilter {
         case "in_block": {
           this.closeBuffer += ch;
           const closeTag = `</${this.blockTag}>`;
-          if (this.closeBuffer.toLowerCase().endsWith(closeTag)) {
+          if (new RegExp(`</${this.blockTag}\\s*>$`, "i").test(this.closeBuffer)) {
             this.state = "normal";
             this.blockTag = "";
             this.closeBuffer = "";
@@ -108,6 +111,7 @@ export class ThinkingTagFilter {
       i++;
     }
 
+    this.visiblePrefix += output;
     return output;
   }
 
@@ -128,16 +132,18 @@ export class ThinkingTagFilter {
     this.tagBuffer = "";
     this.blockTag = "";
     this.closeBuffer = "";
+    this.visiblePrefix = "";
   }
 
   /** One-shot: strip all thinking tag blocks from a complete string. */
   static strip(text: string): string {
-    let result = text;
+    const literals = maskPresentationLiterals(text);
+    let result = literals.text;
     for (const tag of SUPPRESSED_TAGS) {
-      const pattern = new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, "gi");
+      const pattern = new RegExp(`<${tag}\\s*>[\\s\\S]*?(?:<\\/${tag}\\s*>|$)`, "gi");
       result = result.replace(pattern, "");
     }
     // Clean up leftover whitespace from removed blocks
-    return result.replace(/\n{3,}/g, "\n\n").trim();
+    return literals.restore(result.replace(/\n{3,}/g, "\n\n").trim());
   }
 }

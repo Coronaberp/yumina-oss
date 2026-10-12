@@ -229,14 +229,14 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
         {/* Content */}
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {submitted ? (
-            <div className="rounded-xl border border-white/5 bg-[#1A1A1C] px-4 py-6 text-center">
+            <div className="rounded-xl border border-white/5 bg-input px-4 py-6 text-center">
               <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/15">
                 <Check className="h-4 w-4 text-emerald-400" />
               </div>
               <p className="mt-2 text-sm font-medium text-foreground">{t("toasts:reportSubmitted", "Report submitted. We'll review it shortly.")}</p>
             </div>
           ) : alreadyReported ? (
-            <div className="rounded-xl border border-white/5 bg-[#1A1A1C] px-4 py-6 text-center">
+            <div className="rounded-xl border border-white/5 bg-input px-4 py-6 text-center">
               <Flag className="mx-auto h-8 w-8 text-muted-foreground/30 mb-2" />
               <p className="text-sm font-medium text-foreground">{t("report.alreadyReported")}</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
@@ -259,7 +259,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
                     className={`w-full rounded-xl border px-4 py-2.5 text-left text-sm font-medium transition-all ${
                       reason === r.value
                         ? "border-red-400/40 bg-red-500/10 text-red-400"
-                        : "border-white/5 bg-[#1A1A1C] text-muted-foreground hover:border-white/10 hover:bg-white/5 hover:text-foreground"
+                        : "border-white/5 bg-input text-muted-foreground hover:border-white/10 hover:bg-white/5 hover:text-foreground"
                     }`}
                   >
                     {t(r.labelKey)}
@@ -274,7 +274,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
                 placeholder={t("report.detailsPlaceholder")}
                 maxLength={2000}
                 rows={3}
-                className="w-full rounded-xl border border-white/5 bg-[#1A1A1C] px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-white/10 focus:outline-none resize-none"
+                className="w-full rounded-xl border border-white/5 bg-input px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-white/10 focus:outline-none resize-none"
               />
 
               {/* Screenshot upload */}
@@ -287,7 +287,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
                 {screenshots.length > 0 && (
                   <div className="grid grid-cols-4 gap-2">
                     {screenshots.map((s, i) => (
-                      <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-white/10 bg-[#1A1A1C]">
+                      <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-white/10 bg-input">
                         <img src={s.preview} alt="" className="h-full w-full object-cover" />
                         {s.uploading && (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/50">

@@ -1,14 +1,18 @@
+import { buildStudioCompactedMessages, buildStudioSummaryPrompt, estimateStudioTokens, isStudioSummaryRequest } from "../lib/studio-context-compaction.js";
+import { getModelContextWindow } from "../lib/llm/context-window.js";
+import { enqueueStudioSteering, consumeStudioSteering, readStudioSteering, STUDIO_STEERING_KEY, StudioSteeringError } from "../lib/studio-steering.js";
 import { usageObservation } from "../lib/usage-observation.js";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { eq, and, asc, desc, ne, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { worlds, agentRuns, worldSnapshots, worldFolderBindings } from "../db/schema.js";
+import { worlds, agentRuns, worldSnapshots, worldFolderBindings, user } from "../db/schema.js";
 import { recordUsageLog } from "../lib/usage-log.js";
 import { isShutdownAbort, registerStream } from "../lib/stream-registry.js";
 import { authMiddleware } from "../middleware/auth.js";
 import type { LLMProvider, StreamChunk, ChatMessage, ToolCall, ContentPart, ToolDefinition } from "../lib/llm/types.js";
-import { resolveProviderForModel, type ApiKeyTier } from "../lib/resolve-provider.js";
+import { type ApiKeyTier } from "../lib/resolve-provider.js";
+import { resolveStudioNsfwProvider, STUDIO_NSFW_ENDPOINT_ERROR } from "../lib/studio-nsfw-provider.js";
 import { calculateCost, deductCredits, ensureWallet } from "../lib/credit-service.js";
 import { resolveEffectivePlanWithEventEntitlements } from "../lib/event-plan-entitlements.js";
 import { guardGeneration } from "../lib/credit-guard.js";
@@ -28,18 +32,35 @@ import type { AppEnv } from "../lib/types.js";
 import { type SchemaChange, type ToolResult } from "../lib/studio-tools/index.js";
 import { buildToolResultMessages } from "../lib/studio-tools/tool-results.js";
 import { STUDIO_TOOLS, READ_TOOL_NAMES, WRITE_TOOL_NAMES, CONTROL_TOOL_NAMES } from "../lib/studio-tools/tools.js";
-import { STUDIO_MODEL_IDS, SMART_IMAGE_MODEL, type ImageBatchProposal } from "@yumina/shared";
+import { couldStartTextToolCall, looksLikeTextToolRequest, recoverTextToolCalls } from '../lib/studio-tools/text-tool-calls.js';
+import { STUDIO_MODEL_IDS, SMART_IMAGE_MODEL, normalizeStudioOutputLanguage, describeStudioTrace, recoverStudioTrace, type ImageBatchProposal } from "@yumina/shared";
+import { readStudioToolTrace } from "../lib/studio-tool-trace.js";
+import type { StudioImageCapabilities } from '../lib/studio-image-capabilities.js';
 import { isSmartGenerationEnabled, smartImageEstimates, submitSmartGeneration, SmartSubmissionError } from "../lib/generation/smart.js";
-import { IMAGE_TOOL_NAME, imageToolMessages, normalizeImageProposal, waitForGeneratedImage } from "../lib/studio-tools/image-proposal.js";
+import { IMAGE_TOOL_NAME, defaultStudioImageWorkflow, imageToolMessages, normalizeImageProposal, waitForGeneratedImage } from "../lib/studio-tools/image-proposal.js";
 import { IMAGE_BATCH_TOOL_NAME, normalizeImageBatchProposal, editImageBatchProposal, estimateImageBatch, readPersistedImageBatchProposal } from "../lib/studio-tools/image-batch-proposal.js";
 import { createImageBatch, getImageBatch, listImageBatchesForRun, retryImageBatch, resumeImageBatch, isImageBatchEnabled, ImageBatchError } from "../lib/generation/image-batches.js";
 import { getImageBatchBindingState } from "../lib/generation/image-batch-bindings.js";
 import { resolveContext } from "../lib/studio-tools/context-resolver.js";
-import { loadAssetCatalog } from "../lib/studio-tools/asset-catalog.js";
+import { loadAssetCatalog, assertOwnedVnImageRef } from "../lib/studio-tools/asset-catalog.js";
+import { readOwnedStudioImage, attachViewedStudioImages } from "../lib/studio-image-view.js";
+import { configuredImageJobs } from "../lib/configured-image-jobs.js";
+import { studioImageNotifications, subscribeStudioImageNotifications, publishStudioImageNotification } from "../lib/studio-image-notifications.js";
 import { executeReadEntities, executeApplyChanges, executeGrepWorld, executeValidateWorld, executeAnalyzeTokenCost, toolCallsToSchemaChanges } from "../lib/studio-tools/tool-executor.js";
+import { getStudioImageGenerationStatus, imageGenerationService } from "../lib/image-generation/default.js";
+import { selectStudioImageSource, checkStudioImageRequest, CODEX_IMAGE_LABEL } from "../lib/image-generation/codex-service.js";
+import { waitForConfiguredImage } from "../lib/studio-tools/configured-image-proposal.js";
+import { executeListVnAssets } from "../lib/studio-tools/vn-asset-tools.js";
+import { getDependencyGraph, getProjectCompleteness, getStructuralPreflight, getVisualAuditInputs } from "../lib/studio-tools/project-intelligence.js";
+import { evaluateAcceptanceCriteria, formatUnmetAcceptance, normalizeAcceptanceCriteria, readAcceptanceCriteria } from "../lib/studio-tools/acceptance-criteria.js";
+import { getDanbooruConfig, searchDanbooruImages, importDanbooruImage } from "../lib/image-sources/danbooru-service.js";
 import { buildSystemPrompt, type SystemPromptParts } from "../lib/studio-tools/system-prompt.js";
-import { getSkillContent } from "../lib/studio-skills/index.js";
+import { getSkillContent, executeListTemplates } from "../lib/studio-skills/index.js";
 import { parseToolArgs } from "../lib/studio-tools/parse-tool-args.js";
+import { studioNamingRequest } from "../lib/studio-tools/name-request.js";
+import { executeStudioGenerateNames, listNameProfiles, readStudioGeneratedNames } from "../lib/studio-tools/name-registry.js";
+import { characterNameError } from "../lib/studio-tools/name-write-guard.js";
+import { assertNameInputsAuthored } from "../lib/studio-tools/name-authorship.js";
 import { generateStreamWithRetry } from "../lib/studio-tools/generate-stream-with-retry.js";
 import {
   createReadProgressState,
@@ -50,11 +71,18 @@ import {
   readRepeatNudge,
   readWanderNudge,
 } from "../lib/studio-tools/read-progress.js";
-import { harnessTurn, outputBudgetGuidance, withToolNote } from "../lib/studio-tools/harness-notes.js";
+import { acceptanceCriteriaTurn, harnessTurn, outputBudgetGuidance, withToolNote } from "../lib/studio-tools/harness-notes.js";
 import { migrateWorldDefinition } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
 import { resolveWorkingSchema, writeStudioWorldSchema } from "../lib/pending-edit.js";
 import { loadAgentHistoryForConversation, withStudioUserMessageContext } from "../lib/studio-conversations.js";
+import { stopCodexConversation, leaseCodexConversation, NSFW_IMAGE_REQUEST_ERROR } from "../lib/llm/codex.js";
+import { normalizeStudioChatReferences, latestStudioImageReferences, hydrateStudioMessageImages, textOnlyStudioReferenceMessages,
+  mergeStudioImageReferences, latestStudioUserText, resolveStudioAssetReferences,
+  resolveAutomaticStudioImageContext } from "../lib/studio-image-references.js";
+import { ensureOpenRouterCatalog, getCatalogImageSupport } from "../lib/llm/model-catalog.js";
+import { GenerationError } from "../lib/image-generation/config.js";
+import { animaModelSupportsNsfw } from "../lib/image-generation/anima-workflow.js";
 // ── Request Routing ──
 
 const MAX_OUTPUT = 64000; // Claude Sonnet max output with streaming
@@ -104,6 +132,12 @@ function getEntityForChange(world: WorldDefinition, change: SchemaChange): unkno
   const id = change.id;
   if (!id) return undefined;
   const draft = world as unknown as Record<string, unknown>;
+  if (change.entityType === "route") {
+    return (draft.routes as Array<Record<string, unknown>> | undefined)?.find((item) => item.id === id);
+  }
+  if (change.entityType === "ending") {
+    return (draft.endings as Array<Record<string, unknown>> | undefined)?.find((item) => item.id === id);
+  }
   if (change.entityType === "entry") {
     return (draft.entries as Array<Record<string, unknown>> | undefined)?.find((item) => item.id === id);
   }
@@ -253,7 +287,7 @@ function buildChangeCompareFromRun(
       if (!parsed.change) continue;
       const change = parsed.change;
       const isTarget = parsed.toolCallId === toolCallId;
-      const result = executeApplyChanges(simulatedWorld, [change]);
+      const result = executeApplyChanges(simulatedWorld, [change], { replayHistoricalChanges: true });
       const nextWorld = result.success ? result.world : simulatedWorld;
       const compareValues = getComparableValues(simulatedWorld, nextWorld, change);
 
@@ -321,7 +355,91 @@ if (redisSub) {
 }
 
 const agentRoutes = new Hono<AppEnv>();
+
+function resolveStudioImageRoute(input: Record<string, unknown>, personal: Awaited<ReturnType<typeof getStudioImageGenerationStatus>>,
+  referenceCount: number, imageKind: "sprite" | "background" | "image", platformEnabled: boolean): {
+    source?: "codex" | "comfyui" | "forgeneo"; workflow?: "anima" | "krea" | "codex";
+    workflowOptions: { anima: boolean; krea: boolean; codex: boolean }; contentRating: "sfw" | "nsfw";
+    animaEnabled?: boolean; error?: string;
+  } {
+  const workflowOptions = {
+    anima: personal.configs.comfyui.configured && personal.configs.comfyui.workflowMode === "anima",
+    krea: personal.configs.comfyui.configured,
+    codex: personal.configs.codex.configured,
+  };
+  const contentRating = input.contentRating === "nsfw" ? "nsfw" as const : "sfw" as const;
+  const explicitWorkflow: "anima" | "krea" | "codex" | undefined = input.imageWorkflow === "anima" || input.imageWorkflow === "krea" || input.imageWorkflow === "codex"
+    ? input.imageWorkflow : undefined;
+  if (contentRating === "nsfw" && (explicitWorkflow === "codex" || input.source === "codex" || input.source === "forgeneo"))
+    return { workflowOptions, contentRating, error: "Codex and Forge Neo image generation are SFW-only. Choose local Krea or a verified NSFW-capable Anima checkpoint." };
+
+  let requested: "anima" | "krea" | "codex" | undefined = explicitWorkflow;
+  if (!requested && input.source === "codex") requested = "codex";
+  const canonicalReference = /\b(canonical|reference (?:sprite|image|design)|base sprite|initial design|first (?:sprite|design))\b/i
+    .test(`${String(input.purpose ?? "")} ${String(input.prompt ?? "")}`);
+  if (!requested && input.source === "comfyui") requested = workflowOptions.anima && (referenceCount === 0 || canonicalReference)
+    ? "anima" : referenceCount ? "krea" : workflowOptions.krea ? "krea" : undefined;
+  if (!requested && input.source !== "forgeneo") requested = defaultStudioImageWorkflow({
+    contentRating, hasReferences: referenceCount > 0, imageKind, available: workflowOptions,
+    activeSource: personal.activeProvider, animaPreferred: workflowOptions.anima && (referenceCount === 0 || canonicalReference),
+  });
+  if (requested) {
+    if (!workflowOptions[requested]) return { workflowOptions, contentRating,
+      error: requested === "codex" ? "Shared Codex image generation is unavailable in this installation."
+        : requested === "anima" ? "The local Anima workflow is unavailable. Select the built-in Anima workflow in image settings."
+          : "Local Krea requires the configured ComfyUI image connection." };
+    if (contentRating === "nsfw" && requested === "codex") return { workflowOptions, contentRating,
+      error: "Codex image generation is SFW-only. Choose local Krea or a verified NSFW-capable Anima checkpoint." };
+    if (contentRating === "nsfw" && requested === "anima"
+      && (typeof input.animaModel !== "string" || !animaModelSupportsNsfw(input.animaModel)))
+      return { workflowOptions, contentRating, error: "Choose an installed Anima checkpoint marked NSFW-capable, or use local Krea." };
+    if (requested === "krea" && referenceCount > 4)
+      return { workflowOptions, contentRating, error: "Krea accepts at most four project references. Remove a reference or choose Anima or Codex." };
+    return { source: requested === "codex" ? "codex" as const : "comfyui" as const, workflow: requested,
+      workflowOptions, contentRating, animaEnabled: requested === "anima" };
+  }
+
+  const source = input.source === "forgeneo" || input.source === "openai" ? "forgeneo"
+    : selectStudioImageSource(input, personal, platformEnabled);
+  if (contentRating === "nsfw" && source === "forgeneo") return { workflowOptions, contentRating,
+    error: "Forge Neo is SFW-only for Studio image generation. Choose local Krea or a verified NSFW-capable Anima checkpoint." };
+  const inferredWorkflow = source === "codex" ? "codex" as const
+    : source === "comfyui" && personal.configs.comfyui.workflowMode === "anima" ? "anima" as const : undefined;
+  if (contentRating === "nsfw" && inferredWorkflow !== "anima") return { workflowOptions, contentRating,
+    error: "No compatible local NSFW image workflow is available. Configure Krea or select an NSFW-capable Anima checkpoint." };
+  if (contentRating === "nsfw" && inferredWorkflow === "anima"
+    && (typeof input.animaModel !== "string" || !animaModelSupportsNsfw(input.animaModel)))
+    return { workflowOptions, contentRating, error: "Choose an installed Anima checkpoint marked NSFW-capable, or use local Krea." };
+  return { source, workflow: inferredWorkflow, workflowOptions, contentRating, animaEnabled: inferredWorkflow === "anima" };
+}
 agentRoutes.use("/*", authMiddleware);
+
+// An idle notification stream does not hold an agent/model turn open.
+agentRoutes.get("/:worldId/agent/image-notifications", async c => {
+  const userId = c.get("user").id, worldId = c.req.param("worldId"), conversationId = c.req.query("conversationId") || null;
+  const [owned] = await db.select({ id: worlds.id }).from(worlds).where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId)));
+  if (!owned) return c.json({ error: "World not found" }, 404);
+  c.header("X-Accel-Buffering", "no");
+  return streamSSE(c, async stream => {
+    let sending = Promise.resolve();
+    const unsubscribe = subscribeStudioImageNotifications(userId, worldId, conversationId, event => {
+      sending = sending.then(() => stream.writeSSE(event)).catch(() => {});
+    });
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    try {
+      const [latest] = await db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.worldId, worldId),
+        conversationId ? eq(agentRuns.conversationId, conversationId) : sql`${agentRuns.conversationId} IS NULL`))
+        .orderBy(desc(agentRuns.createdAt)).limit(1);
+      if (latest?.context?.studioImageNotification) await stream.writeSSE({ event: "notification_snapshot", data: JSON.stringify({
+        runId: latest.id, model: latest.model, status: latest.status, error: latest.error,
+        committedTurns: latest.committedTurns ?? [], notification: latest.context.studioImageNotification }) });
+      await new Promise<void>(resolve => {
+        stream.onAbort(resolve);
+        heartbeat = setInterval(() => { void stream.writeSSE({ event: "heartbeat", data: "{}" }).catch(resolve); }, 25_000);
+      });
+    } finally { unsubscribe();if (heartbeat) clearInterval(heartbeat); }
+  });
+});
 
 
 // ── POST /api/studio/:worldId/agent/start — Begin server-side agent run ──
@@ -352,6 +470,17 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
   if (worldRows.length === 0) {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
+
+  let imageAttachments: ReturnType<typeof normalizeStudioChatReferences>;
+  try { imageAttachments = normalizeStudioChatReferences(currentUser.id, body.attachments); }
+  catch (error) {
+    if (error instanceof GenerationError) return c.json({ error: error.message, code: error.code }, 400);
+    throw error;
+  }
+
+  const resolved = await resolveStudioNsfwProvider(currentUser.id);
+  if (!resolved) return c.json({ error: STUDIO_NSFW_ENDPOINT_ERROR, code: "STUDIO_NSFW_ENDPOINT_REQUIRED" }, 400);
+  const model = resolved.model;
 
   // World schema comes from DB (client saves draft before starting agent). For a
   // published world with a held edit, operate on the held WORKING copy so Studio
@@ -385,27 +514,9 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
     activeAgentRuns.delete(run.id);
   }
 
-  // Honor the user's explicit model choice. We used to fall back to a fixed
-  // anthropic/claude-3-haiku when the model wasn't in `model_prices`, but
-  // (a) that model is deprecated on api.anthropic.com and (b) BYOK users
-  // routinely run models we don't sell officially. Gating happens later
-  // (resolveProviderForModel returns null if no key handles the model).
-  const model = body.model ?? "qwen/qwen3-vl-235b-a22b-instruct";
-
-  // Enforce studio allowlist — users can't request arbitrary models through this endpoint.
-  // BYOK users bypass this since they're paying for their own key.
-  // allowNonPriced: studio models may not be in modelPrices table, but should still
-  // resolve to the official OpenRouter key.
+  // The server resolves the account's Studio connection; client story/SFW
+  // model selections cannot redirect creator prompts.
   const isStudioModel = STUDIO_MODEL_IDS.has(model);
-  const resolved = await resolveProviderForModel(currentUser.id, model, {
-    allowNonPriced: isStudioModel,
-  });
-  if (!resolved) {
-    return c.json({ error: "No API key configured for this provider. Add one in Settings." }, 400);
-  }
-  if (!resolved.isByok && !STUDIO_MODEL_IDS.has(model)) {
-    return c.json({ error: `Model "${model}" is not available for Studio.`, code: "MODEL_NOT_ALLOWED" }, 403);
-  }
 
   // Pre-generation credit/model/rate checks (skip concurrency — agent has its own via agentRuns table).
   // skipModelValidation: studio has its own allowlist above; models may not be in modelPrices table.
@@ -418,13 +529,12 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
   if (!guard.ok) return c.json(guard.body, guard.status as 400);
 
   // Build user message (with attachments if any)
-  const userContent: ChatMessage = body.attachments?.some((a) => a.mimeType.startsWith("image/"))
+  const userContent: ChatMessage = imageAttachments.length
     ? {
         role: "user" as const,
         content: [
           { type: "text" as const, text: body.message },
-          ...body.attachments
-            .filter((a) => a.mimeType.startsWith("image/"))
+          ...imageAttachments
             .map((a) => ({ type: "image_url" as const, image_url: { url: a.url } })),
         ],
       }
@@ -463,7 +573,7 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
       iteration: 0,
       maxIterations: maxIter,
       model,
-      context: withStudioUserMessageContext(body.context as Record<string, unknown> | undefined, userContent),
+      context: withStudioUserMessageContext(Object.fromEntries(Object.entries(body.context ?? {}).filter(([key]) => key !== STUDIO_STEERING_KEY)), userContent),
     })
     .returning();
   // Serialize start and credit-resume against the same world lock. A new task
@@ -523,9 +633,9 @@ agentRoutes.post("/:worldId/agent/resume-credits", async (c) => {
   if (storedCheckpoint?.phase === "generated" && storedCheckpoint.generated.billingUnavailable) {
     return c.json({ error: "Generation is saved, but its usage could not be confirmed", code: "BILLING_DETAILS_MISSING" }, 409);
   }
-  const resolved = await resolveProviderForModel(currentUser.id, run.model, { allowNonPriced: STUDIO_MODEL_IDS.has(run.model) });
+  const resolved = await resolveStudioNsfwProvider(currentUser.id);
   if (!resolved || resolved.isByok || !STUDIO_MODEL_IDS.has(run.model)) {
-    return c.json({ error: "The original official provider is unavailable", code: "PROVIDER_CHANGED" }, 409);
+    return c.json({ error: "This saved official-provider step cannot resume on the selected NSFW provider. Start a new run.", code: "PROVIDER_CHANGED" }, 409);
   }
   const guard = await guardGeneration(currentUser.id, run.model, {
     isByok: false, isSuspended: !!currentUser.isSuspended, skipConcurrency: true, skipModelValidation: true,
@@ -593,6 +703,17 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
 
   if (!run) {
     return c.json({ error: "Agent run not found or not awaiting approval" }, 404);
+  }
+
+  const resolved = await resolveStudioNsfwProvider(currentUser.id);
+  if (!resolved) {
+    await db.update(agentRuns).set({ status: "awaiting_approval", updatedAt: new Date() }).where(eq(agentRuns.id, body.runId));
+    return c.json({ error: STUDIO_NSFW_ENDPOINT_ERROR, code: "STUDIO_NSFW_ENDPOINT_REQUIRED" }, 400);
+  }
+
+  if (resolved.providerName === "codex" && !leaseCodexConversation(`studio:${currentUser.id}:${worldId}:${run.conversationId ?? run.id}`, run.id)) {
+    await db.update(agentRuns).set({ status: "error", error: "Codex proposal expired. Start a new agent request.", updatedAt: new Date() }).where(eq(agentRuns.id, run.id));
+    return c.json({ error: "This Codex proposal expired. Start a new agent request.", code: "CODEX_SESSION_EXPIRED" }, 409);
   }
 
   // Load current world from DB
@@ -727,6 +848,7 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       .update(agentRuns)
       .set({
         status: "running",
+        model: resolved.model,
         messages: updatedMessages as unknown as Array<Record<string, unknown>>,
         pendingToolCalls: null,
         readToolResults: null,
@@ -735,9 +857,6 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
         updatedAt: new Date(),
       })
       .where(eq(agentRuns.id, body.runId));
-
-    const rejResolved = await resolveProviderForModel(currentUser.id, run.model);
-    if (!rejResolved) return c.json({ error: "No API key" }, 400);
 
     c.header("X-Accel-Buffering", "no");
     c.header("X-Agent-Run-Id", body.runId);
@@ -748,10 +867,10 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       userId: currentUser.id,
       world,
       messages: updatedMessages,
-      model: run.model,
-      provider: rejResolved.provider,
-      isByok: rejResolved.isByok,
-      apiKeyTier: rejResolved.apiKeyTier,
+      model: resolved.model,
+      provider: resolved.provider,
+      isByok: resolved.isByok,
+      apiKeyTier: resolved.apiKeyTier,
       context: run.context as { activePanel?: string; selectedElementId?: string; selectedElementType?: string },
       iteration: nextIteration,
       maxIterations: nextIteration + 1,
@@ -765,6 +884,7 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
     .update(agentRuns)
     .set({
       status: "running",
+      model: resolved.model,
       messages: updatedMessages as unknown as Array<Record<string, unknown>>,
       pendingToolCalls: null,
       readToolResults: null,
@@ -773,9 +893,6 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       updatedAt: new Date(),
     })
     .where(eq(agentRuns.id, body.runId));
-
-  const appResolved = await resolveProviderForModel(currentUser.id, run.model);
-  if (!appResolved) return c.json({ error: "No API key" }, 400);
 
   c.header("X-Accel-Buffering", "no");
   c.header("X-Agent-Run-Id", body.runId);
@@ -786,10 +903,10 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
     userId: currentUser.id,
     world,
     messages: updatedMessages,
-    model: run.model,
-    provider: appResolved.provider,
-    isByok: appResolved.isByok,
-    apiKeyTier: appResolved.apiKeyTier,
+    model: resolved.model,
+    provider: resolved.provider,
+    isByok: resolved.isByok,
+    apiKeyTier: resolved.apiKeyTier,
     context: run.context as { activePanel?: string; selectedElementId?: string; selectedElementType?: string },
     iteration: nextIteration,
     maxIterations: run.maxIterations,
@@ -800,21 +917,60 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
 
 // ── POST /api/studio/:worldId/agent/generate-image — the creator answers a generate_image card ──
 //
-// Mirrors /agent/approve: claim the paused run, turn the creator's click into the
-// tool result the model is waiting for, re-enter the loop. On confirm the job is
-// created here on the creator's behalf (their wallet, the card's bound folder)
-// and the loop's prelude follows it until the picture lands.
+// Retain saved approval cards and older open clients. Automatic jobs replay their
+// existing result here; only a genuinely paused proposal may resume its run.
 
 agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
   const body = await c.req.json<{
     runId: string;
+    toolCallId?: string;
     approved: boolean;
     prompt?: string;
     aspectRatio?: string;
     batchSize?: number;
-  }>();
+  }>().catch(() => null);
+  if (!body || typeof body.runId !== "string" || !body.runId || typeof body.approved !== "boolean"
+    || (body.toolCallId !== undefined && (typeof body.toolCallId !== "string" || !body.toolCallId))
+    || (body.prompt !== undefined && typeof body.prompt !== "string")
+    || (body.aspectRatio !== undefined && typeof body.aspectRatio !== "string")
+    || (body.batchSize !== undefined && typeof body.batchSize !== "number")) {
+    return c.json({ error: "Provide a run ID and an explicit image confirmation.", code: "INVALID_CONFIRMATION" }, 400);
+  }
+
+  const replayQueuedImage = async () => {
+    const [ownedRun] = await db.select({ conversationId: agentRuns.conversationId, status: agentRuns.status }).from(agentRuns)
+      .innerJoin(worlds, eq(worlds.id, agentRuns.worldId)).where(and(eq(agentRuns.id, body.runId),
+        eq(agentRuns.userId, currentUser.id), eq(agentRuns.worldId, worldId), eq(worlds.creatorId, currentUser.id)));
+    if (!ownedRun) return undefined;
+    const jobs = await configuredImageJobs.list(currentUser.id, worldId, ownedRun.conversationId ?? body.runId, body.runId);
+    const matches = body.toolCallId ? jobs.filter(job => job.card.toolCallId === body.toolCallId)
+      : jobs.length === 1 ? jobs : jobs.filter(job => job.card.prompt === body.prompt);
+    if (matches.length > 1 || (!body.toolCallId && jobs.length > 1 && matches.length === 0)) {
+      return c.json({ error: "Several images belong to this task. Reload the chat to select the correct image card.", code: "IMAGE_JOB_AMBIGUOUS" }, 409);
+    }
+    const existing = matches[0];
+    if (!existing) return undefined;
+    const job = body.approved ? existing : await configuredImageJobs.cancel(currentUser.id, existing.jobId, worldId);
+    if (!job) return undefined;
+    c.header("X-Accel-Buffering", "no");
+    c.header("X-Agent-Run-Id", body.runId);
+    return streamSSE(c, async stream => {
+      await stream.writeSSE({ event: "image_progress", data: JSON.stringify({ runId: body.runId,
+        toolCallId: existing.card.toolCallId, jobId: job.jobId, status: job.status, elapsed: job.elapsed }) });
+      await stream.writeSSE({ event: "image_result", data: JSON.stringify({ runId: body.runId,
+        toolCallId: existing.card.toolCallId, jobId: job.jobId, assetIds: job.assetIds,
+        proposal: existing.card,
+        status: job.status === "succeeded" ? "done" : ["failed", "cancelled"].includes(job.status) ? "failed" : "pending",
+        errorCode: job.status === "cancelled" ? "USER_CANCELLED" : job.errorCode }) });
+      // An active main task is recovered through its saved status after EOF.
+      // Image replay never claims, resumes or declares that task finished.
+      if (ownedRun.status === "completed") await stream.writeSSE({ event: "done", data: JSON.stringify({ runId: body.runId }) });
+    });
+  };
+  const existingImage = await replayQueuedImage();
+  if (existingImage) return existingImage;
 
   const transitionApproval = (executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]) => executor
     .update(agentRuns)
@@ -840,7 +996,23 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
   }) : { run: (await transitionApproval(db))[0], blocked: false };
   if (approval.blocked) return c.json({ error: "Another agent run is active", code: "ACTIVE_RUN" }, 409);
   const run = approval.run;
-  if (!run) return c.json({ error: "Agent run not found or not awaiting confirmation" }, 404);
+  if (!run) return (await replayQueuedImage()) ?? c.json({ error: "Agent run not found or not awaiting confirmation" }, 404);
+  if (body.toolCallId && (run.pendingToolCalls as unknown as ToolCall[] | null)?.[0]?.id !== body.toolCallId) {
+    await db.update(agentRuns).set({ status: "awaiting_approval", updatedAt: new Date() }).where(and(
+      eq(agentRuns.id, body.runId), eq(agentRuns.userId, currentUser.id), eq(agentRuns.worldId, worldId), eq(agentRuns.status, "running")));
+    return c.json({ error: "This image card no longer matches the pending request. Reload the chat.", code: "NOT_IMAGE_PROPOSAL" }, 409);
+  }
+
+  const resolved = await resolveStudioNsfwProvider(currentUser.id);
+  if (!resolved) {
+    await db.update(agentRuns).set({ status: "awaiting_approval", updatedAt: new Date() }).where(eq(agentRuns.id, body.runId));
+    return c.json({ error: STUDIO_NSFW_ENDPOINT_ERROR, code: "STUDIO_NSFW_ENDPOINT_REQUIRED" }, 400);
+  }
+
+  if (resolved.providerName === "codex" && !leaseCodexConversation(`studio:${currentUser.id}:${worldId}:${run.conversationId ?? run.id}`, run.id)) {
+    await db.update(agentRuns).set({ status: "error", error: "Codex proposal expired. Start a new agent request.", updatedAt: new Date() }).where(eq(agentRuns.id, run.id));
+    return c.json({ error: "This Codex proposal expired. Start a new agent request.", code: "CODEX_SESSION_EXPIRED" }, 409);
+  }
 
   const pending = (run.pendingToolCalls ?? []) as unknown as ToolCall[];
   const call = pending[0];
@@ -877,12 +1049,6 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
   const effectivePlan = await resolveEffectivePlanWithEventEntitlements(currentUser.id, wallet.plan);
   const isUnlimited = PLANS[effectivePlan]?.unlimited ?? false;
 
-  const resolved = await resolveProviderForModel(currentUser.id, run.model, { allowNonPriced: STUDIO_MODEL_IDS.has(run.model) });
-  if (!resolved) {
-    await db.update(agentRuns).set({ status: "awaiting_approval", updatedAt: new Date() }).where(eq(agentRuns.id, body.runId));
-    return c.json({ error: "No API key configured for this provider. Add one in Settings." }, 400);
-  }
-
   const messages = run.messages as unknown as ChatMessage[];
   const nextIteration = run.iteration + 1;
   const assistantTurn: ChatMessage = { role: "assistant" as const, content: run.textContent ?? "", tool_calls: [call] };
@@ -893,6 +1059,7 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
       .update(agentRuns)
       .set({
         status: "running",
+        model: resolved.model,
         messages: updatedMessages as unknown as Array<Record<string, unknown>>,
         pendingToolCalls: null,
         readToolResults: null,
@@ -910,7 +1077,7 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
       userId: currentUser.id,
       world,
       messages: updatedMessages,
-      model: run.model,
+      model: resolved.model,
       provider: resolved.provider,
       isByok: resolved.isByok,
       apiKeyTier: resolved.apiKeyTier,
@@ -928,6 +1095,12 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
       error: "The creator declined generating this image. Do not propose it again unless they ask; continue without it." }), { oneMoreTurn: true });
   }
 
+  if (proposal.source) {
+    return resumeWith([], { prelude: hooks => waitForConfiguredImage({
+      call, proposal, userId: currentUser.id, runId: body.runId, worldId, ...hooks,
+    }) });
+  }
+
   // The card's first bound folder is where its pictures live; no binding means
   // the library root, which is where the creator would look anyway.
   const [binding] = await db.select({ folderId: worldFolderBindings.folderId }).from(worldFolderBindings)
@@ -936,6 +1109,7 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
 
   let jobId: string;
   try {
+    await checkStudioImageRequest(proposal.prompt);
     // The dispatcher's claim tick shares the admission lock; a momentary BUSY
     // is not worth handing the creator a failure, so give it a few tries.
     const requestId = crypto.randomUUID();
@@ -963,7 +1137,8 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
     const code = error instanceof SmartSubmissionError ? error.code : "SUBMIT_FAILED";
     console.error("[Agent] generate_image submission failed:", error);
     return resumeWith(imageToolMessages(call, { status: "error", result: null,
-      error: `Image generation could not start (${code}). Nothing was charged. Tell the creator${code === "NO_CREDITS" || code === "INSUFFICIENT_CREDITS" ? " they need more mushies" : ""} and continue without the image.` }), {
+      error: error instanceof Error && error.message.includes("NSFW") ? error.message
+        : `Image generation could not start (${code}). Nothing was charged. Tell the creator${code === "NO_CREDITS" || code === "INSUFFICIENT_CREDITS" ? " they need more mushies" : ""} and continue without the image.` }), {
       oneMoreTurn: true,
       // The card is already in its "drawing" state; tell it the job never started.
       prelude: async ({ send }) => { await send("image_result", JSON.stringify({ runId: body.runId, toolCallId: call.id, jobId: null, status: "failed", errorCode: code })); return []; },
@@ -976,9 +1151,19 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
 });
 
 function batchRouteError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof GenerationError) return c.json({ error: error.message, code: error.code }, error.status);
+  if (error instanceof Error && error.message.includes("NSFW")) return c.json({ error: error.message, code: "NSFW_IMAGE_REQUEST" }, 400);
   if (error instanceof ImageBatchError) return c.json({ error: error.code, code: error.code }, error.status);
   console.error("[Agent] image batch request failed", error);
   return c.json({ error: "Image batch request failed", code: "BATCH_REQUEST_FAILED" }, 500);
+}
+
+async function assertBatchWithoutReferences(userId: string, worldId: string, runId: string) {
+  const [run] = await db.select({ messages: agentRuns.messages }).from(agentRuns)
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId), eq(agentRuns.worldId, worldId)));
+  if (run && latestStudioImageReferences(userId, run.messages as unknown as ChatMessage[]).length) {
+    throw new GenerationError("UNSUPPORTED_REFERENCES", "Uploaded references require one Codex image per confirmation. Use the Codex image proposal; references cannot be omitted from a batch.");
+  }
 }
 
 function withBatchBindingState(proposal: ImageBatchProposal, schema: Record<string, unknown>): ImageBatchProposal {
@@ -991,6 +1176,89 @@ function withBatchBindingState(proposal: ImageBatchProposal, schema: Record<stri
 }
 
 /** Confirmation only queues the durable batch. It must never resume the LLM. */
+agentRoutes.get("/:worldId/agent/image-jobs/:jobId", async (c) => {
+  const job = await configuredImageJobs.get(c.get("user").id, c.req.param("jobId"), c.req.param("worldId"));
+  return job ? c.json({ data: job }) : c.json({ error: "Image job not found" }, 404);
+});
+agentRoutes.post("/:worldId/agent/image-jobs/:jobId/cancel", async (c) => {
+  const job = await configuredImageJobs.cancel(c.get("user").id, c.req.param("jobId"), c.req.param("worldId"));
+  return job ? c.json({ data: job }) : c.json({ error: "Image job not found" }, 404);
+});
+agentRoutes.post("/:worldId/agent/image-jobs/:jobId/anima-model", async c => {
+  const userId = c.get("user").id, worldId = c.req.param("worldId"), jobId = c.req.param("jobId");
+  const body = await c.req.json<{ model?: unknown }>().catch(() => null);
+  if (!body || typeof body.model !== "string" || body.model.length > 200
+    || !/^[\p{L}\p{N} _().+-]{1,180}\.safetensors$/iu.test(body.model)) {
+    return c.json({ error: "Choose an installed Anima checkpoint.", code: "INVALID_MODEL" }, 400);
+  }
+  const ownedJob = await configuredImageJobs.get(userId, jobId, worldId);
+  if (!ownedJob?.animaEnabled) return c.json({ error: "Image job not found", code: "IMAGE_JOB_NOT_FOUND" }, 404);
+  try {
+    const catalog = await imageGenerationService.listAnimaModels(userId, c.req.raw.signal);
+    if (!catalog.models.includes(body.model)) return c.json({ error: "That checkpoint is not installed in this ComfyUI container.", code: "ANIMA_MODEL_UNAVAILABLE" }, 409);
+    const job = await configuredImageJobs.setAnimaModel(userId, jobId, worldId, body.model, catalog.models);
+    if (!job) return c.json({ error: "The checkpoint could not be selected for this image.", code: "ANIMA_MODEL_UNAVAILABLE" }, 409);
+    if (job.animaModel !== body.model) return c.json({ error: "Checkpoint selection closed when generation started.", code: "MODEL_SELECTION_CLOSED", data: job }, 409);
+    return c.json({ data: job });
+  } catch (error) {
+    if (error instanceof GenerationError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  }
+});
+agentRoutes.post("/:worldId/agent/image-jobs/:jobId/generation-options", async c => {
+  const userId = c.get("user").id, worldId = c.req.param("worldId"), jobId = c.req.param("jobId");
+  const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+  if (!body || !(body.workflow === "anima" || body.workflow === "krea" || body.workflow === "codex")
+    || !(body.contentRating === "sfw" || body.contentRating === "nsfw")
+    || !(body.seedMode === "random" || body.seedMode === "fixed")
+    || typeof body.cfg !== "number" || !Number.isFinite(body.cfg) || body.cfg < 0.5 || body.cfg > 8
+    || typeof body.steps !== "number" || !Number.isInteger(body.steps) || body.steps < 1 || body.steps > 20
+    || (body.transparent !== undefined && typeof body.transparent !== "boolean")
+    || (body.seed !== undefined && (typeof body.seed !== "number" || !Number.isSafeInteger(body.seed) || body.seed < 0))
+    || (body.seedMode === "fixed" && body.seed === undefined)
+    || (body.animaModel !== undefined && (typeof body.animaModel !== "string" || body.animaModel.length > 200
+      || !/^[\p{L}\p{N} _().+-]{1,180}\.safetensors$/iu.test(body.animaModel))))
+    return c.json({ error: "Check the selected workflow, rating, steps, CFG and seed settings.", code: "INVALID_IMAGE_OPTIONS" }, 400);
+
+  const ownedJob = await configuredImageJobs.get(userId, jobId, worldId);
+  if (!ownedJob) return c.json({ error: "Image job not found", code: "IMAGE_JOB_NOT_FOUND" }, 404);
+  const workflow = body.workflow as "anima" | "krea" | "codex";
+  if (!ownedJob.workflowOptions?.[workflow]) return c.json({ error: "That image workflow is not available for this job.", code: "WORKFLOW_UNAVAILABLE" }, 409);
+  if (body.contentRating === "nsfw" && workflow === "codex")
+    return c.json({ error: "Codex image generation is SFW-only. Choose local Krea or a verified NSFW-capable Anima checkpoint.", code: "NSFW_MODEL_REQUIRED" }, 400);
+  if (workflow === "krea" && (ownedJob.referenceImages?.length ?? 0) > 4)
+    return c.json({ error: "Krea accepts at most four project references. Remove a reference or choose Anima or Codex.", code: "REFERENCE_LIMIT" }, 400);
+  let installedModels: string[] = [];
+  let recommendedAnimaModel: string | undefined;
+  if (workflow === "anima") {
+    try {
+      const catalog = await imageGenerationService.listAnimaModels(userId, c.req.raw.signal);
+      installedModels = catalog.models; recommendedAnimaModel = catalog.recommendedModel;
+    }
+    catch (error) {
+      if (error instanceof GenerationError) return c.json({ error: error.message, code: error.code }, error.status);
+      throw error;
+    }
+  }
+  const selectedAnimaModel = typeof body.animaModel === "string" ? body.animaModel : ownedJob.animaModel ?? recommendedAnimaModel;
+  if (body.contentRating === "nsfw" && workflow === "anima" && (!selectedAnimaModel || !animaModelSupportsNsfw(selectedAnimaModel)))
+    return c.json({ error: "Choose an installed Anima checkpoint marked NSFW-capable, or use local Krea.", code: "NSFW_MODEL_REQUIRED" }, 400);
+  const job = await configuredImageJobs.updateGenerationOptions(userId, jobId, worldId, {
+    workflow, contentRating: body.contentRating as "sfw" | "nsfw", seedMode: body.seedMode as "random" | "fixed",
+    ...(selectedAnimaModel ? { animaModel: selectedAnimaModel } : {}),
+    ...(typeof body.seed === "number" ? { seed: body.seed } : {}), cfg: body.cfg, steps: body.steps, transparent: body.transparent === true,
+  }, installedModels);
+  if (!job) return c.json({ error: "Those settings are unsupported by the selected workflow.", code: "INVALID_IMAGE_OPTIONS" }, 400);
+  if (!job.generationOptionsEditable) return c.json({ error: "Generation already started; its options can no longer be changed.", code: "OPTIONS_SELECTION_CLOSED", data: job }, 409);
+  return c.json({ data: job });
+});
+agentRoutes.post("/:worldId/agent/image-jobs/:jobId/references/remove", async (c) => {
+  const body = await c.req.json<{ key?: string }>().catch(() => null);
+  if (!body || typeof body.key !== "string" || body.key.length > 500) return c.json({ error: "Invalid reference" }, 400);
+  const job = await configuredImageJobs.removeReference(c.get("user").id, c.req.param("jobId"), c.req.param("worldId"), body.key);
+  return job ? c.json({ data: job }) : c.json({ error: "Image job not found" }, 404);
+});
+
 agentRoutes.post("/:worldId/agent/generate-images", async (c) => {
   const userId = c.get("user").id;
   const worldId = c.req.param("worldId");
@@ -1002,10 +1270,12 @@ agentRoutes.post("/:worldId/agent/generate-images", async (c) => {
     return c.json({ error: "Invalid batch confirmation", code: "INVALID_PROPOSAL" }, 400);
   }
   try {
-    const [ownedWorld] = await db.select({ id: worlds.id }).from(worlds).where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId)));
+    const [ownedWorld] = await db.select({ id: worlds.id, schema: worlds.schema, status: worlds.status, isPublished: worlds.isPublished })
+      .from(worlds).where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId)));
     if (!ownedWorld) throw new ImageBatchError("WORLD_NOT_FOUND", 404);
     const [run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, body.runId), eq(agentRuns.userId, userId), eq(agentRuns.worldId, worldId)));
     if (!run) throw new ImageBatchError("RUN_NOT_FOUND", 404);
+    if (body.approved) await assertBatchWithoutReferences(userId, worldId, run.id);
     const saved = run.context?.imageBatchProposal as Record<string, unknown> | undefined;
     const pending = (run.pendingToolCalls ?? []) as unknown as ToolCall[];
     const call = pending.length === 1 && pending[0]?.function.name === IMAGE_BATCH_TOOL_NAME ? pending[0] : undefined;
@@ -1015,20 +1285,51 @@ agentRoutes.post("/:worldId/agent/generate-images", async (c) => {
     if (!original || !toolCallId) throw new ImageBatchError("NOT_IMAGE_BATCH_PROPOSAL", 409);
 
     if (!body.approved) {
-      if (run.context?.imageBatchDeclined === true) return c.json({ data: null, declined: true });
+      if (run.context?.imageBatchDeclined === true) return c.json({ data: null, declined: true,
+        ...(typeof run.context.acceptanceDeclineMessage === "string" ? { acceptanceMessage: run.context.acceptanceDeclineMessage } : {}) });
       if (!call) throw new ImageBatchError("BATCH_ALREADY_SUBMITTED", 409);
+      const criteria = readAcceptanceCriteria(run.context);
+      let acceptanceStatus = null;
+      if (criteria) {
+        const workingSchema = await resolveWorkingSchema(worldId, ownedWorld.status ?? (ownedWorld.isPublished ? "published" : "draft"), ownedWorld.schema as Record<string, unknown>);
+        const currentWorld = migrateWorldDefinition(workingSchema as unknown as WorldDefinition);
+        acceptanceStatus = await evaluateCurrentAcceptance(currentWorld, userId, worldId, criteria);
+      }
+      const acceptanceMessage = acceptanceStatus && !acceptanceStatus.met
+        ? `Image generation was declined. ${formatUnmetAcceptance(acceptanceStatus)}\n\nTell me whether to try a different approach or change the acceptance criteria.`
+        : undefined;
       const toolResults = buildToolResultMessages([{ tool_call_id: call.id, name: IMAGE_BATCH_TOOL_NAME,
         status: "error", result: null, error: "The creator declined this batch. Nothing was generated or charged. Do not propose it again unless asked." }]);
-      const declined = await db.update(agentRuns).set({ status: "completed", pendingToolCalls: null, readToolResults: null,
-        context: { ...run.context, imageBatchDeclined: true },
-        messages: [...run.messages, { role: "assistant", content: run.textContent ?? "", tool_calls: [call] }, ...toolResults] as Array<Record<string, unknown>>,
+      const messages = [
+        ...run.messages,
+        { role: "assistant", content: run.textContent ?? "", tool_calls: [call] },
+        ...toolResults,
+        ...(acceptanceMessage ? [{ role: "assistant", content: acceptanceMessage }] : []),
+      ] as Array<Record<string, unknown>>;
+      const createdAt = new Date().toISOString();
+      const committedTurns = [
+        ...(run.committedTurns ?? []),
+        ...(acceptanceMessage ? [{ iteration: run.iteration, textContent: acceptanceMessage, createdAt, commitId: crypto.randomUUID(), lane: "answer" as const }] : []),
+      ];
+      const contextPatch = {
+        imageBatchDeclined: true,
+        ...(acceptanceStatus ? { acceptanceStatus } : {}),
+        ...(acceptanceMessage ? { acceptanceDeclineMessage: acceptanceMessage } : {}),
+      };
+      const declined = await db.update(agentRuns).set({ status: acceptanceMessage ? "awaiting_user" : "completed",
+        pendingToolCalls: null, readToolResults: null,
+        context: sql`COALESCE(${agentRuns.context}, '{}'::jsonb) || ${JSON.stringify(contextPatch)}::jsonb`,
+        messages,
+        committedTurns,
+        ...(acceptanceMessage ? { textContent: acceptanceMessage } : {}),
         updatedAt: new Date(),
       }).where(and(eq(agentRuns.id, run.id), eq(agentRuns.userId, userId), eq(agentRuns.status, "awaiting_approval"))).returning();
       if (!declined.length) throw new ImageBatchError("BATCH_ALREADY_SUBMITTED", 409);
-      return c.json({ data: null, declined: true });
+      return c.json({ data: null, declined: true, ...(acceptanceMessage ? { acceptanceMessage } : {}) });
     }
     const proposal = editImageBatchProposal(original, body);
     if (!proposal) throw new ImageBatchError("INVALID_PROPOSAL");
+    for (const item of proposal.items) await checkStudioImageRequest(item.prompt);
     const [binding] = await db.select({ folderId: worldFolderBindings.folderId }).from(worldFolderBindings)
       .where(eq(worldFolderBindings.worldId, worldId)).orderBy(asc(worldFolderBindings.createdAt)).limit(1);
     return c.json({ data: await createImageBatch({ userId, worldId, runId: run.id, toolCallId, folderId: binding?.folderId, proposal }) });
@@ -1063,6 +1364,8 @@ agentRoutes.post("/:worldId/agent/image-batches/:batchId/retry", async (c) => {
       || (body.itemIds !== undefined && (!Array.isArray(body.itemIds) || body.itemIds.length > 30 || !body.itemIds.every(id => typeof id === "string")))) {
       throw new ImageBatchError("INVALID_ITEMS");
     }
+    await assertBatchWithoutReferences(c.get("user").id, batch.worldId, batch.runId);
+    for (const item of batch.items) if (!body.itemIds || body.itemIds.includes(item.id)) await checkStudioImageRequest(item.prompt);
     return c.json({ data: await retryImageBatch(c.get("user").id, batch.id, body.itemIds, body.requestId) });
   } catch (error) { return batchRouteError(c, error); }
 });
@@ -1071,6 +1374,8 @@ agentRoutes.post("/:worldId/agent/image-batches/:batchId/resume", async (c) => {
   try {
     const batch = await getImageBatch(c.get("user").id, c.req.param("batchId"));
     if (batch.worldId !== c.req.param("worldId")) throw new ImageBatchError("BATCH_NOT_FOUND", 404);
+    await assertBatchWithoutReferences(c.get("user").id, batch.worldId, batch.runId);
+    for (const item of batch.items) await checkStudioImageRequest(item.prompt);
     return c.json({ data: await resumeImageBatch(c.get("user").id, batch.id) });
   } catch (error) { return batchRouteError(c, error); }
 });
@@ -1114,7 +1419,7 @@ agentRoutes.get("/:worldId/agent/changes/:runId/:toolCallId", async (c) => {
 
   const writeToolCalls = collectRunWriteToolCalls(run);
   const compare = buildChangeCompareFromRun(
-    migrateWorldDefinition(snapshot.schemaData as unknown as WorldDefinition),
+    migrateWorldDefinition(snapshot.schemaData as unknown as WorldDefinition, { preserveStatusSources: true }),
     writeToolCalls,
     toolCallId,
   );
@@ -1124,6 +1429,31 @@ agentRoutes.get("/:worldId/agent/changes/:runId/:toolCallId", async (c) => {
   }
 
   return c.json({ data: compare });
+});
+
+function publicStudioCompaction(context: Record<string, unknown> | null) {
+  const saved = context?.studioCompaction as Record<string, unknown> | undefined;
+  if (!saved) return null;
+  return { id: saved.id, status: saved.status, beforeTokens: saved.beforeTokens, afterTokens: saved.afterTokens,
+    targetTokens: saved.targetTokens, reason: saved.reason };
+}
+
+// Mid-run messages join the existing worker at its next completed step.
+agentRoutes.post("/:worldId/agent/steer", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.runId !== "string" || typeof body.id !== "string" || typeof body.message !== "string"
+    || !(body.conversationId === null || typeof body.conversationId === "string")) {
+    return c.json({ error: "INVALID_STEERING" }, 400);
+  }
+  try {
+    const item = await enqueueStudioSteering({ userId: c.get("user").id, worldId: c.req.param("worldId"),
+      runId: body.runId, conversationId: body.conversationId }, body.id, body.message, body.attachments);
+    return c.json({ data: { runId: body.runId, items: [item] } });
+  } catch (error) {
+    if (error instanceof StudioSteeringError) return c.json({ error: error.code }, error.httpStatus);
+    if (error instanceof GenerationError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  }
 });
 
 // ── GET /api/studio/:worldId/agent/status — Poll current agent state ──
@@ -1167,6 +1497,7 @@ agentRoutes.get("/:worldId/agent/status", async (c) => {
   return c.json({
     data: {
       id: run.id,
+      model: run.model,
       conversationId: run.conversationId,
       status: run.status,
       iteration: run.iteration,
@@ -1177,12 +1508,19 @@ agentRoutes.get("/:worldId/agent/status", async (c) => {
        *  the single `textContent` field, which could duplicate bubbles already committed
        *  live via assistant_turn_commit events. */
       committedTurns: run.committedTurns,
+      steering: readStudioSteering(run.context, run.status),
+      imageJobs: await configuredImageJobs.list(currentUser.id, worldId, run.conversationId ?? run.id, run.id),
+      toolTrace: { runId: run.id, model: run.model, items: readStudioToolTrace(run.context, run.messages) },
+      historyTokens: estimateStudioTokens(run.messages as unknown as ChatMessage[]),
+      compaction: publicStudioCompaction(run.context),
       pendingToolCalls: run.pendingToolCalls,
       readToolResults: run.readToolResults,
       ...(imageBatchProposal ? { imageBatchProposal, imageBatches } : {}),
       error: run.error,
       ...(recoveryEnabled ? { creditPause } : {}),
       messages: run.messages,
+      imageNotification: run.context?.studioImageNotification ?? null,
+      createdAt: run.createdAt,
       updatedAt: run.updatedAt,
     },
   });
@@ -1194,6 +1532,10 @@ agentRoutes.post("/:worldId/agent/stop", async (c) => {
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
   const body = await c.req.json<{ runId: string }>();
+
+  const [ownedRun] = await db.select({ id: agentRuns.id, conversationId: agentRuns.conversationId }).from(agentRuns)
+    .where(and(eq(agentRuns.id, body.runId), eq(agentRuns.userId, currentUser.id), eq(agentRuns.worldId, worldId)));
+  if (ownedRun) await stopCodexConversation(`studio:${currentUser.id}:${worldId}:${ownedRun.conversationId ?? ownedRun.id}`, ownedRun.id);
 
   // Try local abort first (same replica)
   const localController = activeAgentRuns.get(body.runId);
@@ -1290,8 +1632,8 @@ function getContextBudget(modelId: string): number {
  * when approaching the budget. Short messages use less capacity,
  * long messages get compacted sooner. Like Claude Code's auto-compaction.
  */
-export function buildWindowedMessages(messages: ChatMessage[], modelId = ""): ChatMessage[] {
-  if (messages.length <= MIN_RECENT_MESSAGES) return messages;
+export function buildWindowedMessages(messages: ChatMessage[], modelId = "", endpointBudget?: number): ChatMessage[] {
+  if (endpointBudget === undefined && messages.length <= MIN_RECENT_MESSAGES) return messages;
 
   // Calculate total tokens
   let totalTokens = 0;
@@ -1302,7 +1644,7 @@ export function buildWindowedMessages(messages: ChatMessage[], modelId = ""): Ch
   });
 
   // If within budget, return everything
-  const budget = getContextBudget(modelId);
+  const budget = endpointBudget === undefined ? getContextBudget(modelId) : Math.max(0, Math.min(getContextBudget(modelId), endpointBudget));
   if (totalTokens <= budget) return messages;
 
   // Find the split point: keep as many recent messages as fit in budget
@@ -1312,7 +1654,7 @@ export function buildWindowedMessages(messages: ChatMessage[], modelId = ""): Ch
     recentTokens += tokenCounts[i]!;
     if (recentTokens > budget * 0.7) {
       // Keep at least MIN_RECENT_MESSAGES
-      splitIdx = Math.min(i + 1, messages.length - MIN_RECENT_MESSAGES);
+      splitIdx = endpointBudget === undefined ? Math.min(i + 1, messages.length - MIN_RECENT_MESSAGES) : Math.min(i + 1, messages.length - 1);
       break;
     }
     splitIdx = i;
@@ -1325,7 +1667,15 @@ export function buildWindowedMessages(messages: ChatMessage[], modelId = ""): Ch
   // on a 50K-budget model a code card hit it every run around step 6–12
   // (9 runs, 2 BYOK creators, 2026-09-18..21). Walk back over the result
   // group to the assistant turn that owns it so they stay together.
-  while (splitIdx > 0 && splitIdx < messages.length && messages[splitIdx]!.role === "tool") splitIdx--;
+  if (endpointBudget === undefined) {
+    while (splitIdx > 0 && splitIdx < messages.length && messages[splitIdx]!.role === "tool") splitIdx--;
+  } else {
+    // Include the complete latest user request and its pending tool exchange.
+    let latestUser = -1;
+    for (let i = messages.length - 1; i >= 0; i--) { if (messages[i]!.role === "user") { latestUser = i; break; } }
+    if (latestUser >= 0) splitIdx = Math.min(splitIdx, latestUser);
+    while (splitIdx > 0 && messages[splitIdx]!.role === "tool") splitIdx--;
+  }
 
   if (splitIdx <= 0) return messages;
 
@@ -1352,7 +1702,12 @@ export function buildWindowedMessages(messages: ChatMessage[], modelId = ""): Ch
 
   if (actions.length === 0) return messages;
 
-  const summary = `[Earlier conversation — ${older.length} messages summarized]\n${actions.join("\n")}`;
+  let summary = `[Earlier conversation — ${older.length} messages summarized]\n${actions.join("\n")}`;
+  if (endpointBudget !== undefined) {
+    const available = Math.max(0, budget - recent.reduce((total, message) => total + estimateTokens(message), 0) - 32);
+    while (summary && estimateTextTokens(summary) > available) summary = summary.slice(0, Math.max(0, summary.length - 120));
+    if (!summary) return recent;
+  }
 
   return [
     { role: "user" as const, content: summary },
@@ -1499,10 +1854,12 @@ export interface AgentLoopParams {
   unlimited?: boolean;
   creditResume?: { checkpoint: StudioCreditCheckpoint; claimId: string };
   committedTurns?: AgentRunRow["committedTurns"];
+  /** Background completion has already settled the original image action. */
+  imageNotification?: boolean;
   /** Runs once the stream is open, before the first model call, and returns
    *  messages to append (a resumed tool's result). It may take a while and
    *  narrates to the client through `send`; `progress` feeds the stall watchdog. */
-  prelude?: (hooks: { send: (event: string, data: string) => Promise<void>; progress: () => void }) => Promise<ChatMessage[]>;
+  prelude?: (hooks: { send: (event: string, data: string) => Promise<void>; progress: () => void; signal: AbortSignal }) => Promise<ChatMessage[]>;
 }
 
 /** A stale pause the resume path can rebase is presented as an interrupted,
@@ -1530,6 +1887,27 @@ function publicCreditPause(checkpoint: StudioCreditCheckpoint | null) {
   };
 }
 
+async function inspectOwnedVnImageRefs(userId: string, worldId: string, refs: string[]) {
+  const uniqueRefs = [...new Set(refs)];
+  const checked = await Promise.all(uniqueRefs.map(async (ref) => {
+    try {
+      await assertOwnedVnImageRef(userId, worldId, ref);
+      return null;
+    } catch (error) {
+      return { ref, reason: error instanceof Error ? error.message : "Image reference could not be verified." };
+    }
+  }));
+  return checked.filter((item): item is NonNullable<typeof item> => item !== null);
+}
+
+async function evaluateCurrentAcceptance(world: WorldDefinition, userId: string, worldId: string, criteria: ReturnType<typeof readAcceptanceCriteria>) {
+  if (!criteria) return null;
+  const missingAssets = criteria.cleanPreflight
+    ? await inspectOwnedVnImageRefs(userId, worldId, getStructuralPreflight(world).assetRefs)
+    : [];
+  return evaluateAcceptanceCriteria(world, criteria, { missingAssetRefs: missingAssets.map((item) => item.ref) });
+}
+
 function hasKnownStudioUsage(usage: StreamChunk["usage"]): boolean {
   const finiteNonNegative = (value: unknown): value is number =>
     typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -1548,6 +1926,14 @@ function extractEntityMeta(
   id: string,
 ): Record<string, unknown> | null {
   switch (entityType) {
+    case "route": {
+      const route = (world.routes ?? []).find((item) => item.id === id);
+      return route ? { id: route.id, name: route.name, enabled: route.enabled, priority: route.priority } : null;
+    }
+    case "ending": {
+      const ending = (world.endings ?? []).find((item) => item.id === id);
+      return ending ? { id: ending.id, name: ending.name, enabled: ending.enabled, outcome: ending.outcome, mode: ending.mode } : null;
+    }
     case "entry": {
       const e = world.entries.find((x) => x.id === id);
       if (!e) return null;
@@ -1587,13 +1973,22 @@ function extractEntityMeta(
 }
 
 export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: AgentLoopParams) {
-  return streamSSE(c, async (stream) => {
+  return streamSSE(c, stream => runAgentLoop(params, stream));
+}
+
+/** The same agent lifecycle can stream to an HTTP client or a completion event. */
+export async function runAgentLoop(params: AgentLoopParams, stream: {
+  writeSSE(message: { event: string; data: string }): Promise<unknown>;
+  onAbort(callback: () => void): void;
+}) {
     let {
       runId, userId, world, messages, model,
       provider, isByok, apiKeyTier, context, iteration, maxIterations,
       tools,
     } = params;
-    if (!isImageBatchEnabled()) tools = tools.filter(tool => tool.function.name !== IMAGE_BATCH_TOOL_NAME);
+    let imageCapabilities: StudioImageCapabilities = {};
+    const traceMessageStart = params.imageNotification ? params.messages.length : 0;
+    let outputLanguage = normalizeStudioOutputLanguage(undefined);
     const unlimited = params.unlimited ?? false;
     const creditRecovery = studioCreditRecoveryEnabled() && !isByok && (!unlimited || !!params.creditResume);
     const creditScope = { runId, worldId: params.worldId, userId };
@@ -1633,32 +2028,85 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         ? sql`${agentRuns.creditCheckpoint}->'claim'->>'id' = ${creditClaimId}`
         : sql`${agentRuns.creditCheckpoint}->'claim'->>'id' IS NULL`) : undefined,
     );
-    const finishCreditIteration = async (nextMessages: ChatMessage[], nextIteration: number) => {
+    const markStudioChangesApplied = async () => db.update(agentRuns).set({
+      context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioAppliedChanges}', 'true'::jsonb, true)`,
+    }).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId)));
+    const evaluateSavedAcceptance = async () => {
+      const [savedRun] = await db.select({ context: agentRuns.context }).from(agentRuns).where(ownedRunWhere()).limit(1);
+      const criteria = readAcceptanceCriteria(savedRun?.context ?? null);
+      const status = await evaluateCurrentAcceptance(world, userId, params.worldId, criteria);
+      if (status) await db.update(agentRuns).set({
+        context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{acceptanceStatus}', ${JSON.stringify(status)}::jsonb, true)`,
+        updatedAt: new Date(),
+      }).where(ownedRunWhere());
+      return status;
+    };
+    const announceSteering = async (items: ReturnType<typeof readStudioSteering>) => {
+      if (!items.length) return;
+      cachedSystemPrompt = null;
+      clearReadProgress(readProgress);
+      lastWriteToolKey = "";
+      textOnlyNudges = 0;
+      await safeSend("steering", JSON.stringify({ runId, items }));
+    };
+    const finishCreditIteration = async (nextMessages: ChatMessage[], nextIteration: number, contextPatch?: Record<string, unknown>) => {
       if (reservationId) {
         await releaseStudioCreditReservation(userId, reservationId);
         reservationId = undefined;
       }
-      if (!creditClaimId) return;
-      const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (_tx, checkpoint) => ({
-        // Atomically consume the completed result AND journal the next step.
-        // Clearing this between calls left paid progress stranded on deploy.
-        value: null, checkpoint: {
-          version: 1 as const, phase: "preflight" as const, messages: nextMessages,
-          iteration: nextIteration, worldRevision: checkpoint.worldRevision, requiredCredits: 0,
-        },
-        runUpdates: { messages: nextMessages as unknown as Array<Record<string, unknown>>, iteration: nextIteration },
-      // This step's writes are already committed. An editor save that landed
-      // after them is the next step's starting point, not a conflict.
-      }), { rebase: true });
-      creditCheckpoint = saved.checkpoint;
+      let applied: ReturnType<typeof readStudioSteering> = [];
+      // A paid replay must close its completed result before steering enters
+      // the next checkpoint. Both changes commit under the same run-row lock.
+      if (creditClaimId) {
+        const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (_tx, checkpoint, _schema, run) => {
+          const consumed = nextIteration < maxIterations ? consumeStudioSteering(run.context, nextMessages, nextIteration) : null;
+          nextMessages = consumed?.messages ?? nextMessages;
+          applied = consumed?.items ?? [];
+          return { value: null, checkpoint: {
+            version: 1 as const, phase: "preflight" as const, messages: nextMessages,
+            iteration: nextIteration, worldRevision: checkpoint.worldRevision, requiredCredits: 0,
+          }, runUpdates: { messages: nextMessages as unknown as Array<Record<string, unknown>>, iteration: nextIteration,
+            ...((consumed || contextPatch) ? { context: { ...(consumed?.context ?? run.context), ...contextPatch } } : {}) } };
+        }, { rebase: true });
+        creditCheckpoint = saved.checkpoint;
+      } else {
+        await db.transaction(async tx => {
+          await tx.select({ id: worlds.id }).from(worlds).where(eq(worlds.id, params.worldId)).for("update");
+          const [run] = await tx.select().from(agentRuns).where(ownedRunWhere()).for("update");
+          if (!run) { controller.abort(); return; }
+          const consumed = nextIteration < maxIterations ? consumeStudioSteering(run.context, nextMessages, nextIteration) : null;
+          nextMessages = consumed?.messages ?? nextMessages;
+          applied = consumed?.items ?? [];
+          await tx.update(agentRuns).set({ messages: nextMessages as unknown as Array<Record<string, unknown>>,
+            iteration: nextIteration, ...((consumed || contextPatch) ? { context: { ...(consumed?.context ?? run.context), ...contextPatch } } : {}), updatedAt: new Date() }).where(ownedRunWhere());
+        });
+      }
+      messages = nextMessages;
+      await traceResults([], [], nextMessages);
+      await announceSteering(applied);
+      return applied;
     };
-    const finalizeRun = async (set: Partial<typeof agentRuns.$inferInsert>, opts?: { consumeClaim?: boolean }) => {
-      // A deploy is not completion or user cancellation. The finally block
-      // restores our saved checkpoint, including any already-settled work.
-      if (isShutdownAbort(controller.signal)) return;
-      // Errors keep the checkpoint by default so a transient failure stays
-      // resumable. `consumeClaim` is for errors where resuming would only
-      // repeat the failure — the row must end without a "Continue" card.
+    const finalizeRun = async (set: Partial<typeof agentRuns.$inferInsert>, opts?: { consumeClaim?: boolean; allowSteering?: boolean }): Promise<boolean> => {
+      if (isShutdownAbort(controller.signal)) return true;
+      let applied: ReturnType<typeof readStudioSteering> = [];
+      let finished = true;
+      const nextState = (run: AgentRunRow) => {
+        // Acceptance and this decision use the same row lock. An accepted
+        // follow-up cannot be stranded between the last check and completion.
+        if (opts?.allowSteering && iteration + 1 < maxIterations && !controller.signal.aborted) {
+          const consumed = consumeStudioSteering(run.context,
+            (set.messages ?? messages) as unknown as ChatMessage[], iteration + 1);
+          if (consumed.items.length) {
+            applied = consumed.items;
+            messages = consumed.messages;
+            finished = false;
+            return { messages: messages as unknown as Array<Record<string, unknown>>, context: { ...consumed.context, ...set.context, [STUDIO_STEERING_KEY]: consumed.context[STUDIO_STEERING_KEY] },
+              iteration: iteration + 1, status: "running" as const };
+          }
+        }
+        return { ...set, ...(set.context ? { context: { ...run.context, ...set.context,
+          [STUDIO_STEERING_KEY]: run.context?.[STUDIO_STEERING_KEY] ?? [] } } : {}) };
+      };
       if (creditClaimId && !controller.signal.aborted &&
           (set.status === "completed" || set.status === "awaiting_user" || set.status === "awaiting_approval"
             || (set.status === "error" && opts?.consumeClaim))) {
@@ -1666,20 +2114,24 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           await releaseStudioCreditReservation(userId, reservationId);
           reservationId = undefined;
         }
-        // Consume the checkpoint and publish the terminal state atomically.
-        // A deploy must never leave a running row without its recovery record.
-        const status = set.status;
-        // Consuming replays nothing, so a save during the last step must not
-        // turn a finished run into a stale pause.
-        await withStudioCreditClaimTransaction(creditScope, creditClaimId, async () => ({
-          value: null, checkpoint: null, status, runUpdates: set,
-        }), { rebase: true });
-        creditCheckpoint = null;
-        creditClaimId = undefined;
-        return;
+        const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (_tx, checkpoint, _schema, run) => {
+          const updates = nextState(run);
+          return { value: null, checkpoint: finished ? null : {
+            version: 1 as const, phase: "preflight" as const, messages, iteration: iteration + 1,
+            worldRevision: checkpoint.worldRevision, requiredCredits: 0,
+          }, status: updates.status, runUpdates: updates };
+        }, { rebase: true });
+        creditCheckpoint = saved.checkpoint;
+        if (finished) creditClaimId = undefined;
+      } else {
+        await db.transaction(async tx => {
+          await tx.select({ id: worlds.id }).from(worlds).where(eq(worlds.id, params.worldId)).for("update");
+          const [run] = await tx.select().from(agentRuns).where(ownedRunWhere()).for("update");
+          if (run) await tx.update(agentRuns).set({ ...nextState(run), updatedAt: new Date() }).where(ownedRunWhere());
+        });
       }
-      return db.update(agentRuns).set({ ...set, updatedAt: new Date() })
-        .where(ownedRunWhere());
+      await announceSteering(applied);
+      return finished;
     };
     const sendCreditBalance = async (cost?: number) => {
       const balances = await getAvailableCredits(userId);
@@ -1726,6 +2178,29 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         // so we stop attempting writes, but don't abort the agent.
         sseDisconnected = true;
       }
+    };
+
+    const traceResults = async (calls: ToolCall[], results: ToolResult[], completedMessages?: ChatMessage[]) => {
+      if (controller.signal.aborted || (!results.length && !completedMessages)) return;
+      const [saved] = await db.select({ context: agentRuns.context }).from(agentRuns).where(eq(agentRuns.id, runId));
+      const rows = new Map(readStudioToolTrace(saved?.context ?? null, messages.slice(traceMessageStart)).map(item => [item.id, item]));
+      if (completedMessages) for (const item of recoverStudioTrace(completedMessages.slice(traceMessageStart), saved?.context?.studioUserMessage)) {
+        if (!rows.has(item.id)) rows.set(item.id, item);
+      }
+      for (const call of calls) {
+        const output = results.filter(result => result.tool_call_id === call.id);
+        if (!output.length) continue;
+        const failed = output.find(result => result.status === "error");
+        const result = failed && output.length > 1 ? { status: "error", result: { status: "partial_failure",
+          completed: output.filter(value => value.status === "success").length, failed: output.filter(value => value.status === "error").length } } : failed ?? output[0];
+        rows.set(call.id, describeStudioTrace(call, result));
+      }
+      const items = [...rows.values()].slice(-200);
+      if (!items.length) return;
+      // Patch only this key; concurrent steering/credit context stays intact.
+      await db.update(agentRuns).set({ context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioToolTrace}', ${JSON.stringify(items)}::jsonb, true)` })
+        .where(ownedRunWhere());
+      await safeSend("tool_trace", JSON.stringify({ runId, model, items }));
     };
 
     // Triple-purpose heartbeat:
@@ -1801,7 +2276,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
     }, 5_000);
 
     // Send runId to client immediately so it can cancel the agent
-    await safeSend("run_started", JSON.stringify({ runId }));
+    await safeSend("run_started", JSON.stringify({ runId, model }));
 
     let lastTextContent = "";
     // Nudge counter: when the model outputs text without calling ANY tools (i.e. it
@@ -1816,6 +2291,11 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
     // MAX_TEXT_NUDGES cheap extra round-trips before the run still completes.
     const MAX_TEXT_NUDGES = 2;
     let textOnlyNudges = 0;
+    const textToolRetryTurn = harnessTurn('text_tool_call');
+    // Checkpoint history survives credit pauses and worker restarts.
+    let textToolNudges = messages.filter(message => message.role === 'user'
+      && message.content === textToolRetryTurn.content).length;
+    let requireToolRetry = messages.at(-1)?.content === textToolRetryTurn.content;
 
     // Consecutive length-stops with nothing usable. The credit planner sizes
     // max_tokens per call (2026-09-16), and Claude's hidden reasoning is billed
@@ -1856,7 +2336,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
     // bubble on the client. This is the SINGLE source of truth for "has this text been
     // shown to the user as a bubble yet?" — replaces the fragile implicit-commit logic that
     // used to infer boundaries from read_tools_executed vs done.
-    const committedTurns: Array<{ iteration: number; textContent: string; createdAt: string; commitId: string; writeToolCalls?: ToolCall[]; lane?: "answer" | "step" | "notice"; actions?: Array<{ op: string; target?: string }>; toolNarration?: boolean }> = [...(params.committedTurns ?? [])];
+    const committedTurns: Array<{ iteration: number; textContent: string; createdAt: string; commitId: string; writeToolCalls?: ToolCall[]; lane?: "answer" | "step" | "notice"; actions?: Array<{ op: string; target?: string }>; toolNarration?: boolean; questionPrompt?: { question: string; rationale?: string; options: Array<{ label: string; description?: string }> } }> = [...(params.committedTurns ?? [])];
 
     /** Commit one assistant text turn as a persistent chat bubble.
      *  Idempotent on (runId, iteration): callers may invoke it even if unsure whether
@@ -1866,7 +2346,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
      *  mid-task stall), `notice` (server-injected guard/nudge text). `step`/`notice`
      *  are UI-only, so the model is never trained on announcements that never act.
      *  `actions` is the compact tool trace for `step` turns. */
-    async function commitTextTurn(iter: number, text: string, opts?: { writeToolCalls?: ToolCall[]; lane?: "answer" | "step" | "notice"; actions?: Array<{ op: string; target?: string }>; allowEmpty?: boolean }) {
+    async function commitTextTurn(iter: number, text: string, opts?: { writeToolCalls?: ToolCall[]; lane?: "answer" | "step" | "notice"; actions?: Array<{ op: string; target?: string }>; allowEmpty?: boolean; questionPrompt?: { question: string; rationale?: string; options: Array<{ label: string; description?: string }> } }) {
       const writeToolCalls = opts?.writeToolCalls;
       const trimmed = text.trim();
       if (!trimmed && !writeToolCalls?.length && !opts?.allowEmpty) return;
@@ -1881,6 +2361,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         ...(writeToolCalls && writeToolCalls.length > 0 ? { writeToolCalls } : {}),
         ...(lane ? { lane } : {}),
         ...(opts?.actions && opts.actions.length > 0 ? { actions: opts.actions } : {}),
+        ...(opts?.questionPrompt ? { questionPrompt: opts.questionPrompt } : {}),
         // Back-compat: legacy consumers keyed off `toolNarration`. `lane` is the
         // new source of truth; a `step` turn is exactly the old "tool narration".
         ...(lane === "step" ? { toolNarration: true as const } : {}),
@@ -1902,8 +2383,39 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         textContent: text,
         commitId,
         ...(writeToolCalls && writeToolCalls.length > 0 ? { writeToolCalls } : {}),
+        ...(opts?.questionPrompt ? { questionPrompt: opts.questionPrompt } : {}),
       }));
     }
+
+    const gateAcceptanceCompletion = async (response: string): Promise<
+      { kind: "clear" } | { kind: "continue" } | { kind: "unmet"; status: NonNullable<Awaited<ReturnType<typeof evaluateSavedAcceptance>>>; reply: string }
+    > => {
+      const status = await evaluateSavedAcceptance();
+      if (!status || status.met) return { kind: "clear" };
+      if (!controller.signal.aborted && iteration + 1 < maxIterations) {
+        messages = [...messages, { role: "assistant", content: response }, acceptanceCriteriaTurn(formatUnmetAcceptance(status))];
+        await finishCreditIteration(messages, iteration + 1, { acceptanceStatus: status });
+        iteration++;
+        lastTextContent = response;
+        return { kind: "continue" };
+      }
+      return { kind: "unmet", status, reply: `This run stopped before all saved acceptance criteria were met.\n\n${formatUnmetAcceptance(status)}` };
+    };
+
+    const finishWithUnmetAcceptance = async (status: NonNullable<Awaited<ReturnType<typeof evaluateSavedAcceptance>>>, reply: string): Promise<boolean> => {
+      const replyIteration = committedTurns.some((turn) => turn.iteration === iteration) ? iteration + 1 : iteration;
+      messages = [...messages, { role: "assistant", content: reply }];
+      await commitTextTurn(replyIteration, reply, { lane: "answer" });
+      const finished = await finalizeRun({ status: "completed", messages: messages as unknown as Array<Record<string, unknown>>,
+        textContent: reply, iteration: replyIteration, context: { acceptanceStatus: status } }, { allowSteering: true });
+      if (!finished) {
+        iteration++;
+        lastTextContent = reply;
+        return false;
+      }
+      await safeSend("done", JSON.stringify({ runId, status: "completed" }));
+      return true;
+    };
 
     // Read-progress tracker: per entity id, which requests have already been issued.
     // Repetition is judged on the request (slice / grep query), not the id, so paging
@@ -1918,12 +2430,17 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
     // turn after the model has already acted is a legitimate wrap-up, not a
     // "described but didn't do it" stall — so we don't nudge it (the nudge would
     // otherwise pester every successful run and persist "already done" echo turns).
-    let anyToolExecuted = false;
+    // Image confirmation already handled its tool in the prelude, including
+    // a refused request. Allow the ensuing acknowledgement to finish.
+    let anyToolExecuted = !!params.prelude || !!params.imageNotification;
 
     // Build system prompt once — only read-only iterations happen within this loop,
     // so the world doesn't change and the prompt stays valid. The approve handler
     // creates a new streamAgentLoop invocation with the updated world, getting a fresh prompt.
     let cachedSystemPrompt: SystemPromptParts | null = null;
+    let endpointContextWindow: number | undefined;
+    const endpointOutputLimit = (desired: number) => endpointContextWindow === undefined
+      ? desired : Math.min(desired, Math.max(1, Math.floor(endpointContextWindow / 4)));
 
     async function getSystemPromptParts(): Promise<SystemPromptParts> {
       if (cachedSystemPrompt) return cachedSystemPrompt;
@@ -1943,9 +2460,12 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         // this for Layer 2 preload. For Sonnet 4.6 (1M window, 600K budget) this yields
         // ~270K for preloaded custom UI content, so the agent can skip read_entities for
         // most components. Default 120K budget still maps to ~54K preload (no regression).
-        contextWindow: getContextBudget(model),
+        contextWindow: endpointContextWindow === undefined ? getContextBudget(model) : Math.min(getContextBudget(model), Math.floor(endpointContextWindow * 0.6)),
       });
       cachedSystemPrompt = buildSystemPrompt(resolved, {
+        contextWindow: endpointContextWindow,
+        outputLanguage,
+        imageCapabilities,
         activePanel: context?.activePanel,
         selectedEntity: context?.selectedElementId
           ? { id: context.selectedElementId, type: context.selectedElementType }
@@ -1955,9 +2475,19 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
     }
 
     try {
+      const detectedWindow = await provider.getContextWindow?.();
+      if (typeof detectedWindow === "number" && Number.isFinite(detectedWindow) && detectedWindow > 0) endpointContextWindow = Math.min(detectedWindow, getModelContextWindow(model));
+      const personalImages = await getStudioImageGenerationStatus(userId);
+      imageCapabilities = {
+        imageGeneration: isSmartGenerationEnabled() || personalImages.configs.codex.configured || personalImages.configs.comfyui.configured || personalImages.configs.forgeneo.configured,
+        imageBatchGeneration: isImageBatchEnabled(),
+      };
+      tools = tools.filter(tool =>
+        (tool.function.name !== IMAGE_TOOL_NAME || imageCapabilities.imageGeneration) &&
+        (tool.function.name !== IMAGE_BATCH_TOOL_NAME || imageCapabilities.imageBatchGeneration));
       if (params.prelude) {
         try {
-          const extra = await params.prelude({ send: safeSend, progress: noteProgress });
+          const extra = await params.prelude({ send: safeSend, progress: noteProgress, signal: controller.signal });
           messages = [...messages, ...extra];
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : "The resumed step failed";
@@ -1968,8 +2498,44 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         }
       }
 
+      // A refused image needs a reliable explanation, not another provider call.
+      // Inspect only this confirmation's final result; earlier refusals must not
+      // prevent a subsequent safe request or accepted steering from proceeding.
+      const imageResult = params.prelude ? messages.at(-1) : undefined;
+      let imageRefused = false;
+      if (imageResult?.role === "tool" && typeof imageResult.content === "string") {
+        try { imageRefused = JSON.parse(imageResult.content)?.error === NSFW_IMAGE_REQUEST_ERROR; } catch { /* Other tool output. */ }
+      }
+      if (imageRefused && !controller.signal.aborted) {
+        const refusal = "Image generation is disabled for NSFW requests. No image was generated.";
+        const acceptanceGate = await gateAcceptanceCompletion(refusal);
+        if (acceptanceGate.kind === "continue") lastTextContent = refusal;
+        else if (acceptanceGate.kind === "unmet") {
+          if (await finishWithUnmetAcceptance(acceptanceGate.status, acceptanceGate.reply)) return;
+        } else {
+          messages.push({ role: "assistant", content: refusal });
+          await commitTextTurn(iteration, refusal, { lane: "answer" });
+          if (await finalizeRun({ status: "completed", messages: messages as unknown as Array<Record<string, unknown>>,
+            textContent: refusal, iteration }, { allowSteering: true })) {
+            await safeSend("done", JSON.stringify({ runId, status: "completed" }));
+            return;
+          }
+          iteration++;
+          lastTextContent = refusal;
+        }
+      }
+
       while (iteration < maxIterations) {
         if (controller.signal.aborted) break;
+        // Read the account preference on every step, including resumes and steering.
+        const [profile] = await db.select({ preferences: user.preferences }).from(user).where(eq(user.id, userId)).limit(1);
+        const nextLanguage = normalizeStudioOutputLanguage((profile?.preferences as Record<string, unknown> | null)?.studioOutputLanguage);
+        if (nextLanguage !== outputLanguage) cachedSystemPrompt = null;
+        outputLanguage = nextLanguage;
+        if (!replayGenerated) {
+          await finishCreditIteration(messages, iteration);
+          if (controller.signal.aborted) break;
+        }
         noteProgress();
         const sourceRevision = creditRecovery ? await captureStudioCreditWorldRevision(creditScope) : null;
         if (sourceRevision && !replayGenerated) {
@@ -1978,9 +2544,13 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         }
 
         // Compress large tool results from earlier iterations to save context
-        const compressedMessages = compressOldToolResults(messages);
+        const summarizing = isStudioSummaryRequest(messages);
+        const namingRequest = studioNamingRequest(messages);
+        const requireNames = !summarizing && namingRequest.required;
+        const requestTools = summarizing ? [] : requireNames ? tools.filter(tool => tool.function.name === "generate_names") : tools;
+        const compressedMessages = summarizing ? messages : compressOldToolResults(messages);
         // Sliding window: keep recent messages raw, summarize older ones (budget varies by model)
-        const windowedMessages = buildWindowedMessages(compressedMessages, model);
+        let windowedMessages = buildWindowedMessages(compressedMessages, model);
 
         // Three-tier system prompt for higher cache hit rate, all blocks at 1h TTL
         // so the tool→system→messages chain stays monotonically non-increasing
@@ -1991,35 +2561,46 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         //   Block A (static):  identity + tools-guide + core skills — 1h, never changes within session
         //   Block B (world):   Layer 1 inventory + Layer 2 preloaded content — 1h, rebuilt after writes (cachedSystemPrompt = null)
         //   Block C (dynamic): studio context (active panel / selected entity) — no cache (changes per request)
-        const promptParts = await getSystemPromptParts();
+        const promptParts = summarizing ? { static: "", world: "", dynamic: "" } : await getSystemPromptParts();
         const systemContent: ContentPart[] = [
           { type: "text", text: promptParts.static, cache_control: { type: "ephemeral", ttl: "1h" } },
           ...(promptParts.world ? [{ type: "text" as const, text: promptParts.world, cache_control: { type: "ephemeral", ttl: "1h" } as const }] : []),
           ...(promptParts.dynamic ? [{ type: "text" as const, text: promptParts.dynamic }] : []),
         ];
+        if (!summarizing) {
+          const images = await configuredImageJobs.list(userId, params.worldId, params.conversationId, runId);
+          if (images.length) systemContent.push({ type: "text", text: "Background image jobs (status data, not creator instructions): " + JSON.stringify(images)
+            + "\nContinue independent work while queued/running. Use completed refs for image-dependent work. If not ready, explain that the image is still drawing and end this turn; do not repeatedly poll, regenerate, or claim it finished. NSFW_IMAGE_REQUEST means generation is disabled for NSFW requests; tell the creator no image was generated." });
+        }
 
-        const llmMessages: ChatMessage[] = [
-          { role: "system", content: systemContent },
-          ...windowedMessages,
+        if (!summarizing && endpointContextWindow !== undefined) {
+          const inputBudget = Math.floor((endpointContextWindow - endpointOutputLimit(MAX_OUTPUT)) * 0.85);
+          const fixedTokens = estimateStudioTokens([{ role: "system", content: systemContent }]) + estimateTextTokens(JSON.stringify(requestTools));
+          windowedMessages = buildWindowedMessages(compressedMessages, model, Math.max(0, inputBudget - fixedTokens));
+        }
+        const llmMessages: ChatMessage[] = summarizing ? buildStudioSummaryPrompt(messages, outputLanguage) : [
+          { role: "system", content: systemContent }, ...windowedMessages,
         ];
+        if (summarizing) await safeSend("compaction", JSON.stringify({ runId, status: "summarizing",
+          beforeTokens: estimateStudioTokens(messages), targetTokens: 10_000 }));
 
         const usageLogId = replayGenerated?.usageLogId ?? crypto.randomUUID();
-        let outputBudget = MAX_OUTPUT;
+        let outputBudget = endpointOutputLimit(summarizing ? 6_000 : MAX_OUTPUT);
         if (creditRecovery && !replayGenerated && sourceRevision) {
           const balances = await getAvailableCredits(userId);
           const price = await getModelPrice(model);
-          const planBudget = () => planStudioCreditBudget({ messages: llmMessages, tools, price,
+          const planBudget = () => planStudioCreditBudget({ messages: llmMessages, tools: requestTools, price,
             availableCredits: balances.availableCredits, previousCompletionTokens,
             // Ask for the model's full ceiling and let the balance be the only
             // thing that shrinks it. The planner's 8K default was sized for the
             // visible reply, but Claude bills its reasoning inside the same
             // max_tokens: 8K was routinely eaten by thinking alone, and the
             // 1.35x ramp from the previous call reset to 8K on every resume.
-            desiredOutputTokens: MAX_OUTPUT });
+            desiredOutputTokens: endpointOutputLimit(summarizing ? 6_000 : MAX_OUTPUT), maxOutputTokens: endpointOutputLimit(MAX_OUTPUT) });
           let budget = planBudget();
           // A balance-shrunk cap can cut a large rewrite off mid-JSON, so say so
           // in the system prompt — never as a user turn (see harness-notes.ts).
-          const guidance = budget.ok ? outputBudgetGuidance(budget.maxTokens) : null;
+          const guidance = !summarizing && budget.ok ? outputBudgetGuidance(budget.maxTokens) : null;
           if (guidance) {
             systemContent.push({ type: "text", text: guidance });
             budget = planBudget();
@@ -2056,8 +2637,14 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           }
         }
 
+        if (endpointContextWindow !== undefined) {
+          const inputBudget = Math.floor((endpointContextWindow - outputBudget) * 0.85);
+          const inputTokens = estimateStudioTokens(llmMessages) + estimateTextTokens(JSON.stringify(requestTools));
+          if (inputTokens > inputBudget) throw new Error("This request exceeds the endpoint's context window. Shorten the current request or use a larger context window in Settings → AI config.");
+        }
+
         // Send iteration event
-        await safeSend("iteration", JSON.stringify({ iteration, maxIterations }));
+        await safeSend("iteration", JSON.stringify({ iteration, maxIterations, historyTokens: estimateStudioTokens(windowedMessages) }));
 
         // Stream one LLM turn
         const replay = replayGenerated;
@@ -2068,16 +2655,27 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         let iterationUsage: StreamChunk["usage"] = replay?.usage;
         let iterationStopReason: string | undefined = replay?.stopReason;
         let generationFinished = !!replay;
+        let streamedTextLength = 0;
 
         try {
+          if (!replay && model !== "codex/gpt-6-luna" && !model.startsWith("custom/") && getCatalogImageSupport(model) === undefined
+            && llmMessages.some(message => typeof message.content !== "string" && message.content.some(part => part.type === "image_url"))) {
+            await ensureOpenRouterCatalog();
+          }
           if (!replay) for await (const chunk of generateStreamWithRetry(provider, {
             conversationId: `studio:${userId}:${params.worldId}:${params.conversationId}`,
+            generationId: runId,
             model,
-            messages: llmMessages,
+            messages: getCatalogImageSupport(model) === false ? textOnlyStudioReferenceMessages(llmMessages)
+              : await attachViewedStudioImages(userId, await hydrateStudioMessageImages(userId, llmMessages, controller.signal), controller.signal),
             maxTokens: outputBudget,
-            temperature: 0.7,
-            tools,
-            toolChoice: "auto" as const,
+            temperature: summarizing ? 0.2 : 0.7,
+            tools: requestTools,
+            availableTools: tools,
+            toolChoice: summarizing ? "none" as const : requireNames
+              ? { type: "function" as const, function: { name: "generate_names" } }
+              : requireToolRetry ? "required" as const : "auto" as const,
+            ...(summarizing ? { disableReasoning: true } : {}),
             // No forced reasoning effort — let the model decide how much to think.
             // Simple tasks naturally generate fast. Complex tasks (migrations, large builds) need more thinking.
             // Cache breakpoint at end of prior conversation (everything from previous iterations).
@@ -2090,12 +2688,15 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
 
             if (chunk.type === "reasoning") {
               reasoningContent += chunk.content;
-              await safeSend("reasoning", JSON.stringify({ content: chunk.content }));
+              if (!summarizing && !requireNames) await safeSend("reasoning", JSON.stringify({ content: chunk.content }));
             }
 
             if (chunk.type === "text") {
               textContent += chunk.content;
-              await safeSend("text", JSON.stringify({ content: chunk.content }));
+              if (!summarizing && !requireNames && (streamedTextLength > 0 || !couldStartTextToolCall(textContent))) {
+                await safeSend("text", JSON.stringify({ content: textContent.slice(streamedTextLength) }));
+                streamedTextLength = textContent.length;
+              }
             }
 
             if (chunk.type === "tool_call_start") {
@@ -2141,18 +2742,19 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
                 surface: "studio-agent",
                 iteration,
               });
-              await safeSend("error", JSON.stringify({ error: chunk.content }));
               // Mark run as error
               await finalizeRun({
                 status: "error",
                 error: chunk.content,
                 textContent,
               });
+              await safeSend("error", JSON.stringify({ error: chunk.content }));
               return;
             }
           }
         } catch (llmErr) {
           const errMsg = llmErr instanceof Error ? llmErr.message : "LLM call failed";
+          console.error(`[Agent] Studio run ${runId} iteration ${iteration} failed:`, llmErr);
           if (!controller.signal.aborted) {
             captureServerEvent(userId, "llm_error", {
               model,
@@ -2185,6 +2787,28 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         // generated result. Usage arrives on done; partial tool arguments
         // without that completion boundary must never be replayed.
         if (isShutdownAbort(controller.signal) && !generationFinished) return;
+
+        // Some compatible endpoints return a whole tool request as assistant text.
+        // Normalize before billing/checkpointing so resumes use the same calls and IDs.
+        // Native calls, summaries and unfinished/truncated output retain their existing path.
+        if (!summarizing && generationFinished && toolCalls.length === 0
+          && iterationStopReason !== 'max_tokens' && iterationStopReason !== 'length') {
+          const rejected: string[] = [];
+          const recovered = recoverTextToolCalls(textContent, requestTools, `call_text_${runId}_${iteration}`, reason => rejected.push(reason));
+          if (recovered.length) {
+            toolCalls.push(...recovered);
+            textContent = rejected.length ? `Invalid printed tool requests were not executed: ${[...new Set(rejected)].join('; ')}.` : '';
+            for (const [index, call] of recovered.entries()) {
+              await safeSend('tool_start', JSON.stringify({ index, id: call.id, name: call.function.name }));
+              await safeSend('tool_end', JSON.stringify({ index, id: call.id, name: call.function.name, arguments: call.function.arguments }));
+            }
+          }
+        }
+        if (toolCalls.length > 0) requireToolRetry = false;
+        // A JSON-looking answer that is not a tool request must still reach the creator intact.
+        if (!summarizing && !requireNames && !replay && textContent.length > streamedTextLength) {
+          await safeSend('text', JSON.stringify({ content: textContent.slice(streamedTextLength) }));
+        }
 
         // A missing usage record is not a free generation. Keep its complete
         // result, but never invent an actual charge or execute it for zero.
@@ -2292,6 +2916,57 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
 
         if (controller.signal.aborted) return;
 
+        if (requireNames) {
+          // Discard names invented in text, even if the endpoint ignored tool_choice.
+          textContent = "";
+          if (toolCalls.length === 0 || toolCalls.some(call => call.function.name !== "generate_names")) {
+            const error = "The model did not call the required name generator. Retry the request; invented names were discarded.";
+            await finalizeRun({ status: "error", error, iteration, messages: messages as unknown as Array<Record<string, unknown>> }, { consumeClaim: true });
+            await safeSend("error", JSON.stringify({ error, code: "NAME_GENERATOR_REQUIRED" }));
+            return;
+          }
+        }
+
+        if (summarizing) {
+          const compacted = buildStudioCompactedMessages(messages, textContent);
+          const coverage = params.conversationId ? await loadAgentHistoryForConversation({
+            userId, worldId: params.worldId, conversationId: params.conversationId,
+          }, { forCompactionCoverage: true }) : null;
+          const metadata = { ...compacted, coverage: coverage ?? [], beforeIteration: iteration + 1,
+            id: crypto.randomUUID(), createdAt: new Date().toISOString(), status: compacted.success ? "completed" : "failed" };
+          const notice = compacted.success
+            ? `Context summarized: approximately ${compacted.beforeTokens.toLocaleString()} → ${compacted.afterTokens.toLocaleString()} history tokens (10,000 target). Your instructions and recent tool exchanges are retained.`
+            : `Context could not fit within 10,000 tokens while preserving your instructions. Retained approximately ${compacted.afterTokens.toLocaleString()} tokens.`;
+          await commitTextTurn(iteration, notice, { lane: "notice" });
+          const [origin] = await db.select({ context: agentRuns.context }).from(agentRuns).where(eq(agentRuns.id, runId));
+          const initialUser = origin?.context?.studioUserMessage as { content?: unknown } | undefined;
+          const summaryOnly = typeof initialUser?.content === "string" && initialUser.content.trim() === "/summarize";
+          const summaryAcceptance = await evaluateSavedAcceptance();
+          const acceptanceBlocksSummary = !!summaryAcceptance && !summaryAcceptance.met;
+          // A command-only task commits its summary and terminal checkpoint in
+          // one transaction; recovery must never resume an earlier task merely
+          // because the worker died between saving and publishing completion.
+          const finished = summaryOnly && !acceptanceBlocksSummary ? await finalizeRun({ status: "completed", context: { studioCompaction: metadata },
+            messages: compacted.messages as unknown as Array<Record<string, unknown>>, textContent: notice, iteration,
+          }, { allowSteering: true }) : false;
+          if (!summaryOnly || acceptanceBlocksSummary) {
+            messages = acceptanceBlocksSummary && iteration + 1 < maxIterations
+              ? [...compacted.messages, acceptanceCriteriaTurn(formatUnmetAcceptance(summaryAcceptance!))]
+              : compacted.messages;
+            await finishCreditIteration(messages, iteration + 1, { studioCompaction: metadata, ...(summaryAcceptance ? { acceptanceStatus: summaryAcceptance } : {}) });
+          }
+          await safeSend("compaction", JSON.stringify({ runId, id: metadata.id, status: metadata.status,
+            beforeTokens: compacted.beforeTokens, afterTokens: compacted.afterTokens, targetTokens: compacted.targetTokens,
+            reason: compacted.reason }));
+          if (finished) {
+            await safeSend("done", JSON.stringify({ runId, status: "completed" }));
+            return;
+          }
+          iteration++;
+          lastTextContent = "";
+          continue;
+        }
+
         // No tool calls — either a planning turn (continue loop) or final response (end)
         console.log(`[Agent] Iteration ${iteration}: LLM finished. ${toolCalls.length} tool calls, ${textContent.length} text chars`);
         if (iterationStopReason !== "max_tokens") consecutiveTruncations = 0;
@@ -2331,6 +3006,28 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             continue;
           }
 
+          // Printed requests are failed execution attempts, even after earlier real tools.
+          // Do not repair/execute malformed prose or commit it as a successful answer.
+          if (looksLikeTextToolRequest(textContent, requestTools)) {
+            await commitTextTurn(iteration, textContent, { lane: "step" });
+            messages = [...messages, { role: "assistant" as const, content: textContent }];
+            if (textToolNudges < MAX_TEXT_NUDGES && iteration < maxIterations - 1) {
+              textToolNudges++;
+              requireToolRetry = true;
+              messages = [...messages, textToolRetryTurn];
+              console.warn(`[Agent] Iter ${iteration}: unexecuted text tool request, retry ${textToolNudges}/${MAX_TEXT_NUDGES} with required tool calls.`);
+              await finishCreditIteration(messages, iteration + 1);
+              iteration++;
+              lastTextContent = textContent;
+              continue;
+            }
+            const error = "The model printed a tool request as text, so that request was not executed. Retry the request or select a model/endpoint that supports tool calls.";
+            await finalizeRun({ status: "error", error, iteration, textContent,
+              messages: messages as unknown as Array<Record<string, unknown>> }, { consumeClaim: true });
+            await safeSend("error", JSON.stringify({ error, code: "TOOL_CALL_NOT_EXECUTED" }));
+            return;
+          }
+
           // Nudge: if the model described changes without calling tools, push it to execute.
           // Fires on ANY non-empty text-only turn (no char gate — CJK plans are short but
           // are still "describe instead of do"). Capped at MAX_TEXT_NUDGES per run. This
@@ -2368,6 +3065,13 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             continue;
           }
 
+          const acceptanceGate = await gateAcceptanceCompletion(textContent);
+          if (acceptanceGate.kind === "continue") continue;
+          if (acceptanceGate.kind === "unmet") {
+            if (await finishWithUnmetAcceptance(acceptanceGate.status, acceptanceGate.reply)) return;
+            continue;
+          }
+
           messages = [
             ...messages,
             { role: "assistant" as const, content: textContent },
@@ -2385,12 +3089,13 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           // runCommittedAssistantMessages.
           await commitTextTurn(iteration, textContent, { lane: "answer" });
 
-          await finalizeRun({
-            status: "completed",
-            messages: messages as unknown as Array<Record<string, unknown>>,
-            textContent,
-            iteration,
-          });
+          if (!await finalizeRun({
+            status: "completed", messages: messages as unknown as Array<Record<string, unknown>>, textContent, iteration,
+          }, { allowSteering: true })) {
+            iteration++;
+            lastTextContent = textContent;
+            continue;
+          }
 
           // done is now a pure run-terminal marker. textContent omitted — clients
           // hydrate bubbles from assistant_turn_commit events / committedTurns column.
@@ -2412,7 +3117,16 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         const ask = controlCalls.find((tc) => tc.function.name === "ask_user");
         if (ask) {
           const askArgs = parseToolArgs(ask.function.arguments);
-          const question = typeof askArgs.question === "string" ? askArgs.question : "";
+          const question = typeof askArgs.question === "string" ? askArgs.question.trim().slice(0, 1200) : "";
+          const rationale = typeof askArgs.rationale === "string" ? askArgs.rationale.trim().slice(0, 400) : "";
+          const options = Array.isArray(askArgs.options) ? askArgs.options.flatMap((option: unknown) => {
+            if (!option || typeof option !== "object" || Array.isArray(option)) return [];
+            const value = option as Record<string, unknown>;
+            if (typeof value.label !== "string" || !value.label.trim()) return [];
+            return [{ label: value.label.trim().slice(0, 120), ...(typeof value.description === "string" && value.description.trim()
+              ? { description: value.description.trim().slice(0, 240) } : {}) }];
+          }).slice(0, 4) : [];
+          const questionPrompt = { question, ...(rationale ? { rationale } : {}), options };
           const composed = textContent
             ? (question ? `${textContent}\n\n${question}` : textContent)
             : question;
@@ -2422,20 +3136,26 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             assistantToolCallMessage(textContent, toolCalls, reasoningContent),
           ];
 
+          messages.push(...buildToolResultMessages(toolCalls.map(call => ({ tool_call_id: call.id,
+            name: call.function.name, status: call === ask ? "success" as const : "error" as const,
+            result: call === ask ? "Question shown to the creator." : { status: "skipped", reason: "This step asked the creator a question." } }))));
+          await traceResults([], [], messages);
+
           console.log(`[Agent] Iteration ${iteration}: ask_user called — yielding. Question: ${question.slice(0, 120)}`);
 
           // Commit the composed bubble via the standard path so the client gets one
           // assistant_turn_commit just like a normal turn — no special-casing on the UI.
           // lane:"answer" — asking the user is a real, terminal, user-facing turn; it
           // belongs in cross-run history so the next run sees the question it asked.
-          await commitTextTurn(iteration, composed, { lane: "answer" });
+          await commitTextTurn(iteration, composed, { lane: "answer", questionPrompt });
 
-          await finalizeRun({
-            status: "awaiting_user",
-            messages: messages as unknown as Array<Record<string, unknown>>,
-            textContent: composed,
-            iteration,
-          });
+          if (!await finalizeRun({ status: "awaiting_user",
+            messages: messages as unknown as Array<Record<string, unknown>>, textContent: composed, iteration,
+          }, { allowSteering: true })) {
+            iteration++;
+            lastTextContent = composed;
+            continue;
+          }
 
           await safeSend("done", JSON.stringify({
             runId,
@@ -2446,10 +3166,14 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
 
         const batchCall = controlCalls.find(tc => tc.function.name === IMAGE_BATCH_TOOL_NAME);
         if (batchCall) {
-          let proposal = normalizeImageBatchProposal(parseToolArgs(batchCall.function.arguments));
+          const batchInput = parseToolArgs(batchCall.function.arguments);
+          let proposal = normalizeImageBatchProposal(batchInput);
           let error: string | undefined;
           if (!isImageBatchEnabled()) error = "Batch image generation is not available in this environment.";
           else if (toolCalls.length !== 1) error = "Call generate_images alone, after preparing any custom-UI bindings. None of this turn's other tools were executed.";
+          else if (latestStudioImageReferences(userId, messages).length) error = "Uploaded references require individual generate_image calls so each character can use local Anima sprite references when available, or Codex. Do not drop the references or use batch generation.";
+          else if (batchInput.referenceAssetRefs !== undefined && batchInput.referenceAssetRefs !== null
+            && (!Array.isArray(batchInput.referenceAssetRefs) || batchInput.referenceAssetRefs.length > 0)) error = "Owned image references require individual generate_image calls with referenceAssetRefs. Local Anima sprite jobs or Codex can use the references; do not omit them or use batch generation.";
           else if (!proposal) error = "Provide 1–30 unique items, each with an id, label and non-empty prompt of at most 2000 characters. Use one independent prompt per picture.";
           else {
             try { proposal = withBatchBindingState(proposal, world as unknown as Record<string, unknown>); }
@@ -2480,22 +3204,93 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           return;
         }
 
-        // generate_image — a paid action the model may only PROPOSE. The run pauses
-        // in "awaiting_approval" with the call parked in pendingToolCalls; the
-        // creator confirms (or declines) on the card, and /agent/generate-image
-        // resumes the loop with the delivered asset refs as the tool result.
+        // Configured images start automatically as cancellable background jobs.
+        // The platform confirmation path remains available for its paid cards.
         const imageCall = controlCalls.find((tc) => tc.function.name === IMAGE_TOOL_NAME);
         if (imageCall) {
-          const proposal = normalizeImageProposal(parseToolArgs(imageCall.function.arguments));
-          const unavailable = !isSmartGenerationEnabled();
-          if (!proposal || unavailable) {
+          const raw = parseToolArgs(imageCall.function.arguments);
+          const personal = await getStudioImageGenerationStatus(userId);
+          const parallelCalls = controlCalls.filter(call => call.function.name === IMAGE_TOOL_NAME);
+          if (parallelCalls.length > 1 && parallelCalls.length === toolCalls.length) {
+            const results: ToolResult[] = [];
+            let firstCard = true;
+            for (const call of parallelCalls) {
+              if (controller.signal.aborted) break;
+              try {
+                const input = parseToolArgs(call.function.arguments);
+                const intent = [latestStudioUserText(messages), input.purpose, input.prompt].filter(value => typeof value === "string").join("\n");
+                const autoContext = await resolveAutomaticStudioImageContext(userId, params.worldId, world, intent, input);
+                const refs = mergeStudioImageReferences(latestStudioImageReferences(userId, messages),
+                  await resolveStudioAssetReferences(userId, params.worldId, input.referenceAssetRefs), autoContext.referenceImages);
+                const imageKind = input.imageKind === "background" || input.imageKind === "image" || input.imageKind === "sprite"
+                  ? input.imageKind : autoContext.target?.kind === "background" ? "background" : "sprite";
+                const imageRoute = resolveStudioImageRoute(input, personal, refs.length, imageKind, isSmartGenerationEnabled());
+                const parallelSource = imageRoute.source;
+                const parallelProposal = normalizeImageProposal({ ...input, imageKind, target: autoContext.target, referenceImages: refs,
+                  ...imageRoute,
+                  ...(autoContext.target ? { target: autoContext.target } : {}), ...(autoContext.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
+                  ...(autoContext.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(parallelSource ? { source: parallelSource,
+                  model: imageRoute.workflow === "krea" ? "Krea2-Anime v2.0 INT4 · local" : parallelSource === "codex" ? CODEX_IMAGE_LABEL : parallelSource === "forgeneo" ? (personal.configs.forgeneo.model || "Forge Neo") : "ComfyUI" } : {}) });
+                if (imageRoute.error) throw new Error(imageRoute.error);
+                if (!parallelProposal?.source || !personal.configs[parallelProposal.source].configured) throw new Error("Parallel images require an enabled Codex, ComfyUI or Forge Neo connection and a non-empty prompt.");
+                if (refs.length && parallelProposal.source !== "codex" && parallelProposal.imageWorkflow !== "anima" && parallelProposal.imageWorkflow !== "krea") throw new Error("These references require local Anima, local Krea, or Codex. No image was generated without its references.");
+                const job = await configuredImageJobs.submit({ userId, worldId: params.worldId, runId, callId: call.id, proposal: parallelProposal });
+                anyToolExecuted = true;
+                if (firstCard) await commitTextTurn(iteration, textContent, { lane: "step", allowEmpty: true });
+                await safeSend("image_proposal", JSON.stringify({ runId, toolCallId: call.id, textContent: firstCard ? textContent : "",
+                  ...parallelProposal, unitMushies: 0, estimatedMushies: 0, status: "generating", jobStatus: job.status, jobId: job.jobId,
+                  referenceEditable: job.referenceEditable, referencePrepareUntil: job.referencePrepareUntil,
+                  animaEnabled: job.animaEnabled, animaModel: job.animaModel, animaModelEditable: job.animaModelEditable,
+                  imageWorkflow: job.imageWorkflow, contentRating: job.contentRating, workflowOptions: job.workflowOptions,
+                  workflowEditable: job.workflowEditable, generationOptionsEditable: job.generationOptionsEditable,
+                  seedMode: job.seedMode, seed: job.seed, cfg: job.cfg, steps: job.steps,
+                  progressPhase: job.progressPhase, progressPercent: job.progressPercent, elapsed: job.elapsed }));
+                firstCard = false;
+                results.push({ tool_call_id: call.id, name: IMAGE_TOOL_NAME, status: "success", result: { ...job,
+                  help: "This independent image job is queued. Up to four Codex images draw concurrently in separate sessions. Continue other work; the creator can cancel each image separately. Do not regenerate or repeatedly poll." } });
+              } catch (error) {
+                results.push({ tool_call_id: call.id, name: IMAGE_TOOL_NAME, status: "error", result: null,
+                  error: error instanceof Error ? error.message : "The image could not be queued." });
+              }
+            }
+            messages = [...messages, assistantToolCallMessage(textContent, parallelCalls, reasoningContent), ...buildToolResultMessages(results)];
+            await traceResults(parallelCalls, results);
+            await finishCreditIteration(messages, iteration + 1);
+            iteration++;lastTextContent = textContent;continue;
+          }
+          let referenceImages: Awaited<ReturnType<typeof latestStudioImageReferences>> = [];
+          let referenceError: string | undefined;
+          let autoContext: Awaited<ReturnType<typeof resolveAutomaticStudioImageContext>> | undefined;
+          try {
+            const intent = [latestStudioUserText(messages), raw.purpose, raw.prompt].filter(value => typeof value === "string").join("\n");
+            autoContext = await resolveAutomaticStudioImageContext(userId, params.worldId, world, intent, raw);
+            referenceImages = mergeStudioImageReferences(latestStudioImageReferences(userId, messages),
+              await resolveStudioAssetReferences(userId, params.worldId, raw.referenceAssetRefs), autoContext.referenceImages);
+          } catch (error) { referenceError = error instanceof Error ? error.message : "The selected reference images could not be loaded."; }
+          const imageKind = raw.imageKind === "background" || raw.imageKind === "image" || raw.imageKind === "sprite"
+            ? raw.imageKind : autoContext?.target?.kind === "background" ? "background" : "sprite";
+          const imageRoute = resolveStudioImageRoute(raw, personal, referenceImages.length, imageKind, isSmartGenerationEnabled());
+          const source = imageRoute.source;
+          const proposal = normalizeImageProposal({ ...raw, imageKind, target: autoContext?.target, referenceImages,
+            ...imageRoute,
+            ...(autoContext?.target ? { target: autoContext.target } : {}), ...(autoContext?.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
+            ...(autoContext?.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(source ? { source,
+            model: imageRoute.workflow === "krea" ? "Krea2-Anime v2.0 INT4 · local" : source === "codex" ? CODEX_IMAGE_LABEL : source === "forgeneo" ? (personal.configs.forgeneo.model || "Forge Neo") : "ComfyUI" } : {}) });
+          const unavailable = source ? !personal.configs[source].configured : !isSmartGenerationEnabled();
+          const unsupportedReferences = referenceImages.length > 0 && source !== "codex" && proposal?.imageWorkflow !== "anima" && proposal?.imageWorkflow !== "krea";
+          if (!proposal || imageRoute.error || referenceError || unavailable || unsupportedReferences || toolCalls.length !== 1) {
             // Not a pause: an ordinary error result, and the model carries on.
             messages = [
               ...messages,
               assistantToolCallMessage(textContent, toolCalls, reasoningContent),
-              ...imageToolMessages(imageCall, { status: "error", result: null, error: unavailable
-                ? "Image generation is not available in this environment. Ask the creator to upload an image instead."
-                : "generate_image needs a non-empty prompt; aspectRatio must be one of the listed values and batchSize 1-4." }),
+              ...buildToolResultMessages(toolCalls.map(call => ({ tool_call_id: call.id, name: call.function.name, status: "error" as const, result: null,
+                error: toolCalls.length !== 1 ? "Call generate_image alone. Continue other tasks in the following step. No other tools in this turn were executed."
+                  : referenceError ? referenceError
+                  : imageRoute.error ? imageRoute.error
+                  : unavailable && source === "codex" ? "Shared Codex image generation is unavailable in this installation. Configure an available provider, or remove the references and choose a provider that supports the request."
+                  : unavailable ? "Configure and enable ComfyUI or Forge Neo image generation in Settings → AI Configuration before generating images."
+                  : unsupportedReferences ? "Reference images require local Anima, local Krea, or Codex. Choose a compatible workflow; do not generate without the references."
+                  : "Provide a non-empty image prompt." }))),
             ];
             await commitTextTurn(iteration, textContent, { lane: "step" });
             await finishCreditIteration(messages, iteration + 1);
@@ -2503,11 +3298,37 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             lastTextContent = textContent;
             continue;
           }
-          const estimates = await smartImageEstimates();
+          const estimates = proposal.source ? {} : await smartImageEstimates();
           // Price the model the assistant actually picked, so the confirmation
           // card quotes what pressing Generate will cost.
-          const unitMushies = estimates[proposal.model] ?? estimates[SMART_IMAGE_MODEL] ?? 0;
+          const unitMushies = proposal.source ? 0 : estimates[proposal.model] ?? estimates[SMART_IMAGE_MODEL] ?? 0;
           const estimatedMushies = Math.ceil(unitMushies * proposal.batchSize * 10) / 10;
+          if (proposal.source) {
+            let job: Awaited<ReturnType<typeof configuredImageJobs.submit>>;
+            try {
+              job = await configuredImageJobs.submit({ userId, worldId: params.worldId, runId, callId: imageCall.id, proposal });
+            } catch (error) {
+              messages = [...messages, assistantToolCallMessage(textContent, [imageCall], reasoningContent),
+                ...imageToolMessages(imageCall, { status: "error", result: null, error: error instanceof Error ? error.message : "Image queue unavailable" })];
+              await finishCreditIteration(messages, iteration + 1);iteration++;continue;
+            }
+            anyToolExecuted = true;
+            await commitTextTurn(iteration, textContent, { lane: "step", allowEmpty: true });
+            await safeSend("image_proposal", JSON.stringify({ runId, toolCallId: imageCall.id, textContent,
+              ...proposal, unitMushies, estimatedMushies, status: "generating", jobStatus: job.status, jobId: job.jobId,
+              referenceEditable: job.referenceEditable, referencePrepareUntil: job.referencePrepareUntil,
+              animaEnabled: job.animaEnabled, animaModel: job.animaModel, animaModelEditable: job.animaModelEditable,
+              imageWorkflow: job.imageWorkflow, contentRating: job.contentRating, workflowOptions: job.workflowOptions,
+              workflowEditable: job.workflowEditable, generationOptionsEditable: job.generationOptionsEditable,
+              seedMode: job.seedMode, seed: job.seed, cfg: job.cfg, steps: job.steps,
+              progressPhase: job.progressPhase, progressPercent: job.progressPercent, elapsed: job.elapsed }));
+            messages = [...messages, assistantToolCallMessage(textContent, [imageCall], reasoningContent),
+              ...imageToolMessages(imageCall, { status: "success", result: { ...job,
+                help: "Image generation has been queued automatically in the background, including its safety check. The creator can cancel it on the image card. Continue independent work; completed refs arrive in background status. Do not repeatedly poll, regenerate, or claim it finished before success." } })];
+            await traceResults([imageCall], [{ tool_call_id: imageCall.id, name: IMAGE_TOOL_NAME, status: "success", result: job }]);
+            await finishCreditIteration(messages, iteration + 1);
+            iteration++;lastTextContent = textContent;continue;
+          }
           console.log(`[Agent] Iteration ${iteration}: generate_image proposed (${proposal.aspectRatio} ×${proposal.batchSize}, est. ${estimatedMushies}) — awaiting creator.`);
           // The assistant's own words stay a real turn; the card renders beneath them.
           await commitTextTurn(iteration, textContent, { lane: "answer" });
@@ -2515,7 +3336,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           await finalizeRun({
             status: "awaiting_approval",
             messages: messages as unknown as Array<Record<string, unknown>>,
-            pendingToolCalls: [imageCall] as unknown as Array<Record<string, unknown>>,
+            pendingToolCalls: [{ ...imageCall, function: { ...imageCall.function, arguments: JSON.stringify(proposal) } }] as unknown as Array<Record<string, unknown>>,
             readToolResults: [],
             textContent,
             iteration,
@@ -2529,7 +3350,8 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         // Step 1: Split read vs write tools
         const readCalls = toolCalls.filter((tc) => READ_TOOL_NAMES.has(tc.function.name));
         const writeCalls = toolCalls.filter((tc) => WRITE_TOOL_NAMES.has(tc.function.name));
-        if (readCalls.length > 0 || writeCalls.length > 0) anyToolExecuted = true;
+        const importCalls = toolCalls.filter((tc) => tc.function.name === "import_danbooru_image");
+        if (readCalls.length > 0 || writeCalls.length > 0 || importCalls.length > 0) anyToolExecuted = true;
         const allResults: ToolResult[] = [];
 
         // Step 2: Execute all reads immediately
@@ -2537,12 +3359,45 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           try {
             const args = parseToolArgs(tc.function.arguments);
 
-            if (tc.function.name === "list_assets") {
+            if (tc.function.name === "generate_names") {
+              const result = await executeStudioGenerateNames({ worldId: params.worldId, runId, userId, toolCallId: tc.id, input: args, world, messages });
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result });
+            } else if (tc.function.name === "list_name_profiles") {
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: listNameProfiles(world) });
+            } else if (tc.function.name === "get_image_sources") {
+              const config = await getDanbooruConfig(userId);
+              const generation = await getStudioImageGenerationStatus(userId);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: {
+                generation: { available: isSmartGenerationEnabled() || generation.configs.codex.configured || generation.configs.comfyui.configured || generation.configs.forgeneo.configured,
+                  platformAvailable: isSmartGenerationEnabled(), platformBatchAvailable: isImageBatchEnabled(), ...generation },
+                danbooru: { enabled: config.enabled, configured: config.configured, authenticated: config.hasKey },
+                help: "Danbooru searches/imports existing artwork. Enable it in Settings → AI Configuration → Danbooru artwork search; optional username/API key stay in Settings. Never paste secrets into chat. Call search_danbooru_images, import a chosen post, then edit_vn_assets with its @asset ref. The shared Codex image default uses GPT-6.1 Sol with xhigh independently of the selected agent profile, and requests native transparency only when transparent sprite output is selected. For NSFW generation, use local Krea or an installed Anima checkpoint marked NSFW-capable; Codex and Forge Neo remain SFW-only. Krea can create NSFW scene backgrounds; use imageKind=background and preserve the opaque scene. ComfyUI and Forge Neo remove a sprite background only when transparent output is requested. Configure generation providers in the same Settings section.",
+              } });
+            } else if (tc.function.name === "search_danbooru_images") {
+              const result = await searchDanbooruImages(userId, args);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result });
+            } else if (tc.function.name === "list_vn_assets") {
+              const result = executeListVnAssets(world, args);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: result.error ? "error" : "success", result, error: result.error });
+            } else if (tc.function.name === "list_templates") {
+              const templateResult = executeListTemplates(args);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name,
+                status: templateResult.error ? "error" : "success", result: templateResult,
+                error: templateResult.error });
+            } else if (tc.function.name === "list_assets") {
               allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success",
                 result: await loadAssetCatalog(userId, params.worldId, args) });
+            } else if (tc.function.name === "view_image") {
+              if (getCatalogImageSupport(model) === false) throw new Error("The selected profile cannot inspect images. Choose an image-capable profile before making visual claims.");
+              const viewed = await readOwnedStudioImage(userId, args.assetRef, controller.signal);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: viewed.info });
+            } else if (tc.function.name === "get_image_job") {
+              const job = typeof args.jobId === "string" ? await configuredImageJobs.get(userId, args.jobId, params.worldId) : null;
+              if (!job) throw new Error("Image job not found or not authorized in this card.");
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: job });
             } else if (tc.function.name === "load_skill") {
               // Load on-demand skill content (tsx, rules, audio, front-ui, lore)
-              const skillContent = getSkillContent(args.name);
+              const skillContent = getSkillContent(args.name, imageCapabilities);
               allResults.push({
                 tool_call_id: tc.id,
                 name: tc.function.name,
@@ -2576,6 +3431,44 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
                 status: "success",
                 result: validationResult,
               });
+            } else if (tc.function.name === "audit_project_completeness") {
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: getProjectCompleteness(world) });
+            } else if (tc.function.name === "get_visual_audit_inputs") {
+              if (args.kind !== "characters" && args.kind !== "backgrounds") throw new Error("Choose characters or backgrounds for the visual audit.");
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: getVisualAuditInputs(world, args.kind, args.offset, args.limit) });
+            } else if (tc.function.name === "get_dependency_graph") {
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: getDependencyGraph(world, args.offset, args.limit) });
+            } else if (tc.function.name === "preflight_world") {
+              const report = getStructuralPreflight(world);
+              const missingAssets = await inspectOwnedVnImageRefs(userId, params.worldId, report.assetRefs);
+              const blockingErrors = [
+                ...report.blockingErrors,
+                ...missingAssets.map((asset) => ({ severity: "error" as const, code: "missing-image-asset", message: `Image reference ${asset.ref} is unavailable: ${asset.reason}`, evidence: asset.ref, fix: "Use an owned image @asset reference from list_assets or import a new image." })),
+              ];
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: { ...report, clean: blockingErrors.length === 0, blockingErrors } });
+            } else if (tc.function.name === "set_acceptance_criteria") {
+              const criteria = normalizeAcceptanceCriteria(args.criteria);
+              const activeCriteria = Object.keys(criteria).length > 0 ? criteria : null;
+              const status = await evaluateCurrentAcceptance(world, userId, params.worldId, activeCriteria);
+              const contextPatch = { acceptanceCriteria: criteria, acceptanceStatus: status };
+              const updated = await db.update(agentRuns).set({
+                context: sql`COALESCE(${agentRuns.context}, '{}'::jsonb) || ${JSON.stringify(contextPatch)}::jsonb`,
+                updatedAt: new Date(),
+              }).where(and(eq(agentRuns.id, runId), eq(agentRuns.worldId, params.worldId), eq(agentRuns.userId, userId), eq(agentRuns.status, "running"))).returning();
+              if (!updated.length) throw new Error("This agent run is no longer active; acceptance criteria were not saved.");
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: { active: !!activeCriteria, criteria, status, message: status ? formatUnmetAcceptance(status) : "Acceptance criteria cleared." } });
+            } else if (tc.function.name === "check_acceptance_criteria") {
+              const [savedRun] = await db.select({ context: agentRuns.context }).from(agentRuns)
+                .where(and(eq(agentRuns.id, runId), eq(agentRuns.worldId, params.worldId), eq(agentRuns.userId, userId))).limit(1);
+              const criteria = readAcceptanceCriteria(savedRun?.context ?? null);
+              const status = await evaluateCurrentAcceptance(world, userId, params.worldId, criteria);
+              if (status) {
+                await db.update(agentRuns).set({
+                  context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{acceptanceStatus}', ${JSON.stringify(status)}::jsonb, true)`,
+                  updatedAt: new Date(),
+                }).where(and(eq(agentRuns.id, runId), eq(agentRuns.worldId, params.worldId), eq(agentRuns.userId, userId), eq(agentRuns.status, "running")));
+              }
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: status ? { ...status, message: formatUnmetAcceptance(status) } : { active: false, met: true, unmet: [], message: "No acceptance criteria are active for this run." } });
             } else if (tc.function.name === "analyze_token_cost") {
               // On-demand per-turn cost analysis — surfaces the keyword-lore pool
               // the editor footer hides. Pulled only when the creator asks about
@@ -2620,7 +3513,22 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           }
         }
 
-        if (readCalls.length > 0) {
+        // Imports change the owned library, then subsequent VN writes can bind their refs.
+        // The service reuses the same post per creator, making retries/replay idempotent.
+        for (const tc of importCalls) {
+          if (controller.signal.aborted) break;
+          try {
+            const result = await importDanbooruImage(userId, { ...parseToolArgs(tc.function.arguments), signal: controller.signal });
+            allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result });
+            noteProgress();
+          } catch (error) {
+            allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error", result: null,
+              error: error instanceof Error ? error.message : "Danbooru import failed." });
+          }
+        }
+
+        if (readCalls.length > 0 || importCalls.length > 0) {
+          await traceResults([...readCalls, ...importCalls], allResults);
           const readStatuses = allResults.map((r) => ({ name: r.name, status: r.status }));
           await safeSend("read_tools_executed", JSON.stringify({ iteration, readResults: readStatuses }));
         }
@@ -2633,6 +3541,32 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             ...buildToolResultMessages(allResults),
           ];
 
+          const nameResults = allResults.filter(result => result.name === "generate_names" && result.status === "success")
+            .map(result => result.result as Awaited<ReturnType<typeof executeStudioGenerateNames>>);
+          if (namingRequest.namesOnly && nameResults.length) {
+            const names = nameResults.flatMap(result => result.names);
+            textContent = names.map((name, index) => `${index + 1}. ${name}`).join("\n");
+            const warnings = nameResults.flatMap(result => result.warnings);
+            if (warnings.length) textContent += "\n\n" + warnings.map(warning => `Similar names: ${warning.name} / ${warning.similarTo.join(", ")}`).join("\n");
+            const acceptanceGate = await gateAcceptanceCompletion(textContent);
+            if (acceptanceGate.kind === "continue") continue;
+            if (acceptanceGate.kind === "unmet") {
+              if (await finishWithUnmetAcceptance(acceptanceGate.status, acceptanceGate.reply)) return;
+              continue;
+            }
+            messages.push({ role: "assistant", content: textContent });
+            await safeSend("text", JSON.stringify({ content: textContent }));
+            await commitTextTurn(iteration, textContent, { lane: "answer", actions: toolCallActions(readCalls) });
+            if (!await finalizeRun({ status: "completed", messages: messages as unknown as Array<Record<string, unknown>>, textContent, iteration }, { allowSteering: true })) {
+              await finishCreditIteration(messages, iteration + 1);
+              iteration++;
+              lastTextContent = textContent;
+              continue;
+            }
+            await safeSend("done", JSON.stringify({ runId, status: "completed" }));
+            return;
+          }
+
           // Commit this iteration's text as a persistent bubble BEFORE any spiral/continue
           // logic. Previously read_tools_executed carried this as an implicit commit, and
           // the various spiral-exit paths re-emitted textContent via done — producing the
@@ -2641,7 +3575,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           // so it's UI-only and dropped from cross-run history (the read already
           // happened; reads are means, not durable outcomes). actions records what
           // was read as a faithful, cheap trace.
-          await commitTextTurn(iteration, textContent, { lane: "step", actions: toolCallActions(readCalls) });
+          await commitTextTurn(iteration, textContent, { lane: importCalls.length ? "answer" : "step", actions: toolCallActions([...readCalls, ...importCalls]) });
 
           // Read-spiral detection, judged per REQUEST rather than per entity id: a new
           // slice or a new grep query returns information the model didn't have, so it
@@ -2654,6 +3588,15 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             if (verdict.kind === "stop") {
               const stuckMsg = readSpiralStopMessage(verdict.id);
               console.warn(`[Agent] Read spiral on "${verdict.id}" (identical request 3×) — terminating.`);
+              const acceptanceGate = await gateAcceptanceCompletion(stuckMsg);
+              if (acceptanceGate.kind === "continue") {
+                clearReadProgress(readProgress);
+                continue;
+              }
+              if (acceptanceGate.kind === "unmet") {
+                if (await finishWithUnmetAcceptance(acceptanceGate.status, acceptanceGate.reply)) return;
+                continue;
+              }
               // Commit the stuckMsg as its own bubble so the user understands why we stopped,
               // even if the last iteration had no text of its own. lane:"notice" —
               // server-authored guard text, shown in the UI but NEVER re-fed to the
@@ -2686,7 +3629,24 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
 
         // Step 4+5: Parse each write tool individually, apply as-you-go.
         // Per-tool error handling: one bad JSON argument does NOT block the others.
-        const parsedCalls = toolCallsToSchemaChanges(writeCalls, world);
+        const rawParsedCalls = toolCallsToSchemaChanges(writeCalls, world);
+        const hasCharacterNames = rawParsedCalls.some(parsed => parsed.change?.entityType === "entry"
+          && typeof parsed.change.data?.name === "string"
+          && (parsed.change.data.role ?? world.entries.find(entry => entry.id === parsed.change?.id)?.role) === "character");
+        const generatedNames = hasCharacterNames ? await readStudioGeneratedNames(params.worldId) : [];
+        const parsedCalls = rawParsedCalls.map(parsed => {
+          try {
+            if (parsed.change?.entityType === "settings" && Array.isArray(parsed.change.data?.nameGeneratorProfiles)) {
+              for (const profile of parsed.change.data.nameGeneratorProfiles) if (profile && typeof profile === "object") {
+                assertNameInputsAuthored(profile, messages, world.settings.nameGeneratorProfiles ?? []);
+              }
+            }
+            const error = parsed.change ? characterNameError(parsed.change, world, messages, generatedNames) : undefined;
+            return error ? { ...parsed, change: undefined, error } : parsed;
+          } catch (error) {
+            return { ...parsed, change: undefined, error: error instanceof Error ? error.message : "Invalid naming profile." };
+          }
+        });
         const hasValidChanges = parsedCalls.some((p) => p.change);
         console.log(`[Agent] Parsed ${writeCalls.length} write tools → ${parsedCalls.filter((p) => p.change).length} valid, ${parsedCalls.filter((p) => p.error).length} errors`);
 
@@ -2755,10 +3715,23 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           if (!parsed.change) continue;
           const change = parsed.change;
 
+          if (tc.function.name === "edit_vn_assets") {
+            const operation = change.data?.vn_asset_operation as { assetRef?: unknown } | undefined;
+            if (operation?.assetRef !== undefined) {
+              try { await assertOwnedVnImageRef(userId, params.worldId, operation.assetRef); }
+              catch (error) {
+                allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error", result: null,
+                  error: error instanceof Error ? error.message : "Image not authorized." });
+                continue;
+              }
+            }
+          }
+
           // Apply this single change
           const singleResult = executeApplyChanges(world, [change]);
 
           if (singleResult.success) {
+            const schemaChanged = JSON.stringify(singleResult.world) !== JSON.stringify(world);
             world = singleResult.world;
             appliedCount++;
             noteProgress();
@@ -2782,6 +3755,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
             // Save to DB and notify client IMMEDIATELY — editor refreshes progressively.
             // Published worlds route material changes into the held edit instead.
             const worldId = params.worldId;
+            let saved = false;
             try {
               const saveResult = allResults[allResults.length - 1]!;
               if (creditClaimId) {
@@ -2796,6 +3770,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
               } else {
                 await writeStudioWorldSchema({ worldId, creatorId: params.userId, schema: world as unknown as Record<string, unknown> });
               }
+              saved = true;
             } catch (saveErr) {
               // The transaction left both the stored world and journal intact.
               // Pause the unfinished step instead of advancing its in-memory copy.
@@ -2807,6 +3782,10 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
                 error: `Applied but failed to save: ${saveErr instanceof Error ? saveErr.message : "DB error"}`,
               };
             }
+            if (saved && schemaChanged) {
+              try { await markStudioChangesApplied(); }
+              catch (markerErr) { console.error("[Agent] Applied-change marker failed:", markerErr instanceof Error ? markerErr.message : markerErr); }
+            }
 
             await safeSend("applied", JSON.stringify({
               changes: 1,
@@ -2814,6 +3793,10 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
               reason: `${tc.function.name} "${change.id}"`,
               toolNames: tc.function.name,
             }));
+            const completed = allResults.filter(result => result.tool_call_id === tc.id);
+            const expected = parsedCalls.filter(value => value.toolCallId === tc.id).length;
+            await traceResults([tc], completed.length < expected ? [{ tool_call_id: tc.id, name: tc.function.name,
+              status: "success", result: { status: "partial", completed: completed.filter(result => result.status === "success").length, total: expected } }] : completed);
           } else {
             // This one failed — report error, continue with remaining writes
             allResults.push({
@@ -2826,6 +3809,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
           }
         }
 
+        await traceResults(toolCalls, allResults);
         cachedSystemPrompt = null;
 
         // Add all results to messages ONCE — collapsed to one tool message per
@@ -2867,6 +3851,15 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         // Catch duplicate write batches (model retrying a failing write with identical args).
         const toolKey = toolCalls.map((tc) => tc.function.name + ":" + tc.function.arguments).sort().join("|");
         if (toolKey === lastWriteToolKey) {
+          const acceptanceGate = await gateAcceptanceCompletion(textContent || lastTextContent);
+          if (acceptanceGate.kind === "continue") {
+            lastWriteToolKey = "";
+            continue;
+          }
+          if (acceptanceGate.kind === "unmet") {
+            if (await finishWithUnmetAcceptance(acceptanceGate.status, acceptanceGate.reply)) return;
+            continue;
+          }
           await finalizeRun({
             status: "completed",
             messages: messages as unknown as Array<Record<string, unknown>>,
@@ -2881,6 +3874,14 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         await finishCreditIteration(messages, iteration + 1);
         iteration++;
         lastTextContent = textContent;
+      }
+
+      if (iteration >= maxIterations && !controller.signal.aborted) {
+        const acceptanceStatus = await evaluateSavedAcceptance();
+        if (acceptanceStatus && !acceptanceStatus.met) {
+          const reply = `The run reached its step limit before completing the saved acceptance criteria.\n\n${formatUnmetAcceptance(acceptanceStatus)}`;
+          if (await finishWithUnmetAcceptance(acceptanceStatus, reply)) return;
+        }
       }
 
       // Safety cap reached (or aborted mid-loop). Conditional write: when the
@@ -2939,11 +3940,33 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
         }
       }
       if (reservationId) await releaseStudioCreditReservation(userId, reservationId).catch(() => {});
+      if (model === "codex/gpt-6-luna") {
+        const [savedRun] = await db.select({ status: agentRuns.status }).from(agentRuns)
+          .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId), eq(agentRuns.worldId, params.worldId))).catch(() => []);
+        if (savedRun?.status !== "awaiting_approval") await stopCodexConversation(`studio:${userId}:${params.worldId}:${params.conversationId}`, runId);
+      }
       clearInterval(heartbeat);
       if (activeAgentRuns.get(runId) === controller) activeAgentRuns.delete(runId);
       unregisterStream();
+      if (!isShutdownAbort(controller.signal)) {
+        const [run] = await db.select({ context: agentRuns.context }).from(agentRuns).where(eq(agentRuns.id, runId)).catch(() => []);
+        const origin = (run?.context?.studioImageNotification as { taskRunId?: string } | undefined)?.taskRunId ?? runId;
+        void studioImageNotifications.notify(userId, params.worldId, origin)
+          .catch(error => console.warn("[Studio image notification] Dispatch failed", error instanceof Error ? error.name : "Error"));
+      }
     }
-  });
 }
+
+studioImageNotifications.setLauncher(async params => {
+  const guard = await guardGeneration(params.userId, params.model, { isByok: params.isByok,
+    skipConcurrency: true, skipModelValidation: STUDIO_MODEL_IDS.has(params.model) });
+  if (!guard.ok) throw new Error((guard.body as { error?: string }).error ?? "The agent continuation could not start.");
+  const [run] = await db.select({ conversationId: agentRuns.conversationId }).from(agentRuns).where(eq(agentRuns.id, params.runId));
+  await runAgentLoop({ ...params, tools: STUDIO_TOOLS.filter(tool => ![IMAGE_TOOL_NAME, IMAGE_BATCH_TOOL_NAME].includes(tool.function.name)),
+    unlimited: guard.ctx.planConfig.unlimited }, {
+    writeSSE: async message => publishStudioImageNotification(params.userId, params.worldId, run?.conversationId ?? null, message.event, message.data),
+    onAbort: () => {},
+  });
+});
 
 export { agentRoutes };

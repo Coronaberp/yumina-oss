@@ -6,6 +6,9 @@ import { StructuredResponseParser } from "./structured-response-parser.js";
 import { ThinkingTagFilter } from "./thinking-tag-filter.js";
 import { stripStateReceipts } from "./state-receipt.js";
 import { parseLeadingSpeakerTag } from "../prompts/speaker-tag.js";
+import { extractResponseChoices } from "./response-choices.js";
+import { stripZeroWidthSpaces } from "./text-normalization.js";
+import { maskPresentationLiterals, presentationLiteralRanges, isPresentationLiteral, isActiveDirectiveFence } from "./presentation-literals.js";
 
 export interface StateDiagnostic { code: string; start?: number; end?: number }
 export interface GuardedParseResult extends ParseResult {
@@ -86,6 +89,7 @@ export function validateAiBatch(world: WorldDefinition, state: GameState, batch:
 
 /** Additive strict entry point. Existing permissive parsers remain unchanged. */
 export function parseGuardedResponse(raw: string, world: WorldDefinition, state: GameState): GuardedParseResult {
+  raw = stripZeroWidthSpaces(raw);
   const speakerTag = parseLeadingSpeakerTag(ThinkingTagFilter.strip(raw));
   const text = speakerTag.text;
   const legacy = new ResponseParser();
@@ -135,10 +139,11 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
     // cannot acknowledge a turn. Malformed tails are diagnostics, not none.
     let inFence = false;
     let offset = 0;
+    const protectedRanges = presentationLiteralRanges(text);
     const receipts: Array<{ raw: string; start: number; end: number }> = [];
     for (const line of text.split(/\n/)) {
       if (/^\s*(?:```|~~~)/.test(line)) inFence = !inFence;
-      if (!inFence && /^[\t ]*<yumina-state\b/.test(line)) receipts.push({ raw: line.trim(), start: offset, end: offset + line.length });
+      if (!inFence && !isPresentationLiteral(protectedRanges, offset + line.search(/\S/)) && /^[\t ]*<yumina-state\b/.test(line)) receipts.push({ raw: line.trim(), start: offset, end: offset + line.length });
       offset += line.length + 1;
     }
     if (receipts.length !== 1) fail(receipts.length ? "duplicate_receipt" : "missing_receipt");
@@ -165,13 +170,18 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
     // Invalid marker placement must not discard the rest of the frozen story
     // or conceal commands from validation/correction.
     let body = marker ? text.slice(0, marker.start) + text.slice(marker.end) : text;
+    const choiceResult = extractResponseChoices(body);
+    body = choiceResult.text;
+    const compatibilityLiterals = presentationLiteralRanges(body);
     for (const malformed of body.matchAll(/\[\s*([^\s\]:]+)\s+(set|add|subtract|multiply|toggle|append|merge|push|delete)\b[^\n]*/g)) {
+      if (isPresentationLiteral(compatibilityLiterals, malformed.index!)) continue;
       if (world.variables.some((v) => v.id === malformed[1] || v.name === malformed[1])) fail("missing_colon", malformed.index, malformed.index! + malformed[0].length);
     }
     const effects: Effect[] = [];
     // Validate entire compatibility blocks before the legacy adapter can drop
     // a bad member. Keep their existing normalization, not another patch engine.
     body = body.replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi, (block, start: number) => {
+      if (isPresentationLiteral(compatibilityLiterals, start)) return block;
       try {
         const patch = /<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>/i.exec(block);
         const data: unknown = JSON.parse(patch?.[1] ?? "");
@@ -183,8 +193,10 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
       } catch { fail("invalid_patch", start, start + block.length); }
       return "";
     });
-    if (/<\/?(?:UpdateVariable|JSONPatch)\b/i.test(body)) fail("incomplete_patch");
+    if (/<\/?(?:UpdateVariable|JSONPatch)\b/i.test(maskPresentationLiterals(body).text)) fail("incomplete_patch");
+    const fenceSource = body;
     body = body.replace(/```[^\n]*\n([\s\S]*?)```/g, (block, inside: string, start: number) => {
+      if (!isActiveDirectiveFence(fenceSource, start)) return block;
       const result = legacy.tryParseDirectiveBlock(inside);
       if (result) { effects.push(...result); return ""; }
       // A receipt inside a code example is not an acknowledgement. JSON that
@@ -192,6 +204,8 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
       if (/"[^"\n]+"\s*:\s*"(?:(?:set|add|subtract|push|merge|delete|toggle|append|multiply)\b|[+*-]\d)/.test(block)) fail("invalid_fenced_batch", start, start + block.length);
       return block;
     });
+    const literals = maskPresentationLiterals(body);
+    body = literals.text;
     const header = /\[\s*([\w\p{L}\p{N}.$-]+(?:\[\d+\][\w\p{L}\p{N}.$-]*)*):\s*/gu;
     let cursor = 0;
     let visible = "";
@@ -230,15 +244,27 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
       }
       const normalizedId = match[1]!.replace(/\[(\d+)\]/g, ".$1");
       const token = `[${normalizedId}: ${payload}]`;
+      const known = world.variables.some(variable => variable.id === normalizedId.split(".")[0] || variable.name === normalizedId.split(".")[0]);
+      if (complete && !known && !/^(?:set|add|subtract|multiply|toggle|append|merge|push|delete)\b|^[+*-]\s*\d/.test(payload) && !/^(scene|speaker|name)$/i.test(normalizedId)) {
+        visible += body.slice(start, end + 1);
+        cursor = end + 1; header.lastIndex = cursor; continue;
+      }
       const result = legacy.parse(token);
+      if (complete && result.effects.length === 0 && /^(scene|speaker|name)$/i.test(normalizedId)) {
+        visible += body.slice(start, end + 1);
+        cursor = end + 1; header.lastIndex = cursor;
+        continue;
+      }
       if (!complete || result.effects.length !== 1) fail("malformed_directive", start, end);
       else effects.push(...result.effects);
       cursor = end + (body[end] === "]" ? 1 : 0);
       header.lastIndex = cursor;
     }
     visible += body.slice(cursor);
-    const audio = legacy.parse(visible);
-    parsed = { cleanText: audio.cleanText, effects, audioEffects: audio.audioEffects };
+    const audio = legacy.parse(visible, undefined, world.variables.flatMap(variable => [variable.id, variable.name]));
+    parsed = { cleanText: literals.restore(audio.cleanText), effects, audioEffects: audio.audioEffects,
+      ...(choiceResult.choices !== undefined ? { choices: choiceResult.choices } : {}),
+    };
     if (receipt === "none" && effects.length) fail("contradictory_none");
     if (receipt === "updated" && (!effects.length || declaredCount !== effects.length)) fail("count_mismatch");
   }
@@ -250,7 +276,7 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
   return {
     ...parsed, effects: relevant.length ? [] : checked.effects,
     ...(speakerTag.speaker ? { speaker: speakerTag.speaker } : {}),
-    cleanText: stripStateReceipts(parsed.cleanText), diagnostics: relevant,
+    cleanText: stripZeroWidthSpaces(stripStateReceipts(parsed.cleanText)), diagnostics: relevant,
     outcome: relevant.length ? "invalid" : !required ? "not-required" : receipt === "none" ? "explicit-none" : "valid-updates",
     declaredCount, repaired,
   };

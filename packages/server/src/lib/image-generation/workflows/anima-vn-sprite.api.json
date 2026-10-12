@@ -1,0 +1,164 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "anima-base-v1.0.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ],
+      "lora_name": "anima-turbo-lora-v0.2.safetensors",
+      "strength_model": 1,
+      "strength_clip": 0
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        1
+      ],
+      "text": "single isolated character, visual novel character sprite, clean anime illustration, thigh-up framing, full visible silhouette, plain flat uniform electric magenta background filling the whole image (#ff00ff), character in front of the solid backdrop, no environment, no scenery, no cast shadows on the background; {{prompt}}; keep the entire background one uniform electric magenta color (#ff00ff), no white background, no transparent background, no checkerboard, no text"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        1
+      ],
+      "text": "worst quality, low quality, blurry, jpeg artifacts, multiple people, extra limbs, cropped head, cropped hands, gradient background, plain white background, transparent background, checkerboard, scenery, background objects, text, watermark"
+    }
+  },
+  "7": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 832,
+      "height": 1216,
+      "batch_size": 1
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "6",
+        0
+      ],
+      "latent_image": [
+        "7",
+        0
+      ],
+      "seed": 1,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "8",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "BiRefNetRMBG",
+    "inputs": {
+      "image": [
+        "9",
+        0
+      ],
+      "model": "BiRefNet-portrait",
+      "sensitivity": 0.85,
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": true,
+      "unload_model": false,
+      "background": "Alpha",
+      "background_color": "#ffffff"
+    }
+  },
+  "11": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "10",
+        1
+      ]
+    }
+  },
+  "12": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "illumi-sprite-original"
+    }
+  },
+  "13": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "11",
+        0
+      ],
+      "filename_prefix": "illumi-sprite-mask"
+    }
+  },
+  "14": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "10",
+        0
+      ],
+      "filename_prefix": "illumi-sprite-foreground"
+    }
+  }
+}

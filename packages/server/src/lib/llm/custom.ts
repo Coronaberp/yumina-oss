@@ -1,8 +1,11 @@
+import { modelFallbackReason } from "./openrouter.js";
 import { PUBLIC_ORIGIN } from "../env.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
 import type { ApiKeyMetadata } from "@yumina/shared";
-import { validateCustomEndpointUrl } from "../ssrf.js";
+import { PROFILE_SAMPLING_DEFAULTS } from "@yumina/shared";
+import { isStrataLocalEndpoint, validateCustomEndpointUrl } from "../ssrf.js";
+import { IS_LOCAL_EDITION } from "../env.js";
 import { applyPromptPostProcessing } from "./post-process.js";
 import { parseUnsupportedParam, stripParamFromBody, looksLikeReasoningModel } from "./param-fallback.js";
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
@@ -22,11 +25,14 @@ export class CustomProvider implements LLMProvider {
   private apiKey: string;
   private baseUrl: string;
   private metadata: ApiKeyMetadata;
+  private unsupportedReasoningHistoryModels = new Set<string>();
 
   constructor(apiKey: string, baseUrl: string, metadata?: ApiKeyMetadata | null) {
     this.apiKey = apiKey;
     // SSRF-safe validation; throws on disallowed URLs (metadata endpoints, private IPs, etc.)
-    this.baseUrl = validateCustomEndpointUrl(baseUrl);
+    this.baseUrl = validateCustomEndpointUrl(baseUrl, {
+      allowStrataLocal: IS_LOCAL_EDITION && isStrataLocalEndpoint(baseUrl),
+    });
     this.metadata = metadata ?? {};
   }
 
@@ -178,7 +184,7 @@ export class CustomProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      yield { type: "error", content: `Custom endpoint error (${response.status}): ${error}` };
+      yield { type: "error", content: `Custom endpoint error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 
@@ -363,7 +369,7 @@ export class CustomProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text().catch(() => "");
-      yield { type: "error", content: `Custom endpoint error (${response.status}): ${error}` };
+      yield { type: "error", content: `Custom endpoint error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 
@@ -493,10 +499,17 @@ export class CustomProvider implements LLMProvider {
     try {
       const probeModel = model.replace(/^custom\//, "");
       const response = await this.postChatWithRetry(
-        this.shapeBody({
+        this.buildChatBody({
           model: probeModel,
           messages: [{ role: "user", content: prompt }],
           stream: false,
+          params: {
+            model: probeModel,
+            messages: [{ role: "user", content: prompt }],
+            temperature: this.metadata.temperature ?? PROFILE_SAMPLING_DEFAULTS.temperature,
+            topP: this.metadata.topP ?? PROFILE_SAMPLING_DEFAULTS.topP,
+            topK: this.metadata.topK ?? PROFILE_SAMPLING_DEFAULTS.topK,
+          },
         }),
         AbortSignal.timeout(60_000),
       );
@@ -566,11 +579,13 @@ export class CustomProvider implements LLMProvider {
     };
 
     if (params.maxTokens !== undefined) body.max_tokens = params.maxTokens;
+    if (!params.disableReasoning) body.reasoning_effort = this.metadata.reasoningEffort ?? params.reasoningEffort ?? "low";
 
     // Sampling controls — proactively skipped on suspected reasoning models.
     if (!reasoning) {
       if (params.temperature !== undefined) body.temperature = params.temperature;
       if (params.topP !== undefined) body.top_p = params.topP;
+      if (params.topK !== undefined && params.topK > 0) body.top_k = params.topK;
       if (params.frequencyPenalty !== undefined) body.frequency_penalty = params.frequencyPenalty;
       if (params.presencePenalty !== undefined) body.presence_penalty = params.presencePenalty;
     }
@@ -580,6 +595,11 @@ export class CustomProvider implements LLMProvider {
     if (params.toolChoice !== undefined) body.tool_choice = params.toolChoice;
 
     const shaped = this.shapeBody(body);
+    if (params.disableReasoning) delete shaped.reasoning_effort;
+    if (params.lockModel) {
+      shaped.model = model;
+      delete shaped.models;
+    }
 
     // DeepSeek V4 enables thinking by default. Background callers can request
     // disableReasoning; translate that into DeepSeek's native field
@@ -589,6 +609,25 @@ export class CustomProvider implements LLMProvider {
     // re-enable reasoning for a summary request.
     if (params.disableReasoning && isOfficialDeepSeekEndpoint(this.baseUrl)) {
       shaped.thinking = { type: "disabled" };
+    }
+
+    // MiMo V2.5/V2.6 enables thinking by default and controls it with Xiaomi's
+    // `thinking` field, not `reasoning_effort`. Generic custom endpoints such
+    // as OpenAI-compatible gateways can serve these model IDs too, so key this
+    // translation on the model and apply it after metadata shaping.
+    if (params.disableReasoning && isXiaomiMimoModel(model)) {
+      shaped.thinking = { type: "disabled" };
+    }
+
+    // Strata's Qwen template defaults to thinking even without reasoning_effort.
+    // Preserve other template options while giving bounded background calls a
+    // visible answer within their output budget.
+    if (params.disableReasoning && isStrataLocalEndpoint(this.baseUrl)) {
+      const configured = shaped.chat_template_kwargs;
+      shaped.chat_template_kwargs = {
+        ...(configured && typeof configured === "object" && !Array.isArray(configured) ? configured : {}),
+        enable_thinking: false,
+      };
     }
 
     return shaped;
@@ -607,6 +646,8 @@ export class CustomProvider implements LLMProvider {
     const headers = this.buildHeaders({ conversationId });
 
     let body = initialBody;
+    const model = typeof body.model === 'string' ? body.model : '';
+    if (this.unsupportedReasoningHistoryModels.has(model)) body = stripAssistantReasoningHistory(body) ?? body;
     let response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
     if (response.ok || response.status !== 400 || !allowRetry) return response;
 
@@ -616,10 +657,12 @@ export class CustomProvider implements LLMProvider {
     const errorText = await response.text().catch(() => "");
     const errorShim = () => new Response(errorText, { status: response.status, statusText: response.statusText });
 
-    const offendingParam = parseUnsupportedParam(errorText);
-    if (!offendingParam) return errorShim();
-    const retryBody = stripParamFromBody(body, offendingParam);
+    const rejectedReasoning = rejectsAssistantReasoningHistory(errorText);
+    const reasoningRetry = rejectedReasoning ? stripAssistantReasoningHistory(body) : null;
+    const offendingParam = rejectedReasoning ? 'messages[].reasoning_content' : parseUnsupportedParam(errorText);
+    const retryBody = rejectedReasoning ? reasoningRetry : (offendingParam ? stripParamFromBody(body, offendingParam) : null);
     if (!retryBody) return errorShim();
+    if (reasoningRetry) this.unsupportedReasoningHistoryModels.add(model);
 
     console.warn(`[Custom] Upstream rejected param '${offendingParam}'. Retrying once without it. Excerpt: ${errorText.slice(0, 200)}`);
     body = retryBody;
@@ -645,7 +688,7 @@ export class CustomProvider implements LLMProvider {
         headers[k] = v;
       }
     }
-    headers["Authorization"] = `Bearer ${this.apiKey}`;
+    if (this.apiKey.trim()) headers["Authorization"] = `Bearer ${this.apiKey}`;
     if (isOpenCode) {
       headers["User-Agent"] = `Yumina (+${PUBLIC_ORIGIN})`;
       headers["x-opencode-session"] = createHash("sha256")
@@ -682,18 +725,61 @@ function isOfficialDeepSeekEndpoint(baseUrl: string): boolean {
   }
 }
 
+function isXiaomiMimoModel(model: string): boolean {
+  return /^(?:xiaomi\/)?mimo-v2\.(?:5|6)(?:-|$)/i.test(model.replace(/^custom\//i, ""));
+}
+
+/** Recognize a rejected message property, without treating generic reasoning errors as capability hints. */
+function rejectsAssistantReasoningHistory(errorText: string): boolean {
+  let message = errorText;
+  try {
+    const parsed = JSON.parse(errorText) as { message?: unknown; error?: { message?: unknown } };
+    const text = parsed.error?.message ?? parsed.message;
+    if (typeof text === 'string') message = text;
+  } catch { /* Some compatible endpoints return plain-text validation errors. */ }
+  return /(?:property|parameter|field|argument)\s*:?\s*['"`]?messages(?:\.\d+|\[\d+\])(?:\.assistant)?\.reasoning_content['"`]?\s+(?:is\s+)?(?:unsupported|not\s+(?:supported|allowed|permitted))\b/i.test(message)
+    || /(?:unsupported|unknown|unrecognized)\s+(?:property|parameter|field|argument)\s*:?\s*['"`]?messages(?:\.\d+|\[\d+\])(?:\.assistant)?\.reasoning_content\b/i.test(message);
+}
+
+/** Change only the wire copy; canonical reasoning and tool history stay available to the agent. */
+function stripAssistantReasoningHistory(body: Record<string, unknown>): Record<string, unknown> | null {
+  if (!Array.isArray(body.messages)) return null;
+  let changed = false;
+  const messages = body.messages.map((message: unknown) => {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return message;
+    const record = message as Record<string, unknown>;
+    if (record.role !== 'assistant' || !Object.hasOwn(record, 'reasoning_content')) return message;
+    changed = true;
+    const next = { ...record };
+    delete next.reasoning_content;
+    return next;
+  });
+  return changed ? { ...body, messages } : null;
+}
+
 function serializeMessage(m: ChatMessage): Record<string, unknown> {
   if (m.role === "tool") {
     return { role: "tool", tool_call_id: m.tool_call_id, content: m.content };
   }
   if (m.role === "assistant" && "tool_calls" in m && m.tool_calls && m.tool_calls.length > 0) {
-    const message: Record<string, unknown> = { role: "assistant", content: m.content ?? "", tool_calls: m.tool_calls };
+    const message: Record<string, unknown> = { role: "assistant", content: serializeContent(m.content ?? ""), tool_calls: m.tool_calls };
     if (typeof m.reasoning_content === "string" && m.reasoning_content.length > 0) {
       message.reasoning_content = m.reasoning_content;
     }
     return message;
   }
-  return { role: m.role, content: m.content };
+  return { role: m.role, content: serializeContent(m.content) };
+}
+
+/** Custom OpenAI-compatible endpoints do not share Anthropic's prompt-cache metadata. */
+function serializeContent(content: ChatMessage["content"]): ChatMessage["content"] {
+  if (typeof content === "string") return content;
+  return content.map((part) => {
+    if (part.type !== "text" || part.cache_control === undefined) return part;
+    const serializedPart = { ...part };
+    delete serializedPart.cache_control;
+    return serializedPart;
+  });
 }
 
 function* flushToolCalls(

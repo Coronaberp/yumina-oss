@@ -2,6 +2,9 @@ import type { Hono } from "hono";
 import { AUTH_MODE, env } from "../lib/env.js";
 import { storageKind } from "../lib/s3.js";
 import type { Edition, EditionFeatures, EditionInfo, EditionName } from "./types.js";
+import { resolveAuthenticationPolicy } from "../lib/authentication-policy.js";
+import { localAdminRoutes } from "../routes/local-admin.js";
+import { configuredImageJobs } from "../lib/configured-image-jobs.js";
 
 /** Every platform feature off. This is the open-source edition. */
 export const LOCAL_FEATURES: EditionFeatures = {
@@ -22,16 +25,16 @@ export const LOCAL_FEATURES: EditionFeatures = {
   library: false,
   sharedPlaythroughs: false,
   socialProfiles: false,
-  admin: false,
+  admin: true,
   telemetry: false,
 };
 
 export function configuredSocialProviders(): string[] {
   const out: string[] = [];
-  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) out.push("google");
+  if (env.YUMINA_SIGN_IN_METHOD !== "github" && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) out.push("google");
   if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) out.push("github");
-  if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) out.push("discord");
-  if (env.TWITTER_CLIENT_ID && env.TWITTER_CLIENT_SECRET) out.push("twitter");
+  if (env.YUMINA_SIGN_IN_METHOD !== "github" && env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) out.push("discord");
+  if (env.YUMINA_SIGN_IN_METHOD !== "github" && env.TWITTER_CLIENT_ID && env.TWITTER_CLIENT_SECRET) out.push("twitter");
   return out;
 }
 
@@ -44,7 +47,7 @@ export function buildInfo(edition: EditionName, features: EditionFeatures): Edit
     edition,
     release: releaseId(),
     features,
-    auth: { mode: AUTH_MODE, socialProviders: configuredSocialProviders() },
+    auth: resolveAuthenticationPolicy(AUTH_MODE, env.YUMINA_SIGN_IN_METHOD, Object.fromEntries(configuredSocialProviders().map(provider=>[provider,true]))),
     storage: { kind: storageKind() },
   };
 }
@@ -52,11 +55,11 @@ export function buildInfo(edition: EditionName, features: EditionFeatures): Edit
 export const localEdition: Edition = {
   name: "local",
   info: () => buildInfo("local", LOCAL_FEATURES),
-  mountPublicApiRoutes(_app: Hono) {},
+  mountPublicApiRoutes(app: Hono) { app.route("/api/admin",localAdminRoutes); },
   mountApiRoutes(_app: Hono) {},
   mountRootRoutes(_app: Hono) {},
-  startBackgroundJobs() {},
-  stopBackgroundJobs() {},
-  async drain(_timeoutMs: number) {},
+  startBackgroundJobs() { configuredImageJobs.start(); },
+  stopBackgroundJobs() { configuredImageJobs.stop(); },
+  async drain(timeoutMs: number) { await configuredImageJobs.drain(timeoutMs); },
   afterListen() {},
 };

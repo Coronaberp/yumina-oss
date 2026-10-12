@@ -1,5 +1,7 @@
+import { providerFailureCode } from "../../lib/llm/provider-errors.js";
 import { parseGuardedResponse, estimateTokens, stripStateReceipts, isAiReadable, isAiWritable, ThinkingTagFilter, type GuardedParseResult } from "@yumina/engine";
 import type { TurnOutputContext, ValidatedTurnOutput } from "../../lib/extension-hooks.js";
+import { anonymizePlayerPrompt } from "../../lib/player-prompt-identity.js";
 import { isJsonModeUnsupported, normalizeCorrectionJson, omitReadOnlyCorrectionWrites } from "./correction-format.js";
 
 export const STATE_GUARD_INSTRUCTIONS = `Platform State Update Guard: keep the card's existing state commands and narrative format. Prose alone does not update variables. After all text/directive/JSONPatch output, on its own final line emit exactly one receipt:
@@ -43,21 +45,11 @@ export class StateGuardError extends Error {
 
 const refused = (reason?: string) => /content_filter|SAFETY|refus|block/i.test(reason ?? "");
 const truncated = (reason?: string) => /length|max_tokens|MAX_TOKENS/i.test(reason ?? "");
-const CORRECTION_TIMEOUT_MS = 20_000;
+// Allow slow shared endpoints to finish while retaining the overall turn deadline.
+const CORRECTION_TIMEOUT_MS = 90_000;
 const TURN_DEADLINE_MS = 180_000;
 
-/** Persist useful provider categories, never raw messages which can echo
- * credentials, full request payloads or URLs supplied by a BYOK endpoint. */
-export function providerFailureCode(message: string): string {
-  const text = message.slice(0, 4000);
-  if (/\b(?:401|403)\b|invalid.api.key|unauthori[sz]ed/i.test(text)) return "provider_auth";
-  if (/\b429\b|rate.limit/i.test(text)) return "provider_rate_limit";
-  if (/context.{0,20}(?:limit|length|exceed)|too.many.tokens/i.test(text)) return "provider_context_limit";
-  if (/(?:unsupported|not.support|invalid).{0,40}(?:parameter|format|tool)|(?:parameter|format|tool).{0,40}(?:unsupported|not.support)/i.test(text)) return "provider_unsupported_format";
-  if (/model.{0,40}(?:not.found|unavailable|not.exist)|no.endpoints/i.test(text)) return "provider_model_unavailable";
-  if (/\b5\d\d\b|unavailable|overloaded/i.test(text)) return "provider_unavailable";
-  return "provider_error";
-}
+export { providerFailureCode } from "../../lib/llm/provider-errors.js";
 
 /** Byte count is a conservative upper bound for the byte-level tokenizer. A
  * very long unbroken piece can make BPE merging quadratic and block even the
@@ -103,11 +95,14 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
     await ctx.progress(audit);
     const variables = ctx.world.variables.filter((v) => isAiReadable(v, ctx.state));
     const writableVariableIds = variables.filter((v) => isAiWritable(v, ctx.state)).map((v) => v.id);
+    // Minified state maps can exceed the unbroken-token cutoff even when all
+    // individual values are ordinary text. Separate JSON fields before counting;
+    // genuinely oversized or unbroken values still hit the conservative guard.
     const data = JSON.stringify({
       variables, writableVariableIds, state: Object.fromEntries(variables.map((v) => [v.id, ctx.state.variables[v.id]])),
-      history: ctx.history.slice(-4).map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content.slice(-6000) : "[attachment]" })),
+      history: ctx.history.slice(-4).map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "[attachment]", ...(m.choices?.length ? { choices: m.choices } : {}) })),
       draft: ctx.raw, diagnostics: audit.diagnostics,
-    });
+    }, null, 2);
     // Do not silently truncate the schema/draft: that can fabricate a no-op.
     const controller = new AbortController();
     const onAbort = () => controller.abort(ctx.signal.reason);
@@ -122,8 +117,18 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
     audit.correctionCount = 1;
     try {
       const request = async () => {
-        const correction = await ctx.resolveCorrection?.() ?? { provider: ctx.provider, model: ctx.model, maxContext: ctx.maxContext, apiKeyTier: audit.apiKeyTier };
+        let correction = await ctx.resolveCorrection?.() ?? { provider: ctx.provider, model: ctx.model, maxContext: ctx.maxContext, apiKeyTier: audit.apiKeyTier };
         if (controller.signal.aborted) throw new StateGuardError("correction_timeout");
+        let correctionMessages: import("../../lib/llm/types.js").ChatMessage[] = [
+          { role: "system", content: CORRECTION_INSTRUCTIONS }, { role: "user", content: data },
+        ];
+        correctionMessages = anonymizePlayerPrompt(correctionMessages, ctx.playerNames ?? [], ctx.characterNames ?? []);
+        if (correction.contentRouting) {
+          const { prepareContentRoutedRequest } = await import("../../lib/story-content-routing.js");
+          const routed = await prepareContentRoutedRequest({ ...correction.contentRouting, playerNames: ctx.playerNames, characterNames: ctx.characterNames, selected: { resolved: correction.contentRouting.resolved, model: correction.model }, messages: correctionMessages, maxContext: correction.maxContext, maxTokens: 4096 });
+          correction = { ...correction, provider: routed.resolved.provider, model: routed.model, apiKeyTier: routed.resolved.apiKeyTier, maxContext: routed.maxContext ?? correction.maxContext };
+          correctionMessages = routed.messages;
+        }
         const inputBudget = Math.min(24_000, Math.max(0, correction.maxContext - 4608));
         if (boundedCorrectionInputTokens(data + CORRECTION_INSTRUCTIONS, correction.model) > inputBudget) throw new StateGuardError("correction_context_limit");
         servedModel = correction.model;
@@ -143,10 +148,7 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
               // Story-provider transport/cache overrides may not suit another model.
               stream: sameProvider ? ctx.stream : undefined,
               ...(sameProvider && ctx.cacheEnabled && { cacheBreakpoints: [0] }),
-              messages: [
-                { role: "system", content: CORRECTION_INSTRUCTIONS },
-                { role: "user", content: data },
-              ],
+              messages: correctionMessages,
             })) {
               if (controller.signal.aborted) throw new StateGuardError("correction_timeout");
               if (chunk.model) servedModel = chunk.model;

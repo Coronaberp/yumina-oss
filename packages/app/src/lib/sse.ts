@@ -82,6 +82,7 @@ export interface SSECallbacks {
   onStateValidation?: (audit: import("@yumina/shared").StateValidationAudit) => void;
   onText: (content: string) => void;
   onReasoning?: (content: string) => void;
+  onProgress?: (data: { tokens: number }) => void;
   onSegment?: (data: { segment: Record<string, unknown> }) => void;
   onBg?: (data: { bg: string }) => void;
   onDone: (data: Record<string, unknown>) => void;
@@ -211,6 +212,11 @@ export function connectSSE(
                   break;
                 case "reasoning":
                   options.callbacks.onReasoning?.(parsed.content ?? "");
+                  break;
+                case "progress":
+                  if (Number.isSafeInteger(parsed.tokens) && parsed.tokens >= 0) {
+                    options.callbacks.onProgress?.({ tokens: parsed.tokens });
+                  }
                   break;
                 case "segment":
                   options.callbacks.onSegment?.(parsed);

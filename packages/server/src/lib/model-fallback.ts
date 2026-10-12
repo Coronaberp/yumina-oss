@@ -6,11 +6,12 @@ const recordSchema = z.object({
   requestedModel: z.string().trim().min(1).max(200),
   reason: z.enum(["unavailable", "policy", "capacity"]),
   automatic: z.boolean(),
+  providerChanged: z.boolean().optional(),
 }).strict();
 
 export function parseModelFallbackRecord(value: unknown, model: string): ModelFallbackRecord | undefined {
   const parsed = recordSchema.safeParse(value);
-  return parsed.success && parsed.data.requestedModel !== model ? parsed.data : undefined;
+  return parsed.success && (parsed.data.requestedModel !== model || parsed.data.providerChanged) ? parsed.data : undefined;
 }
 
 export function modelFallbackError(
@@ -19,6 +20,7 @@ export function modelFallbackError(
   content: string,
   isByok: boolean,
   userMessageId?: string,
+  backupMatchesProfile?: boolean,
 ) {
   // Never restart after partial output, and never mistake a transport loss for
   // an explicit upstream failure (the original request could still complete).
@@ -28,6 +30,7 @@ export function modelFallbackError(
     error: "The selected model could not complete this request. Choose whether to retry or use another model.",
     userMessageId: userMessageId ?? null,
     fallback: {
+      ...(backupMatchesProfile !== undefined ? { backupMatchesProfile } : {}),
       requestedModel: model,
       reason: chunk.fallbackReason,
       provider: isByok ? "private" as const : "official" as const,

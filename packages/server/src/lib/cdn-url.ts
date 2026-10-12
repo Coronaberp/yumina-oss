@@ -5,11 +5,27 @@
  * Cloudflare can cache. Replaces all the async `resolveImage()` /
  * `resolveThumbnail()` functions that generated presigned S3 URLs.
  */
-import { PUBLIC_ORIGIN } from "./env.js";
+import { env, PUBLIC_ORIGIN } from "./env.js";
+import { getRequestMediaOrigin } from "./request-cache.js";
+
+/** Use the caller's host; configured HTTPS handles TLS terminated by a proxy.
+ * Never use forwarded headers to invent a different host or change auth config. */
+export function cdnOriginForRequest(
+  requestUrl: string,
+  configuredOrigins: readonly string[] = [PUBLIC_ORIGIN, env.APP_URL, env.BETTER_AUTH_URL],
+): string {
+  const request = new URL(requestUrl);
+  if (request.protocol === "https:") return request.origin;
+  for (const value of configuredOrigins) {
+    const configured = new URL(value);
+    if (configured.host === request.host && configured.protocol === "https:") return configured.origin;
+  }
+  return request.origin;
+}
 
 /** Get the origin URL for absolute CDN paths */
 function getOrigin(): string {
-  return PUBLIC_ORIGIN;
+  return getRequestMediaOrigin() ?? PUBLIC_ORIGIN;
 }
 
 /**
@@ -18,7 +34,7 @@ function getOrigin(): string {
  * - Starts with "http" → returned as-is (external URL or legacy presigned URL)
  * - Otherwise → treated as S3 key, encoded into absolute CDN URL
  *
- * Returns ABSOLUTE URLs (e.g., https://yumina.io/cdn/key/...) so they work
+ * Resolves storage keys to ABSOLUTE URLs (e.g., https://yumina.io/cdn/key/...) so they work
  * in custom components that parse URLs with `new URL(imageUrl)`.
  *
  * Synchronous — pure string manipulation, zero I/O.
@@ -28,6 +44,9 @@ const ASSET_REF_RE = /^@asset:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 export function resolveImageCdn(url: string | null | undefined): string | null {
   if (!url) return null;
+  // Local upload responses can be saved directly as profile/persona images.
+  // These are already resolved and must not be encoded as another storage key.
+  if (url.startsWith("/cdn/")) return url;
   if (url.startsWith("http")) return url;
   if (url.startsWith("data:") || url.startsWith("blob:")) return null;
   // @asset:UUID references → extract the UUID and route to /cdn/:assetId

@@ -6,6 +6,7 @@ interface StyledCheckboxProps {
   label: string;
   disabled?: boolean;
   hint?: string;
+  semanticCheckbox?: boolean;
 }
 
 /** Editor-flavored checkbox: rounded square with primary-tinted check
@@ -17,10 +18,15 @@ export function StyledCheckbox({
   label,
   disabled,
   hint,
+  semanticCheckbox = false,
 }: StyledCheckboxProps) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      role={semanticCheckbox ? "checkbox" : undefined}
+      aria-checked={semanticCheckbox ? checked : undefined}
+      aria-label={semanticCheckbox ? label : undefined}
       onClick={() => !disabled && onChange(!checked)}
       className={cn(
         "group flex items-center gap-2",

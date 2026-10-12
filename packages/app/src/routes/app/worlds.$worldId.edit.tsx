@@ -26,7 +26,13 @@ function WorldEditPage() {
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
   const editorMode = useEditorStore((s) => s.worldDraft.editorMode);
   const isDirty = useEditorStore((s) => s.isDirty);
-  const [simpleMode, setSimpleMode] = useState<boolean | null>(null);
+  const editingLocked = useEditorStore((s) => s.editingLocked);
+  const setReadOnlyInspect = useEditorStore((s) => s.setReadOnlyInspect);
+  const [modeOverride, setModeOverride] = useState<{ worldId: string; simple: boolean } | null>(null);
+  const simpleMode = serverWorldId !== worldId ? null
+    : modeOverride?.worldId === worldId ? modeOverride.simple
+    : (editorMode ?? getEditorMode(worldId) ?? getGlobalEditorMode()) === "simple";
+  const setSimpleMode = (simple: boolean) => setModeOverride({ worldId, simple });
 
   // Block SPA navigation + browser close when there are unsaved changes
   const blocker = useUnsavedChangesGuard(isDirty);
@@ -36,28 +42,21 @@ function WorldEditPage() {
     return () => { useEditorStore.getState().stopAutosave(); };
   }, [worldId, loadWorld]);
 
-  // Determine editor mode once world is loaded
-  // Priority: schema editorMode > localStorage per-world > global preference > default advanced
   useEffect(() => {
-    if (serverWorldId === worldId && simpleMode === null) {
-      if (editorMode) {
-        setSimpleMode(editorMode === "simple");
-      } else {
-        const perWorld = getEditorMode(worldId);
-        if (perWorld) {
-          setSimpleMode(perWorld === "simple");
-        } else {
-          const global = getGlobalEditorMode();
-          setSimpleMode(global === "simple");
-        }
-      }
-    }
-  }, [serverWorldId, worldId, simpleMode, editorMode]);
+    setReadOnlyInspect(editingLocked);
+    return () => setReadOnlyInspect(false);
+  }, [editingLocked, setReadOnlyInspect]);
 
   // Show spinner while loading or before the correct world is in the store
   if (loadingWorld || serverWorldId !== worldId || simpleMode === null) {
     return <LoadingSpinner />;
   }
+
+  if (editingLocked) return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <EditorShell />
+    </Suspense>
+  );
 
   if (simpleMode) {
     return (

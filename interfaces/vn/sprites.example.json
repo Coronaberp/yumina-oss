@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "kind": "sprite-set",
+  "sprites": {
+    "miveth": {
+      "kind": "sprite",
+      "speakerName": "Miveth",
+      "expressions": {
+        "normal": {
+          "assetRef": "@asset:00000000-0000-4000-8000-000000000001",
+          "mimeType": "image/png",
+          "transparentBackground": true,
+          "framing": "half-body",
+          "anchor": { "x": 0.5, "y": 1 }
+        },
+        "happy": {
+          "assetRef": "@asset:00000000-0000-4000-8000-000000000002",
+          "mimeType": "image/png",
+          "transparentBackground": true,
+          "framing": "half-body",
+          "anchor": { "x": 0.5, "y": 1 }
+        }
+      }
+    }
+  }
+}

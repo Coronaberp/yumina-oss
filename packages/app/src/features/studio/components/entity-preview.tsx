@@ -15,6 +15,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useEditorStore } from "@/stores/editor";
 import type { ToolCall } from "../lib/types";
+import { isStatusVisualizationTool } from "../lib/status-visualization-tools";
 
 /** Compact inline preview of what a single tool call will do, with before/after diff for updates. */
 export function EntityPreview({ toolCall }: { toolCall: ToolCall }) {
@@ -33,9 +34,11 @@ export function EntityPreview({ toolCall }: { toolCall: ToolCall }) {
   }
 
   const info = getToolInfo(name);
-  const diff = useDiffInfo(name, args);
-  const fullContent = getFullContent(name, args);
-  const isCode = name.includes("component") || name.includes("renderer") || name.includes("tsx") || name === "write_custom_ui";
+  const hiddenLayout = isStatusVisualizationTool(name, args);
+  const rawDiff = useDiffInfo(name, args);
+  const diff = hiddenLayout ? null : rawDiff;
+  const fullContent = hiddenLayout ? null : getFullContent(name, args);
+  const isCode = name.includes("component") || name.includes("renderer") || name.includes("tsx") || name === "write_custom_ui" || name.endsWith("status_visualization") || name === "write_character_showcase_css" || name === "write_card_showcase";
 
   return (
     <div className="rounded-md border border-border/40 bg-background/50">
@@ -49,16 +52,17 @@ export function EntityPreview({ toolCall }: { toolCall: ToolCall }) {
               {t(info.verb as any)}
             </span>
             <span className="text-xs font-medium text-foreground truncate">
-              {(args.name as string) || (args.id as string) || t(info.category as any)}
+              {hiddenLayout ? "Status design" : name === "write_character_showcase_css" || name === "write_card_showcase" ? "Card showcase" : (args.name as string) || (args.id as string) || t(info.category as any)}
             </span>
-            {info.badge && (
+            {info.badge && !hiddenLayout && (
               <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
                 {info.badge(args)}
               </span>
             )}
           </div>
           {/* Detail line (for creates) */}
-          {info.detail && !diff && (
+          {hiddenLayout && <p className="mt-0.5 text-[10px] text-muted-foreground">Your design in Visualizations. The agent handles the code.</p>}
+          {info.detail && !diff && !hiddenLayout && (
             <div className="text-[10px] text-muted-foreground/70 truncate mt-0.5">
               {info.detail(args)}
             </div>
@@ -155,6 +159,10 @@ function getFullContent(name: string, args: Record<string, unknown>): string | n
   if (name === "write_entry") return (args.content as string) ?? null;
   if (name === "write_variable") return (args.behaviorRules as string) ?? (args.description as string) ?? null;
   if (name === "write_custom_ui") return (args.tsxCode as string) ?? null;
+  if (name === "write_character_showcase_css") return (args.css as string) ?? null;
+  if (name === "write_card_showcase") return [args.html, args.css].filter(value => typeof value === "string").join("\n\n");
+  if (name === "write_status_visualization") return (args.layoutCode as string) ?? null;
+  if (name === "edit_status_visualization") return (args.new_code as string) ?? null;
   if (name === "write_behavior") { const { id: _id, ...rest } = args; return JSON.stringify(rest, null, 2); }
   if (name === "write_audio") return null;
   if (name === "delete_entities") return (args.ids as string[])?.join(", ") ?? null;
@@ -320,6 +328,20 @@ function getToolInfo(name: string): ToolInfo {
         return `${(a.conditions as unknown[])?.length ?? 0} conditions, ${then?.length ?? 0} effects`;
       },
     };
+  if (name === "write_status_visualization" || name === "edit_status_visualization")
+    return {
+      verb: "studio.entity.write",
+      verbColor: "text-emerald-400",
+      category: "studio.entity.statusVisualization",
+      icon: Code2,
+      badge: () => "Visualizations · Custom layout",
+      detail: (a) => truncate((a.layoutCode ?? a.new_code) as string, 60),
+    };
+  if (name === "write_character_showcase_css" || name === "write_card_showcase") return {
+    verb: "studio.entity.write", verbColor: "text-emerald-400", category: "studio.entity.customUI", icon: Code2,
+    badge: () => "Publish · Card profile",
+    detail: a => `${typeof a.html === "string" ? a.html.length : 0} HTML chars · ${typeof a.css === "string" ? a.css.length : 0} CSS chars`,
+  };
   if (name === "write_custom_ui")
     return {
       verb: "studio.entity.write",

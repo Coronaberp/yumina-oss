@@ -5,7 +5,8 @@ import { db } from "../db/index.js";
 import { messages, playSessions, summaryceptionSnippets, worlds } from "../db/schema.js";
 import { recordUsageLog } from "./usage-log.js";
 import { billBackgroundUsage } from "./background-billing.js";
-import { resolveProviderForModel } from "./resolve-provider.js";
+import { resolveStoryProviderForModel, isProtectedStorySession } from "./story-provider.js";
+import { prepareContentRoutedRequest } from "./story-content-routing.js";
 import { applyModelRedirect } from "./llm/model-redirects.js";
 import { captureServerEvent } from "./analytics.js";
 import { SESSION_MEMORY_EXTENSION_KEY } from "@yumina/shared";
@@ -150,11 +151,14 @@ async function generateSummaryceptionCandidate(args: {
   prompt: ChatMessage[];
   singleAttempt?: boolean;
 }): Promise<string> {
-  const resolved = await resolveProviderForModel(args.userId, args.model, {
-    allowOfficialFallback: false,
-  });
+  const protectedWorld = await isProtectedStorySession(args.userId, args.sessionId);
+  let resolved = await resolveStoryProviderForModel(args.userId, args.model, { allowOfficialFallback: false, forceOfficial: protectedWorld });
   if (!resolved) throw new Error("No provider/API key is available for the selected summary model");
 
+  const routed = await prepareContentRoutedRequest({ userId: args.userId, protectedWorld,
+    selected: { resolved, model: resolved.model }, messages: args.prompt, maxTokens: SUMMARYCEPTION_MAX_SNIPPET_TOKENS });
+  resolved = { ...routed.resolved, model: routed.model };
+  let actualModel = routed.model;
   let text = "";
   let observation = usageObservation();
     let promptTokens = 0;
@@ -164,13 +168,14 @@ async function generateSummaryceptionCandidate(args: {
 
   for await (const chunk of resolved.provider.generateStream({
     conversationId: `play:${args.sessionId}`,
-    model: args.model,
-    messages: args.prompt,
+    model: routed.model,
+    messages: routed.messages,
     maxTokens: SUMMARYCEPTION_MAX_SNIPPET_TOKENS,
     temperature: 0.2,
     singleAttempt: args.singleAttempt,
-    fallbackModels: args.singleAttempt || args.model === DEFAULT_STORY_SUMMARY_MODEL ? undefined : [DEFAULT_STORY_SUMMARY_MODEL],
+    fallbackModels: routed.rerouted || resolved.isByok || args.singleAttempt || routed.model === DEFAULT_STORY_SUMMARY_MODEL ? undefined : [DEFAULT_STORY_SUMMARY_MODEL],
   })) {
+    if (chunk.model) actualModel = chunk.model;
     if (chunk.type === "text") text += chunk.content;
     if (chunk.usage) {
         observation = usageObservation(chunk.usage);
@@ -188,7 +193,7 @@ async function generateSummaryceptionCandidate(args: {
       id: usageLogId,
       userId: args.userId,
       sessionId: args.sessionId,
-      model: args.model,
+      model: actualModel,
       promptTokens,
       completionTokens,
       totalTokens,
@@ -201,7 +206,7 @@ async function generateSummaryceptionCandidate(args: {
     if (!resolved.isByok) {
       await billBackgroundUsage({
         userId: args.userId,
-        model: args.model,
+        model: actualModel,
         promptTokens,
         completionTokens,
         usageLogId,

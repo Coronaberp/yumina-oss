@@ -1,3 +1,4 @@
+import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import { randomUUID } from "node:crypto";
 import type { ReadableStreamReadResult } from "node:stream/web";
@@ -86,7 +87,8 @@ export class GoogleProvider implements LLMProvider {
       });
       if (streaming) clearTimeout(timer);
       if (!response.ok) {
-        yield { type: "error", content: summarizeGoogleError(response.status, await response.text()) };
+        const error = await response.text();
+        yield { type: "error", content: summarizeGoogleError(response.status, error), fallbackReason: modelFallbackReason(response.status, error) };
         return;
       }
 
@@ -307,6 +309,7 @@ function buildGoogleRequest(params: GenerateParams): Record<string, unknown> {
     presencePenalty: params.presencePenalty,
     ...(params.topK !== undefined && params.topK > 0 && { topK: params.topK }),
     ...(params.responseFormat && { responseMimeType: "application/json" }),
+    ...googleThinkingConfig(params),
   };
   const choice = params.toolChoice;
   return {
@@ -322,4 +325,24 @@ function buildGoogleRequest(params: GenerateParams): Record<string, unknown> {
       ...(typeof choice === "object" && { allowedFunctionNames: [choice.function.name] }),
     } } }),
   };
+}
+
+/** Gemini 3 uses named levels; 2.5 still requires a token budget. */
+function googleThinkingConfig(params: GenerateParams): Record<string, unknown> {
+  const model = toGoogleModelId(params.model);
+  const effort = params.reasoningEffort ?? "low";
+  if (/^gemini-3/.test(model)) {
+    const minimalSupported = /(?:gemini-3-flash|gemini-3\.(?:5|6)-flash)/.test(model);
+    const level = params.disableReasoning || effort === "none" || effort === "minimal"
+      ? minimalSupported ? "minimal" : "low"
+      : effort === "medium" && /^gemini-3-pro/.test(model) ? "high" : effort;
+    return { thinkingConfig: { thinkingLevel: level } };
+  }
+  if (/^gemini-2\.5/.test(model)) {
+    const disabled = params.disableReasoning || effort === "none";
+    const budget = disabled ? (model.includes("pro") ? 128 : 0)
+      : effort === "high" ? 8192 : effort === "medium" ? 4096 : effort === "minimal" ? 512 : 1024;
+    return { thinkingConfig: { thinkingBudget: budget } };
+  }
+  return {};
 }

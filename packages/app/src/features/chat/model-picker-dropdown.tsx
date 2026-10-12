@@ -32,7 +32,7 @@ export function ModelPickerDropdown<Value extends string>({
         disabled={disabled}
         aria-label={`${label}: ${selected?.label ?? value}`}
         className={cn(
-          "group flex min-w-0 items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#242228] px-3 text-xs text-white/70 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white data-[state=open]:border-primary/40 data-[state=open]:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11",
+          "group flex min-w-0 items-center justify-between gap-2 rounded-xl border border-white/10 bg-popover px-3 text-xs text-white/70 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white data-[state=open]:border-primary/40 data-[state=open]:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11",
           className,
         )}
       >
@@ -48,7 +48,7 @@ export function ModelPickerDropdown<Value extends string>({
           aria-label={label}
           onClick={(event) => event.stopPropagation()}
           onEscapeKeyDown={(event) => event.stopImmediatePropagation()}
-          className="yumina-platform-overlay-surface z-[10030] min-w-[max(12rem,var(--radix-dropdown-menu-trigger-width))] max-w-[calc(100vw-1.5rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-2xl border border-white/10 bg-[#242129] p-1.5 text-white/75 shadow-[0_16px_48px_rgba(0,0,0,0.45)] outline-none"
+          className="yumina-platform-overlay-surface z-[10030] min-w-[max(12rem,var(--radix-dropdown-menu-trigger-width))] max-w-[calc(100vw-1.5rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-2xl border border-white/10 bg-popover p-1.5 text-white/75 shadow-[0_16px_48px_rgba(0,0,0,0.45)] outline-none"
         >
           <DropdownMenu.RadioGroup value={value} onValueChange={(next) => {
             const option = options.find((entry) => entry.value === next);

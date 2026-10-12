@@ -51,19 +51,19 @@ export function ResetPasswordPage() {
   if (success) {
     return (
       <AuthLayout wide>
-          <div className="rounded-2xl border border-white/[0.08] bg-[#212124]/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
+          <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
             <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/10 ring-1 ring-emerald-500/20">
               <svg className="h-10 w-10 text-emerald-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
 
-            <h1 className="mb-8 text-2xl font-bold text-[#E6E4DD]">
+            <h1 className="mb-8 text-2xl font-bold text-foreground">
               {t("resetPassword.success.title")}
             </h1>
 
             <Link to="/login">
-              <button className="w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-[#181818] shadow-[0_0_20px_rgba(201,162,94,0.15)] transition-all hover:bg-[#F0C24A] hover:shadow-[0_0_30px_rgba(201,162,94,0.25)] active:scale-[0.98]">
+              <button className="w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-primary-foreground shadow-[0_0_20px_rgba(212,194,146,0.15)] transition-all hover:bg-primary-hover hover:shadow-[0_0_30px_rgba(212,194,146,0.25)] active:scale-[0.98]">
                 {t("resetPassword.success.signIn")}
               </button>
             </Link>
@@ -75,12 +75,12 @@ export function ResetPasswordPage() {
   return (
     <AuthLayout wide>
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-black tracking-tight text-[#E6E4DD]">
+          <h1 className="text-3xl font-black tracking-tight text-foreground">
             {t("resetPassword.title")}
           </h1>
         </div>
 
-        <div className="rounded-2xl border border-white/[0.08] bg-[#212124]/80 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <form onSubmit={handleSubmit} className="space-y-4">
             <input
               type="password"
@@ -91,7 +91,7 @@ export function ResetPasswordPage() {
               minLength={8}
               autoComplete="new-password"
               autoFocus
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-4 py-3 text-sm text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-4 py-3 text-sm text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20"
             />
             <input
               type="password"
@@ -101,7 +101,7 @@ export function ResetPasswordPage() {
               required
               minLength={8}
               autoComplete="new-password"
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-4 py-3 text-sm text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-4 py-3 text-sm text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20"
             />
 
             {error && (
@@ -113,16 +113,16 @@ export function ResetPasswordPage() {
             <button
               type="submit"
               disabled={loading || !token}
-              className="w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-[#181818] shadow-[0_0_20px_rgba(201,162,94,0.15)] transition-all hover:bg-[#F0C24A] hover:shadow-[0_0_30px_rgba(201,162,94,0.25)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded-xl bg-gold px-4 py-3 text-sm font-bold text-primary-foreground shadow-[0_0_20px_rgba(212,194,146,0.15)] transition-all hover:bg-primary-hover hover:shadow-[0_0_30px_rgba(212,194,146,0.25)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? t("resetPassword.submitting") : t("resetPassword.submit")}
             </button>
           </form>
         </div>
 
-        <p className="mt-6 text-center text-sm text-[#B9B6AE]/60">
+        <p className="mt-6 text-center text-sm text-sub/60">
           {t("resetPassword.needNewLink")}{" "}
-          <Link to="/forgot-password" className="font-semibold text-gold transition-colors hover:text-[#F0C24A]">
+          <Link to="/forgot-password" className="font-semibold text-gold transition-colors hover:text-primary-hover">
             {t("resetPassword.requestReset")}
           </Link>
         </p>

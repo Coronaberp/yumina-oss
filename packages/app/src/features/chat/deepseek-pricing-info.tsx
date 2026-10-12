@@ -126,7 +126,7 @@ export function DeepSeekPricingInfo({ modelId, modelName, copy, className }: Dee
         }}
         className={cn(
           "group/help inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-cyan-300/55",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1b1e]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
           className,
         )}
       >
@@ -139,12 +139,13 @@ export function DeepSeekPricingInfo({ modelId, modelName, copy, className }: Dee
         <div
           ref={contentRef}
           id={contentId}
+          data-vn-dialog-surface="compact"
           role="dialog"
           aria-labelledby={titleId}
           tabIndex={-1}
           onClick={(event) => event.stopPropagation()}
           className={cn(
-            "fixed z-[20000] max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-xl border border-cyan-300/15 bg-[#17191d]/[0.98] p-3.5 text-left",
+            "fixed z-[20000] max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-xl border border-cyan-300/15 bg-card/[0.98] p-3.5 text-left",
             "shadow-2xl shadow-black/60 backdrop-blur-xl focus:outline-none",
             "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150",
           )}

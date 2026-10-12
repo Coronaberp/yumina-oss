@@ -7,6 +7,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { preloadTokenizer } from "@yumina/engine";
 import { env } from "./lib/env.js";
+import { ensureLocalAdminAccount } from "./lib/local-admin.js";
 import { privateStateCache } from "./middleware/private-state-cache.js";
 import {
   db,
@@ -29,6 +30,9 @@ import {
   ensureScheduledFunctions,
   ensureSessionContextColumns,
   ensureTables,
+  ensureStoryhavenMemoryTables,
+  ensureDanbooruTables,
+  ensureImageGenerationTables,
   ensureWorldReviewControlsColumn,
   ensureSessionPersonaColumn,
   ensureWorldReviewTables,
@@ -53,11 +57,15 @@ import { sessionRoutes } from "./routes/sessions.js";
 import { sessionMemoryRoutes } from "./routes/session-memory.js";
 import { stateGuardRoutes } from "./routes/state-update-guard.js";
 import { messageRoutes } from "./routes/messages.js";
+import { contentFlagRoutes } from "./routes/content-flags.js";
+import { contentFlagService } from "./lib/content-flag-service.js";
+import { kevContentClassifier } from "./lib/kev-content-classifier.js";
 import { studioRoutes } from "./routes/studio.js";
 import { assetRoutes } from "./routes/assets.js";
 import { userPromptsRoutes } from "./routes/user-prompts.js";
 import { userPresetOverridesRoutes } from "./routes/user-preset-overrides.js";
 import { userAssetRoutes } from "./routes/user-assets.js";
+import { customUiPresetRoutes } from "./routes/custom-ui-presets.js";
 import { sessionMediaRoutes } from "./routes/session-media.js";
 import { startSessionMediaCleanup } from "./lib/session-media.js";
 import { assetRefRoutes } from "./routes/asset-references.js";
@@ -81,9 +89,38 @@ import { drainStreams, activeStreamCount } from "./lib/stream-registry.js";
 import { getMetaForPath, injectMeta } from "./lib/seo.js";
 import { registerSessionMemoryExtension } from "./extensions/session-memory/hooks.js";
 import { registerStateUpdateGuard } from "./extensions/state-update-guard/hooks.js";
+import { installDefaultExtensions } from "./lib/default-extensions.js";
 import { runWithRequestCache } from "./lib/request-cache.js";
+import { cdnOriginForRequest } from "./lib/cdn-url.js";
 import { edition, editionRoutes } from "./edition/index.js";
 import { storageRoutes } from "./routes/storage.js";
+import { buildSandboxCsp } from "./lib/sandbox-csp.js";
+import { imageGenerationRoutes } from "./routes/image-generation-default.js";
+import { imageSourceRoutes } from "./routes/image-sources-default.js";
+import { createMemoryProfileRoutes } from "./routes/memory-profiles.js";
+import { createStoryhavenMemoryRoutes } from "./routes/storyhaven-memory.js";
+import {
+  createStoryhavenController,
+  markMemoryAccountEnabled,
+} from "./memory/commands.js";
+import {
+  getMemoryRuntime,
+  closeMemoryRuntime,
+  testMemoryProfile,
+  activateMemoryProfile,
+  updateAdminMemoryDefault,
+} from "./memory/runtime.js";
+import {
+  startMemoryWorker,
+  stopMemoryWorker,
+  wakeMemoryWorker,
+} from "./memory/yumina-adapter.js";
+import { ensureProfileSchema } from "./memory/schema.js";
+import {
+  createMemoryStartup,
+  mountMemoryRoutes,
+  mountMemoryHealth,
+} from "./memory/startup.js";
 
 // Register first-party extension hooks before any request is served — the
 // message pipeline dispatches through the registry instead of hardcoding
@@ -114,6 +151,7 @@ process.on("uncaughtException", (err, origin) => {
 
 import { startRuntimeMonitor } from "./lib/runtime-monitor.js";
 import { captureBoundedCpuProfile } from "./lib/cpu-profile.js";
+import { WorldEditLockedError, worldEditLockMiddleware } from "./lib/world-edit-lock.js";
 import { runtimeIdentity } from "./lib/runtime-identity.js";
 import { findDatabaseQueryTimeout, withDatabaseQueryTimeout } from "./db/query-deadline.js";
 const stopRuntimeMonitor = startRuntimeMonitor((event, properties) => {
@@ -122,11 +160,20 @@ const stopRuntimeMonitor = startRuntimeMonitor((event, properties) => {
 });
 
 const app = new Hono();
+const memoryStartup = createMemoryStartup({
+  ensureAppTables: ensureStoryhavenMemoryTables,
+  getRuntime: getMemoryRuntime,
+  startWorker: startMemoryWorker,
+  stopWorker: stopMemoryWorker,
+  closeRuntime: closeMemoryRuntime,
+});
+
 const VITE_DEV_SERVER_ORIGIN = process.env.VITE_DEV_SERVER_ORIGIN ?? "http://localhost:5173";
 
 // Global error handler — log + capture unhandled exceptions so they reach
 // both Railway logs and PostHog error tracking (same pane as client errors).
 app.onError((err, c) => {
+  if (err instanceof WorldEditLockedError) return c.json({ error: err.message, code: err.code }, 403);
   const queryTimeout = findDatabaseQueryTimeout(err);
   if (queryTimeout) {
     return c.json({ error: "Database response timed out. Refresh to check whether the operation completed.",
@@ -156,7 +203,7 @@ app.onError((err, c) => {
 });
 
 // Deduplicate expensive plan/entitlement resolution within a single request.
-app.use("/api/*", async (_c, next) => runWithRequestCache(next));
+app.use("/api/*", async (c, next) => runWithRequestCache(next, cdnOriginForRequest(c.req.url)));
 
 // Request timing — every slow API request (>1s) plus a 1% sample of the rest
 // goes to PostHog as `server_request`, keyed by ROUTE PATTERN (not raw path,
@@ -197,6 +244,10 @@ app.use("*", async (c, next) => {
   return middleware(c, next);
 });
 
+// Append memory status while the health body is JSON; compression runs after
+// this middleware unwinds and encodes the completed response.
+mountMemoryHealth(app, memoryStartup);
+
 // Global middleware — CORS for API routes only.
 // Static assets (/assets/*, /sandbox/*, /cdn/*) set their own CORS headers
 // because the sandbox iframe has an opaque origin that doesn't match APP_URL.
@@ -230,6 +281,9 @@ app.use("/api/*", async (c, next) => {
   }
 });
 
+// Protect locked originals before any editor, asset, version or Studio route.
+app.use("/api/*", worldEditLockMiddleware);
+
 // Routes
 app.route("/health", health);
 if (IS_DEV || !env.DATABASE_URL) app.route("/api/dev", devRoutes);
@@ -242,6 +296,37 @@ app.route("/api/users", users);
 app.route("/api/worlds", worldRoutes);
 app.route("/api/keys", apiKeyRoutes);
 app.route("/api/local-bridge", localBridgeRoutes);
+// Mount before the legacy memory extension gate. Authentication and owner checks
+// remain inside each native StoryHaven router.
+mountMemoryRoutes(
+  app,
+  createMemoryProfileRoutes({
+    repository: {
+      list: async userId => (await getMemoryRuntime()).profiles.list(userId),
+      getActive: async userId => (await getMemoryRuntime()).profiles.getActive(userId),
+      get: async (userId, id) => (await getMemoryRuntime()).profiles.get(userId, id),
+      getCredential: async (userId, id) =>
+        (await getMemoryRuntime()).profiles.getCredential(userId, id),
+      create: async (userId, input) =>
+        (await getMemoryRuntime()).profiles.create(userId, input),
+      updateKey: async (userId, id, key) =>
+        (await getMemoryRuntime()).profiles.updateKey(userId, id, key),
+    },
+    prepare: async profile =>
+      ensureProfileSchema((await getMemoryRuntime()).database, profile),
+    test: testMemoryProfile,
+    updateAdminDefault: updateAdminMemoryDefault,
+    activate: async profile => {
+      await activateMemoryProfile(profile, async () =>
+        (await db.execute(sql`SELECT 1 FROM "user" WHERE id=${profile.userId}`))
+          .rows.length === 1,
+      );
+      await markMemoryAccountEnabled(profile.userId);
+      wakeMemoryWorker();
+    },
+  }),
+  createStoryhavenMemoryRoutes(createStoryhavenController),
+);
 app.route("/api/sessions", sessionRoutes);
 app.route("/api/sessions", sessionMemoryRoutes);
 app.route("/api/sessions", stateGuardRoutes);
@@ -256,6 +341,7 @@ edition.mountPublicApiRoutes(app);
 // must precede messageRoutes' broad auth middleware.
 app.route("/api/extensions", extensionRoutes);
 app.route("/api", messageRoutes);
+app.route("/api", contentFlagRoutes);
 app.route("/api", completionRoutes);
 app.route("/api/sessions", socialSimulatorRoutes);
 app.route("/api/studio", studioRoutes);
@@ -264,6 +350,9 @@ app.route("/api", assetRoutes);
 app.route("/api/user-prompts", userPromptsRoutes);
 app.route("/api/user-preset-overrides", userPresetOverridesRoutes);
 app.route("/api/user-assets", userAssetRoutes);
+app.route("/api/image-sources", imageGenerationRoutes);
+app.route("/api/image-sources", imageSourceRoutes);
+app.route("/api/custom-ui-presets", customUiPresetRoutes);
 app.route("/api/session-media", sessionMediaRoutes);
 app.route("/api", assetRefRoutes);
 app.route("/api", folderBindingRoutes);
@@ -303,27 +392,8 @@ if (process.env.NODE_ENV === "production") {
     ? fs.readFileSync("./public/index.html", "utf-8")
     : null;
 
-  // Sandbox CSP — the iframe has an opaque origin (sandbox="allow-scripts"
-  // without allow-same-origin), so 'self' = null. Use https: to allow loading
-  // scripts/CSS from the parent domain. The real security boundary is the
-  // iframe sandbox attribute + connect-src 'none'.
-  //
-  // frame-src: allowlist of common static-hosting platforms that trusted card
-  // authors can use to embed their own apps (e.g. Pokemon battle iframe on
-  // *.pages.dev). These hosts all require account creation + have abuse
-  // detection, so they're higher-trust than arbitrary https:. Expand this list
-  // only when a specific card needs a new platform.
-  const SANDBOX_CSP = [
-    "default-src https: 'unsafe-inline' 'unsafe-eval'",
-    "img-src https: data: blob:",
-    "font-src https: data:",
-    "connect-src 'none'",
-    "frame-src https://*.pages.dev https://*.vercel.app https://*.netlify.app https://*.github.io",
-    // Only the app itself may embed the sandbox document. If the sandbox
-    // ever moves to a dedicated origin (VITE_SANDBOX_URL), this must
-    // become the app origin explicitly (e.g. https://yumina.io).
-    "frame-ancestors 'self'",
-  ].join("; ");
+  // Opaque-origin sandboxes need explicit HTTP asset origins for local installs.
+  const sandboxCsp = (c: Context) => buildSandboxCsp(c.req.url, env.YUMINA_EDITION === "local", env.PUBLIC_ORIGIN ?? env.BETTER_AUTH_URL);
 
   /** The build emits the sandbox document twice: at its authored path and, so
    *  Cloudflare's /assets/* rule can cache it, under a content hash. The hashed
@@ -336,7 +406,7 @@ if (process.env.NODE_ENV === "production") {
 
   app.use("/sandbox/*", async (c, next) => {
     await next();
-    c.header("Content-Security-Policy", SANDBOX_CSP);
+    c.header("Content-Security-Policy", sandboxCsp(c));
     c.header("Cache-Control", "no-store");
     // CORS — opaque-origin iframe needs explicit permission to load ES modules
     c.header("Access-Control-Allow-Origin", "*");
@@ -365,7 +435,7 @@ if (process.env.NODE_ENV === "production") {
     c.header("Content-Type", "text/html; charset=utf-8");
     c.header("Cache-Control", "public, max-age=300");
     c.header("CDN-Cache-Control", "public, max-age=300");
-    c.header("Content-Security-Policy", SANDBOX_CSP);
+    c.header("Content-Security-Policy", sandboxCsp(c));
     c.header("Access-Control-Allow-Origin", "*");
     return c.body(body);
   });
@@ -388,7 +458,7 @@ if (process.env.NODE_ENV === "production") {
       c.header("Cache-Control", "no-store");
     }
     c.header("Access-Control-Allow-Origin", "*");
-    if (isSandboxDoc(c.req.path)) c.header("Content-Security-Policy", SANDBOX_CSP);
+    if (isSandboxDoc(c.req.path)) c.header("Content-Security-Policy", sandboxCsp(c));
   });
 
   // Cache static images (wallpapers, hero, logo) for 1 day with revalidation
@@ -424,6 +494,9 @@ if (process.env.NODE_ENV === "production") {
     // them DYNAMIC, sending every image to the LA origin. HTML stays no-store so SPA
     // deploys never serve a stale index.html. (2026-06-05 wallpaper/asset-cache fix.)
     onFound: (path, c) => {
+      // The built-in VN font is read from the opaque-origin UI sandbox.
+      // These bundled public assets need anonymous CORS, like /assets/*.
+      if (c.req.path.startsWith("/vn-assets/")) c.header("Access-Control-Allow-Origin", "*");
       // Everything under /assets/ is content-hashed, .html included: the build
       // emits the sandbox document as assets/sandbox-doc-<hash>.html precisely
       // so it can live here. It is as immutable as the JS chunks beside it and
@@ -459,6 +532,7 @@ if (process.env.NODE_ENV === "production") {
     app.get("*", async (c) => {
       if (c.req.path.startsWith("/sandbox")) return c.notFound();
       if (c.req.path.startsWith("/assets/")) return c.notFound();
+      if (c.req.path.startsWith("/vn-assets/")) return c.notFound();
 
       let html = indexHtml;
       try {
@@ -564,6 +638,8 @@ const SELF_HEAL_ATTEMPT_DELAYS_MS = process.env.NODE_ENV === "production"
 
 async function runSchemaSelfHealOnce(): Promise<void> {
   await ensureTables();
+  await ensureDanbooruTables();
+  await ensureImageGenerationTables();
   await ensureLifetimePlaytimePending();
   await ensureWorldsSchemaDerived();
   await ensureMessagesSwipeCount();
@@ -586,6 +662,7 @@ async function runSchemaSelfHealOnce(): Promise<void> {
   await ensureProfileWallTable();
   await ensureDmSchema();
   await ensureExtensionTables();
+  await installDefaultExtensions();
   await ensureScheduledFunctions();
   await ensureAnalyticsRollupTables();
   // Flip account-deletion readiness only after every table touched by the
@@ -593,6 +670,11 @@ async function runSchemaSelfHealOnce(): Promise<void> {
   await ensureAccountDeletionForeignKeys();
   // Hot-path indexes (CONCURRENTLY, leader-only) — see db/index.ts.
   await ensureHotPathIndexes();
+  // A failed memory initialization can recover on this existing bounded heal
+  // schedule, independently of chat readiness.
+  await memoryStartup.initialize().catch(() =>
+    console.warn("[MEMORY] Initialization unavailable; chat remains available"),
+  );
 
   // Sync status column for worlds published before migration 0011 (idempotent
   // data heal — rides the same retry schedule as the DDL above).
@@ -648,6 +730,11 @@ async function start() {
 
   // Connect Redis (no-op if REDIS_URL not set)
   await connectRedis();
+  if (edition.name === "local") await ensureLocalAdminAccount(env.YUMINA_ADMIN_ACCOUNT_ID,env.YUMINA_AUTH_MODE === "multi-user" && env.YUMINA_SIGN_IN_METHOD === "github" && !!env.YUMINA_ADMIN_GITHUB_ID);
+  if (edition.name === "local") {
+    await ensureExtensionTables();
+    await installDefaultExtensions();
+  }
 
   // Local-bridge cross-instance fan-out. Must follow connectRedis(): it
   // subscribes on the shared subscriber connection. No-op without Redis, where
@@ -689,8 +776,15 @@ async function start() {
   // bound and the healthcheck can pass.
   if (env.DATABASE_URL) {
     scheduleSchemaSelfHeal();
+    // Keep PostgreSQL's existing bind-first policy: memory DDL and its worker
+    // initialize after listen, and failures remain visible in memory health.
+    void memoryStartup.initialize().catch(() =>
+      console.warn("[MEMORY] Initialization unavailable; chat remains available"),
+    );
   }
   edition.afterListen();
+  contentFlagService.start();
+  void kevContentClassifier.warm().catch(() => console.warn("[CONTENT FLAGS] CPU classifier unavailable; checks remain unsafe"));
 
   // Graceful shutdown — drain in-flight generations before exiting.
   // Railway's web service drainingSeconds is 90 (.railway/railway.ts).
@@ -700,6 +794,8 @@ async function start() {
   // handlers log their usage and send the client a clean SERVER_RESTART error
   // instead of a dead connection (see lib/stream-registry.ts).
   process.on("SIGTERM", async () => {
+    contentFlagService.stop();
+    kevContentClassifier.close();
     stopRuntimeMonitor();
     console.log(`[SHUTDOWN] SIGTERM received, draining ${activeStreamCount()} active generation(s)...`);
     // Stop the in-process daily-recovery interval first so its handle no
@@ -711,7 +807,9 @@ async function start() {
     server.close();
     const [{ finishedNaturally, abortedCount }] = await Promise.all([
       drainStreams(50_000, 10_000), edition.drain(50_000),
+      stopMemoryWorker(),
     ]);
+    await memoryStartup.shutdown();
     console.log(
       finishedNaturally
         ? "[SHUTDOWN] All generations completed naturally"

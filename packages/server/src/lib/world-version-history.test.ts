@@ -85,6 +85,15 @@ describe("world version history with PostgreSQL", { concurrency: false }, () => 
   });
   after(async () => { await pg.close(); });
 
+  it("locked cards reject version restores inside the transaction", async () => {
+    await version();
+    await database.update(worlds).set({ editingLocked: true }).where(eq(worlds.id, "world"));
+    const before = await database.select().from(worlds).where(eq(worlds.id, "world"));
+    await assert.rejects(() => transact(tx => restoreVersionDraft(tx, action)), { code: "WORLD_EDIT_LOCKED" });
+    assert.deepEqual(await database.select().from(worlds).where(eq(worlds.id, "world")), before);
+    assert.equal((await database.select().from(worldVersions)).length, 1);
+  });
+
   it("accepts only immutable live-source versions belonging to this world and owner", async () => {
     await version();
     await rejectsCode(() => transact((tx) => makeVersionLive(tx, { ...action, creatorId: "stranger" })), "NOT_FOUND");

@@ -46,6 +46,7 @@ test("the play composer honors keyboard settings on touch-capable desktops", asy
       ComposerToolMenu: ({ onOpenModelPicker }: { onOpenModelPicker: () => void }) => createElement("button", { onClick: onOpenModelPicker, "data-model-trigger": true }, "Model menu"),
       useIsNarrow: () => narrow,
     },
+    "./story-memory-launcher": { StoryMemoryLauncher: () => null },
     "../protocol": { postToParentWindow: noop, wrapMessage: (value: unknown) => value },
     "../../src/lib/chat-image-input": require("./chat-image-input.ts"),
     "../../src/lib/composer-message-limit": {

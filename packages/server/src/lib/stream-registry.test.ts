@@ -2,12 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   registerStream,
+  reserveSessionRetry,
+  isSessionStreaming,
   activeStreamCount,
   drainStreams,
   isShutdownAbort,
   isClientAbort,
   SHUTDOWN_ABORT_REASON,
 } from "./stream-registry.js";
+
+test("pending retry reservation excludes duplicates through stream registration", () => {
+  const sessionId = "pending-retry-test";
+  const release = reserveSessionRetry(sessionId);
+  assert.ok(release);
+  assert.equal(isSessionStreaming(sessionId), true);
+  assert.equal(reserveSessionRetry(sessionId), null);
+  const unregister = registerStream(new AbortController(), sessionId);
+  release();
+  assert.equal(reserveSessionRetry(sessionId), null, "the registered stream keeps the session busy");
+  unregister();
+  const next = reserveSessionRetry(sessionId);
+  assert.ok(next);
+  next();
+  assert.equal(isSessionStreaming(sessionId), false);
+});
 
 // ─── Stream registry (R2, 2026-06-09) ───────────────────────────────────────
 // Deploys drain in-flight generations instead of killing them. These tests pin

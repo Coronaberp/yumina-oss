@@ -8,8 +8,11 @@ import { trackSignupConversion } from "@/lib/analytics";
 import { Turnstile, type TurnstileHandle } from "@/components/turnstile";
 import { AuthLayout } from "./auth-layout";
 import { VerificationPending } from "./verification-pending";
+import { useEdition } from "@/edition/edition";
+import { GitHubSignIn } from "./github-sign-in";
 
 export function RegisterPage() {
+  const {auth}=useEdition();
   const { t } = useTranslation("auth");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -99,6 +102,7 @@ export function RegisterPage() {
     }
   };
 
+  if (!auth.emailPassword) return <AuthLayout><GitHubSignIn ready={auth.socialProviders.includes("github")} /></AuthLayout>;
   if (showVerification) {
     return <VerificationPending email={email} />;
   }
@@ -107,16 +111,16 @@ export function RegisterPage() {
     <AuthLayout>
         {/* Logo */}
         <div className="mb-3.5 text-center sm:mb-6">
-          <h1 className="text-[1.75rem] font-black tracking-tight text-[#E6E4DD] sm:text-[2rem]">
+          <h1 className="text-[1.75rem] font-black tracking-tight text-foreground sm:text-[2rem]">
             {t("register.title")}
           </h1>
-          <p className="mt-1 text-[11px] leading-snug text-[#B9B6AE] sm:mt-1.5 sm:text-xs">
+          <p className="mt-1 text-[11px] leading-snug text-sub sm:mt-1.5 sm:text-xs">
             {t("register.subtitle")}
           </p>
         </div>
 
         {/* Card */}
-        <div className="rounded-[1.2rem] border border-white/[0.08] bg-[#212124]/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:rounded-[1.35rem] sm:p-5">
+        <div className="rounded-[1.2rem] border border-white/[0.08] bg-card/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:rounded-[1.35rem] sm:p-5">
           {/* Email form */}
           <form onSubmit={handleRegister} className="space-y-2.5 sm:space-y-3">
             <input
@@ -126,7 +130,7 @@ export function RegisterPage() {
               onChange={(e) => setName(e.target.value)}
               required
               autoComplete="name"
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-3 py-2.25 text-[12px] text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-3 py-2.25 text-[12px] text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
             />
             <div>
               <input
@@ -138,12 +142,12 @@ export function RegisterPage() {
                 minLength={3}
                 maxLength={20}
                 autoComplete="username"
-                className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-3 py-2.25 text-[12px] text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
+                className="w-full rounded-xl border border-white/[0.08] bg-input px-3 py-2.25 text-[12px] text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
               />
               <div className="mt-1.5 flex items-center justify-between px-1">
-                <span className="text-[9px] text-[#B9B6AE]/40 sm:text-[10px]">{t("register.usernameHint")}</span>
+                <span className="text-[9px] text-sub/40 sm:text-[10px]">{t("register.usernameHint")}</span>
                 {usernameStatus === "checking" && (
-                  <span className="text-[9px] text-[#B9B6AE]/40 sm:text-[10px]">{t("register.usernameChecking")}</span>
+                  <span className="text-[9px] text-sub/40 sm:text-[10px]">{t("register.usernameChecking")}</span>
                 )}
                 {usernameStatus === "available" && (
                   <span className="text-[9px] text-emerald-400 sm:text-[10px]">{t("register.usernameAvailable")}</span>
@@ -160,7 +164,7 @@ export function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-3 py-2.25 text-[12px] text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-3 py-2.25 text-[12px] text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
             />
             <input
               type="password"
@@ -170,7 +174,7 @@ export function RegisterPage() {
               required
               minLength={8}
               autoComplete="new-password"
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-3 py-2.25 text-[12px] text-[#E6E4DD] placeholder:text-[#B9B6AE]/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-3 py-2.25 text-[12px] text-foreground placeholder:text-sub/50 outline-none transition-colors focus:border-gold/40 focus:ring-1 focus:ring-gold/20 sm:px-3.5 sm:py-2.5 sm:text-[13px]"
             />
 
             {error && (
@@ -178,10 +182,10 @@ export function RegisterPage() {
                 {error}
                 {error === t("errors.userAlreadyExists") && (
                   <div className="mt-1.5 flex gap-2 text-[11px]">
-                    <Link to="/login" className="font-semibold text-gold hover:text-[#F0C24A]">
+                    <Link to="/login" className="font-semibold text-gold hover:text-primary-hover">
                       {t("register.signIn")}
                     </Link>
-                    <Link to="/forgot-password" className="font-semibold text-gold hover:text-[#F0C24A]">
+                    <Link to="/forgot-password" className="font-semibold text-gold hover:text-primary-hover">
                       {t("login.forgotPassword")}
                     </Link>
                   </div>
@@ -194,7 +198,7 @@ export function RegisterPage() {
             <button
               type="submit"
               disabled={loading || usernameStatus === "taken"}
-              className="w-full rounded-xl bg-gold px-4 py-2.25 text-[12px] font-bold text-[#181818] shadow-[0_0_20px_rgba(201,162,94,0.15)] transition-all hover:bg-[#F0C24A] hover:shadow-[0_0_30px_rgba(201,162,94,0.25)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 sm:py-2.5 sm:text-[13px]"
+              className="w-full rounded-xl bg-gold px-4 py-2.25 text-[12px] font-bold text-primary-foreground shadow-[0_0_20px_rgba(212,194,146,0.15)] transition-all hover:bg-primary-hover hover:shadow-[0_0_30px_rgba(212,194,146,0.25)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 sm:py-2.5 sm:text-[13px]"
             >
               {loading ? t("register.submitting") : t("register.submit")}
             </button>
@@ -202,9 +206,9 @@ export function RegisterPage() {
         </div>
 
         {/* Footer */}
-        <p className="mt-3 text-center text-[11px] text-[#B9B6AE]/60 sm:mt-4 sm:text-xs">
+        <p className="mt-3 text-center text-[11px] text-sub/60 sm:mt-4 sm:text-xs">
           {t("register.hasAccount")}{" "}
-          <Link to="/login" className="font-semibold text-gold transition-colors hover:text-[#F0C24A]">
+          <Link to="/login" className="font-semibold text-gold transition-colors hover:text-primary-hover">
             {t("register.signIn")}
           </Link>
         </p>

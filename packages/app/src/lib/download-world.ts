@@ -30,7 +30,7 @@ interface WorldDownloadPayload {
 
 async function fetchWorldPayload(worldId: string): Promise<WorldDownloadPayload | null> {
   try {
-    const res = await fetch(`${apiBase}/api/worlds/${worldId}`, { credentials: "include" });
+    const res = await fetch(`${apiBase}/api/worlds/${worldId}?forEdit=1`, { credentials: "include" });
     if (!res.ok) return null;
     const { data } = await res.json();
     return {

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jelavu:vn:sprite-set:v1",
+  "title": "VN Sprite Set",
+  "description": "Character cutouts for the VN stage. Portraits, backgrounds and CGs are separate asset roles.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "kind", "sprites"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "sprite-set" },
+    "npcSprites": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional authored cutout pools for undefined NPCs. Gender comes from explicit story metadata, not name or pronoun guessing. The visible speaker label remains NPC.",
+      "properties": {
+        "male": { "$ref": "#/$defs/npcPool" },
+        "female": { "$ref": "#/$defs/npcPool" }
+      }
+    },
+    "sprites": {
+      "type": "object",
+      "description": "A reusable inventory keyed by stable character ID. Display limits apply to the stage, not this inventory.",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$" },
+      "additionalProperties": { "$ref": "#/$defs/characterSprite" }
+    }
+  },
+  "$defs": {
+    "npcPool": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$" },
+      "additionalProperties": { "$ref": "#/$defs/expression" },
+      "description": "Image IDs map to transparent authored cutouts. A stable NPC ID and session seed select one image; the ID is never displayed as NPC A/B/C."
+    },
+    "characterSprite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "speakerName", "expressions"],
+      "properties": {
+        "kind": { "const": "sprite" },
+        "speakerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S",
+          "description": "Exact character display name used by [SPEAKER:name:emotion] or [Name:name:emotion]."
+        },
+        "expressions": {
+          "type": "object",
+          "required": ["normal"],
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_-]{0,49}$" },
+          "additionalProperties": { "$ref": "#/$defs/expression" },
+          "description": "Emotion IDs map to authored cutouts. normal is the fallback. idle is an ordinary expression, not an animation instruction."
+        }
+      }
+    },
+    "expression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetRef", "mimeType", "transparentBackground", "framing"],
+      "properties": {
+        "assetRef": {
+          "type": "string",
+          "pattern": "^@asset:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "An uploaded character-cutout asset; never a portrait or CG reference by default."
+        },
+        "mimeType": {
+          "enum": ["image/png", "image/webp", "image/svg+xml"],
+          "description": "Declared file type. JPEG is excluded because it cannot store transparency."
+        },
+        "transparentBackground": {
+          "const": true,
+          "description": "A required asset declaration. Actual transparency must also be checked in the image bytes; JSON cannot prove it."
+        },
+        "framing": {
+          "enum": ["half-body", "bust", "full-body"],
+          "default": "half-body",
+          "description": "The authored cutout's framing. half-body means waist-up and is the suggested default for dialogue scenes; bust means chest-up. full-body is an explicit artistic choice, never mandatory. Sprites occupy the scene behind the dialogue layer rather than shrinking to fit above it. This field does not instruct the engine to crop a portrait or CG."
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor",
+          "default": { "x": 0.5, "y": 1 },
+          "description": "Normalized placement anchor within the source canvas; default is bottom center."
+        }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

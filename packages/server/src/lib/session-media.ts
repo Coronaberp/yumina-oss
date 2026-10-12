@@ -1,9 +1,6 @@
 import { db } from "../db/index.js";
 import { createSessionMediaService } from "./session-media-service.js";
 import { generateUploadUrl, generatePrivateReadUrl, getObjectBufferLimited, putObject, deleteObject, storageKind } from "./s3.js";
-import { PLANS } from "./plan-config.js";
-import { ensureWallet } from "./credit-service.js";
-import { resolveEffectivePlanWithEventEntitlements } from "./event-plan-entitlements.js";
 export const sessionMedia = createSessionMediaService(db, {
     signUpload: (key, mime, size, seconds) => generateUploadUrl(key, mime, { contentLength: size, expiresIn: seconds }),
     signRead: generatePrivateReadUrl,
@@ -11,11 +8,6 @@ export const sessionMedia = createSessionMediaService(db, {
     write: (key, bytes) => putObject(key, bytes, "image/webp", { signal: AbortSignal.timeout(30000) }),
     remove: deleteObject,
 });
-export async function sessionMediaLimit(userId: string) {
-    const wallet = await ensureWallet(userId);
-    const plan = await resolveEffectivePlanWithEventEntitlements(userId, wallet.plan);
-    return PLANS[plan].storageCap;
-}
 /** Kill switch affects new writes only; existing media remains readable. */
 export function sessionMediaUploadsEnabled(userId: string, worldId: string) {
     if (storageKind() !== 's3') return false;

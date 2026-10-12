@@ -48,15 +48,12 @@ import { ReviewStateControl } from "../editor/review-state-control";
 import type { YuminaBundle } from "@yumina/engine";
 import {
   AiChatPanel,
-  CanvasPanel,
   LorebookPanel,
   VariablesPanel,
   AudioPanel,
   OverviewPanel,
-  CodeViewPanel,
   PlaytestPanel,
   RulesPanel,
-  AssetsPanel,
   SidebarPanel,
   FirstMessagePanel,
   AddPagePickerPanel,
@@ -73,6 +70,7 @@ import { buildReviewDiffTokens } from "./lib/review-diff";
 
 import "dockview-react/dist/styles/dockview.css";
 import "./studio-theme.css";
+import { CustomUiPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
 
 const STUDIO_CHANGE_REVIEW_COMPONENT = "studio-change-review";
 
@@ -81,15 +79,19 @@ const PANEL_COMPONENTS: Record<
   React.FC<IDockviewPanelProps>
 > = {
   "ai-chat": AiChatPanel,
-  canvas: CanvasPanel,
+  canvas: CustomUiPanel,
   lorebook: LorebookPanel,
   variables: VariablesPanel,
   rules: RulesPanel,
   audio: AudioPanel,
   overview: OverviewPanel,
-  "code-view": CodeViewPanel,
+  "code-view": CustomUiPanel,
+  "custom-ui": CustomUiPanel,
+  "character-showcase": CharacterShowcasePanel,
+  "vn-sprites": VnSpritesPanel,
+  "vn-backgrounds": VnBackgroundsPanel,
   playtest: PlaytestPanel,
-  assets: AssetsPanel,
+  assets: VnSpritesPanel,
   sidebar: SidebarPanel,
   "first-message": FirstMessagePanel,
   marketplace: BundlesPanel,
@@ -97,7 +99,7 @@ const PANEL_COMPONENTS: Record<
   [STUDIO_CHANGE_REVIEW_COMPONENT]: StudioChangeReviewPanel,
 };
 
-// Panel id → i18n title key. Used to (re)apply translated tab titles after a
+// Panel type → i18n title key. Used to (re)apply translated tab titles after a
 // dockview layout restore: `fromJSON` replays the SERIALIZED title verbatim, so
 // a layout persisted before i18n was ready (or before these keys existed) would
 // otherwise show raw keys like "studio.panels.lorebook" in the tabs.
@@ -107,10 +109,14 @@ const PANEL_TITLE_KEYS: Record<string, string> = {
   variables: "studio.panels.variables",
   rules: "studio.panels.behaviors",
   "first-message": "studio.panels.firstMessage",
-  assets: "studio.panels.assets",
+  assets: "sections.vnSprites",
   audio: "studio.panels.audio",
-  canvas: "studio.panels.canvas",
-  "code-view": "studio.panels.frontEndCode",
+  canvas: "sections.customUI",
+  "code-view": "sections.customUI",
+  "custom-ui": "sections.customUI",
+  "character-showcase": "sections.characterShowcase",
+  "vn-sprites": "sections.vnSprites",
+  "vn-backgrounds": "sections.vnBackgrounds",
   overview: "studio.panels.overview",
   playtest: "studio.panels.playtest",
   sidebar: "studio.panels.previewControls",
@@ -298,6 +304,16 @@ function buildDesktopReviewPayload(toolCall: ToolCall, draftInput?: Record<strin
       toolName,
       changed: formatReviewValue(args),
       original: existing ? formatReviewValue(summarizeReviewEntity(existing)) : noOriginal,
+    };
+  }
+
+  if (toolName === "write_status_visualization" || toolName === "edit_status_visualization") {
+    const files = (draft.rootComponent as Record<string, unknown> | undefined)?.files as Record<string, string> | undefined;
+    return {
+      title: "Visualizations · Custom layout",
+      toolName,
+      changed: formatReviewValue(args.layoutCode ?? args.new_code ?? args),
+      original: formatReviewValue(args.old_code ?? files?.["status-layout.tsx"] ?? noOriginal),
     };
   }
 
@@ -568,6 +584,7 @@ function StudioDesktopShell() {
   const variantLabel = useEditorStore(s => s.variantLabel);
   const readOnlyInspect = useEditorStore(s => s.readOnlyInspect);
   const mode = useStudioStore(s => s.mode);
+  const pendingVisualizationTask = useStudioStore(s => s.pendingVisualizationTask);
   const setMode = useStudioStore(s => s.setMode);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const { features } = useEdition();
@@ -577,6 +594,17 @@ function StudioDesktopShell() {
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
   const dockviewRef = useRef<DockviewApi | null>(null);
   const layoutChangeListenerRef = useRef<{ dispose: () => void } | null>(null);
+
+  const openVisualizationAgent = useCallback((api: DockviewApi) => {
+    const task = useStudioStore.getState().pendingVisualizationTask;
+    if (!task || task.worldId !== useEditorStore.getState().serverWorldId) return;
+    const panel = api.panels.find(panel => panel.api.component === "ai-chat")
+      ?? api.addPanel({ id: "ai-chat", component: "ai-chat", title: t("studio.panels.aiAssistant") });
+    panel.api.setActive();
+  }, [t]);
+  useEffect(() => {
+    if (pendingVisualizationTask && dockviewRef.current) openVisualizationAgent(dockviewRef.current);
+  }, [pendingVisualizationTask, openVisualizationAgent]);
 
   const applyDefaultAiChatWidth = useCallback((api: DockviewApi) => {
     const setWidth = () => {
@@ -645,7 +673,8 @@ function StudioDesktopShell() {
   // ("studio.panels.lorebook") surfacing from a stale persisted layout.
   const refreshPanelTitles = useCallback((api: DockviewApi) => {
     for (const panel of api.panels) {
-      const key = PANEL_TITLE_KEYS[panel.id];
+      // Added tabs use "type::instance" IDs; refresh their saved titles too.
+      const key = PANEL_TITLE_KEYS[panel.id.split("::")[0]];
       if (key) panel.setTitle(t(key as never));
     }
   }, [t]);
@@ -682,6 +711,7 @@ function StudioDesktopShell() {
           // from the i18n keys so restored tabs never show a raw "studio.panels.*".
           refreshPanelTitles(event.api);
           applyDefaultAiChatWidth(event.api);
+          openVisualizationAgent(event.api);
           return;
         } catch {
           // fallback to default layout
@@ -691,8 +721,9 @@ function StudioDesktopShell() {
       // Default layout: Writing preset (AI Assistant left, Lorebook + Variables + Behaviors tabbed right)
       applyDefaultStudioLayout(event.api);
       refreshPanelTitles(event.api);
+      openVisualizationAgent(event.api);
     },
-    [applyDefaultAiChatWidth, applyDefaultStudioLayout, refreshPanelTitles, serverWorldId]
+    [applyDefaultAiChatWidth, applyDefaultStudioLayout, refreshPanelTitles, serverWorldId, openVisualizationAgent]
   );
 
   // If i18n finishes loading after onReady (async resource race) or the user
@@ -1067,7 +1098,7 @@ function StudioDesktopShell() {
                     )}
                   >
                     <span className="min-w-0 flex-1 truncate">{label}</span>
-                    {showStar && <Star className="h-3 w-3 shrink-0 fill-[#C9A25E] text-[#C9A25E]" aria-label={t("variantBar.primaryBadge", "主")} />}
+                    {showStar && <Star className="h-3 w-3 shrink-0 fill-[#C9A25E] text-gold" aria-label={t("variantBar.primaryBadge", "主")} />}
                     {/* Only a published version can be promoted. The button stays
                         visible but disabled, labelled "(publish first)", so the
                         reason sits on the control instead of in a pill. */}
@@ -1083,7 +1114,7 @@ function StudioDesktopShell() {
                         className={cn(
                           "shrink-0 rounded-full p-1 transition-colors",
                           promoteReady
-                            ? "text-muted-foreground/60 hover:bg-[#C9A25E]/15 hover:text-[#C9A25E]"
+                            ? "text-muted-foreground/60 hover:bg-gold/15 hover:text-gold"
                             : "cursor-not-allowed text-muted-foreground/30",
                         )}
                       >

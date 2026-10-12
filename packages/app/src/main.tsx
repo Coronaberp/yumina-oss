@@ -1,3 +1,4 @@
+import "./lib/crypto-compat";
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { rememberShareInvite } from "@/lib/share-invite";
 import { createRoot } from "react-dom/client";
@@ -289,7 +290,7 @@ function RouteErrorFallback({ error, reset }: { error: Error; reset: () => void 
   if (recovering) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="w-full max-w-sm rounded-2xl border border-white/[0.06] bg-[#1A1B20] p-8 text-center shadow-2xl">
+        <div className="w-full max-w-sm rounded-2xl border border-white/[0.06] bg-card p-8 text-center shadow-2xl">
           <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
           <h2 className="mb-1 text-lg font-semibold text-foreground">网络不稳定，正在重试…</h2>
           <p className="text-sm text-muted-foreground/50">
@@ -316,7 +317,7 @@ function RouteErrorFallback({ error, reset }: { error: Error; reset: () => void 
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-white/[0.06] bg-[#1A1B20] p-8 text-center shadow-2xl">
+      <div className="w-full max-w-sm rounded-2xl border border-white/[0.06] bg-card p-8 text-center shadow-2xl">
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
           <svg className="h-6 w-6 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />

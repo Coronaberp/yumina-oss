@@ -1,5 +1,8 @@
+import { personaPresetsSchema, cardShowcaseSchema } from "@yumina/engine";
 import { worldVersionRoutes } from "./world-versions.js";
 import { captureAutomaticVersion, capturePublishVersion, lockVersionDraft } from "../lib/world-version-history.js";
+import { assertWorldEditable, isWorldEditLocked } from "../lib/world-edit-lock.js";
+import { installationSharedWorldIds, isInstallationSharedWorld } from "../lib/installation-shared-worlds.js";
 import { communityMuteMiddleware } from "../middleware/community-mute.js";
 import { Hono } from "hono";
 import { reviewPlaytimeQuery } from "../lib/review-playtime.js";
@@ -7,7 +10,9 @@ import { eq, or, and, desc, ilike, sql, inArray, notInArray, isNotNull } from "d
 import { db, readDb, readOwn, flagWrite } from "../db/index.js";
 import { worlds, user, assetReferences, userLibrary, worldPendingEdits, worldUpdates, follows, reviews, worldRatings, contentTranslations, worldReviewSubmissions } from "../db/schema.js";
 import { estimateTokens } from "@yumina/engine";
-import { generateUploadUrl } from "../lib/s3.js";
+import { generateUploadUrl, getObjectBuffer, putObject, deleteObject } from "../lib/s3.js";
+import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
+import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { MAX_REVIEW_CONTENT, clampWorldTags, OFFICIAL_WORLD_TAGS, PLAYED_TAG_FILTER_THRESHOLD, MAX_DYNAMIC_FILTER_TAGS } from "@yumina/shared";
 import { canonicalizeTag } from "@yumina/shared";
@@ -303,6 +308,10 @@ function stripRecommendationInternals<
 // GET /api/worlds — list user's worlds + published worlds
 worldRoutes.get("/", authMiddleware, async (c) => {
   const currentUser = c.get("user");
+  const sharedIds = installationSharedWorldIds();
+  const sharedFilter = sharedIds.length
+    ? and(inArray(worlds.id, sharedIds), inArray(worlds.status, ["draft", "published"]))
+    : sql`false`;
   const rd = await readOwn(currentUser.id);
   // "Orphaned fork" = the source card was LIVE at some point, is not live now,
   // and belongs to someone else. Reading `is_published` alone could not tell
@@ -340,6 +349,7 @@ worldRoutes.get("/", authMiddleware, async (c) => {
       status: worlds.status,
       isNsfw: worlds.isNsfw,
       allowEdit: worlds.allowEdit,
+      editingLocked: worlds.editingLocked,
       allowCustomApi: worlds.allowCustomApi,
       allowReviews: worlds.allowReviews,
       allowSessionSharing: worlds.allowSessionSharing,
@@ -374,13 +384,14 @@ worldRoutes.get("/", authMiddleware, async (c) => {
     .leftJoin(user, eq(worlds.creatorId, user.id))
     .where(
       and(
-        or(eq(worlds.creatorId, currentUser.id), eq(worlds.isPublished, true)),
+        or(eq(worlds.creatorId, currentUser.id), eq(worlds.isPublished, true), sharedFilter),
         // Collapse each language group to ONE representative: the 主 of the
         // viewer's language (then oldest), chosen among own-or-published rows so
         // the creator's own drafts still surface. This keeps multi-language groups
         // from showing one card per language. Other variants stay reachable via
         // the variant tab bar / version picker.
         or(
+          sharedFilter,
           sql`${worlds.languageGroupId} IS NULL`,
           sql`${worlds.id} = (
             SELECT w2.id FROM worlds w2
@@ -402,11 +413,13 @@ worldRoutes.get("/", authMiddleware, async (c) => {
 
   // Only resolve thumbnails for list view — gallery images resolved lazily in GET /:id
   // My Projects is a creator view and shows each primary variant as-is.
-  const resolved = result.map((w) => ({
+  const resolved = await Promise.all(result.map(async (w) => ({
     ...w,
+    editingLocked: await isWorldEditLocked(w.id, w.editingLocked),
+    sharedInLibrary: isInstallationSharedWorld(w.id, w.status),
     thumbnailUrl: resolveImageCdn(w.thumbnailUrl),
     pendingEdit: w.creatorId === currentUser.id ? pendingEditMap.get(w.id) ?? null : null,
-  }));
+  })));
 
   return c.json({ data: resolved });
 });
@@ -1360,6 +1373,7 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
         creatorId: worlds.creatorId,
         name: worlds.name,
         description: worlds.description,
+        cardShowcase: sql<Record<string, unknown> | null>`${worlds.schema}->'cardShowcase'`,
         thumbnailUrl: worlds.thumbnailUrl,
         coverCrop: coverCropCols.coverCrop,
         galleryCoverCrop: coverCropCols.galleryCoverCrop,
@@ -1405,6 +1419,8 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
 
   const world = result[0]!;
 
+  (world as typeof world & { editingLocked: boolean }).editingLocked = await isWorldEditLocked(worldId, (world as { editingLocked?: boolean }).editingLocked);
+
   if (currentUser && currentUser.id !== world.creatorId && (await getBlockStatus(currentUser.id, world.creatorId)).blocked) {
     return c.json({ error: "World not found" }, 404);
   }
@@ -1412,6 +1428,8 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
   // Access control: status-based with library tombstone support
   const isCreator = currentUser && world.creatorId === currentUser.id;
   const worldStatus = world.status ?? (world.isPublished ? "published" : "draft");
+  const sharedInLibrary = !!currentUser && isInstallationSharedWorld(worldId, worldStatus);
+  (world as typeof world & { sharedInLibrary: boolean }).sharedInLibrary = sharedInLibrary;
 
   // Admins can read any world regardless of status (for moderation inspect).
   // Resolved lazily so we don't pay a role lookup for the published-world hot path.
@@ -1441,7 +1459,7 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
     hasDmGrant = await hasWorldDmShareGrant(currentUser.id, worldId, world.creatorId);
   }
 
-  if (worldStatus === "draft" && !isCreator) {
+  if (worldStatus === "draft" && !isCreator && !sharedInLibrary) {
     await ensureDmGrantFlag();
     if (!hasDmGrant) {
       await ensureAdminFlag();
@@ -1594,7 +1612,7 @@ worldRoutes.get("/:id/context-requirement", optionalAuthMiddleware, async (c) =>
 
   const worldStatus = row.status ?? (row.isPublished ? "published" : "draft");
   const isCreator = currentUser != null && row.creatorId === currentUser.id;
-  if (worldStatus !== "published" && !isCreator) {
+  if (worldStatus !== "published" && !isCreator && !(currentUser && isInstallationSharedWorld(worldId, worldStatus))) {
     return c.json({ error: "World not found" }, 404);
   }
 
@@ -1623,6 +1641,8 @@ worldRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"), a
   }
 
   const body = await c.req.json();
+  if (body?.schema?.personaPresets !== undefined && !personaPresetsSchema.safeParse(body.schema.personaPresets).success) return c.json({ error: "Invalid creator personas. Personas contain identity details only, without stats or status values." }, 400);
+  if (body?.schema?.cardShowcase !== undefined && !cardShowcaseSchema.safeParse(body.schema.cardShowcase).success) return c.json({ error: "Invalid card showcase. Use HTML up to 100,000 characters and CSS up to 30,000 characters." }, 400);
   const parsed = createWorldSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -1682,6 +1702,21 @@ worldRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"), a
   return c.json({ data: result[0] }, 201);
 });
 
+// PATCH /api/worlds/:id/editing-lock — owner-only deliberate lock control.
+worldRoutes.patch("/:id/editing-lock", authMiddleware, async c => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.locked !== "boolean" || Object.keys(body).some(key => key !== "locked")) {
+    return c.json({ error: "Choose whether the card is locked" }, 400);
+  }
+  const currentUser = c.get("user");
+  const [saved] = await db.update(worlds).set({ editingLocked: body.locked })
+    .where(and(eq(worlds.id, c.req.param("id")), eq(worlds.creatorId, currentUser.id)))
+    .returning();
+  if (!saved) return c.json({ error: "World not found" }, 404);
+  await flagWrite(currentUser.id);
+  return c.json({ data: { id: saved.id, editingLocked: saved.editingLocked } });
+});
+
 // PATCH /api/worlds/:id — update world (owner only, auth required)
 worldRoutes.patch("/:id", authMiddleware, async (c) => {
   const currentUser = c.get("user");
@@ -1696,6 +1731,8 @@ worldRoutes.patch("/:id", authMiddleware, async (c) => {
       ? ((body as Record<string, unknown>).baseUpdatedAt as string)
       : null;
 
+  if (body?.schema?.personaPresets !== undefined && !personaPresetsSchema.safeParse(body.schema.personaPresets).success) return c.json({ error: "Invalid creator personas. Personas contain identity details only, without stats or status values." }, 400);
+  if (body?.schema?.cardShowcase !== undefined && !cardShowcaseSchema.safeParse(body.schema.cardShowcase).success) return c.json({ error: "Invalid card showcase. Use HTML up to 100,000 characters and CSS up to 30,000 characters." }, 400);
   const parsed = updateWorldSchema.safeParse(body);
   if (!parsed.success) {
     return c.json(
@@ -1929,6 +1966,8 @@ worldRoutes.patch("/:id", authMiddleware, async (c) => {
       .from(worlds)
       .where(eq(worlds.id, worldId))
       .for("update");
+
+    if (lockedWorld) await assertWorldEditable(worldId, lockedWorld.editingLocked);
 
     // A save planned before a version switch must not apply its old hold plan
     // afterwards. The editor handles STALE_WORLD by merging its unsaved edits.
@@ -2876,11 +2915,14 @@ worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
   }
 
   const currentImages = (existing[0]!.galleryImages as string[] | null) ?? [];
+  const alreadyStored = currentImages.find(key => key === body.key || key === losslessWebpKey(body.key));
+  if (alreadyStored) return c.json({ data: { url: resolveImageCdn(alreadyStored) ?? alreadyStored, galleryImages: currentImages } });
   if (currentImages.length >= 8) {
     return c.json({ error: "Maximum 8 gallery images allowed" }, 400);
   }
 
-  const updatedImages = [...currentImages, body.key];
+  const stored = await optimizeUploadedImage({ key: body.key, filename: body.key.split("/").pop()!, mimeType: normalizeAssetMimeType(body.key), sizeBytes: 0 }, { read: getObjectBuffer, write: putObject });
+  const updatedImages = [...currentImages, stored.key];
 
   await db
     .update(worlds)
@@ -2888,7 +2930,8 @@ worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
     .where(eq(worlds.id, worldId));
 
   // Return CDN URL for the new image
-  const url = resolveImageCdn(body.key) ?? body.key;
+  const url = resolveImageCdn(stored.key) ?? stored.key;
+  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
 
   return c.json({ data: { url, galleryImages: updatedImages } });
 });

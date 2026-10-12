@@ -18,8 +18,11 @@
  */
 
 export interface TurnSwipe {
+  contentFlags?: import("@yumina/shared").ContentFlagAudit;
   content: string;
   rawContent?: string;
+  choices?: string[];
+  reasoningContent?: string;
   stateChanges?: Record<string, unknown>;
   stateSnapshot?: Record<string, unknown>;
   createdAt: string;

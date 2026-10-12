@@ -10,9 +10,11 @@ import { compileTSX } from "./tsx-compiler";
 import { useAssetFont } from "@/lib/asset-font";
 import { resolveAssetRefs, resolveAssetUrl } from "@/lib/asset-url";
 import { CopyErrorButton } from "@/components/copy-error-button";
+import type { StoryProgress } from "@yumina/engine";
 
 /** API exposed to custom components via the useYumina() hook */
 export interface YuminaAPI {
+  personaSelectable?: boolean;
   mode?: "session" | "guest-preview";
   capabilities?: {
     canSendMessage: boolean;
@@ -21,6 +23,13 @@ export interface YuminaAPI {
     requiresAuth: boolean;
   };
   sendMessage: (text: string, attachments?: import("@yumina/shared").ChatImageInput[]) => void;
+  generateChoices?: (messageId: string) => Promise<string[]>;
+  retryPendingReply?: (messageId: string) => void;
+  storyProgress?: StoryProgress;
+  isCompletingEnding?: boolean;
+  endingError?: string | null;
+  retryEnding?: () => Promise<void>;
+  completeEnding?: () => Promise<void>;
   setVariable: (id: string, value: number | string | boolean | Record<string, unknown> | unknown[], options?: { scope?: string; targetUserId?: string }) => void;
   executeAction: (actionId: string) => void;
   navigateTo?: (path: string) => void;
@@ -39,12 +48,14 @@ export interface YuminaAPI {
   /** Persona-aware user — same branching as {{user}}: active persona if set,
    *  else account. Prefer this over `currentUser` for in-world role-play
    *  rendering (chat bubbles, character cards, profile panels). */
-  user?: { name: string; avatar: string | null };
+  user?: { name: string; avatar: string | null; sprites?: import("@yumina/shared").PersonaSprites };
   messages?: Array<Record<string, unknown>>;
   /** Whether the LLM is currently streaming a response */
   isStreaming?: boolean;
   /** Raw streaming content from the LLM (accumulated text chunks) */
   streamingContent?: string;
+  /** Estimated generated tokens, including thinking, before story text is released. */
+  streamingTokenCount?: number | null;
   /** Resolve an @asset:{id} reference to a CDN URL */
   resolveAssetUrl?: (ref: string) => string;
   /** Play an audio track by ID (must be defined in world audioTracks) */
@@ -392,8 +403,16 @@ export function CustomComponentRenderer({
       worldName,
       currentUser: api?.currentUser ?? null,
       messages: api?.messages ?? [],
+      generateChoices: api?.generateChoices,
+      retryPendingReply: api?.retryPendingReply,
+      storyProgress: api?.storyProgress ?? { status: "playing" },
+      isCompletingEnding: api?.isCompletingEnding ?? false,
+      endingError: api?.endingError ?? null,
+      retryEnding: api?.retryEnding,
+      completeEnding: api?.completeEnding,
       isStreaming: api?.isStreaming,
       streamingContent: api?.streamingContent,
+      streamingTokenCount: api?.streamingTokenCount ?? null,
       playAudio: api?.playAudio,
       stopAudio: api?.stopAudio,
       pauseAudio: api?.pauseAudio,

@@ -10,6 +10,8 @@ import {
 import { downloadWorldJSON, downloadWorldPNG } from "@/lib/download-world";
 import { feedback } from "@/lib/feedback";
 import { cn } from "@/lib/utils";
+import { useEditorStore } from "@/stores/editor";
+import { confirmPreflightWarnings, preflightIssueSummary, runStudioPreflight } from "@/features/studio/lib/preflight";
 
 interface ExportCardMenuProps {
   worldId: string | null;
@@ -27,11 +29,23 @@ interface ExportCardMenuProps {
 export function ExportCardMenu({ worldId, worldName, size = "md", disabled, className }: ExportCardMenuProps) {
   const { t } = useTranslation("editor");
   const [busy, setBusy] = useState(false);
+  const isDirty = useEditorStore((s) => s.isDirty);
+  const saveDraft = useEditorStore((s) => s.saveDraft);
 
   const run = async (kind: "png" | "json") => {
     if (!worldId || busy) return;
     setBusy(true);
     try {
+      if (isDirty) {
+        const saved = await saveDraft();
+        if (!saved) throw new Error("Failed to save the draft before export.");
+      }
+      const preflight = await runStudioPreflight(worldId);
+      if (preflight.blockingErrors.length) {
+        feedback.error(`Fix these preflight errors before export:\n${preflightIssueSummary(preflight.blockingErrors)}`);
+        return;
+      }
+      if (!confirmPreflightWarnings(preflight.warnings, "export")) return;
       if (kind === "png") await downloadWorldPNG(worldId, worldName || undefined);
       else await downloadWorldJSON(worldId, worldName || undefined);
     } catch (err) {

@@ -23,12 +23,14 @@
     <style>
       /* Let Tailwind preflight handle the full reset — only add box-sizing */
       *, *::before, *::after { box-sizing: border-box; }
+      * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+      ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
       /* Opt out of Android WebView font-boosting up front (X5/TBS in WeChat,
          MIUI/Huawei) so the composer text isn't inflated before globals.css
          loads. Full prefix set — newer engines honor the unprefixed property
          over the deprecated -webkit- alias. See globals.css html{} for the why. */
       html { touch-action: manipulation; -webkit-text-size-adjust: 100%; -moz-text-size-adjust: 100%; -ms-text-size-adjust: 100%; text-size-adjust: 100%; }
-      html, body, #sandbox-root { width: 100%; height: 100%; background: var(--color-background, #121316); color: var(--color-foreground, #E8E2D2); -webkit-user-select: none; user-select: none; }
+      html, body, #sandbox-root { width: 100%; height: 100%; background: var(--color-background, #141312); color: var(--color-foreground, #F0E5D4); -webkit-user-select: none; user-select: none; }
       /* Exactly ONE document-level scroller: #sandbox-root. html/body stay
          hidden so browser-driven scrolls (soft-keyboard focus reveal, missed
          momentum clamps) can never offset the whole canvas. This invariant

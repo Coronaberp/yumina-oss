@@ -13,6 +13,7 @@ import { resolveImageUrl } from "@/lib/asset-url";
 import { useSettingsDocumentScroll } from "./use-settings-document-scroll";
 import {
   User,
+  Github,
   Key,
   Bot,
   Eye,
@@ -88,6 +89,9 @@ import {
 import { normalizeVisualStrength } from "@/lib/visual-settings";
 import { AiProviderTab } from "./ai-provider-tab";
 import { AiConfigTab } from "./ai-config-tab";
+import { MemoryEmbeddingsSettings } from "./memory-embeddings";
+import { DanbooruSettings } from "./danbooru-settings";
+import { ImageGenerationSettings } from "./image-generation-settings";
 import {
   OFFICIAL_SUPPORT_EMAIL,
   OFFICIAL_USER_ID,
@@ -419,6 +423,10 @@ function createSettingsSearchItems(
     { id: "account-delete", sectionId: "account", targetId: "settings-target-account-delete", title: t("account.deleteAccount.title"), description: t("account.deleteAccount.description"), category: category.account },
 
     { id: "ai-config", sectionId: "ai-config", targetId: "settings-target-ai-config", title: category.aiConfig, description: t("search.aiConfigDescription"), category: category.aiConfig, keywords: ["API", "OpenRouter"] },
+    { id: "prompt-context", sectionId: "ai-config", targetId: "settings-target-prompt-context", title: t("config.overallLimit", { ns: "profile", defaultValue: "Prompt context length" }), category: category.aiConfig, keywords: ["context length", "prompt tokens", "maxContext", "context window"] },
+    { id: "memory-context", sectionId: "ai-config", targetId: "settings-target-memory-context", title: t("config.recallMemory", { ns: "profile", defaultValue: "Recalled memory length" }), category: category.aiConfig, keywords: ["memory", "recall", "token budget", "memory context", "context length"] },
+    { id: "image-generation", sectionId: "ai-config", targetId: "settings-target-image-generation", title: t("imageGeneration.title", { defaultValue: "Image generation" }), description: t("imageGeneration.description"), category: category.aiConfig, keywords: ["ComfyUI", "OpenAI", "image generation", "sprites", "transparent", "green screen", "workflow"] },
+    { id: "danbooru", sectionId: "ai-config", targetId: "settings-target-danbooru", title: t("danbooru.title", { defaultValue: "Danbooru artwork search" }), description: t("danbooru.description"), category: category.aiConfig, keywords: ["Danbooru", "artwork", "sprites", "backgrounds", "images"] },
     { id: "model-fallback", sectionId: "ai-config", targetId: "model-fallback", title: modelFallbackText(language, "settingsTitle"), description: modelFallbackText(language, "settingsBody"), category: category.aiConfig, keywords: ["fallback", modelFallbackText(language, "auto"), modelFallbackText(language, "ask")] },
 
     { id: "content-safety", sectionId: "content-safety", targetId: "settings-target-content-safety", title: category.contentSafety, description: t("contentSafety.description"), category: category.contentSafety },
@@ -530,8 +538,9 @@ export function SettingsPage() {
     return localizedItems.filter((item) =>
       visibleSectionIds.has(item.sectionId)
       && (!isTouchDevice || item.id !== "send-key")
-      && (!isSingleUser || !SINGLE_USER_HIDDEN_ACCOUNT_ITEMS.has(item.id)));
-  }, [isTouchDevice, t, i18n.language, visibleSections, isSingleUser]);
+      && (!isSingleUser || !SINGLE_USER_HIDDEN_ACCOUNT_ITEMS.has(item.id))
+      && (auth.emailPassword || item.id !== "account-password"));
+  }, [isTouchDevice, t, i18n.language, visibleSections, isSingleUser, auth.emailPassword]);
   const searchResults = useMemo(
     () => searchSettingsItems(searchItems, normalizedSearchQuery),
     [normalizedSearchQuery, searchItems]
@@ -1087,6 +1096,9 @@ function AiConfigSection() {
       <SectionHeader id="settings-target-ai-config" title={t("aiConfig.title")} />
 
       <AiProviderTab />
+      <MemoryEmbeddingsSettings />
+      <DanbooruSettings />
+      <ImageGenerationSettings />
       <AiConfigTab />
     </div>
   );
@@ -1122,6 +1134,7 @@ function XSocialIcon() {
 }
 
 const SOCIAL_PROVIDERS: Array<{ id: SocialProviderId; label: string; Icon: React.ComponentType }> = [
+  { id: "github", label: "GitHub", Icon: () => <Github className="h-4 w-4" /> },
   { id: "google", label: "Google", Icon: GoogleSocialIcon },
   { id: "discord", label: "Discord", Icon: DiscordSocialIcon },
   { id: "twitter", label: "X", Icon: XSocialIcon },
@@ -1269,6 +1282,7 @@ function LoginDevicesCard({ currentToken }: { currentToken: string | null }) {
 }
 
 function ConnectedAccountsCard() {
+  const {auth}=useEdition();
   const { t } = useTranslation("settings");
   const [accounts, setAccounts] = useState<Array<{ providerId: string; accountId: string }> | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
@@ -1342,8 +1356,8 @@ function ConnectedAccountsCard() {
         </div>
 
         <div className="space-y-2">
-          {/* Email & password — always shown, no action */}
-          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+          {/* Password methods appear only when permitted by the server. */}
+          {auth.emailPassword&&<div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-main/80">
                 <Mail className="h-4 w-4" />
@@ -1359,12 +1373,12 @@ function ConnectedAccountsCard() {
                 </div>
               </div>
             </div>
-          </div>
+          </div>}
 
-          {SOCIAL_PROVIDERS.map(({ id, label, Icon }) => {
+          {SOCIAL_PROVIDERS.filter(({id})=>auth.socialProviders.includes(id)).map(({ id, label, Icon }) => {
             const isLinked = linkedSet.has(id);
             const isBusy = busyProvider === id;
-            const disabled = isBusy || accounts === null;
+            const disabled = isBusy || accounts === null || (!auth.emailPassword && isLinked);
             return (
               <div key={id} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
                 <div className="flex items-center gap-3">
@@ -1481,8 +1495,8 @@ function AccountSection({
         </div>
       </Card>
 
-      {/* Change Password — not in single-user mode (the local account has no password) */}
-      {auth.mode === "multi-user" && (
+      {/* Password controls are absent when sign-in is GitHub-only. */}
+      {auth.mode === "multi-user" && auth.emailPassword && (
       <Card id="settings-target-account-password">
         <CardIcon icon={Key} />
         <div className="flex-1 space-y-4">
@@ -1683,7 +1697,7 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
       </div>
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto border-red-500/20 bg-[#18181b] text-main sm:max-w-lg">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-red-500/20 bg-card text-main sm:max-w-lg">
           {emailSent ? (
             <div className="py-4 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
@@ -1896,7 +1910,7 @@ function ContentSafetySection({
                       }`}
                     >
                       {active && (
-                        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5 text-[#181818]" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5 text-primary-foreground" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <polyline points="2,6.5 5,9 10,3.5" />
                         </svg>
                       )}
@@ -2135,7 +2149,7 @@ function BlacklistManager() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="flex max-h-[80vh] w-full max-w-[520px] flex-col rounded-2xl border border-white/[0.08] bg-[#1A1B20] shadow-[0_18px_60px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in-95 duration-200"
+            className="flex max-h-[80vh] w-full max-w-[520px] flex-col rounded-2xl border border-white/[0.08] bg-card shadow-[0_18px_60px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
@@ -2724,7 +2738,7 @@ function WallpaperSlider({
           step={1}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-[#C9A25E]"
+          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-gold"
           aria-label={ariaLabel}
         />
         {hint && <p className="text-[11px] text-sub/70">{hint}</p>}

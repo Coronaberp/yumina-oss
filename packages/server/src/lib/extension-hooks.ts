@@ -28,6 +28,9 @@ import type { ParseResult } from "@yumina/engine";
 import type { LLMProvider } from "./llm/types.js";
 
 export interface TurnOutputContext {
+  personaControlMode?: import('@yumina/shared').PersonaControlMode;
+  playerNames?: (string | null | undefined)[];
+  characterNames?: string[];
   world: WorldDefinition;
   state: GameState;
   raw: string;
@@ -39,11 +42,11 @@ export interface TurnOutputContext {
   cacheEnabled?: boolean;
   stream?: boolean;
   /** Resolved lazily: valid primary output never needs another provider. */
-  resolveCorrection?: () => Promise<{ provider: LLMProvider; model: string; maxContext: number; apiKeyTier: string }>;
+  resolveCorrection?: () => Promise<{ provider: LLMProvider; model: string; maxContext: number; apiKeyTier: string; contentRouting?: { userId: string; protectedWorld: boolean; resolved: import("./resolve-provider.js").ResolvedProvider & { profileId?: string } } }>;
   signal: AbortSignal;
   stopReason?: string;
   audit: StateValidationAudit;
-  history: Array<{ role: string; content: unknown }>;
+  history: Array<{ role: string; content: unknown; choices?: readonly string[] }>;
   mayCorrect: () => Promise<boolean>;
   progress: (audit: StateValidationAudit) => Promise<void>;
   recordUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number; providerCostUsd?: number }, model: string) => Promise<string>;

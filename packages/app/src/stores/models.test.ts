@@ -119,3 +119,31 @@ test("a failed profile read preserves the last rendered catalog", async () => {
   await useModelsStore.getState().fetchModels();
   assert.equal(useModelsStore.getState().models[0]?.id, "custom/new");
 });
+
+
+test("unassigned accounts show the admin default without probing its private connection", async () => {
+  useUserProfileStore.setState({ profile: { preferences: {} } as never });
+  const paths: string[] = [];
+  globalThis.fetch = (async url => {
+    const path = String(url); paths.push(path);
+    if (path.endsWith("/keys")) return reply([key("unassigned-private")]);
+    if (path.endsWith("/content-endpoints")) return reply({ sfwApiKeyId: null, nsfwApiKeyId: null, defaults: { sfw: { provider: "custom", model: "custom/admin-default" } } });
+    throw new Error("Shared credentials must never be used for browser discovery");
+  }) as typeof fetch;
+  await useModelsStore.getState().fetchModels();
+  assert.deepEqual(useModelsStore.getState().models.map(m => m.id), ["custom/admin-default"]);
+  assert.equal(paths.length, 2);
+});
+
+test("personal selection keeps its catalog even when admin defaults are available", async () => {
+  const paths: string[] = [];
+  globalThis.fetch = (async url => {
+    const path = String(url); paths.push(path);
+    if (path.endsWith("/keys")) return reply([key()]);
+    if (path.endsWith("/content-endpoints")) return reply({ sfwApiKeyId: null, defaults: { sfw: { provider: "custom", model: "custom/admin-default" } } });
+    return reply({ ok: true, models: ["personal-model"] });
+  }) as typeof fetch;
+  await useModelsStore.getState().fetchModels();
+  assert.deepEqual(useModelsStore.getState().models.map(m => m.id), ["custom/personal-model"]);
+  assert.equal(paths.some(path => path.endsWith("/content-endpoints")), false);
+});

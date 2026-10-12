@@ -1,3 +1,4 @@
+import { readStudioSteering, STUDIO_STEERING_KEY } from "./studio-steering.js";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { agentRuns, studioConversations } from "../db/schema.js";
@@ -22,6 +23,7 @@ interface CommittedDisplayTurn {
   commitId: string;
   writeToolCalls?: ToolCall[];
   lane?: "answer" | "step" | "notice";
+  questionPrompt?: { question: string; rationale?: string; options: Array<{ label: string; description?: string }> };
 }
 
 const STUDIO_USER_MESSAGE_CONTEXT_KEY = "studioUserMessage";
@@ -218,6 +220,14 @@ function normalizeCommittedDisplayTurn(runId: string, value: unknown): Committed
   if (!commitId) return null;
 
   const lane = value.lane === "answer" || value.lane === "step" || value.lane === "notice" ? value.lane : undefined;
+  const rawQuestion = isRecord(value.questionPrompt) ? value.questionPrompt : undefined;
+  const question = typeof rawQuestion?.question === "string" ? rawQuestion.question.slice(0, 1200) : undefined;
+  const options = Array.isArray(rawQuestion?.options) ? rawQuestion.options.flatMap(option => {
+    if (!isRecord(option) || typeof option.label !== "string" || !option.label.trim()) return [];
+    return [{ label: option.label.slice(0, 120), ...(typeof option.description === "string" ? { description: option.description.slice(0, 240) } : {}) }];
+  }).slice(0, 4) : [];
+  const questionPrompt = question ? { question,
+    ...(typeof rawQuestion?.rationale === "string" ? { rationale: rawQuestion.rationale.slice(0, 400) } : {}), options } : undefined;
 
   return {
     runId,
@@ -227,6 +237,7 @@ function normalizeCommittedDisplayTurn(runId: string, value: unknown): Committed
     commitId,
     writeToolCalls: normalizeToolCalls(value.writeToolCalls),
     ...(lane ? { lane } : {}),
+    ...(questionPrompt ? { questionPrompt } : {}),
   };
 }
 
@@ -267,6 +278,7 @@ function hydrateDisplayMessagesWithCommittedTurns(
     if (!message.commitId) message.commitId = turn.commitId;
     if (!message.agentRunId) message.agentRunId = turn.runId;
     if (turn.lane && !message.lane) message.lane = turn.lane;
+    if (turn.questionPrompt && !message.questionPrompt) message.questionPrompt = turn.questionPrompt;
     if (!messageHasReviewCalls(message) && turn.writeToolCalls?.length) {
       message.toolCalls = turn.writeToolCalls;
       message.proposalStatus = message.proposalStatus ?? "approved";
@@ -285,6 +297,7 @@ function hydrateDisplayMessagesWithCommittedTurns(
       agentRunId: turn.runId,
       commitId: turn.commitId,
       ...(turn.lane ? { lane: turn.lane } : {}),
+      ...(turn.questionPrompt ? { questionPrompt: turn.questionPrompt } : {}),
       ...(turn.writeToolCalls?.length ? { toolCalls: turn.writeToolCalls, proposalStatus: "approved" } : {}),
     });
   }
@@ -374,7 +387,7 @@ function matchesDisplayMessage(serverMessage: ChatMessage, displayMessage: ChatM
 
 function filterServerOwnedHistoryByDisplayMessages(
   serverHistory: ChatMessage[],
-  displayMessages: Array<Record<string, unknown>>
+  displayMessages: Array<Record<string, unknown>>, limit = 40
 ): ChatMessage[] {
   const displayHistory = displayStudioMessagesToComparableHistory(displayMessages);
   if (displayHistory.length === 0) return [];
@@ -405,7 +418,7 @@ function filterServerOwnedHistoryByDisplayMessages(
     previousKept = true;
   }
 
-  return filtered.slice(-40);
+  return filtered.slice(-limit);
 }
 
 export function withStudioUserMessageContext(
@@ -413,7 +426,7 @@ export function withStudioUserMessageContext(
   userMessage: ChatMessage
 ): Record<string, unknown> {
   return {
-    ...(context ?? {}),
+    ...Object.fromEntries(Object.entries(context ?? {}).filter(([key]) => key !== STUDIO_STEERING_KEY && key !== "studioCompaction" && key !== "studioToolTrace")),
     [STUDIO_USER_MESSAGE_CONTEXT_KEY]: userMessage,
   };
 }
@@ -467,6 +480,21 @@ export async function loadStudioConversationForDisplay(
   }, null);
   const appendMissing = !!latestRunUpdatedAt && (!conversation.updatedAt || conversation.updatedAt <= latestRunUpdatedAt);
   const displayMessages = hydrateDisplayMessagesWithCommittedTurns(conversation.messages, turns, appendMissing);
+  for (const run of runs) {
+    const visible = appendMissing || displayMessages.some(message => message.agentRunId === run.id);
+    for (const item of readStudioSteering(run.context, run.status)) {
+      const existing = displayMessages.findIndex(message => message.id === item.id && message.agentRunId === run.id);
+      const message = { id: item.id, role: "user", content: item.content, agentRunId: run.id,
+        steering: { status: item.status, createdAt: item.createdAt, beforeIteration: item.beforeIteration } };
+      if (existing >= 0) displayMessages[existing] = message;
+      else if (visible) {
+        const nextTurn = (run.committedTurns ?? []).find(turn => turn.iteration >= (item.beforeIteration ?? Infinity));
+        const position = nextTurn ? displayMessages.findIndex(message => message.commitId === nextTurn.commitId) : -1;
+        if (position >= 0) displayMessages.splice(position, 0, message);
+        else displayMessages.push(message);
+      }
+    }
+  }
   // Reattach a persisted proposal even if the browser closed before saving its
   // chat bubble. Only attach to visible history; never resurrect an undone run.
   for (const run of runs) {
@@ -509,7 +537,7 @@ export async function deleteStudioConversationForWorld(
 }
 
 export function serverOwnedStudioRunsToAgentHistory(
-  runs: Pick<AgentRun, "context" | "committedTurns">[]
+  runs: Pick<AgentRun, "context" | "committedTurns">[], limit = 40
 ): ChatMessage[] {
   const history: ChatMessage[] = [];
 
@@ -519,20 +547,58 @@ export function serverOwnedStudioRunsToAgentHistory(
     if (userMessage) {
       history.push(userMessage);
     }
-    history.push(...runCommittedAssistantMessages(run));
+    const steering = readStudioSteering(context).filter(item => item.status === "applied")
+      .sort((a, b) => (a.beforeIteration ?? 0) - (b.beforeIteration ?? 0));
+    let previousIteration = -1;
+    for (const item of steering) {
+      history.push(...runCommittedAssistantMessages({ committedTurns: (run.committedTurns ?? [])
+        .filter(turn => turn.iteration > previousIteration && turn.iteration < (item.beforeIteration ?? 0)) }));
+      if (item.content.trim() !== "/summarize") history.push({ role: "user", content: item.content });
+      previousIteration = (item.beforeIteration ?? 0) - 1;
+    }
+    history.push(...runCommittedAssistantMessages({ committedTurns: (run.committedTurns ?? []).filter(turn => turn.iteration > previousIteration) }));
   }
 
-  return history.slice(-40);
+  return history.slice(-limit);
+}
+
+/** A summary replaces only an unchanged server-owned prefix. Removing or
+ * editing covered conversation messages invalidates it instead of resurrecting
+ * facts from an undone task. Client transcripts never supply summary content. */
+export function applyStudioCompactionHistory(history: ChatMessage[], runs: Pick<AgentRun, "context" | "committedTurns">[]): ChatMessage[] {
+  const marker = (message: ChatMessage) => {
+    const content = typeof message.content === "string"
+      ? message.content.split(WRITE_SUMMARY_PREFIX)[0]!.trim() : JSON.stringify(message.content);
+    return content ? JSON.stringify([message.role, content]) : "";
+  };
+  for (const run of [...runs].reverse()) {
+    const saved = run.context?.studioCompaction as Record<string, unknown> | undefined;
+    if (!saved || saved.success !== true || !Array.isArray(saved.coverage) || !saved.coverage.length || !Array.isArray(saved.messages)) continue;
+    const coverage = (saved.coverage as ChatMessage[]).map(marker).filter(Boolean);
+    if (!coverage.length) continue;
+    let next = 0;
+    for (let index = 0; index < history.length; index++) {
+      const current = marker(history[index]!);
+      if (!current) continue;
+      if (current !== coverage[next]) break;
+      next++;
+      if (next === coverage.length) {
+        return [...saved.messages as ChatMessage[], ...history.slice(index + 1)];
+      }
+    }
+  }
+  return history;
 }
 
 export async function loadAgentHistoryForConversation(
-  scope: ConversationScope
+  scope: ConversationScope, options?: { forCompactionCoverage?: boolean }
 ): Promise<ChatMessage[] | null> {
   const conversation = await loadStudioConversationForWorld(scope);
   if (!conversation) return null;
 
   const runs = await db
     .select({
+      id: agentRuns.id,
       context: agentRuns.context,
       committedTurns: agentRuns.committedTurns,
       updatedAt: agentRuns.updatedAt,
@@ -547,15 +613,15 @@ export async function loadAgentHistoryForConversation(
     )
     .orderBy(asc(agentRuns.createdAt), asc(agentRuns.id));
 
-  const serverHistory = serverOwnedStudioRunsToAgentHistory(runs);
+  const serverHistory = serverOwnedStudioRunsToAgentHistory(runs, Number.MAX_SAFE_INTEGER);
   const latestRunUpdatedAt = runs.reduce<Date | null>((latest, run) => {
     if (!run.updatedAt) return latest;
     return !latest || run.updatedAt > latest ? run.updatedAt : latest;
   }, null);
 
-  if (!latestRunUpdatedAt || !conversation.updatedAt || conversation.updatedAt <= latestRunUpdatedAt) {
-    return serverHistory;
-  }
-
-  return filterServerOwnedHistoryByDisplayMessages(serverHistory, conversation.messages);
+  const visibleHistory = !latestRunUpdatedAt || !conversation.updatedAt || conversation.updatedAt <= latestRunUpdatedAt
+    ? serverHistory : filterServerOwnedHistoryByDisplayMessages(serverHistory, conversation.messages, Number.MAX_SAFE_INTEGER);
+  if (options?.forCompactionCoverage) return visibleHistory;
+  const compactedHistory = applyStudioCompactionHistory(visibleHistory, runs);
+  return compactedHistory === visibleHistory ? visibleHistory.slice(-40) : compactedHistory;
 }

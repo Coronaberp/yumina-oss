@@ -176,8 +176,40 @@ Well-known event types for the `emit` effect:
 | `ui:notification` | `message`, `style` ("info"/"achievement"/"warning"/"danger") | Show toast to player |
 | `audio:play` | `trackId`, `action` ("play"/"stop"/"crossfade"/"volume"), `volume?`, `fadeDuration?`, `chainTo?`, `maxDuration?` | Full audio control |
 | `ai:context` | `message`, `role` ("system"/"user") | Inject one-shot AI context |
+| `progression:resolve` | `checkpointVariableId`, `maxProgress`, `ladders`, `tracks`, optional `readyVariableId` / `phaseVariableId` | Resolve shared stage progression from actual actions |
+
+### Shared stage progression
+
+For repeated relationship/reputation ladders, use ONE `turn:complete` behavior emitting `progression:resolve`, with `priority: -1000`. Reuse ladder tables across tracks; preserve the card's thresholds and earned milestone rules. Do not generate separate promote/demote/clamp/repair behaviors for every character and stage. Read the existing behavior before editing its configuration and preserve unrelated tracks.
+
+```json
+{
+  "type": "emit",
+  "event": {
+    "type": "progression:resolve",
+    "checkpointVariableId": "social-checkpoints",
+    "maxProgress": 1000,
+    "ladders": {
+      "relationship": [
+        { "label": "Neutral", "capacity": 100 },
+        { "label": "Friendly", "capacity": 200 },
+        { "label": "Trusted", "capacity": 400, "milestone": "trust" }
+      ]
+    },
+    "tracks": [{
+      "scoreVariableId": "rel-alice", "stateVariableId": "rel-alice-state",
+      "ladder": "relationship", "defaultState": "Neutral", "aliases": {},
+      "milestoneVariables": { "trust": "alice-trust-earned" }
+    }]
+  }
+}
+```
+
+Declare all referenced variables: numeric action progress; read-only string state; boolean milestones; internal JSON checkpoints with default `{}`. Each ladder is ordered worst to best with unique labels and positive capacities no greater than `maxProgress`. Positive/negative current-stage requirements advance/retreat ONE stage and reset progress to zero; endpoints and blocked promotions clamp to the stored stage's requirement. Promotions require every milestone through the next stage; demotions revoke milestones for the lost and deeper stages. An idle full bar does not advance. A newly earned boolean milestone can unlock a held bar. Aliases repair old labels; invalid scores restore a valid checkpoint or zero. Optional internal `readyVariableId` (boolean) and `phaseVariableId` (string default `"collect"`) retain legacy checkpoint compatibility. Narrative awards still follow the card's authored rules.
 
 **When to use `set @audio.bgm` vs `emit audio:play`**: The `set` shorthand is simpler for basic play/stop. The `emit` version gives full control (volume, fade, chain, maxDuration).
+
+Legacy checkpoints with `pending: true` retain evidence of an unresolved prior action. A valid stored score can resolve that action on the next turn; a malformed score is repaired without granting a transition.
 
 ## Best Practices
 

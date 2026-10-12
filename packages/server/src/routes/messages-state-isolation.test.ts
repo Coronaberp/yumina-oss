@@ -16,6 +16,7 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   const priorKey = env.YUMINA_OPENROUTER_KEY;
   env.YUMINA_OPENROUTER_KEY = "synthetic-test-key";
   t.after(() => { env.YUMINA_OPENROUTER_KEY = priorKey; });
+  t.after(async () => { await db.$client.close(); });
   const model = "google/gemini-2.5-flash";
   await db.insert(modelPrices).values({ modelId: model, inputPricePerM: 1, outputPricePerM: 1 });
   t.mock.method(globalThis, "fetch", async () => Response.json({ data: [
@@ -55,6 +56,8 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
     const stream = await response.text();
     assert.equal(response.status, 200, stream);
     assert.match(stream, /event: done/);
+    assert.match(stream, /event: progress\ndata: \{"tokens":\d+\}/, "send, regenerate and continue report buffered generation progress");
+    assert.ok(stream.indexOf("event: progress") < stream.indexOf("event: done"), "progress precedes completion");
     assert.doesNotMatch(stream, /event: error/);
   };
   duringStream = async () => {

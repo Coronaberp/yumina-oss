@@ -9,11 +9,10 @@ export function createSessionMediaRoutes(deps: {
     db: DrizzleDB;
     authMiddleware: MiddlewareHandler<AppEnv>;
     sessionMedia: ReturnType<typeof createSessionMediaService>;
-    sessionMediaLimit: (id: string) => Promise<number>;
     sessionMediaUploadsEnabled: (userId: string, worldId: string) => boolean;
     isS3Configured: () => boolean;
 }) {
-    const { db, authMiddleware, sessionMedia, sessionMediaLimit, sessionMediaUploadsEnabled, isS3Configured } = deps;
+    const { db, authMiddleware, sessionMedia, sessionMediaUploadsEnabled, isS3Configured } = deps;
     const sessionMediaRoutes = new Hono<AppEnv>();
     sessionMediaRoutes.use('*', authMiddleware);
     sessionMediaRoutes.use('*', bodyLimit({maxSize:512*1024,onError:c=>c.json({error:'MEDIA_REQUEST_TOO_LARGE',code:'MEDIA_REQUEST_TOO_LARGE'},413)}));
@@ -35,11 +34,11 @@ export function createSessionMediaRoutes(deps: {
     sessionMediaRoutes.get('/', async (c) => {
         const userId = c.get('user').id;
         if (!await sessionMedia.isReady())
-            return c.json({ data: { items: [], hasMore: false, sessions: [], configured: false, storage: { ...await sessionMedia.usage(userId), limit: await sessionMediaLimit(userId) } } });
+            return c.json({ data: { items: [], hasMore: false, sessions: [], configured: false, storage: { ...await sessionMedia.usage(userId), limit: null } } });
         const list = await sessionMedia.ownList(userId, { offset: offsetOf(c.req.query('offset')), sessionId: c.req.query('sessionId'), filter: c.req.query('filter'), order: c.req.query('order') });
         const sessions = await mediaRows(db, sql `SELECT DISTINCT s.id,COALESCE(s.name,w.name) AS name FROM play_sessions s JOIN worlds w ON w.id=s.world_id
     JOIN session_media_refs r ON r.session_id=s.id WHERE s.user_id=${userId} AND r.removed_at IS NULL ORDER BY name LIMIT 500`);
-        return c.json({ data: { ...list, sessions, configured: true, storage: { ...await sessionMedia.usage(userId), limit: await sessionMediaLimit(userId) } } });
+        return c.json({ data: { ...list, sessions, configured: true, storage: { ...await sessionMedia.usage(userId), limit: null } } });
     });
     sessionMediaRoutes.get('/session/:sessionId', async (c) => {
         const userId = c.get('user').id, sessionId = c.req.param('sessionId');
@@ -52,12 +51,12 @@ export function createSessionMediaRoutes(deps: {
         const session = await sessionMedia.ownSession(db, userId, body.sessionId);
         if (!isS3Configured() || !sessionMediaUploadsEnabled(userId, session.world_id))
             throw new MediaError('MEDIA_UPLOADS_PAUSED', 503);
-        return c.json({ data: await sessionMedia.reserve(userId, await sessionMediaLimit(userId), body) });
+        return c.json({ data: await sessionMedia.reserve(userId, body) });
     });
     sessionMediaRoutes.post('/uploads/:id/complete', async (c) => {
         const userId = c.get('user').id;
         // In-flight uploads may finish after the rollout flag is disabled.
-        return c.json({ data: await sessionMedia.complete(userId, c.req.param('id'), await sessionMediaLimit(userId)) });
+        return c.json({ data: await sessionMedia.complete(userId, c.req.param('id')) });
     });
     sessionMediaRoutes.delete('/session/:sessionId/entries/:entryId', async (c) => {
         const { version } = z.object({ version: z.number().int().positive() }).parse(await c.req.json());

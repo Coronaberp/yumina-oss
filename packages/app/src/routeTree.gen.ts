@@ -27,6 +27,7 @@ import { Route as AppLibraryRouteImport } from './routes/app/library'
 import { Route as AppInviteRaceRouteImport } from './routes/app/invite-race'
 import { Route as AppExtensionsRouteImport } from './routes/app/extensions'
 import { Route as AppConfigsRouteImport } from './routes/app/configs'
+import { Route as AppAdminRouteImport } from './routes/app/admin'
 import { Route as AppWorldsIndexRouteImport } from './routes/app/worlds.index'
 import { Route as AppProfileIndexRouteImport } from './routes/app/profile.index'
 import { Route as AppWorldsCreateRouteImport } from './routes/app/worlds.create'
@@ -125,6 +126,11 @@ const AppConfigsRoute = AppConfigsRouteImport.update({
   path: '/configs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminRoute = AppAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppWorldsIndexRoute = AppWorldsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -170,6 +176,7 @@ export interface FileRoutesByFullPath {
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verified': typeof VerifiedRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/configs': typeof AppConfigsRoute
   '/app/extensions': typeof AppExtensionsRoute
   '/app/invite-race': typeof AppInviteRaceRoute
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verified': typeof VerifiedRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/configs': typeof AppConfigsRoute
   '/app/extensions': typeof AppExtensionsRoute
   '/app/invite-race': typeof AppInviteRaceRoute
@@ -222,6 +230,7 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verified': typeof VerifiedRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/configs': typeof AppConfigsRoute
   '/app/extensions': typeof AppExtensionsRoute
   '/app/invite-race': typeof AppInviteRaceRoute
@@ -251,6 +260,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/reset-password'
     | '/verified'
+    | '/app/admin'
     | '/app/configs'
     | '/app/extensions'
     | '/app/invite-race'
@@ -277,6 +287,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/reset-password'
     | '/verified'
+    | '/app/admin'
     | '/app/configs'
     | '/app/extensions'
     | '/app/invite-race'
@@ -302,6 +313,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/reset-password'
     | '/verified'
+    | '/app/admin'
     | '/app/configs'
     | '/app/extensions'
     | '/app/invite-race'
@@ -461,6 +473,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfigsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/admin': {
+      id: '/app/admin'
+      path: '/admin'
+      fullPath: '/app/admin'
+      preLoaderRoute: typeof AppAdminRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/worlds/': {
       id: '/app/worlds/'
       path: '/'
@@ -542,6 +561,7 @@ const AppWorldsRouteWithChildren = AppWorldsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
+  AppAdminRoute: typeof AppAdminRoute
   AppConfigsRoute: typeof AppConfigsRoute
   AppExtensionsRoute: typeof AppExtensionsRoute
   AppInviteRaceRoute: typeof AppInviteRaceRoute
@@ -557,6 +577,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAdminRoute: AppAdminRoute,
   AppConfigsRoute: AppConfigsRoute,
   AppExtensionsRoute: AppExtensionsRoute,
   AppInviteRaceRoute: AppInviteRaceRoute,

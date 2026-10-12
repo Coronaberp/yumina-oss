@@ -1,0 +1,51 @@
+{
+  "commit": "d2e2f96236bbc95512719204126395bd87561302",
+  "sourceHashes": {
+    "backend/memory/config.py": "1cfe7dc3d51928b4490c0aa760ab1243a743826f7943f563a9d2ac2e371e0fe2",
+    "backend/memory/ranking.py": "7a68c45da5abe0e44f1b1d9ba0928a065e35096942f8218d417876e28dc39a09",
+    "backend/memory/block.py": "ee8a03218323a773702f8a9aa9a4654a9dbea042653019290c3f6d14f6e7686d"
+  },
+  "block": "## Story so far\nMira returned; the gate opened and the hidden key came to light.\n\n## Established world facts\n- The city gate stands open.\n\n## Ongoing & pinned\n- The city gate stands open. (ongoing)\n- The gate is open. (ongoing)\n\n## Recalled from earlier\n- Mira promised to return.\n- Later event 1 occurred.\n- Later event 2 occurred.\n- Later event 3 occurred.\n- Later event 4 occurred.\n- Later event 5 occurred.\n- Later event 6 occurred.\n- Later event 7 occurred.\n- The gate remains closed. (this later changed)\n- Earlier event 1 occurred.\n- Earlier event 2 occurred.\n- Earlier event 3 occurred.\n- Earlier event 4 occurred.\n- Earlier event 5 occurred.\n- Earlier event 6 occurred.\n- The key is under the stone.",
+  "memoryLines": [
+    "- The city gate stands open. (ongoing)",
+    "- The gate is open. (ongoing)",
+    "- Mira promised to return.",
+    "- Later event 1 occurred.",
+    "- Later event 2 occurred.",
+    "- Later event 3 occurred.",
+    "- Later event 4 occurred.",
+    "- Later event 5 occurred.",
+    "- Later event 6 occurred.",
+    "- Later event 7 occurred.",
+    "- The gate remains closed. (this later changed)",
+    "- Earlier event 1 occurred.",
+    "- Earlier event 2 occurred.",
+    "- Earlier event 3 occurred.",
+    "- Earlier event 4 occurred.",
+    "- Earlier event 5 occurred.",
+    "- Earlier event 6 occurred.",
+    "- The key is under the stone."
+  ],
+  "usedIds": [
+    "override",
+    "gate-lore",
+    "newstate",
+    "promise",
+    "new-0",
+    "new-1",
+    "new-2",
+    "new-3",
+    "new-4",
+    "new-5",
+    "new-6",
+    "oldstate",
+    "old-0",
+    "old-1",
+    "old-2",
+    "old-3",
+    "old-4",
+    "old-5",
+    "secret"
+  ],
+  "droppedIds": []
+}

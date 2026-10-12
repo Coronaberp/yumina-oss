@@ -9,6 +9,46 @@ This skill is a pattern library. When a user asks for "a combat system" or "rela
 
 ---
 
+## Built-in Routes and Endings
+
+Routes and Endings are implemented platform entities, available in **Classic chat, VN and custom interfaces**. Creators edit them in their own editor tabs. Use `write_route` and `write_ending` rather than recreating progression in lore entries, variables or custom UI code. Gameplay variables drive their conditions; the engine makes the selection.
+
+**Read and edit:** the world inventory lists all route/ending IDs, including disabled drafts. Call `read_entities({ids:["route-loyalty","ending-home","settings"]})` for full current definitions and settings. Reuse an existing ID for a partial update; omitted fields are preserved. Arrays (`conditions`, `routeIds`) replace their complete lists. Change `name` to rename the label while retaining the ID and bindings. Use globally unique kebab-case IDs for new entities. Use `enabled:false` to retain a definition without making it newly eligible. New routes default enabled; new endings default disabled.
+
+Check new IDs against the inventory yourself: writes do not reject every cross-type collision. `validate_world` reports these collisions afterward.
+
+**Conditions:** use `{variableId:"trust",operator:"gte",value:60}` with an actual declared variable. Supported operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`. JSON and array paths use dots, e.g. `relationships.alice.trust` or `party.0.hp`; do not use brackets. For a variable-to-variable comparison, use `{variableId:"trust",operator:"gte",value:0,valueRef:"required-trust"}`: `value` is still required but ignored when `valueRef` is provided. `conditionLogic:"all"` requires every condition; `"any"` requires one. Create any needed variables with clear `behaviorRules` so gameplay can update them.
+
+**Route selection:** empty conditions are immediately eligible. The engine selects the highest `priority`, then lexical ID for ties. One route is active at a time. `lockOnEntry:true` fixes the captured route and its guidance once entered; later definition edits cannot change that captured record. Unlocked routes can switch when another eligible route ranks first; if none qualifies, the current route is retained. Guidance directs generated story prose without changing the fixed outcome.
+
+**Endings:** `routeIds` restrict eligibility to those existing routes; `[]` allows any route, including no active route. Add a specific finale condition rather than ending immediately on route entry. An enabled ending needs a nonempty `outcome` and either `mode:"authored"` with nonempty `prose` (creator text), or `mode:"ai"` with nonempty `guidance` (AI closing prose constrained by that fixed outcome). Endings without conditions require explicit `allowUnconditional:true`; route restrictions still apply. Higher priority wins, with lexical ID breaking ties. Keep unfinished endings disabled until their content is complete.
+
+**Worked tool calls** (first create or inspect the `trust` number and `finale` boolean variables):
+
+```javascript
+write_route({
+  "id":"route-loyalty", "name":"Loyalty", "priority":10,
+  "conditions":[{"variableId":"trust","operator":"gte","value":60}],
+  "conditionLogic":"all", "lockOnEntry":true,
+  "guidance":"Keep the mutual loyalty central while respecting the player's choices."
+})
+write_ending({
+  "id":"ending-home", "name":"Homecoming", "enabled":true,
+  "routeIds":["route-loyalty"],
+  "conditions":[{"variableId":"finale","operator":"eq","value":true}],
+  "outcome":"Both characters return home together.",
+  "mode":"authored", "prose":"The door opens. Home, at last."
+})
+write_ending({"id":"ending-home","mode":"ai","guidance":"Write a brief homecoming that preserves the fixed outcome."})
+validate_world({})
+```
+
+**Structured or open-ended:** `update_settings({storyStructureEnabled:false})` disables new route/ending evaluation; `true` enables it (the default). Empty definitions leave ordinary play unchanged. Disabling retains definitions and captured session progress; it does not erase an ending or reopen completed play. Selected routes/endings capture their data for that session. Editing definitions affects future selections, not already captured outcomes or prose. Do not claim these authoring tools reset a playthrough.
+
+**Delete and validate:** remove a deleted route from affected endings' `routeIds`, or delete those endings too, before `delete_entities({ids:["route-loyalty"]})`. Do not leave dangling bindings. Run `validate_world` after edits, bindings, deletions and dependent variable changes, and repair reported errors. It checks missing variables/route references, duplicate IDs and enabled ending completeness, including the explicit unconditional flag.
+
+---
+
 ## Pattern 1 — Stat System (HP, mana, stamina, willpower, etc.)
 
 **What it is:** A numeric resource with meaningful thresholds, visible to the player, changed by narrative events.

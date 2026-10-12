@@ -1,0 +1,3615 @@
+{
+  "commit": "d2e2f96236bbc95512719204126395bd87561302",
+  "provenance": {
+    "procedure": "AST-selected pure source definitions; original imports never executed",
+    "pydantic_version": "2.12.5",
+    "python_version": "3.14.7"
+  },
+  "tokens": [
+    {
+      "text": "",
+      "expected": 1
+    },
+    {
+      "text": "abc",
+      "expected": 1
+    },
+    {
+      "text": "abcd",
+      "expected": 2
+    },
+    {
+      "text": "😀😀😀😀",
+      "expected": 2
+    },
+    {
+      "text": "中文你好",
+      "expected": 2
+    },
+    {
+      "text": "A🧑‍🚀é",
+      "expected": 2
+    }
+  ],
+  "ranking": [
+    {
+      "fact": {
+        "id": "event-0",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "event-30",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.4333749811289167,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "event-31",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7654882761312164,
+        "score": 1.4190997567345547,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "event-100",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.4222874796346124,
+        "score": 0.7195434048770807,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "event-1000",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.00018033584225875176,
+        "score": 0.0002423790846350323,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "state-0",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "state-30",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.8564247858550347,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "state-31",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.853849106490168,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "state-100",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.70391839582758,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "state-1000",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.3440427681994513,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "relationship-0",
+        "text": "Mira arrived.",
+        "fact_type": "relationship",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "relationship-30",
+        "text": "Mira arrived.",
+        "fact_type": "relationship",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.4333749811289167,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "relationship-31",
+        "text": "Mira arrived.",
+        "fact_type": "relationship",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7654882761312164,
+        "score": 1.4190997567345547,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "relationship-100",
+        "text": "Mira arrived.",
+        "fact_type": "relationship",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.4222874796346124,
+        "score": 0.7195434048770807,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "relationship-1000",
+        "text": "Mira arrived.",
+        "fact_type": "relationship",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.00018033584225875176,
+        "score": 0.0002423790846350323,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "world-0",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "world-30",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.4333749811289167,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "world-31",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7654882761312164,
+        "score": 1.4190997567345547,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "world-100",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.4222874796346124,
+        "score": 0.7195434048770807,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "world-1000",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.00018033584225875176,
+        "score": 0.0002423790846350323,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-0",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-30",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.8564247858550347,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-31",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.853849106490168,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-100",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.70391839582758,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-1000",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.3440427681994513,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "promise-0",
+        "text": "Mira arrived.",
+        "fact_type": "promise",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "promise-30",
+        "text": "Mira arrived.",
+        "fact_type": "promise",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.8564247858550347,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "promise-31",
+        "text": "Mira arrived.",
+        "fact_type": "promise",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.853849106490168,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "promise-100",
+        "text": "Mira arrived.",
+        "fact_type": "promise",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.70391839582758,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "promise-1000",
+        "text": "Mira arrived.",
+        "fact_type": "promise",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.3440427681994513,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "conflict-0",
+        "text": "Mira arrived.",
+        "fact_type": "conflict",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "conflict-30",
+        "text": "Mira arrived.",
+        "fact_type": "conflict",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.8564247858550347,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "conflict-31",
+        "text": "Mira arrived.",
+        "fact_type": "conflict",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.853849106490168,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "conflict-100",
+        "text": "Mira arrived.",
+        "fact_type": "conflict",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.70391839582758,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "conflict-1000",
+        "text": "Mira arrived.",
+        "fact_type": "conflict",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.3440427681994513,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "injury-0",
+        "text": "Mira arrived.",
+        "fact_type": "injury",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "injury-30",
+        "text": "Mira arrived.",
+        "fact_type": "injury",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.4333749811289167,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "injury-31",
+        "text": "Mira arrived.",
+        "fact_type": "injury",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.0,
+        "score": 0.0,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "injury-100",
+        "text": "Mira arrived.",
+        "fact_type": "injury",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.0,
+        "score": 0.0,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "injury-1000",
+        "text": "Mira arrived.",
+        "fact_type": "injury",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.0,
+        "score": 0.0,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "illness-0",
+        "text": "Mira arrived.",
+        "fact_type": "illness",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "illness-30",
+        "text": "Mira arrived.",
+        "fact_type": "illness",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.8564247858550347,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "illness-31",
+        "text": "Mira arrived.",
+        "fact_type": "illness",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.853849106490168,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "illness-100",
+        "text": "Mira arrived.",
+        "fact_type": "illness",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.70391839582758,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "illness-1000",
+        "text": "Mira arrived.",
+        "fact_type": "illness",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.3440427681994513,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "inventory-0",
+        "text": "Mira arrived.",
+        "fact_type": "inventory",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "inventory-30",
+        "text": "Mira arrived.",
+        "fact_type": "inventory",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.4333749811289167,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "inventory-31",
+        "text": "Mira arrived.",
+        "fact_type": "inventory",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7654882761312164,
+        "score": 1.4190997567345547,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "inventory-100",
+        "text": "Mira arrived.",
+        "fact_type": "inventory",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.4222874796346124,
+        "score": 0.7195434048770807,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "inventory-1000",
+        "text": "Mira arrived.",
+        "fact_type": "inventory",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.00018033584225875176,
+        "score": 0.0002423790846350323,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "equipment-0",
+        "text": "Mira arrived.",
+        "fact_type": "equipment",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 2.44,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "equipment-30",
+        "text": "Mira arrived.",
+        "fact_type": "equipment",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7721158390312759,
+        "score": 1.8194329006445549,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "equipment-31",
+        "text": "Mira arrived.",
+        "fact_type": "equipment",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.7654882761312164,
+        "score": 1.8018438948001627,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "equipment-100",
+        "text": "Mira arrived.",
+        "fact_type": "equipment",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.4222874796346124,
+        "score": 0.930687144694387,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "equipment-1000",
+        "text": "Mira arrived.",
+        "fact_type": "equipment",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.00018033584225875176,
+        "score": 0.0003325470057644082,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "mood-0",
+        "text": "Mira arrived.",
+        "fact_type": "mood",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 10,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.94,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "mood-30",
+        "text": "Mira arrived.",
+        "fact_type": "mood",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 40,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.825052966980536,
+        "score": 1.5648334853492614,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "mood-31",
+        "text": "Mira arrived.",
+        "fact_type": "mood",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 41,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.8197810810329061,
+        "score": 1.5536951884702586,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "mood-100",
+        "text": "Mira arrived.",
+        "fact_type": "mood",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 110,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.5267518885455156,
+        "score": 0.9519884006211442,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "mood-1000",
+        "text": "Mira arrived.",
+        "fact_type": "mood",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": -2,
+        "reinforcements": 2,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": " Dock ",
+        "distance": 0.4
+      },
+      "turn": 1010,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.0016446027549886467,
+        "score": 0.002284766020612849,
+        "passes": false
+      }
+    },
+    {
+      "fact": {
+        "id": "profile-low",
+        "text": "Mira arrived.",
+        "fact_type": "profile",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 1,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 1.0,
+        "score": 1.171238451846789,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "demoted",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4,
+        "demoted": true
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": true,
+        "retention": 0.5647181220077593,
+        "score": 0.7517744784714355,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "absent",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Alice"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.5647181220077593,
+        "score": 0.37588723923571776,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "lore",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4,
+        "source": "lore"
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.331238451846789,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "pinned",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": true,
+        "location": "",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 1.0,
+        "score": 1.331238451846789,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "expired",
+        "text": "Mira arrived.",
+        "fact_type": "state",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": 12,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.5647181220077593,
+        "score": 0.7517744784714355,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "blank-location",
+        "text": "Mira arrived.",
+        "fact_type": "event",
+        "participants": [
+          "Mira"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "   ",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.5647181220077593,
+        "score": 0.7517744784714355,
+        "passes": true
+      }
+    },
+    {
+      "fact": {
+        "id": "world",
+        "text": "Mira arrived.",
+        "fact_type": "world",
+        "participants": [
+          "Alice"
+        ],
+        "importance": 3,
+        "valence": 0,
+        "reinforcements": 0,
+        "last_turn": 10,
+        "valid_until_turn": null,
+        "pinned": false,
+        "location": "",
+        "distance": 0.4
+      },
+      "turn": 50,
+      "location": "dock",
+      "present": [
+        "mira"
+      ],
+      "expected": {
+        "active": false,
+        "retention": 0.5647181220077593,
+        "score": 0.7517744784714355,
+        "passes": true
+      }
+    }
+  ],
+  "rank": [
+    {
+      "candidates": [
+        {
+          "id": "a",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        },
+        {
+          "id": "b",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        },
+        {
+          "id": "old",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": -1000,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "present": [
+        "Mira"
+      ],
+      "turn": 50,
+      "location": "dock",
+      "expected": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "id": "absent",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Alice"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        },
+        {
+          "id": "present",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "present": [
+        "Mira"
+      ],
+      "turn": 50,
+      "location": "dock",
+      "expected": [
+        "present",
+        "absent"
+      ]
+    }
+  ],
+  "blocks": [
+    {
+      "pinned": [],
+      "active": [],
+      "ranked": [],
+      "budget": 100,
+      "clusters": [],
+      "expected": [
+        "",
+        [],
+        []
+      ]
+    },
+    {
+      "pinned": [
+        {
+          "id": "huge",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 5,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        },
+        {
+          "id": "small",
+          "text": "yes",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "active": [],
+      "ranked": [
+        {
+          "id": "scored-long",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        },
+        {
+          "id": "tail",
+          "text": "yes",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "budget": 15,
+      "clusters": [],
+      "expected": [
+        "## Ongoing & pinned\n- yes",
+        [
+          "small"
+        ],
+        [
+          "huge"
+        ]
+      ]
+    },
+    {
+      "pinned": [
+        {
+          "id": "p",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "active": [
+        {
+          "id": "a",
+          "text": "Mira arrived.",
+          "fact_type": "state",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "ranked": [
+        {
+          "id": "l",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4,
+          "source": "lore",
+          "metadata": {
+            "is_open": true,
+            "empty": [],
+            "people": [
+              "Mira",
+              null,
+              2
+            ],
+            "zero": 0
+          },
+          "links": [
+            {
+              "label": "Near",
+              "name": "Dock"
+            }
+          ],
+          "link_label": "friend"
+        },
+        {
+          "id": "e",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": 15,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "budget": 100,
+      "clusters": [],
+      "expected": [
+        "## Established world facts\n- Mira arrived. (linked: friend)\n  Is open: True | People: Mira, None, 2 | Near: Dock\n\n## Ongoing & pinned\n- Mira arrived.\n- Mira arrived. (ongoing)\n\n## Recalled from earlier\n- Mira arrived. (this later changed)",
+        [
+          "p",
+          "a",
+          "l",
+          "e"
+        ],
+        []
+      ]
+    },
+    {
+      "pinned": [],
+      "active": [],
+      "ranked": [
+        {
+          "id": "emoji",
+          "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "budget": 20,
+      "clusters": [],
+      "expected": [
+        "## Recalled from earlier\n- 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        [
+          "emoji"
+        ],
+        []
+      ]
+    },
+    {
+      "pinned": [],
+      "active": [],
+      "ranked": [
+        {
+          "id": "a",
+          "text": "Mira arrived.",
+          "fact_type": "event",
+          "participants": [
+            "Mira"
+          ],
+          "importance": 3,
+          "valence": 0,
+          "reinforcements": 0,
+          "last_turn": 10,
+          "valid_until_turn": null,
+          "pinned": false,
+          "location": "",
+          "distance": 0.4
+        }
+      ],
+      "budget": 100,
+      "clusters": [
+        {
+          "id": "c",
+          "title": "旅",
+          "summary_text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+          "created_turn": 10
+        }
+      ],
+      "expected": [
+        "## 旅\nword word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word...",
+        [],
+        []
+      ]
+    },
+    {
+      "pinned": [],
+      "active": [],
+      "ranked": [],
+      "budget": 350,
+      "clusters": [
+        {
+          "id": "c",
+          "title": "",
+          "summary_text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "created_turn": 10
+        }
+      ],
+      "expected": [
+        "## Story so far\n😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀...",
+        [],
+        []
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "content": "",
+      "expected": [
+        ""
+      ]
+    },
+    {
+      "content": " a short entry ",
+      "expected": [
+        " a short entry "
+      ]
+    },
+    {
+      "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "expected": [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ]
+    },
+    {
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "x"
+      ]
+    },
+    {
+      "content": "A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. ",
+      "expected": [
+        "A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence.",
+        "A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence. A sentence."
+      ]
+    },
+    {
+      "content": "First paragraph\n\nSecond paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! ",
+      "expected": [
+        "First paragraph",
+        "Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph!",
+        "Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph! Second paragraph!"
+      ]
+    },
+    {
+      "content": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+      "expected": [
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
+      ]
+    },
+    {
+      "content": "\n\n中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\n\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文",
+      "expected": [
+        "中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中",
+        "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文"
+      ]
+    },
+    {
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx word yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "expected": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "word",
+        "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      ]
+    }
+  ],
+  "prompts": [
+    {
+      "kind": "extract",
+      "args": [
+        "Alice: hello\nMira: 你好😀",
+        "Mira",
+        "Alice",
+        "English",
+        null
+      ],
+      "expected": "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nAlice: hello\nMira: 你好😀\n\nReply with only a JSON object in exactly the example's format."
+    },
+    {
+      "kind": "extract",
+      "args": [
+        "Alice: hello\nMira: 你好😀",
+        "Mira",
+        "Alice",
+        "English",
+        []
+      ],
+      "expected": "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nAlice: hello\nMira: 你好😀\n\nReply with only a JSON object in exactly the example's format."
+    },
+    {
+      "kind": "extract",
+      "args": [
+        "Alice: hello\nMira: 你好😀",
+        "Mira",
+        "Alice",
+        "English",
+        [
+          "Mira",
+          "Ryōshū"
+        ]
+      ],
+      "expected": "Analyze this roleplay story between Alice and these characters: Mira, Ryōshū.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what the group is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Alice and every listed character (Mira, Ryōshū) — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nAlice: hello\nMira: 你好😀\n\nReply with only a JSON object in exactly the example's format."
+    },
+    {
+      "kind": "reconcile",
+      "args": [
+        [
+          {
+            "text": "Mira promised to return. 😀",
+            "fact_type": "promise",
+            "participants": [
+              "Mira"
+            ],
+            "importance": 4,
+            "valence": 1
+          },
+          {
+            "text": "The king fell.",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 5,
+            "valence": -1
+          }
+        ],
+        [
+          [
+            {
+              "id": "mf_1",
+              "text": "Mira was away."
+            }
+          ],
+          []
+        ]
+      ],
+      "expected": "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nSIMILAR existing facts:\n0. [id=mf_1] Mira was away.\n1. (none)\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format."
+    },
+    {
+      "kind": "lore_update",
+      "args": [
+        [
+          {
+            "text": "Mira promised to return. 😀",
+            "fact_type": "promise",
+            "participants": [
+              "Mira"
+            ],
+            "importance": 4,
+            "valence": 1
+          },
+          {
+            "text": "The king fell.",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 5,
+            "valence": -1
+          }
+        ],
+        [
+          [
+            {
+              "id": "mf_1",
+              "text": "Mira was away."
+            }
+          ],
+          []
+        ]
+      ],
+      "expected": "You maintain a story's world lorebook. For each NEW fact, check its NEARBY existing lore entries — does this fact make any of them factually outdated (a change of ruler, an overthrown government, a destroyed location, a died character)? Most facts update nothing — only flag a genuine, clear contradiction or supersession, not a minor detail or something that could simply be added alongside the existing lore without contradicting it.\n\nNever override a lore entry's core identity (a character's name, species, occupation, role, or allegiance) on the strength of a fact that is itself hedged, secondhand, or not something the story has actually confirmed happened on-screen. Overriding core identity requires a real, witnessed event or a direct statement in the story, never a rumor, a passing remark from someone else, or a description of a character who never appeared in the scene. Example: a NEW fact that only reports a rumor about a character who was not present in the scene (\"heard she's apparently a bit strange\") must NOT override that character's established occupation or role in the NEARBY lore entry — that is not a genuine contradiction, it is hearsay about someone unconfirmed.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY lore entries:\n0. [lore_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely update lore):\n[{\"index\": 0, \"lore_id\": \"l_abc\", \"new_content\": \"The government was overthrown by the player; the old ruling council no longer holds power.\"}]\n\nReply with only a JSON array — one entry per fact that updates lore, [] if none do."
+    },
+    {
+      "kind": "secret_reveal",
+      "args": [
+        [
+          {
+            "text": "Mira promised to return. 😀",
+            "fact_type": "promise",
+            "participants": [
+              "Mira"
+            ],
+            "importance": 4,
+            "valence": 1
+          },
+          {
+            "text": "The king fell.",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 5,
+            "valence": -1
+          }
+        ],
+        [
+          [
+            {
+              "id": "mf_1",
+              "text": "Mira was away."
+            }
+          ],
+          []
+        ]
+      ],
+      "expected": "You maintain a story's hidden lore secrets — facts the players don't know yet until the story itself reveals them. For each NEW fact, check its NEARBY hidden secrets — does this fact show that a secret has genuinely come to light in the story (a character learns it, witnesses it, or it's stated outright)? Most facts reveal nothing — only flag a secret when the story has clearly and specifically surfaced that exact information, not just something adjacent or suggestive of it.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY hidden secrets:\n0. [secret_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely reveal a secret):\n[{\"index\": 0, \"secret_id\": \"lsec_abc\"}]\n\nReply with only a JSON array — one entry per fact that reveals a secret, [] if none do."
+    },
+    {
+      "kind": "cluster",
+      "args": [
+        [
+          {
+            "id": "mf_1",
+            "text": "Mira was away."
+          }
+        ],
+        null
+      ],
+      "expected": "Summarize the following story facts into one compact narrative paragraph — a few flowing sentences describing the overall arc of what has happened so far, not a bulleted list and not another fact-by-fact recap.\n\nFacts:\n- Mira was away.\n\nReply with only the summary paragraph, no preamble."
+    },
+    {
+      "kind": "cluster",
+      "args": [
+        [
+          {
+            "id": "mf_1",
+            "text": "Mira was away."
+          }
+        ],
+        "A previous arc."
+      ],
+      "expected": "Here is the story so far:\n\nA previous arc.\n\nNew facts have since occurred. Write an updated \"story so far\" paragraph that folds these new facts into the existing narrative — a few flowing sentences describing the overall arc up to and including these new events, not a bulleted list and not another fact-by-fact recap. Compress or drop earlier detail that's no longer central to keep the paragraph compact.\n\nNew facts:\n- Mira was away.\n\nReply with only the updated summary paragraph, no preamble."
+    },
+    {
+      "kind": "cluster_assign",
+      "args": [
+        [
+          {
+            "id": "c",
+            "title": "",
+            "summary_text": "summary"
+          }
+        ],
+        [
+          {
+            "id": "mf_1",
+            "text": "Mira was away."
+          }
+        ]
+      ],
+      "expected": "Existing narrative clusters:\nid=\"c\" title=\"(untitled)\" summary=\"summary\"\n\nNew facts (referenced by index):\n0. Mira was away.\n\nAssign every new fact to the best matching narrative cluster: an ongoing arc, relationship, location, or thread. Prefer an existing cluster when a fact continues it; start a new cluster only when a fact begins a genuinely new thread. For each cluster you touch, write an updated one-paragraph summary folding in the fact(s) assigned to it (for an existing cluster, extend its current summary; for a new cluster, summarize just the new facts).\n\nReply with only JSON: {\"clusters\": [{\"id\": \"<existing cluster id>\", \"summary\": \"...\", \"fact_indices\": [0, 2]}, {\"title\": \"short new cluster title\", \"summary\": \"...\", \"fact_indices\": [1]}]}. Every fact index must appear in exactly one cluster."
+    }
+  ],
+  "parsers": [
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"state\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"relationship\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"profile\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"conflict\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"injury\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"illness\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"inventory\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"equipment\", \"participants\": [], \"importance\": 3, \"valence\": 0}, {\"text\": \"confirmed\", \"fact_type\": \"mood\", \"participants\": [], \"importance\": 3, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [
+          {
+            "text": "confirmed",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "state",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "relationship",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "world",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "profile",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "promise",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "conflict",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "injury",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "illness",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          },
+          {
+            "text": "confirmed",
+            "fact_type": "inventory",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          }
+        ],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "```JSON\n{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \" 3.0 \", \"valence\": false}], \"char_state\": {\"doing\": \"\", \"npcs\": [], \"ignored\": 9}}\n```",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [
+          {
+            "text": "confirmed",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 3,
+            "valence": 0
+          }
+        ],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "{}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": null, \"char_state\": false}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "[]",
+      "factCount": null,
+      "validIds": null,
+      "error": "expected a JSON object with facts and char_state"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 3.1, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer, got a number with a fractional part [type=int_from_float, input_value=3.1, input_type=float]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_from_float"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 3, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\ntext\n  String should have at least 1 character [type=string_too_short, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_too_short"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [4], \"importance\": 0, \"valence\": 3}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "3 validation errors for FactDraft\nparticipants.0\n  Input should be a valid string [type=string_type, input_value=4, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\nimportance\n  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/greater_than_equal\nvalence\n  Input should be less than or equal to 2 [type=less_than_equal, input_value=3, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/less_than_equal"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": 4, \"fact_type\": \"event\", \"participants\": [], \"importance\": 3, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\ntext\n  Input should be a valid string [type=string_type, input_value=4, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \"nan\", \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='nan', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_parsing"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"char_state\": {\"npcs\": null}}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for CharStateDraft\nnpcs\n  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]\n    For further information visit https://errors.pydantic.dev/2.12/v/list_type"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[{\"index\":\"1.0\",\"action\":\"reinforce\",\"target_id\":\"mf_1\"},{\"index\":false,\"action\":\"add\"}]",
+      "factCount": 2,
+      "validIds": [
+        "mf_1"
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "action": "add",
+          "target_id": null
+        },
+        {
+          "index": 1,
+          "action": "reinforce",
+          "target_id": "mf_1"
+        }
+      ]
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[{\"index\":0,\"action\":\"add\"},{\"index\":0,\"action\":\"add\"}]",
+      "factCount": 1,
+      "validIds": [],
+      "error": "expected exactly 1 decisions, got 2 with duplicate indexes"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[{\"index\":0,\"action\":\"reinforce\",\"target_id\":\"missing\"}]",
+      "factCount": 1,
+      "validIds": [],
+      "error": "unknown target_id missing"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[{\"index\":0,\"action\":\"reinforce\"}]",
+      "factCount": 1,
+      "validIds": [],
+      "error": "1 validation error for ReconcileDecision\n  Value error, action reinforce requires target_id [type=value_error, input_value={'index': 0, 'action': 'reinforce'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/value_error"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[]",
+      "factCount": 1,
+      "validIds": [],
+      "error": "expected one decision per fact 0..0, got indexes []"
+    },
+    {
+      "kind": "lore_updates",
+      "raw": "[{\"index\":0,\"lore_id\":\"l\",\"new_content\":\" \"},{\"index\":0,\"lore_id\":\"l\",\"new_content\":\"b\"}]",
+      "factCount": 1,
+      "validIds": [
+        "l"
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "lore_id": "l",
+          "new_content": " "
+        },
+        {
+          "index": 0,
+          "lore_id": "l",
+          "new_content": "b"
+        }
+      ]
+    },
+    {
+      "kind": "lore_updates",
+      "raw": "[{\"index\":1,\"lore_id\":\"l\",\"new_content\":\"b\"}]",
+      "factCount": 1,
+      "validIds": [
+        "l"
+      ],
+      "error": "index 1 out of range for 1 facts"
+    },
+    {
+      "kind": "secret_reveals",
+      "raw": "[{\"index\":0,\"secret_id\":\"\"}]",
+      "factCount": 1,
+      "validIds": [
+        ""
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "secret_id": ""
+        }
+      ]
+    },
+    {
+      "kind": "secret_reveals",
+      "raw": "[{\"index\":-1,\"secret_id\":\"s\"}]",
+      "factCount": 1,
+      "validIds": [
+        "s"
+      ],
+      "error": "1 validation error for SecretRevealDecision\nindex\n  Input should be greater than or equal to 0 [type=greater_than_equal, input_value=-1, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/greater_than_equal"
+    },
+    {
+      "kind": "secret_reveals",
+      "raw": "{}",
+      "factCount": 1,
+      "validIds": [],
+      "error": "expected a JSON array"
+    },
+    {
+      "kind": "extract",
+      "raw": "",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "kind": "extract",
+      "raw": "not json",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\":",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting value: line 1 column 10 (char 9)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": []",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting ',' delimiter: line 1 column 13 (char 12)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [],}",
+      "factCount": null,
+      "validIds": null,
+      "error": "Illegal trailing comma before end of object: line 1 column 13 (char 12)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [1,]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "Illegal trailing comma before end of array: line 1 column 13 (char 12)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{} trailing",
+      "factCount": null,
+      "validIds": null,
+      "error": "Extra data: line 1 column 4 (char 3)"
+    },
+    {
+      "kind": "extract",
+      "raw": "[",
+      "factCount": null,
+      "validIds": null,
+      "error": "Expecting value: line 1 column 2 (char 1)"
+    },
+    {
+      "kind": "extract",
+      "raw": "\"unterminated",
+      "factCount": null,
+      "validIds": null,
+      "error": "Unterminated string starting at: line 1 column 1 (char 0)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": \"bad\\x\"}",
+      "factCount": null,
+      "validIds": null,
+      "error": "Invalid \\escape: line 1 column 15 (char 14)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": \"bad\\uZZZZ\"}",
+      "factCount": null,
+      "validIds": null,
+      "error": "Invalid \\uXXXX escape: line 1 column 16 (char 15)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": \"bad\ntext\"}",
+      "factCount": null,
+      "validIds": null,
+      "error": "Invalid control character at: line 1 column 15 (char 14)"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": true, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [
+          {
+            "text": "confirmed",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 1,
+            "valence": 0
+          }
+        ],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \"01\", \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [
+          {
+            "text": "confirmed",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 1,
+            "valence": 0
+          }
+        ],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \"+2.00\", \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "expected": [
+        [
+          {
+            "text": "confirmed",
+            "fact_type": "event",
+            "participants": [],
+            "importance": 2,
+            "valence": 0
+          }
+        ],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \"1_0\", \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be less than or equal to 5 [type=less_than_equal, input_value='1_0', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/less_than_equal"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": \"\\uff13\", \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='３', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_parsing"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 0.0, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0.0, input_type=float]\n    For further information visit https://errors.pydantic.dev/2.12/v/greater_than_equal"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 6.0, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be less than or equal to 5 [type=less_than_equal, input_value=6.0, input_type=float]\n    For further information visit https://errors.pydantic.dev/2.12/v/less_than_equal"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": null, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer [type=int_type, input_value=None, input_type=NoneType]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": [], \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer [type=int_type, input_value=[], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"event\", \"participants\": [], \"importance\": {}, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nimportance\n  Input should be a valid integer [type=int_type, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [null]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\n  Input should be a valid dictionary or instance of FactDraft [type=model_type, input_value=None, input_type=NoneType]\n    For further information visit https://errors.pydantic.dev/2.12/v/model_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [3]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\n  Input should be a valid dictionary or instance of FactDraft [type=model_type, input_value=3, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/model_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [[]]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\n  Input should be a valid dictionary or instance of FactDraft [type=model_type, input_value=[], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/model_type"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "5 validation errors for FactDraft\ntext\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\nfact_type\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\nparticipants\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\nimportance\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\nvalence\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing"
+    },
+    {
+      "kind": "extract",
+      "raw": "{\"facts\": [{\"text\": \"confirmed\", \"fact_type\": \"bad\", \"participants\": [], \"importance\": 3, \"valence\": 0}]}",
+      "factCount": null,
+      "validIds": null,
+      "error": "1 validation error for FactDraft\nfact_type\n  Input should be 'event', 'state', 'relationship', 'world', 'profile', 'promise', 'conflict', 'injury', 'illness', 'inventory', 'equipment' or 'mood' [type=literal_error, input_value='bad', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/literal_error"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "",
+      "factCount": 1,
+      "validIds": [],
+      "error": "not valid JSON: Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "[",
+      "factCount": 1,
+      "validIds": [],
+      "error": "not valid JSON: Expecting value: line 1 column 2 (char 1)"
+    },
+    {
+      "kind": "reconcile",
+      "raw": "null",
+      "factCount": 1,
+      "validIds": [],
+      "error": "expected a JSON array"
+    }
+  ],
+  "clusters": [
+    {
+      "clusters": [
+        {
+          "id": "a",
+          "created_turn": 10,
+          "distance": 0.5
+        },
+        {
+          "id": "b",
+          "created_turn": 10,
+          "distance": 0.5
+        },
+        {
+          "id": "old",
+          "created_turn": 0
+        }
+      ],
+      "turn": 100,
+      "expected": [
+        "a",
+        "b",
+        "old"
+      ],
+      "scores": [
+        0.882576890973064,
+        0.882576890973064,
+        0.36391839582758007
+      ]
+    },
+    {
+      "clusters": [],
+      "turn": 100,
+      "expected": [],
+      "scores": []
+    }
+  ],
+  "transcripts": [
+    {
+      "messages": [
+        {
+          "id": "0",
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "id": "1",
+          "role": "user",
+          "content": "(OOC: ordinary untrusted text)"
+        },
+        {
+          "id": "2",
+          "role": "assistant",
+          "content": "<think>private</think> reply",
+          "char_id": "m"
+        },
+        {
+          "id": "3",
+          "role": "assistant",
+          "content": "second reply",
+          "char_id": "r"
+        },
+        {
+          "id": "4",
+          "role": "user",
+          "content": " (╾━╤デ╦︻ : [OOC] director)"
+        },
+        {
+          "id": "5",
+          "role": "assistant",
+          "content": "<think>x</think> (ooc: reply)"
+        },
+        {
+          "id": "6",
+          "role": "user",
+          "content": "你好😀",
+          "sender_user_id": "u"
+        },
+        {
+          "id": "7",
+          "role": "assistant",
+          "content": "<think> hidden\nreason </think>answer"
+        },
+        {
+          "id": "8",
+          "role": "user",
+          "content": "incomplete"
+        }
+      ],
+      "group": false,
+      "pairIndexes": [
+        [
+          1,
+          2
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "ooc": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "turn": 4,
+      "ordinals": {
+        "1": 1,
+        "4": 2,
+        "6": 3,
+        "8": 4
+      },
+      "recent": "<think>x</think> (ooc: reply)\n你好😀\n<think> hidden\nreason </think>answer\nincomplete",
+      "transcript": "Player: (OOC: ordinary untrusted text)\nMira: reply\nAlice: 你好😀\nDefault: answer"
+    },
+    {
+      "messages": [
+        {
+          "id": "0",
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "id": "1",
+          "role": "user",
+          "content": "(OOC: ordinary untrusted text)"
+        },
+        {
+          "id": "2",
+          "role": "assistant",
+          "content": "<think>private</think> reply",
+          "char_id": "m"
+        },
+        {
+          "id": "3",
+          "role": "assistant",
+          "content": "second reply",
+          "char_id": "r"
+        },
+        {
+          "id": "4",
+          "role": "user",
+          "content": " (╾━╤デ╦︻ : [OOC] director)"
+        },
+        {
+          "id": "5",
+          "role": "assistant",
+          "content": "<think>x</think> (ooc: reply)"
+        },
+        {
+          "id": "6",
+          "role": "user",
+          "content": "你好😀",
+          "sender_user_id": "u"
+        },
+        {
+          "id": "7",
+          "role": "assistant",
+          "content": "<think> hidden\nreason </think>answer"
+        },
+        {
+          "id": "8",
+          "role": "user",
+          "content": "incomplete"
+        }
+      ],
+      "group": true,
+      "pairIndexes": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "ooc": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "turn": 4,
+      "ordinals": {
+        "1": 1,
+        "4": 2,
+        "6": 3,
+        "8": 4
+      },
+      "recent": "<think>x</think> (ooc: reply)\n你好😀\n<think> hidden\nreason </think>answer\nincomplete",
+      "transcript": "Player: (OOC: ordinary untrusted text)\nMira: reply\nRyōshū: second reply\nAlice: 你好😀\nDefault: answer"
+    }
+  ],
+  "keywordMatches": [
+    {
+      "key": "Mira",
+      "text": "Mirabelle",
+      "expected": false
+    },
+    {
+      "key": "Mira",
+      "text": "éMira",
+      "expected": false
+    },
+    {
+      "key": "Mira",
+      "text": "Mira",
+      "expected": true
+    },
+    {
+      "key": "猫",
+      "text": "小猫咪",
+      "expected": true
+    },
+    {
+      "key": "東京",
+      "text": "東京都",
+      "expected": true
+    },
+    {
+      "key": "kael",
+      "text": "Kael_2",
+      "expected": false
+    },
+    {
+      "key": "-x",
+      "text": "--x ",
+      "expected": false
+    },
+    {
+      "key": "x-",
+      "text": " x--",
+      "expected": false
+    },
+    {
+      "key": "",
+      "text": "word",
+      "expected": true
+    },
+    {
+      "key": "",
+      "text": "",
+      "expected": false
+    },
+    {
+      "key": "a.b",
+      "text": "a.b!",
+      "expected": true
+    }
+  ],
+  "runs": [
+    {
+      "kind": "extract",
+      "responses": [
+        "[]",
+        "{}"
+      ],
+      "prompts": [
+        "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nTranscript 😀\n\nReply with only a JSON object in exactly the example's format.",
+        "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nTranscript 😀\n\nReply with only a JSON object in exactly the example's format.\n\nYour previous reply was invalid: expected a JSON object with facts and char_state\nReply again with only the corrected JSON array."
+      ],
+      "expected": [
+        [],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "responses": [
+        "TRANSPORT_ERROR"
+      ],
+      "prompts": [
+        "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nTranscript 😀\n\nReply with only a JSON object in exactly the example's format."
+      ],
+      "expected": [
+        [],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "extract",
+      "responses": [
+        "[]",
+        "[]"
+      ],
+      "prompts": [
+        "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nTranscript 😀\n\nReply with only a JSON object in exactly the example's format.",
+        "Analyze this roleplay story between Alice and Mira.\nList facts worth remembering many scenes from now, and the current scene state.\nFact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. \"Kael promised to meet Alice at the docks at dawn\", \"the tournament begins in three days\", \"Mira's exam is next Tuesday\"), conflict (an unresolved disagreement or antagonism between characters, e.g. \"Kael and the merchant are in open conflict over the stolen goods\"), injury (a physical wound or harm the character is currently suffering, e.g. \"Kael's arm is bleeding from the sword strike\"), illness (a sickness or ailment the character is currently afflicted with, e.g. \"Kael has contracted a fever from the swamp water\"), inventory (an item the character possesses but isn't actively using, e.g. \"Kael is carrying three healing potions\"), equipment (an item the character is currently wearing or wielding, e.g. \"Kael is wielding the enchanted longsword\"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. \"Kael has grown deeply suspicious of strangers since the ambush\"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.\nNever record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.\nA fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.\nEach fact: one short third-person sentence in English; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.\nchar_state: doing = a short phrase (in English) describing what Mira is doing or experiencing right now, or empty string; location = a short phrase (in English) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, excluding Mira and Alice — empty array if none. Never translate, transliterate, or alter proper names in any field.\n\nExample output:\n{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}\n\nTranscript:\nTranscript 😀\n\nReply with only a JSON object in exactly the example's format.\n\nYour previous reply was invalid: expected a JSON object with facts and char_state\nReply again with only the corrected JSON array."
+      ],
+      "expected": [
+        [],
+        {
+          "doing": "",
+          "location": "",
+          "npcs": []
+        }
+      ]
+    },
+    {
+      "kind": "reconcile",
+      "responses": [
+        "[]",
+        "[]"
+      ],
+      "prompts": [
+        "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nSIMILAR existing facts:\n0. [id=mf_1] Mira was away.\n1. (none)\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format.",
+        "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nSIMILAR existing facts:\n0. [id=mf_1] Mira was away.\n1. (none)\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format.\n\nYour previous reply was invalid: expected one decision per fact 0..1, got indexes []\nReply again with only the corrected JSON array."
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "action": "add",
+          "target_id": null
+        },
+        {
+          "index": 1,
+          "action": "add",
+          "target_id": null
+        }
+      ]
+    },
+    {
+      "kind": "reconcile",
+      "responses": [
+        "[]",
+        "[{\"index\":0,\"action\":\"add\"},{\"index\":1,\"action\":\"reinforce\",\"target_id\":\"mf_1\"}]"
+      ],
+      "prompts": [
+        "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nSIMILAR existing facts:\n0. [id=mf_1] Mira was away.\n1. (none)\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format.",
+        "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nSIMILAR existing facts:\n0. [id=mf_1] Mira was away.\n1. (none)\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format.\n\nYour previous reply was invalid: expected one decision per fact 0..1, got indexes []\nReply again with only the corrected JSON array."
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "action": "add",
+          "target_id": null
+        },
+        {
+          "index": 1,
+          "action": "reinforce",
+          "target_id": "mf_1"
+        }
+      ]
+    },
+    {
+      "kind": "lore_update_detection",
+      "responses": [
+        "{}",
+        "[]"
+      ],
+      "prompts": [
+        "You maintain a story's world lorebook. For each NEW fact, check its NEARBY existing lore entries — does this fact make any of them factually outdated (a change of ruler, an overthrown government, a destroyed location, a died character)? Most facts update nothing — only flag a genuine, clear contradiction or supersession, not a minor detail or something that could simply be added alongside the existing lore without contradicting it.\n\nNever override a lore entry's core identity (a character's name, species, occupation, role, or allegiance) on the strength of a fact that is itself hedged, secondhand, or not something the story has actually confirmed happened on-screen. Overriding core identity requires a real, witnessed event or a direct statement in the story, never a rumor, a passing remark from someone else, or a description of a character who never appeared in the scene. Example: a NEW fact that only reports a rumor about a character who was not present in the scene (\"heard she's apparently a bit strange\") must NOT override that character's established occupation or role in the NEARBY lore entry — that is not a genuine contradiction, it is hearsay about someone unconfirmed.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY lore entries:\n0. [lore_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely update lore):\n[{\"index\": 0, \"lore_id\": \"l_abc\", \"new_content\": \"The government was overthrown by the player; the old ruling council no longer holds power.\"}]\n\nReply with only a JSON array — one entry per fact that updates lore, [] if none do.",
+        "You maintain a story's world lorebook. For each NEW fact, check its NEARBY existing lore entries — does this fact make any of them factually outdated (a change of ruler, an overthrown government, a destroyed location, a died character)? Most facts update nothing — only flag a genuine, clear contradiction or supersession, not a minor detail or something that could simply be added alongside the existing lore without contradicting it.\n\nNever override a lore entry's core identity (a character's name, species, occupation, role, or allegiance) on the strength of a fact that is itself hedged, secondhand, or not something the story has actually confirmed happened on-screen. Overriding core identity requires a real, witnessed event or a direct statement in the story, never a rumor, a passing remark from someone else, or a description of a character who never appeared in the scene. Example: a NEW fact that only reports a rumor about a character who was not present in the scene (\"heard she's apparently a bit strange\") must NOT override that character's established occupation or role in the NEARBY lore entry — that is not a genuine contradiction, it is hearsay about someone unconfirmed.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY lore entries:\n0. [lore_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely update lore):\n[{\"index\": 0, \"lore_id\": \"l_abc\", \"new_content\": \"The government was overthrown by the player; the old ruling council no longer holds power.\"}]\n\nReply with only a JSON array — one entry per fact that updates lore, [] if none do.\n\nYour previous reply was invalid: expected a JSON array\nReply again with only the corrected JSON array."
+      ],
+      "expected": []
+    },
+    {
+      "kind": "secret_reveal_detection",
+      "responses": [
+        "{}",
+        "[{\"index\":0,\"secret_id\":\"mf_1\"}]"
+      ],
+      "prompts": [
+        "You maintain a story's hidden lore secrets — facts the players don't know yet until the story itself reveals them. For each NEW fact, check its NEARBY hidden secrets — does this fact show that a secret has genuinely come to light in the story (a character learns it, witnesses it, or it's stated outright)? Most facts reveal nothing — only flag a secret when the story has clearly and specifically surfaced that exact information, not just something adjacent or suggestive of it.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY hidden secrets:\n0. [secret_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely reveal a secret):\n[{\"index\": 0, \"secret_id\": \"lsec_abc\"}]\n\nReply with only a JSON array — one entry per fact that reveals a secret, [] if none do.",
+        "You maintain a story's hidden lore secrets — facts the players don't know yet until the story itself reveals them. For each NEW fact, check its NEARBY hidden secrets — does this fact show that a secret has genuinely come to light in the story (a character learns it, witnesses it, or it's stated outright)? Most facts reveal nothing — only flag a secret when the story has clearly and specifically surfaced that exact information, not just something adjacent or suggestive of it.\n\nNEW facts:\n0. Mira promised to return. 😀\n1. The king fell.\n\nNEARBY hidden secrets:\n0. [secret_id=mf_1] Mira was away.\n1. (none)\n\nExample output (only include facts that genuinely reveal a secret):\n[{\"index\": 0, \"secret_id\": \"lsec_abc\"}]\n\nReply with only a JSON array — one entry per fact that reveals a secret, [] if none do.\n\nYour previous reply was invalid: expected a JSON array\nReply again with only the corrected JSON array."
+      ],
+      "expected": [
+        {
+          "index": 0,
+          "secret_id": "mf_1"
+        }
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "backend/memory/config.py": "1cfe7dc3d51928b4490c0aa760ab1243a743826f7943f563a9d2ac2e371e0fe2",
+    "backend/memory/block.py": "ee8a03218323a773702f8a9aa9a4654a9dbea042653019290c3f6d14f6e7686d",
+    "backend/memory/ranking.py": "7a68c45da5abe0e44f1b1d9ba0928a065e35096942f8218d417876e28dc39a09",
+    "backend/inference/client.py": "620a787ad51decf0b13e6bdda03be1e22cb9276dd438bca0a9ff51502d272ba5",
+    "backend/memory/extraction.py": "8b5933a1444f9e6f15867546ba7c810bd3cb0bcfe9b5c3aaceb53c6880872f16",
+    "backend/retrieval.py": "45db933c37c15ff610841ee7ee50796f24af246d248dd7dfc01bc9e4bccefd77",
+    "backend/memory/clusters.py": "8b6126e4a6050d8893d98503f9f0b8fc4a6e1d4868e81cc99ff272e80708934f",
+    "backend/prompt.py": "152ac8be632d11b45c94eaeb97d5bfc88cbfb4a7244f49b415fda7c56fb2ed53",
+    "backend/memory/service.py": "1b2d7889be88d2992e42f7c6c7c4abb581ed82e1257a4c4a4be8dd8b68a52f21"
+  }
+}

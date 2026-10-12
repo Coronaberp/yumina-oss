@@ -89,7 +89,7 @@ function getGradientOverlay(scale: number) {
   const bottom = getScaledWallpaperOpacity(0.8, scale);
   const middle = getScaledWallpaperOpacity(0.5, scale);
   const top = getScaledWallpaperOpacity(0.2, scale);
-  return `linear-gradient(to top, rgba(11, 15, 25, ${bottom}), rgba(18, 18, 18, ${middle}), rgba(18, 18, 18, ${top}))`;
+  return `linear-gradient(to top, rgba(20, 19, 18, ${bottom}), rgba(32, 29, 24, ${middle}), rgba(20, 19, 18, ${top}))`;
 }
 
 function isWallpaperPreset(value: unknown): value is WallpaperPreset {
@@ -138,7 +138,7 @@ export function AppShell({ children }: AppShellProps) {
   const theaterMode = useUiStore((s) => s.theaterMode);
   const isAdminWorldInspect = location.pathname.startsWith("/app/admin/world-inspect/");
   const isAdminPage = location.pathname === "/app/admin" || location.pathname.startsWith("/app/admin/");
-  const enableMobilePageScroll = !isPlayPage && !isCreatePagePicker && !location.pathname.startsWith("/app/studio") && !isAdminPage;
+  const enableMobilePageScroll = !isPlayPage && !isCreatePagePicker && !location.pathname.startsWith("/app/studio") && !isAdminWorldInspect;
   const { toggle: toggleImmersive } = useImmersiveMode();
 
   // Dedicated messages replaces the URL while switching conversations, so a
@@ -199,7 +199,7 @@ export function AppShell({ children }: AppShellProps) {
   }, []);
 
   const isDiscover = location.pathname.startsWith("/app/hub");
-  const isProfile = location.pathname.startsWith("/app/profile") || location.pathname.startsWith("/app/users");
+  const isProfile = location.pathname.startsWith("/app/profile") || location.pathname.startsWith("/app/users") || (isAdminPage && !isAdminWorldInspect);
   const isSettings = location.pathname.startsWith("/app/settings");
   const isHubOrProfile = isDiscover || isProfile || isSettings;
   const isLibrary = location.pathname.startsWith("/app/library") || isCreatePagePicker;
@@ -400,7 +400,7 @@ export function AppShell({ children }: AppShellProps) {
     }
   }, [sessionPending, sessionUserId, profileId, fetchProfile, clearUserProfile]);
 
-  const hideSidebar = isAdminPage || (theaterMode && isPlayPage);
+  const hideSidebar = isAdminWorldInspect || (theaterMode && isPlayPage);
   const desktopSidebarOffset = getDesktopSidebarOffset(
     location.pathname,
     hideSidebar,
@@ -457,7 +457,7 @@ export function AppShell({ children }: AppShellProps) {
           data-immersive-bg
           className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-500 ease-in-out opacity-100"
         >
-          <div className="absolute inset-0 bg-[#0B0A10]" />
+          <div className="absolute inset-0 bg-background" />
 
           {/* Previous wallpaper (fading out during crossfade) */}
           {crossfading && prevSrc && (
@@ -491,7 +491,7 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       )}
 
-      {/* ── Atmosphere layer (purple ambient glow) ──
+      {/* ── Atmosphere layer (earth, gold, and steel-blue ambient glow) ──
            Only rendered when visible — the 140-180px blur blobs with will-change-transform
            were keeping 3 large GPU compositing layers resident even at opacity:0 on play pages. */}
       {!isAdminPage && !isImmersiveBg && !isEditorBg && atmosphereClass !== "atmosphere-none" && (
@@ -501,9 +501,9 @@ export function AppShell({ children }: AppShellProps) {
             opacity: atmosphereClass === "atmosphere-vibrant" ? 1 : atmosphereClass === "atmosphere-subtle" ? 0.25 : 0,
           }}
         >
-          <div className="absolute -left-[30%] -top-[20%] h-[900px] w-[1100px] rounded-full bg-[#8B70E0]/[0.18] blur-[180px]" />
-          <div className="absolute -right-[25%] -bottom-[15%] h-[800px] w-[1000px] rounded-full bg-[#8B70E0]/[0.14] blur-[160px]" />
-          <div className="absolute left-[30%] -top-[30%] h-[700px] w-[800px] rounded-full bg-[#947AE4]/[0.10] blur-[140px]" />
+          <div className="absolute -left-[30%] -top-[20%] h-[900px] w-[1100px] rounded-full bg-earth/[0.18] blur-[180px]" />
+          <div className="absolute -right-[25%] -bottom-[15%] h-[800px] w-[1000px] rounded-full bg-tertiary/[0.10] blur-[160px]" />
+          <div className="absolute left-[30%] -top-[30%] h-[700px] w-[800px] rounded-full bg-gold/[0.08] blur-[140px]" />
         </div>
       )}
 
@@ -513,7 +513,7 @@ export function AppShell({ children }: AppShellProps) {
         className={`app-shell-content relative z-10 flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden ${hideSidebar ? "" : "transition-[padding-left] duration-200 ease-out"}`}
         style={appShellContentStyle}
       >
-        {!isAdminPage && <TopBar />}
+        <TopBar />
         <main
           data-scroll-restoration-id="app-shell-main"
           className={`app-shell-main min-h-0 w-full min-w-0 flex-1 overflow-hidden ${enableMobilePageScroll ? "app-shell-main-mobile-scrollable" : ""}`}

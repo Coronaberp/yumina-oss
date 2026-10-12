@@ -1,11 +1,23 @@
 {
   "name": "Visual Novel Scene Engine",
   "description": "Full-screen VN with scene backgrounds (day/evening/night), character sprites with emotions, dialogue parsing from AI text, and a navigation map. Demonstrates: asset-driven scenes, sprite emotion system, segment parsing, period/time tracking, map overlay with landmarks.",
-  "tags": ["visual-novel", "scenes", "sprites", "dialogue", "full-screen", "map"],
+  "tags": [
+    "visual-novel",
+    "scenes",
+    "sprites",
+    "dialogue",
+    "full-screen",
+    "map"
+  ],
   "surface": "custom-component",
   "requires": {
-    "variables": ["current-scene", "current-period", "char1-emotion", "char2-emotion"],
-    "notes": "String variables for scene ID and period (morning/afternoon/evening/night). String variables for character emotions (normal/happy/sad/angry/shy/surprised). Optionally number variables for affinity tracking."
+    "variables": [
+      "current-scene",
+      "current-period",
+      "char1-emotion",
+      "char2-emotion"
+    ],
+    "notes": "String variables for scene ID and period (morning/afternoon/evening/night), and character emotions (normal/happy/sad/angry/shy/smug/surprised). This scene example consumes a segments JSON array of {speaker, emotion, text}; it does not parse response markers into that array or render choice controls automatically. For current VN defaults, require [SPEAKER:Name:emotion] on every spoken passage, [SPEAKER:NPC:emotion] for undefined characters, [SPEAKER:Narrator:normal] with italic actions using exact character names, literal double-brace user tokens in generated player references, and one [CHOICES: [\"Action one\", \"Action two\"]] block with 2–4 real player options per playable turn. Speaker labels resolve defined characters and unique short names such as Diane for Diane (Bluerose); unresolved dialogue displays NPC. The engine saves choices as swipe metadata. Use the built-in VN interface for parsed replies and choices, or wire segments and api.pendingChoices when adapting this example. Optionally add number variables for affinity tracking. Undefined NPC segments may supply gender (male/female) and npcId (stable hidden identity); configure uploaded cutouts in NPC_SPRITES or vn-npc-sprites. Selection is repeatable per session/NPC, with the visible label NPC. Omit gender when unknown; registered character art takes precedence."
   },
   "author": "yumina-official",
   "version": "1.0.0"

@@ -214,6 +214,7 @@ export class GameStateManager {
       variables: { ...this.state.variables },
       metadata: { ...this.state.metadata },
       ruleState: this.cloneRuleState(this.state.ruleState),
+      ...(this.state.story ? { story: JSON.parse(JSON.stringify(this.state.story)) } : {}),
     };
   }
 
@@ -656,6 +657,7 @@ export class GameStateManager {
           : 0,
       metadata: { ...(state?.metadata ?? {}) },
       ruleState: this.cloneRuleState(state?.ruleState),
+      ...(state?.story ? { story: JSON.parse(JSON.stringify(state.story)) } : {}),
     };
 
     if ("activeCharacterId" in (state ?? {})) {

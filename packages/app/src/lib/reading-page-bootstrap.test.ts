@@ -23,7 +23,8 @@ test("every app entry paints the document before React, independently of its scr
     ["/app/profile/achievements", "wallpaper"], ["/app/settings", "wallpaper"],
     ["/app/messages/123", "wallpaper"], ["/app/chat/123", "plain"],
     ["/app/preview/123", "plain"], ["/app/studio", "plain"],
-    ["/app/admin", "plain"], ["/app/worlds/123/edit", "plain"],
+    ["/app/admin", "wallpaper"], ["/app/admin/users", "wallpaper"],
+    ["/app/admin/world-inspect/123", "plain"], ["/app/worlds/123/edit", "plain"],
     ["/app/worlds/create", "wallpaper"],
   ]) {
     const dom = boot(`https://yumina.io${path}`);
@@ -121,7 +122,7 @@ test("the initial HTML has the final browser-edge color while external styleshee
       const doc = dom.window.document;
       const computed = (element: Element) => dom.window.getComputedStyle(element);
       const rootStyle = computed(doc.documentElement);
-      assert.equal(rootStyle.getPropertyValue("--reading-canvas-color").replace(/\s/g, ""), "rgb(25,27,36)", path);
+      assert.equal(rootStyle.getPropertyValue("--reading-canvas-color").replace(/\s/g, ""), "rgb(20,19,18)", path);
       // JSDOM incorrectly gives the baseline's `html, body, #root` rule the
       // ID selector's specificity when matching html. Inspect the parsed
       // native rule instead; browsers match each selector independently.

@@ -7,6 +7,7 @@ import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { TopBarAccountControls } from "@/components/layout/top-bar";
 import { WorldRenderer } from "./world-renderer";
 import { makeVariableKeyResolver } from "./variable-key";
+import { collectPreviewGreetings } from "./preview-greetings";
 import type { YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
 import {
   DEFAULT_CHAT_ROOT,
@@ -89,20 +90,6 @@ function resolveGuestPreviewRootComponent(
 
 type GuestVariableValue = number | string | boolean | Record<string, unknown> | unknown[];
 type GuestVariables = Record<string, GuestVariableValue>;
-
-/** Pre-written greeting bodies for the world, in display order. Used both for the
- *  initial preview message and for `switchGreeting()` swipes from custom UI. */
-function collectGreetings(worldDef: WorldDefinition | undefined): string[] {
-  if (!worldDef) return [];
-  const fromEntries = (worldDef.entries ?? [])
-    .filter((entry) => entry.role === "greeting" && entry.enabled !== false)
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    .map((entry) => (entry.content ?? "").trim())
-    .filter(Boolean);
-  if (fromEntries.length > 0) return fromEntries;
-  const fallback = (worldDef.settings as { greeting?: string } | undefined)?.greeting?.trim();
-  return fallback ? [fallback] : [];
-}
 
 function expandGreeting(
   worldDef: WorldDefinition | undefined,
@@ -254,10 +241,10 @@ export function WorldPreview({
   const isDefaultChatPreview = isGeneratedDefaultChatRoot(rootComponent);
 
   // List of available greetings (for switchGreeting + swipe rendering)
-  const greetings = useMemo(() => collectGreetings(worldDef), [worldDef]);
+  const greetings = useMemo(() => collectPreviewGreetings(worldDef), [worldDef]);
 
   const greetingContent = useMemo(
-    () => expandGreeting(worldDef, greetings[greetingIndex] ?? greetings[0], variables),
+    () => expandGreeting(worldDef, (greetings[greetingIndex] ?? greetings[0])?.content, variables),
     [worldDef, greetings, greetingIndex, variables],
   );
 
@@ -268,7 +255,7 @@ export function WorldPreview({
   const previewMessages = useMemo<Array<Record<string, unknown>>>(() => {
     if (!greetingContent) return [];
     const expandedSwipes = greetings
-      .map((raw) => expandGreeting(worldDef, raw, variables))
+      .map((greeting) => expandGreeting(worldDef, greeting.content, variables))
       .filter((c): c is string => Boolean(c))
       .map((content) => ({ content, createdAt: new Date(0).toISOString() }));
     return [
@@ -280,6 +267,7 @@ export function WorldPreview({
         createdAt: new Date(0).toISOString(),
         swipes: expandedSwipes,
         activeSwipeIndex: Math.min(greetingIndex, Math.max(0, expandedSwipes.length - 1)),
+        stateSnapshot: { activeGreetingId: (greetings[greetingIndex] ?? greetings[0])?.id },
       },
     ];
   }, [greetingContent, greetings, greetingIndex, worldDef, variables]);
@@ -453,7 +441,7 @@ export function WorldPreview({
   // ── Shared sign-up banner (consistent across all preview modes) ──
   const signUpBanner = (
     <div
-      className="shrink-0 z-50 flex items-center justify-center gap-3 border-t border-white/10 bg-[#0C0C0E]/95 px-4 pt-3 backdrop-blur-md"
+      className="shrink-0 z-50 flex items-center justify-center gap-3 border-t border-white/10 bg-inset/95 px-4 pt-3 backdrop-blur-md"
       style={{ paddingBottom: "calc(0.75rem + var(--mobile-safe-bottom))" }}
     >
       <button
@@ -504,7 +492,7 @@ export function WorldPreview({
     return (
       <div className="play-page-root flex h-full w-full flex-col overflow-hidden" style={playZoomStyle}>
         {previewHeader}
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-[#0D0E11] p-6">
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-6">
           <div className="flex max-w-sm flex-col items-center gap-4 text-center">
             <p className="text-sm text-muted-foreground">{t("preview.signInToSend")}</p>
             <button

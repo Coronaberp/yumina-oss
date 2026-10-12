@@ -67,7 +67,7 @@ export function runReactionChain(
     if (result.firedIds.length === 0) break;
 
     const systemResult = processSystemEffects(result.effects);
-    const changes = applySystemEffects(stateManager, systemResult);
+    const changes = applySystemEffects(stateManager, systemResult, events);
 
     // Keep bookkeeping unique as well as execution (including legacy rules).
     const firedThisHop = new Set(result.firedIds);

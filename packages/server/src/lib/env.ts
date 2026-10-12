@@ -25,12 +25,26 @@ const envSchema = z.object({
     z.string().url().optional()
   ),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(100),
+  MEMORY_DATABASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  MEMORY_PGLITE_DATA_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
   IMAGE_EXECUTION_MODE: z.enum(["embedded", "external"]).default("embedded"),
   IMAGE_EVENT_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(50_000).default(25_000),
   YUMINA_EDITION: z.enum(["hosted", "local"]).default("hosted"),
   // single-user: one auto-signed-in local account, no login screen (local default).
   // multi-user: Better Auth email/password (+ optional social providers).
   YUMINA_AUTH_MODE: z.preprocess(emptyToUndefined, z.enum(["single-user", "multi-user"]).optional()),
+  YUMINA_SIGN_IN_METHOD: z.enum(["password", "github"]).default("password"),
+  YUMINA_ADMIN_ACCOUNT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  YUMINA_ADMIN_GITHUB_ID: z.preprocess(emptyToUndefined, z.string().regex(/^\d+$/).optional()),
+  YUMINA_ADMIN_GITHUB_LOGIN: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Explicit example cards shared with all accounts on this local installation.
+  YUMINA_SHARED_WORLD_IDS: z.string().default(""),
+  // Opt-in installation default for the Studio agent; users may select their own profile.
+  YUMINA_STUDIO_CODEX_ENABLED: z.preprocess(
+    v => typeof v === "string" ? ["1", "true", "on"].includes(v.trim().toLowerCase()) : v,
+    z.boolean().default(false),
+  ),
+  YUMINA_STUDIO_CODEX_BIN: z.preprocess(emptyToUndefined, z.string().default("codex")),
   // Root folder for everything a local install persists (PGlite + assets).
   YUMINA_DATA_DIR: z.preprocess(emptyToUndefined, z.string().default(IS_LOCAL ? "./data" : "./.yumina-data")),
   // On-disk asset storage, used when no S3 bucket is configured. Resolved below.

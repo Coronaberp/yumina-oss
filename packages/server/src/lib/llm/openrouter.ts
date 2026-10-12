@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { OpenRouterProviderSelections } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
 import { LLM_CONNECTION_TIMEOUT_MS, LLM_REQUEST_TIMEOUT_MS, LLM_STREAM_INACTIVITY_TIMEOUT_MS } from "./constants.js";
 import { clampTemperatureForModel, clampTopKForModel, repetitionPenaltyForModel } from "./sampling-limits.js";
@@ -180,7 +181,11 @@ export function providerRoutingFor(
   hasCacheBreakpoints: boolean,
   excludeProviders?: readonly string[],
   preserveAccountRouting = false,
+  allowedProviders?: readonly string[],
 ): Record<string, unknown> | undefined {
+  // Explicit user selections take precedence over both account defaults and
+  // application preferences. Keep the same restriction on every retry.
+  if (allowedProviders?.length) return { only: [...allowedProviders], allow_fallbacks: false };
   // A user-owned OpenRouter key may have BYOK providers (for example Vertex AI)
   // configured on the OpenRouter account. Any request-level provider object
   // overrides that account routing, so BYOK requests must omit it entirely.
@@ -497,10 +502,12 @@ function requestSignature(body: Record<string, unknown>): string {
 export class OpenRouterProvider implements LLMProvider {
   private apiKey: string;
   private preserveAccountRouting: boolean;
+  private providerSelections?: OpenRouterProviderSelections;
 
-  constructor(apiKey: string, options?: { preserveAccountRouting?: boolean }) {
+  constructor(apiKey: string, options?: { preserveAccountRouting?: boolean; providerSelections?: OpenRouterProviderSelections }) {
     this.apiKey = apiKey;
     this.preserveAccountRouting = options?.preserveAccountRouting ?? false;
+    this.providerSelections = options?.providerSelections;
   }
 
   /**
@@ -670,6 +677,7 @@ export class OpenRouterProvider implements LLMProvider {
       !!params.cacheBreakpoints?.length,
       excludeProviders,
       this.preserveAccountRouting,
+      this.providerSelections?.[params.model],
     );
 
     const requestBody: Record<string, unknown> = {
@@ -1013,6 +1021,7 @@ export class OpenRouterProvider implements LLMProvider {
       !!params.cacheBreakpoints?.length,
       excludeProviders,
       this.preserveAccountRouting,
+      this.providerSelections?.[params.model],
     );
 
     // Non-streaming responses only send headers AFTER the upstream finishes

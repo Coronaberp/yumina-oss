@@ -48,11 +48,8 @@ import { EntriesSection } from "../editor/sections/entries";
 import { VariablesSection } from "../editor/sections/variables";
 import {
   AiChatPanel,
-  AssetsPanel,
   AudioPanel,
   BundlesPanel,
-  CanvasPanel,
-  CodeViewPanel,
   FirstMessagePanel,
   LorebookPanel,
   OverviewPanel,
@@ -61,7 +58,8 @@ import {
   SidebarPanel,
   VariablesPanel,
 } from "./panels";
-import { PANEL_MENU_GROUPS, type StudioPanelMenuItem } from "./studio-page-catalog";
+import { PANEL_MENU_GROUPS, migrateStudioPanelId, type StudioPanelMenuItem } from "./studio-page-catalog";
+import { CustomUiPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
 import type { ToolCall } from "./lib/types";
 import { buildReviewDiffTokens } from "./lib/review-diff";
 
@@ -75,10 +73,11 @@ type MobileStudioPanelId =
   | "variables"
   | "rules"
   | "first-message"
-  | "assets"
+  | "custom-ui"
+  | "vn-sprites"
+  | "character-showcase"
+  | "vn-backgrounds"
   | "audio"
-  | "canvas"
-  | "code-view"
   | "overview"
   | "playtest"
   | "sidebar"
@@ -117,10 +116,11 @@ const MOBILE_PANEL_COMPONENTS: Record<MobileStudioPanelId, React.FC<IDockviewPan
   variables: VariablesPanel,
   rules: RulesPanel,
   "first-message": FirstMessagePanel,
-  assets: AssetsPanel,
+  "custom-ui": CustomUiPanel,
+  "character-showcase": CharacterShowcasePanel,
+  "vn-sprites": VnSpritesPanel,
+  "vn-backgrounds": VnBackgroundsPanel,
   audio: AudioPanel,
-  canvas: CanvasPanel,
-  "code-view": CodeViewPanel,
   overview: OverviewPanel,
   playtest: PlaytestPanel,
   sidebar: SidebarPanel,
@@ -133,10 +133,11 @@ const MOBILE_PANEL_LABEL_KEYS: Record<MobileStudioPanelId, string> = {
   variables: "studio.panels.variables",
   rules: "studio.panels.behaviors",
   "first-message": "studio.panels.firstMessage",
-  assets: "studio.panels.assets",
+  "custom-ui": "sections.customUI",
+  "character-showcase": "sections.characterShowcase",
+  "vn-sprites": "sections.vnSprites",
+  "vn-backgrounds": "sections.vnBackgrounds",
   audio: "studio.panels.audio",
-  canvas: "studio.panels.canvas",
-  "code-view": "studio.panels.frontEndCode",
   overview: "studio.panels.overview",
   playtest: "studio.panels.playtest",
   sidebar: "studio.panels.previewControls",
@@ -171,6 +172,9 @@ function loadMobileLayout(worldId: string | null): MobileLayoutState {
     const saved = localStorage.getItem(getMobileLayoutKey(worldId ?? "new"));
     if (!saved) return DEFAULT_MOBILE_LAYOUT;
     const parsed = JSON.parse(saved) as Partial<MobileLayoutState>;
+    for (const slot of ["activePanel", "topPanel", "bottomPanel"] as const) {
+      if (typeof parsed[slot] === "string") parsed[slot] = migrateStudioPanelId(parsed[slot]!) as MobileStudioPanelId;
+    }
     return {
       mode: isMobileWorkspaceMode(parsed.mode) ? parsed.mode : DEFAULT_MOBILE_LAYOUT.mode,
       activePanel: parsed.activePanel && isMobileStudioPanelId(parsed.activePanel) ? parsed.activePanel : DEFAULT_MOBILE_LAYOUT.activePanel,
@@ -263,6 +267,16 @@ function buildMobileReviewPayload(toolCall: ToolCall): MobileReviewPayload {
       toolName,
       changed: formatReviewValue(args),
       original: existing ? formatReviewValue(summarizeEntity(existing)) : noOriginal,
+    };
+  }
+
+  if (toolName === "write_status_visualization" || toolName === "edit_status_visualization") {
+    const files = (draft.rootComponent as Record<string, unknown> | undefined)?.files as Record<string, string> | undefined;
+    return {
+      title: "Visualizations · Custom layout",
+      toolName,
+      changed: formatReviewValue(args.layoutCode ?? args.new_code ?? args),
+      original: formatReviewValue(args.old_code ?? files?.["status-layout.tsx"] ?? noOriginal),
     };
   }
 
@@ -425,7 +439,7 @@ function MobilePanelPicker({
   const groups = useMemo(() => {
     const baseGroups = PANEL_MENU_GROUPS.map(group => ({
       labelKey: group.labelKey,
-      items: group.items.filter(item => isMobileStudioPanelId(item.id) && item.id !== "ai-chat"),
+      items: group.items.filter(item => isMobileStudioPanelId(item.id) && item.id !== "ai-chat" && item.id !== "playtest"),
     })).filter(group => group.items.length > 0);
 
     return [
@@ -631,6 +645,7 @@ export function MobileStudioShell() {
   const variantLabel = useEditorStore(s => s.variantLabel);
   const readOnlyInspect = useEditorStore(s => s.readOnlyInspect);
   const mode = useStudioStore(s => s.mode);
+  const pendingVisualizationTask = useStudioStore(s => s.pendingVisualizationTask);
   const setMode = useStudioStore(s => s.setMode);
   const [layout, setLayout] = useState<MobileLayoutState>(() => loadMobileLayout(serverWorldId));
   const [focusedPane, setFocusedPane] = useState<MobilePane | null>(null);
@@ -758,6 +773,10 @@ export function MobileStudioShell() {
     setReviewPayload(null);
     setReviewLoading(false);
   }, [updateLayout]);
+
+  useEffect(() => {
+    if (pendingVisualizationTask?.worldId === serverWorldId) openAgentWorkspace();
+  }, [pendingVisualizationTask, serverWorldId, openAgentWorkspace]);
 
   const openSplitWorkspace = useCallback(() => {
     updateLayout({ mode: "split" });
@@ -903,7 +922,7 @@ export function MobileStudioShell() {
                         className={cn("flex items-center gap-2 text-xs", isActive && "bg-primary/10")}
                       >
                         <span className="min-w-0 flex-1 truncate">{variant.variantLabel || variant.name}</span>
-                        {showStar && <Star className="h-3.5 w-3.5 shrink-0 fill-[#C9A25E] text-[#C9A25E]" aria-label={t("variantBar.primaryBadge", "主")} />}
+                        {showStar && <Star className="h-3.5 w-3.5 shrink-0 fill-[#C9A25E] text-gold" aria-label={t("variantBar.primaryBadge", "主")} />}
                         {/* Only a published version can be promoted. The button
                             stays visible but disabled, labelled "(publish
                             first)", so the reason sits on the control. */}
@@ -919,7 +938,7 @@ export function MobileStudioShell() {
                             className={cn(
                               "shrink-0 rounded-full p-1 transition-colors",
                               promoteReady
-                                ? "text-muted-foreground/60 active:bg-[#C9A25E]/15 active:text-[#C9A25E]"
+                                ? "text-muted-foreground/60 active:bg-gold/15 active:text-gold"
                                 : "cursor-not-allowed text-muted-foreground/30",
                             )}
                           >

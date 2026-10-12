@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GameStateManager, type WorldDefinition } from "@yumina/engine";
+import { GameStateManager, ResponseParser, type WorldDefinition } from "@yumina/engine";
 import type { TurnOutputContext } from "./extension-hooks.js";
 
 // Set inert connection settings BEFORE dynamic imports. These are pure tests:
@@ -19,8 +19,32 @@ const world: WorldDefinition = {
   variables: [{ id: "hp", name: "health", type: "number", defaultValue: 100 }, { id: "ui", name: "ui", type: "json", defaultValue: { panel: "open" } }],
 };
 const makeState = () => new GameStateManager(world).getSnapshot();
+
+test("player speech and actions are automatically purged even when the optional state guard is disabled", async () => {
+  for (const raw of ['[SPEAKER:{{user}}:normal] "I agree."', '*{{user}} walks toward the door.*', '*{{user}} decides to trust the guide.*', '[speaker: You]\n"I agree."']) {
+    const signal = new AbortController().signal;
+    const attempt = new TurnOutputAttempt({ dispatch: absent, userId: "unit", sessionId: "unit", targetId: "unit", path: "send", world, baseline: makeState(), model: "unit", apiKeyTier: "unit", startedAt: Date.now(), worldVersion: null, pendingVersion: null, worldId: world.id, checkPending: false, signal });
+    const result = await attempt.validate({ world, state: makeState(), raw, parsed: new ResponseParser().parse(raw), signal, playerNames: ["Private account"], characterNames: [] } as unknown as Omit<TurnOutputContext, "audit" | "mayCorrect" | "progress" | "recordUsage">, async () => {});
+    assert.match(result.parsed.cleanText, /The scene pauses/);
+    assert.doesNotMatch(result.raw, /I agree|walks toward|decides to trust/);
+  }
+});
 const installed = { activeExtensions: new Map([[key, new Set<string>()]]) };
 const absent = { activeExtensions: new Map<string, Set<string>>() };
+
+test("all turn paths normalize speaker markup once and preserve authoritative effects", async () => {
+  const vnWorld = { ...world, rootComponent: { interfaceId: "vn" }, entries: [{ id: "maeve", role: "character", enabled: true, name: "Maeve" }] } as unknown as WorldDefinition;
+  registerExtensionHooks(key, { validateTurnOutput: async ctx => ({ parsed: ctx.parsed }) });
+  for (const dispatch of [absent, installed]) for (const path of ["send", "regenerate", "continue"] as const) {
+    const signal = new AbortController().signal;
+    const attempt = new TurnOutputAttempt({ dispatch, userId: "unit", sessionId: "unit", targetId: "unit", path, world: vnWorld, baseline: makeState(), model: "unit", apiKeyTier: "unit", startedAt: Date.now(), worldVersion: null, pendingVersion: null, worldId: world.id, checkPending: false, signal });
+    const raw = '[speaker:Maeve] "Hello."\n[speaker:Kei] "Wait."\n[hp: subtract 1]';
+    const result = await attempt.validate({ world: vnWorld, state: makeState(), raw, parsed: new ResponseParser().parse(raw), signal, playerNames: [], characterNames: ["Maeve", "Kei"] } as unknown as Parameters<typeof attempt.validate>[0], async () => {});
+    assert.equal((result.parsed.cleanText.match(/\[SPEAKER:Maeve:normal\]/g) || []).length, 1);
+    assert.match(result.parsed.cleanText, /\[SPEAKER:Kei:normal\]/);
+    assert.deepEqual(result.parsed.effects, [{ variableId: "hp", operation: "subtract", value: 1 }]);
+  }
+});
 
 test("send then continue then regenerate replaces both segments without accumulated effects", () => {
   const before = makeState();
@@ -123,6 +147,22 @@ test("uninstalled attempt performs no database work and passes legacy effects th
   assert.equal(result.parsed, parsed);
   await attempt.checkCommit(null as never, null, makeState());
   await attempt.finish(new AbortController().signal);
+});
+
+test("all chat paths check and correct character identity without the optional state extension", async () => {
+  const card = { ...world, entries: [{ id: "sera", role: "character", enabled: true, name: "Sera (Seraphine)", content: "Full Name: Seraphine\nAge: 247\nSpecies: Angel\nOccupation: Divine Combat Instructor", conditions: [] }] } as unknown as WorldDefinition;
+  for (const path of ["send", "regenerate", "continue"] as const) {
+    const raw = "Seraphine is a first-year student. [hp: subtract 1]";
+    let calls = 0;
+    const signal = new AbortController().signal;
+    const attempt = new TurnOutputAttempt({ dispatch: absent, userId: "unit", sessionId: "unit", targetId: "unit", path, world: card, baseline: makeState(), model: "unit", apiKeyTier: "unit", startedAt: Date.now(), worldVersion: null, pendingVersion: null, worldId: world.id, checkPending: false, signal, identityRequest: async () => ({ raw: [JSON.stringify({ valid: false, issues: [{ claim: "first-year student", authoredFact: "Divine Combat Instructor" }] }), "Seraphine, the 247-year-old angel instructor, begins class. [hp: subtract 1]", JSON.stringify({ valid: true, issues: [] })][calls++] }) } as any);
+    const result = await attempt.validate({ world: card, state: makeState(), raw, parsed: new ResponseParser().parse(raw), signal, history: [], playerNames: [], characterNames: ["Sera (Seraphine)"] } as unknown as Parameters<typeof attempt.validate>[0], async () => {});
+    assert.equal(attempt.enabled, false);
+    assert.equal(calls, 3);
+    assert.match(result.parsed.cleanText, /247-year-old angel instructor/);
+    assert.deepEqual(result.parsed.effects, [{ variableId: "hp", operation: "subtract", value: 1 }]);
+    assert.doesNotMatch(result.raw, /first-year student/);
+  }
 });
 
 test("narrative usage audit link is stable and deduplicated per attempt", () => {

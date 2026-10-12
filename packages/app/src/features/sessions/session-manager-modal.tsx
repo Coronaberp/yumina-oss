@@ -476,6 +476,7 @@ function SessionManagerModalImpl() {
     <div className="fixed inset-0 z-[90] flex items-center justify-center">
       {/* Backdrop */}
       <div
+        data-vn-dialog-backdrop=""
         className={SESSION_MODAL_BACKDROP_CLASS}
         onClick={close}
       />
@@ -483,6 +484,7 @@ function SessionManagerModalImpl() {
       {/* Modal */}
       <div
         ref={contentRef}
+        data-vn-dialog-surface="structured"
         role="dialog"
         aria-modal="true"
         aria-label="Session manager"
@@ -490,9 +492,9 @@ function SessionManagerModalImpl() {
         className={`${SESSION_MODAL_SURFACE_CLASS} max-w-lg`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pb-3 pt-5">
+        <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pb-3 pt-5">
           <div>
-            <h2 className="text-[0.95rem] font-semibold text-foreground">
+            <h2 data-vn-dialog-title="" className="text-[0.95rem] font-semibold text-foreground">
               {tCommon("mobile.manageSessions")}
             </h2>
             {sessions.length > 0 && (
@@ -504,6 +506,7 @@ function SessionManagerModalImpl() {
           <button
             type="button"
             onClick={close}
+            data-vn-dialog-close=""
             aria-label="Close"
             className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:bg-white/5 hover:text-muted-foreground"
           >

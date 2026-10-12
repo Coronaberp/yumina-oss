@@ -73,11 +73,25 @@ Import: Yumina `.png` or `.json` cards, plus character cards and worldbooks in t
 | `HOST` | `127.0.0.1` | Bind address. Single-user mode has no login, so only bind `0.0.0.0` on a network you trust, or switch to multi-user mode. |
 | `YUMINA_DATA_DIR` | `./data` (under `packages/server`) | Database and uploaded assets |
 | `YUMINA_STORAGE_DIR` | `<data dir>/assets` | Uploaded files, when no S3 bucket is configured |
-| `YUMINA_AUTH_MODE` | `single-user` | `multi-user` turns on email and password accounts |
+| `YUMINA_AUTH_MODE` | `single-user` | `multi-user` enables separate accounts |
+| `YUMINA_SIGN_IN_METHOD` | `password` | `github` enables GitHub-only sign-in and blocks password endpoints |
+| `YUMINA_ADMIN_ACCOUNT_ID` | unset | Existing account to promote to installation admin; its ID and data stay intact |
+| `YUMINA_ADMIN_GITHUB_ID` | unset | Numeric GitHub account ID permitted to sign into that existing admin account |
+| `YUMINA_SHARED_WORLD_IDS` | unset | Comma-separated world UUIDs shared as example cards in every local account's library |
 | `PUBLIC_ORIGIN` | derived from `BETTER_AUTH_URL` | The origin browsers use to reach this server |
 | `BETTER_AUTH_SECRET` | generated | Signs sessions and encrypts stored API keys. Keep it. |
 | `DATABASE_URL` | unset | Set to use a real PostgreSQL instead of the embedded one. An empty database is provisioned on first start. |
 | `AWS_S3_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL` | unset | Store uploads in any S3-compatible bucket instead of on disk |
+
+### GitHub sign-in and local administration
+
+Configure a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with `<PUBLIC_ORIGIN>/api/auth/callback/github` as its authorization callback URL. Set its `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, `YUMINA_AUTH_MODE=multi-user`, and `YUMINA_SIGN_IN_METHOD=github`. Keep `BETTER_AUTH_URL` and `PUBLIC_ORIGIN` aligned with the URL people actually use. Password sign-in, password signup, and password reset are disabled by the server in GitHub mode.
+
+Set `YUMINA_ADMIN_ACCOUNT_ID` to the existing local account's ID to retain its worlds, sessions, personas, and provider settings. Pin the owner's numeric GitHub ID with `YUMINA_ADMIN_GITHUB_ID` and its display username with `YUMINA_ADMIN_GITHUB_LOGIN`. GitHub verifies the identity before it is linked to that existing account; new GitHub users receive separate ordinary accounts. On the initial transition, existing shared local sign-in sessions are revoked so visitors do not inherit admin access. Story sessions are retained.
+
+The admin can open **Administration → GitHub sign-in** at `/app/admin` to update the OAuth client ID, replace the secret, and configure the admin GitHub username. A blank secret retains the saved one. The secret is stored in the private server `.env` and never returned by the settings API. Saving preserves `BETTER_AUTH_SECRET` and other settings; restart Yumina to apply changes.
+
+To offer example cards to every account on a local installation, add only their UUIDs to `YUMINA_SHARED_WORLD_IDS` and restart. Those cards appear automatically in each library, including for new accounts. Other private drafts remain private. An edit lock does not share a card by itself: it blocks changes while allowing viewers to inspect the editor, browse sections, and read source files. Playthrough histories stay private to their owners.
 
 ### Docker
 

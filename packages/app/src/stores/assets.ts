@@ -23,7 +23,7 @@ interface AssetState {
   uploading: boolean;
   uploadingCount: number;
   uploadProgress: UploadProgress | null;
-  storage: { used: number; limit: number };
+  storage: { used: number; limit: number | null };
 
   fetchAssets: (worldId: string) => Promise<void>;
   uploadAsset: (
@@ -46,7 +46,7 @@ export const useAssetStore = create<AssetState>((set) => ({
   uploading: false,
   uploadingCount: 0,
   uploadProgress: null,
-  storage: { used: 0, limit: 0 },
+  storage: { used: 0, limit: null },
 
   fetchAssets: async (worldId) => {
     set({ loading: true });
@@ -90,7 +90,7 @@ export const useAssetStore = create<AssetState>((set) => ({
 
       set((s) => ({
         assets: [...s.assets, asset],
-        storage: { ...s.storage, used: s.storage.used + (file.size ?? 0) },
+        storage: { ...s.storage, used: s.storage.used + (asset.sizeBytes ?? file.size ?? 0) },
       }));
 
       // R6/T0: the grid shows a progress bar while this runs and the new asset
@@ -147,6 +147,6 @@ export const useAssetStore = create<AssetState>((set) => ({
       uploading: false,
       uploadingCount: 0,
       uploadProgress: null,
-      storage: { used: 0, limit: 0 },
+      storage: { used: 0, limit: null },
     }),
 }));

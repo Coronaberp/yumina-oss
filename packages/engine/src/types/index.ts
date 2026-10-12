@@ -181,6 +181,8 @@ export interface TriggerConfig {
   direction?: "rises-above" | "drops-below";
   /** For variable-crossed: threshold value */
   threshold?: number;
+  /** For variable-crossed: repeat at threshold + k * repeatEvery, k >= 0. */
+  repeatEvery?: number;
   /** For turn-count: fire at this specific turn */
   atTurn?: number;
   /** For turn-count: fire every N turns */
@@ -352,8 +354,16 @@ export type {
   UIPackageWorldValidationContext,
 } from "./ui-package.js";
 
+export interface MemoryLoreMetadata {
+  hidden?: boolean;
+  metadata?: Record<string, string | string[]>;
+  links?: Array<{ targetId: string; label: string }>;
+  secrets?: string[];
+}
+
 /** @deprecated Use WorldEntry instead */
 export interface LorebookEntry {
+  memory?: MemoryLoreMetadata;
   id: string;
   name: string;
   type: "character" | "lore" | "plot" | "style" | "custom";
@@ -370,6 +380,8 @@ export interface LorebookEntry {
 
 /** A unified content entry — replaces Character + LorebookEntry */
 export interface WorldEntry {
+  /** Authored lore used by session memory; hidden content is excluded from normal prompts. */
+  memory?: MemoryLoreMetadata;
   id: string;
   name: string;
   content: string;
@@ -510,6 +522,8 @@ export type StateChannel = "variables" | "messages" | "streaming" | "session" | 
 export interface RootComponent {
   id: string;
   name: string;
+  /** Editor interface choice. Runtime remains self-contained in files. */
+  interfaceId?: string;
   /** Entry point file name (e.g. "index.tsx") */
   entryFile: string;
   /** Virtual file system: filename → TSX source code */
@@ -583,6 +597,8 @@ export interface WorldDefinition {
   name: string;
   description: string;
   author: string;
+  /** HTML/CSS shown on this card's public profile, outside the playable story. */
+  cardShowcase?: import("../world/card-showcase.js").CardShowcase;
   /** @deprecated Use worlds.thumbnailUrl DB column instead. This field is unused for display. */
   avatar?: string;
   /** Crop framing for the Hub card cover. */
@@ -618,6 +634,8 @@ export interface WorldDefinition {
    *  world after v19→v20 migration. This is the ONLY visual-layer input the
    *  runtime reads. */
   rootComponent?: RootComponent;
+  /** Inactive edited interfaces, restored when switching back in the editor. */
+  interfaceDrafts?: Record<string, RootComponent>;
 
   /** User-defined tag names beyond the defaults */
   customTags?: string[];
@@ -636,10 +654,17 @@ export interface WorldDefinition {
   /** Which editor UI to use: "simple" (Quick Create) or "advanced" (full editor) */
   editorMode?: "simple" | "advanced";
   settings: WorldSettings;
+  /** Creator-authored deterministic story structure (optional for legacy worlds). */
+  routes?: import("./story.js").StoryRoute[];
+  endings?: import("./story.js").StoryEnding[];
+  /** Optional player identities supplied by the creator; never initial stats. */
+  personaPresets?: import("../world/persona-presets.js").PersonaPreset[];
 }
 
 /** World-level settings — generation parameters are optional (global user config takes priority) */
 export interface WorldSettings {
+  /** Deterministic creator-defined culture/family naming patterns. */
+  nameGeneratorProfiles?: import("@yumina/shared").NameGeneratorProfile[];
   /** Max response tokens (optional — global config takes priority, default 12000) */
   maxTokens?: number;
   /** Max context window size for history trimming (default 200000) */
@@ -673,6 +698,8 @@ export interface WorldSettings {
   uiMode?: "chat" | "per-reply" | "persistent";
   /** When true, request JSON structured output from the LLM via response_format */
   structuredOutput?: boolean;
+  /** When false, preserve definitions but do not enforce route/ending progression. */
+  storyStructureEnabled?: boolean;
 }
 
 /** Runtime game state during a play session */
@@ -692,4 +719,6 @@ export interface GameState {
   metadata: Record<string, unknown>;
   /** Rules 2.0 runtime state (initialized on first use for backward compat) */
   ruleState?: RuleRuntimeState;
+  /** Engine-owned route/ending progress, outside model-writable variables. */
+  story?: import("./story.js").StoryProgress;
 }

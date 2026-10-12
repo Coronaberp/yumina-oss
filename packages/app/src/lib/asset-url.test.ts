@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cardImageUrl, originalImageUrl, fallbackToOriginalOnError, isAnimatedImageRef } from "./asset-url";
+import { absoluteImageUrl, resolveImageUrl, cardImageUrl, originalImageUrl, fallbackToOriginalOnError, isAnimatedImageRef } from "./asset-url";
 
 // Guards the CF Image Transformations contract (see cardImageUrl doc comment):
 // quality=85 (Cloudflare's default — 82 read visibly worse on DPR-1 monitors),
@@ -70,4 +70,27 @@ test("isAnimatedImageRef reads the key out of a /cdn/key/ URL", () => {
   assert.equal(isAnimatedImageRef("worlds/w1/thumbnail/abc.anim.webp"), true);
   assert.equal(isAnimatedImageRef("/cdn/2232e6b0-132b-41b8-ad1b-78c6a37f8f96"), false);
   assert.equal(isAnimatedImageRef(null), false);
+});
+
+test("bundled VN NPC images remain static URLs for editor thumbnails and previews", () => {
+  for (const ref of ["/vn-assets/npc/male/male_01.png", "/vn-assets/npc/female/female_15.png"]) {
+    assert.equal(resolveImageUrl(ref), ref);
+    assert.equal(cardImageUrl(ref), ref);
+  }
+});
+
+test("bundled VN images receive the app origin for sandbox consumers", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://vn.example" } } });
+  try {
+    assert.equal(absoluteImageUrl("/vn-assets/npc/female/female_01.png"), "https://vn.example/vn-assets/npc/female/female_01.png");
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("raw storage keys and uploaded asset references retain CDN resolution", () => {
+  assert.equal(resolveImageUrl("worlds/npc.png"), "/cdn/key/d29ybGRzL25wYy5wbmc");
+  assert.equal(resolveImageUrl("@asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "/cdn/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
 });

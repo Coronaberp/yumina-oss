@@ -18,6 +18,21 @@ const msg = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+test("saved assistant metadata cannot become a final VN page, while original raw output remains intact", () => {
+  const content = 'The clerk waits.\n<variable-updates>\n\n</variable-updates>';
+  const rawContent = 'The clerk waits.\n<variable-updates>\n[time-period: set "9:10 AM"]\n</variable-updates>';
+  const original = msg({ content, activeSwipeIndex: 0, swipes: [{ content, rawContent }] });
+  const [out] = slimMessages([original]);
+  assert.equal(out.content, "The clerk waits.");
+  const swipe = (out.swipes as Array<Record<string, unknown>>)[0]!;
+  assert.equal(swipe.content, "The clerk waits.");
+  assert.equal(swipe.rawContent, rawContent);
+  assert.equal(original.content, content);
+  assert.equal(original.swipes[0]!.content, content);
+  const user = { role: "user", content };
+  assert.equal(slimMessages([user])[0], user);
+});
+
 test("slimMessages keeps message-level stateSnapshot (renderers + compacted display read it)", () => {
   const [out] = slimMessages([msg()]);
   assert.deepEqual(out.stateSnapshot, { variables: { hp: 10 } });
@@ -48,6 +63,27 @@ test("slimMessages preserves swipe count + scalar fields (for the N/M control)",
   assert.equal(swipes.length, 3); // count drives "2/3"
   assert.equal(swipes[0]!.model, "x"); // scalars kept
   assert.equal(swipes[0]!.creditCost, 1);
+});
+
+test("server-owned content flags retain their source binding across the sandbox bridge", () => {
+  const audit = { status: "complete", sourceHash: "original-source", label: "sfw" };
+  const original = msg({ contentFlags: audit, swipes: [{ content: "active", contentFlags: audit }, { content: "inactive", contentFlags: { ...audit, label: "nsfw" } }], activeSwipeIndex: 0 });
+  const [out] = slimMessages([original]);
+  assert.deepEqual(out.contentFlags, audit);
+  assert.deepEqual((out.swipes as Array<Record<string, unknown>>)[0]!.contentFlags, audit);
+  assert.equal(((out.swipes as Array<Record<string, unknown>>)[1]!.contentFlags as typeof audit).label, "nsfw");
+});
+
+test("saved reasoning follows the active swipe without copying every trace into the iframe", () => {
+  const original = msg({ swipes: [
+    { content: "old", reasoningContent: "earlier thinking" },
+    { content: "current", reasoningContent: "current thinking" },
+  ] });
+  const [out] = slimMessages([original]);
+  const swipes = out.swipes as Array<Record<string, unknown>>;
+  assert.equal(swipes[1]!.reasoningContent, "current thinking");
+  assert.equal(swipes[0]!.reasoningContent, undefined);
+  assert.equal((original.swipes as Array<Record<string, unknown>>)[0]!.reasoningContent, "earlier thinking");
 });
 
 test("slimMessages defaults activeSwipeIndex to 0 when absent", () => {

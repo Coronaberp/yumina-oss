@@ -1,3 +1,4 @@
+import { currentStatusRoot } from "@/features/editor/lib/status-template-upgrade";
 import { invalidJsonDefault } from "@/features/editor/lib/json-default";
 import { create } from "zustand";
 import { toPillText } from "@/lib/feedback-policy";
@@ -27,6 +28,7 @@ import { uploadAssetWithPresignedUrl } from "@/lib/asset-upload";
 import { useWorldsStore } from "./worlds";
 import { hashRootFiles, COMPILED_FORMAT_VERSION } from "@/features/studio/lib/compiled-format";
 import { serializeWorldSavePayload, worldSaveErrorMessage, worldSaveValidationMessage, worldSaveExceptionMessage, type WorldSaveErrorOptions } from "@/lib/world-save-payload";
+import { switchInterface, type InterfacePreset } from "@/features/editor/lib/interface-presets";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -298,6 +300,8 @@ function createEmptyWorld(): WorldDefinition {
     coverCrop: { x: 0, y: 0, zoom: 1, fit: "cover" },
     galleryCoverCrop: { x: 0, y: 0, zoom: 1, fit: "cover" },
     entries: OFFICIAL_PRESETS.map(presetToEntry),
+    routes: [],
+    endings: [],
     variables: [],
     rules: [],
     components: [],
@@ -310,6 +314,7 @@ function createEmptyWorld(): WorldDefinition {
     worldbooks: [],
     rootComponent: createDefaultRootComponent(),
     settings: {
+      storyStructureEnabled: true,
       maxTokens: 12000,
       maxContext: 200000,
       temperature: 1.0,
@@ -330,9 +335,14 @@ export type EditorSection =
   | "entries"
   | "variables"
   | "rules"
+  | "routes"
+  | "endings"
+  | "personas"
   | "components"
+  | "character-showcase"
   | "audio"
-  | "assets"
+  | "vn-sprites"
+  | "vn-backgrounds"
   | "overview"
   | "bundles";
 
@@ -402,13 +412,14 @@ interface EditorState {
   // autosave is disabled. The editor still loads the world and renders all
   // sections so an admin can audit content without changing it.
   readOnlyInspect: boolean;
+  editingLocked: boolean;
   setReadOnlyInspect: (value: boolean) => void;
   guestMode: boolean;
   setGuestMode: (value: boolean) => void;
 
   /** Custom UI section sub-tab (code vs lore bindings). */
-  customUiTab: "code" | "bindings";
-  setCustomUiTab: (tab: "code" | "bindings") => void;
+  customUiTab: "layouts" | "visualizations" | "advanced" | "code" | "bindings";
+  setCustomUiTab: (tab: "layouts" | "visualizations" | "advanced" | "code" | "bindings") => void;
 
   // History
   _past: WorldDefinition[];
@@ -440,7 +451,7 @@ interface EditorState {
   submitPendingEdit: () => Promise<boolean>;
   /** Pull a submitted held edit back out of the queue so it can be edited. */
   withdrawPendingEdit: () => Promise<boolean>;
-  loadWorldFromData: (data: { id: string; name: string; description: string | null; schema: Record<string, unknown>; thumbnailUrl: string | null }) => void;
+  loadWorldFromData: (data: { id: string; name: string; description: string | null; schema: Record<string, unknown>; thumbnailUrl: string | null; editingLocked?: boolean }) => void;
   setActiveSection: (section: EditorSection) => void;
   setField: <K extends keyof WorldDefinition>(
     key: K,
@@ -518,7 +529,8 @@ interface EditorState {
   // (addCustomUI / updateCustomUI / removeCustomUI) + their legacy wrappers
   // (addCustomComponent / setMessageRenderer / etc.) were removed in phase 6
   // once all editor UI was migrated to rootComponent.
-  updateRootComponent: (updates: { name?: string; entryFile?: string; files?: Record<string, string> }) => void;
+  updateRootComponent: (updates: { name?: string; interfaceId?: string; entryFile?: string; files?: Record<string, string> }) => void;
+  selectInterface: (id: string, preset: InterfacePreset) => void;
 
   // Rule actions
   addRule: (variableId?: string) => void;
@@ -796,7 +808,7 @@ function commitDraft(
   // Guest previews are genuinely read-only. Previously we applied the change
   // locally and only suppressed persistence, which let guests spend hours on a
   // draft that disappeared as soon as Save opened the sign-in flow.
-  if (s.guestMode) {
+  if (s.guestMode || s.editingLocked) {
     return {};
   }
   // Admin inspect mode: skip both the localStorage recovery scheduler and
@@ -886,6 +898,8 @@ function buildServerDraftFromData(data: any): WorldDefinition {
     },
   } as WorldDefinition;
   const draft = migrateWorldDefinition(rawDraft);
+  draft.rootComponent = currentStatusRoot(draft.rootComponent);
+  if (draft.interfaceDrafts) draft.interfaceDrafts = Object.fromEntries(Object.entries(draft.interfaceDrafts).map(([id, root]) => [id, currentStatusRoot(root)]));
   draft.entries = normalizePositions(draft.entries);
   // Heal dangling entry→folder refs so orphaned entries render (don't vanish).
   draft.entries = normalizeFolders(draft).world.entries;
@@ -920,6 +934,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   variants: [],
   variantsLoading: false,
   readOnlyInspect: false,
+  editingLocked: false,
   setReadOnlyInspect: (value: boolean) => set({ readOnlyInspect: value }),
   guestMode: false,
   setGuestMode: (value: boolean) => set({ guestMode: value }),
@@ -1017,6 +1032,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const draft = createEmptyWorld();
     set({
       worldDraft: draft,
+      editingLocked: false,
       serverWorldId: null,
       saving: false,
       loadingWorld: false,
@@ -1096,6 +1112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
       set({
         worldDraft: draft,
+        editingLocked: data.editingLocked === true,
         serverWorldId: data.id,
         isDirty: false,
         activeSection: "entries",
@@ -1130,7 +1147,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // until acted on (dropping it silently would lose the recovered work),
       // but it belongs to THIS world: the handle is retired by every world
       // swap, and the click re-checks the loaded id in case one slips through.
-      if (recoveryDraft) {
+      if (recoveryDraft && !data.editingLocked) {
         const recovered = recoveryDraft;
         dismissRecoveryPill = feedback.persistent(
           tr("editor:shell.recoverDraftFound", "Unsaved changes from last time"),
@@ -1175,6 +1192,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!res.ok) return;
       const { data } = await res.json();
       if (sessionAtRequest !== editorSession || !data || data.id !== get().serverWorldId) return;
+      set({ editingLocked: data.editingLocked === true });
       if (!canApplyServerSnapshot(data.updatedAt, started, get())) return;
       const draft = buildServerDraftFromData(data);
       const serverToken = validServerToken(data.updatedAt) ?? get().baseUpdatedAt;
@@ -1339,6 +1357,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     set({
       worldDraft: draft,
+      editingLocked: data.editingLocked === true,
       serverWorldId: data.id,
       saving: false,
       isDirty: false,
@@ -1358,7 +1377,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setActiveSection: (section) => set({ activeSection: section }),
 
-  customUiTab: "code",
+  customUiTab: "layouts",
   setCustomUiTab: (tab) => set({ customUiTab: tab }),
 
   setField: (key, value) => {
@@ -1427,6 +1446,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         entries: s.worldDraft.entries.map((e) => {
           if (e.id !== id) return e;
           const next = { ...e, ...updates };
+          // The character tag is how the advanced editor identifies a new
+          // character; a generic custom entry must also gain its runtime role.
+          if (Object.prototype.hasOwnProperty.call(updates, "tags") && !Object.prototype.hasOwnProperty.call(updates, "role") &&
+            next.role === "custom" && !next.presetId && next.tags?.some(tag => /^characters?$/i.test(tag.trim()))) {
+            next.role = "character";
+          }
           const folderWasSet = Object.prototype.hasOwnProperty.call(updates, "folderId");
           const scopeOrSectionChanged =
             Object.prototype.hasOwnProperty.call(updates, "worldbookId") ||
@@ -1975,6 +2000,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // ── Root Component ──
 
+  selectInterface: (id, preset) => {
+    set((s) => {
+      const draft = switchInterface(s.worldDraft, id, preset, generateComposedIndex);
+      return draft === s.worldDraft ? s : commitDraft(s, draft);
+    });
+  },
+
   updateRootComponent: (updates) => {
     set((s) => {
       if (!s.worldDraft.rootComponent) return s;
@@ -1983,6 +2015,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         rootComponent: {
           ...s.worldDraft.rootComponent,
           ...updates,
+          ...(updates.files || updates.entryFile ? { compiled: undefined } : {}),
           updatedAt: new Date().toISOString(),
         },
       };
@@ -2177,7 +2210,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       audioTracks: def.audioTracks ?? base.audioTracks,
       customUI: def.customUI ?? base.customUI,
       rootComponent:
-        def.rootComponent ??
+        currentStatusRoot(def.rootComponent) ??
         ((def.customUI && def.customUI.length > 0)
           ? undefined
           : createDefaultRootComponent()),
@@ -2187,12 +2220,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       },
     };
     const draft = migrateWorldDefinition(rawDraft);
+    draft.rootComponent = currentStatusRoot(draft.rootComponent);
+    if (draft.interfaceDrafts) draft.interfaceDrafts = Object.fromEntries(Object.entries(draft.interfaceDrafts).map(([id, root]) => [id, currentStatusRoot(root)]));
     draft.entries = normalizePositions(draft.entries);
     // Heal dangling entry→folder refs so orphaned entries render (don't vanish).
     draft.entries = normalizeFolders(draft).world.entries;
     set({
       worldDraft: draft,
       serverWorldId: preserveServerState ? prev.serverWorldId : null,
+      editingLocked: preserveServerState ? prev.editingLocked : false,
       saving: preserveServerState ? prev.saving : false,
       loadingWorld: false,
       baseUpdatedAt: preserveServerState ? prev.baseUpdatedAt : null,
@@ -2767,7 +2803,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveDraft: () => serializeEditorSave(async () => {
     // Inspection/guest edits stay local. The wrapper serializes callers;
     // never save the previous draft while another world is still loading.
-    if (get().readOnlyInspect || get().guestMode || get().saving || get().loadingWorld) return false;
+    if (get().editingLocked || get().readOnlyInspect || get().guestMode || get().saving || get().loadingWorld) return false;
 
     const started = get();
     const { worldDraft, serverWorldId, language, variantLabel } = started;

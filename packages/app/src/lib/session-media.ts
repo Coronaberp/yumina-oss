@@ -51,7 +51,7 @@ export interface MediaLibrary {
     }[];
     storage: {
         used: number;
-        limit: number;
+        limit: number | null;
         mediaBytes: number;
         reserved: number;
     };

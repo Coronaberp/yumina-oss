@@ -716,10 +716,11 @@ function InlineModelPickerModal({
           aria-modal="true"
           aria-label={title ?? t("chooseModel")}
         >
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div data-vn-dialog-backdrop="" className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
           <div
             onClick={(e) => e.stopPropagation()}
+            data-vn-dialog-kind="model" data-vn-dialog-surface="structured"
             className="yumina-model-sheet relative z-10 w-[min(440px,calc(100vw-2rem))] max-h-[min(600px,calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-4rem))] flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#1a1b1e]/95 shadow-2xl shadow-black/40 backdrop-blur-xl"
             style={{ animation: "modalIn 0.2s ease-out" }}
           >
@@ -1010,17 +1011,17 @@ function OfficialPicker({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
             <Sparkles className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">{title ?? t("chooseModel")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{title ?? t("chooseModel")}</h2>
             <p className="text-[11px] text-white/40">{subtitle ?? t("yuminaApi")}</p>
           </div>
         </div>
-        <button
+        <button data-vn-dialog-close=""
           onClick={onClose}
           aria-label={t("cancel")}
           className="play-action-btn flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60 active:bg-white/5 active:text-white/60"
@@ -1358,17 +1359,17 @@ function ByokPicker({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-400/10">
             <Sparkles className="h-4 w-4 text-slate-300" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">{title ?? t("chooseModel")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{title ?? t("chooseModel")}</h2>
             <p className="text-[11px] text-white/40">{subtitle ?? t("privateApiKey")}</p>
           </div>
         </div>
-        <button
+        <button data-vn-dialog-close=""
           onClick={onClose}
           aria-label={t("cancel")}
           className="play-action-btn flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60 active:bg-white/5 active:text-white/60"
@@ -1562,17 +1563,17 @@ function SandboxMixConfig({ onBack, onClose, t }: { onBack: () => void; onClose:
 
   return (
     <>
-      <div className="flex items-center justify-between px-5 pt-5 pb-1">
+      <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pt-5 pb-1">
         <div className="flex items-center gap-2.5">
           <button onClick={onBack} className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/[0.04] text-white/40 transition-colors hover:bg-white/[0.08] hover:text-white/70">
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div>
-            <h2 className="text-sm font-bold text-white">{t("mixModels")}</h2>
+            <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{t("mixModels")}</h2>
             <p className="text-[11px] text-white/40">{(modelPool ?? []).length}/{MAX_POOL}</p>
           </div>
         </div>
-        <button onClick={onClose} className="play-action-btn flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60 active:bg-white/5 active:text-white/60">
+        <button data-vn-dialog-close="" onClick={onClose} className="play-action-btn flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60 active:bg-white/5 active:text-white/60">
           <X className="h-4 w-4" />
         </button>
       </div>

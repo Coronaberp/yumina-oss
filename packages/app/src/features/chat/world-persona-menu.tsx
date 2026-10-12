@@ -41,7 +41,7 @@ export function WorldPersonaIconMenu({ className = "", disabled = false }: {
           <UserRound aria-hidden="true" className="h-4 w-4" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="z-[100] max-h-[60vh] min-w-[15rem] max-w-[19rem] overflow-y-auto rounded-2xl border-white/10 bg-[#201E23] p-2 text-main shadow-2xl">
+      <DropdownMenuContent align="end" className="z-[100] max-h-[60vh] min-w-[15rem] max-w-[19rem] overflow-y-auto rounded-2xl border-white/10 bg-popover p-2 text-main shadow-2xl">
         <p className="px-2 py-1.5 text-sm font-bold">{t("persona.title")}</p>
         {[null, ...personas].map((persona) => {
           const selected = persona ? persona.id === active?.id : !active;

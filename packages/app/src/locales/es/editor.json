@@ -1,4 +1,15 @@
 {
+  "visualNovel": {
+    "move": "Mover {{name}} — {{variant}}",
+    "dragHint": "Arrastra los controles para mover las tarjetas. Guarda la tarjeta para conservar el orden.",
+    "settingsChanged": "La tarjeta o sus imágenes han cambiado. Inténtalo de nuevo.",
+    "backgroundCollection": "Colección de fondos",
+    "globalBackgrounds": "Global",
+    "openingBackgrounds": "Inicio: {{name}}",
+    "openingNumber": "Inicio {{number}}",
+    "globalBackgroundsHint": "Compartida por todos los inicios. Editar los fondos de un inicio no cambia esta colección.",
+    "openingBackgroundsHint": "Se usa al elegir este inicio. Sus escenas coincidentes tienen prioridad; las demás usan los fondos globales."
+  },
   "twoTapConfirm": "Toca de nuevo para confirmar",
   "shell": {
     "namePlaceholder": "Nombra tu mundo...",
@@ -21,7 +32,8 @@
       "content": "Contenido",
       "presentation": "Presentación",
       "publish": "Publicar",
-      "creation": "Herramientas IA"
+      "creation": "Herramientas IA",
+      "story": "Story"
     },
     "switchSimple": "Modo simple",
     "versionHistoryMenu": "Historial de versiones",
@@ -38,14 +50,19 @@
     "lorebook": "Lorebook",
     "variables": "Variables",
     "behaviors": "Comportamientos",
-    "customUI": "UI personalizada",
+    "customUI": "Opciones de interfaz",
     "audio": "Audio",
     "assets": "Recursos",
     "overview": "Vista general",
     "bundles": "Paquetes",
-    "aiGeneration": "Generación IA"
+    "aiGeneration": "Generación IA",
+    "routes": "Routes",
+    "endings": "Endings"
   },
   "firstMessage": {
+    "nameLabel": "Nombre del saludo",
+    "namePlaceholder": "p. ej., Inscripción en la academia",
+    "nameHint": "Se muestra en el selector de rutas.",
     "title": "Primer mensaje",
     "description": "El mensaje inicial que se muestra cuando un jugador empieza una nueva sesión. Agrega varios saludos para que los jugadores puedan deslizar entre ellos.",
     "addGreeting": "Agregar saludo",
@@ -59,7 +76,7 @@
     "noFirstMessageDesc": "El primer mensaje establece la escena: introduce el entorno, los personajes y le da a los jugadores algo a lo que responder.",
     "createFirstMessage": "Crear primer mensaje",
     "learnMore": "Guía del creador →",
-    "dragHint": "Arrastra los números para reordenar"
+    "dragHint": "Arrastra los saludos para reordenar"
   },
   "entries": {
     "unnamed": "Sin nombre",
@@ -286,8 +303,8 @@
     }
   },
   "components": {
-    "title": "UI personalizada",
-    "description": "Componentes TSX personalizados para mensajes y UI completa de la app",
+    "title": "Opciones de interfaz",
+    "description": "Elige el diseño del jugador y personaliza su pantalla de estado.",
     "addComponent": "Agregar componente",
     "surfaceMessage": "Mensaje",
     "surfaceApp": "App",
@@ -341,7 +358,9 @@
     "htmlCode": "HTML",
     "htmlPlaceholder": "<div>Tu HTML aquí</div>\n<script>window.yumina.onChange(function() { ... });</script>",
     "markdownCode": "Markdown",
-    "markdownPlaceholder": "# Encabezado\n\nTu contenido en markdown aquí..."
+    "markdownPlaceholder": "# Encabezado\n\nTu contenido en markdown aquí...",
+    "tabLayouts": "Diseños",
+    "tabAdvanced": "Avanzado"
   },
   "audio": {
     "title": "Audio",
@@ -903,7 +922,7 @@
       "overview": "Vista general",
       "previewControls": "Controles de vista previa",
       "canvas": "Lienzo",
-      "aiAssistant": "Asistente IA",
+      "aiAssistant": "Little Idot",
       "playtest": "Playtest",
       "marketplace": "Mercado"
     },
@@ -980,6 +999,9 @@
         "balanceUnknown": "No se pudo obtener el saldo. Actualiza el estado."
       },
       "resizeInput": "Cambiar tamaño de entrada",
+      "outputLanguage": "Idioma de respuesta",
+      "outputLanguageHint": "Idioma de las respuestas y resúmenes de Little Idot. Se aplica desde la próxima respuesta.",
+      "languageSaveFailed": "No se pudo guardar el idioma de respuesta. Inténtalo de nuevo.",
       "conversations": "Conversaciones",
       "newConversation": "Nueva conversación",
       "clearChat": "Limpiar chat",
@@ -1059,7 +1081,6 @@
           "skipped": "Omitida",
           "binding_failed": "Asignación fallida"
         },
-        "pausedStorageNote": "El almacenamiento está lleno. Libera espacio en la biblioteca para continuar.",
         "pausedUnavailableNote": "La generación no está disponible temporalmente. Las imágenes completadas están guardadas.",
         "pausedGenericNote": "En pausa temporalmente. Las imágenes completadas están guardadas. Intenta continuar más tarde."
       }

@@ -105,11 +105,13 @@
     "storyMemory": "Memoria de la historia",
     "storyMemorySuggested": "sugerido",
     "storyMemoryDesc": "Cuánta conversación pasada se conserva. Lo anterior pasa a un resumen. El lorebook no cuenta aquí.",
-    "overallLimit": "Limite total",
-    "overallUncapped": "Al maximo",
-    "overallLimitDesc": "Total por petición, mundo incluido. Déjalo sin tope.",
-    "overallLimitCapped": "El mundo más grande que lleva tu plan. Lo que sobra se recorta; la memoria de la historia no se toca.",
-    "storyMemoryShort": "Conversación conservada"
+    "overallLimit": "Longitud de contexto del prompt",
+    "overallUncapped": "Usar el máximo",
+    "overallLimitDesc": "Máximo de tokens de entrada por solicitud, incluidas las instrucciones, el mundo, los recuerdos y la conversación reciente. El modelo elegido puede reducir este límite.",
+    "overallLimitCapped": "Máximo de tokens de entrada por solicitud. Tu plan y el modelo elegido pueden reducir este límite.",
+    "storyMemoryShort": "Conversación conservada",
+    "recallMemory": "Longitud de memoria recuperada",
+    "recallMemoryDesc": "Presupuesto de tokens predeterminado para los hechos y el mundo recuperados en el prompt. Es independiente de la conversación reciente. El presupuesto del chat en Menú → Memoria tiene prioridad."
   },
   "aiProvider": {
     "yuminaApi": "API de Yumina",

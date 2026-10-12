@@ -1,12 +1,10 @@
 /** Platform receipt, never a gameplay command. Standalone lines only. */
+import { maskPresentationLiterals } from "./presentation-literals.js";
 export const STATE_RECEIPT_PREFIX = "<yumina-state";
 
 export function stripStateReceipts(text: string): string {
-  let fence = false;
-  return text.split("\n").filter((line) => {
-    if (/^\s*(?:```|~~~)/.test(line)) fence = !fence;
-    return fence || !/^[\t ]*<yumina-state(?:\s|\/|>|$)/.test(line);
-  }).join("\n").trimEnd();
+  const literals = maskPresentationLiterals(text);
+  return literals.restore(literals.text.split("\n").filter(line => !/^[\t ]*<yumina-state(?:\s|\/|>|$)/.test(line)).join("\n").trimEnd());
 }
 
 /** Hold only a possible protocol prefix (not an entire line/response). */

@@ -53,6 +53,11 @@ function fixture(extra: Partial<Variable>[] = []) {
 const codes = (r: ReturnType<typeof parseGuardedResponse>) => r.diagnostics.map((d) => d.code);
 
 describe("State Update Guard acknowledgement", () => {
+  it("hides variable-update wrappers without changing guarded operations or receipt counts", () => {
+    const result = fixture().parse(`The clerk waits.\n<variable-updates>\n[energy: subtract 1]\n</variable-updates>\n${updated(1)}`);
+    expect(result).toMatchObject({ outcome: "valid-updates", cleanText: "The clerk waits.", declaredCount: 1 });
+    expect(result.effects).toEqual([{ variableId: "energy", operation: "subtract", value: 1 }]);
+  });
   it("requires explicit none, rather than interpreting absent commands as success", () => {
     const { parse } = fixture();
     expect(parse(`The stranger waits.\n${none}`)).toMatchObject({ outcome: "explicit-none", effects: [], cleanText: "The stranger waits." });
@@ -308,7 +313,7 @@ describe("structured and compatibility adapters", () => {
     const result = fixture().parse(`Story.\n\`\`\`text\n[health: subtract 1]\n[bag: merge {"missing":1,}]\n\`\`\`\n${updated(1)}`);
     expect(result.outcome).toBe("invalid");
     expect(result.effects).toEqual([]);
-    expect(codes(result)).toContain("malformed_directive");
+    expect(codes(result)).toContain("count_mismatch");
   });
   it.each([
     '{"narrative":"The survivor waits.","stateChanges":[',

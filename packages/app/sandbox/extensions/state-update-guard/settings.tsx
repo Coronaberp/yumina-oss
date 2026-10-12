@@ -109,7 +109,7 @@ export function StateGuardSettingsPanel(props: StateGuardSettingsProps) {
           {settings.model && (officialModels || savedSelection.provider !== "official") ? models.find((m) => m.id === settings.model)?.name ?? settings.model : defaultModelLabels[languageKey(props.language)]}
         </button>}
       </div> : <select aria-labelledby={modelId} value={!officialModels && savedSelection.provider === "official" ? "" : settings.model ?? ""} disabled={busy} onChange={(event) => void save({ model: event.target.value || null })}
-        className="min-h-11 w-full min-w-0 rounded-lg border border-white/30 bg-zinc-950 px-3 py-2 text-white">
+        className="min-h-11 w-full min-w-0 rounded-lg border border-white/30 bg-card px-3 py-2 text-white">
         <option value="">{officialModels ? "Gemini 2.5 Flash Lite" : props.storyModel ?? defaultModelLabels[languageKey(props.language)]}</option>
         {settings.model && (officialModels || savedSelection.provider !== "official") && !models.some((m) => m.id === settings.model) && <option value={settings.model}>{settings.model}</option>}
         {models.filter((model) => officialModels || parseStateGuardModel(model.id).provider !== "official").map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}

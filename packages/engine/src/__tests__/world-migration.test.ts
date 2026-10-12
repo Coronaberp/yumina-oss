@@ -3,7 +3,7 @@ import { migrateWorldDefinition, migrateV18ToV19, migrateV19ToV20, migrateV20ToV
 import type { WorldDefinition } from "../types/index.js";
 
 describe("migrateWorldDefinition", () => {
-  it("normalizes legacy lore and personality roles onto system and character", () => {
+  it("preserves lore identity while normalizing legacy personality onto character", () => {
     // Pre-migration entries intentionally lack section/order — the migration adds them
     const world = {
       id: "world-1",
@@ -60,7 +60,7 @@ describe("migrateWorldDefinition", () => {
     const migrated = migrateWorldDefinition(world as WorldDefinition);
 
     expect(migrated.entries[0]?.role).toBe("character");
-    expect(migrated.entries[1]?.role).toBe("system");
+    expect(migrated.entries[1]?.role).toBe("lore");
   });
 
   it("fills schema-defaulted keywords/enabled on entries that omit them (imported/sparse cards)", () => {

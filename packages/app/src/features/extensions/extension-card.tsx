@@ -24,11 +24,11 @@ export function ExtensionCard({ extension }: { extension: ExtensionSummary }) {
   return (
     <button
       onClick={() => open(extension, "overview")}
-      className="group relative flex min-w-0 flex-col rounded-[20px] border border-white/[0.06] bg-[#1F1D21]/70 p-5 text-left transition-all hover:border-gold/30 hover:bg-[#1F1D21] hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
+      className="group relative flex min-w-0 flex-col rounded-[20px] border border-white/[0.06] bg-card/70 p-5 text-left transition-all hover:border-gold/30 hover:bg-card hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
     >
       <div className="mb-3 flex items-start gap-3">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#C9A25E]/25 bg-gradient-to-br from-[#C9A25E]/15 to-white/5">
-          <ExtensionIcon name={extension.icon} className="h-6 w-6 text-[#C9A25E]" />
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-gold/25 bg-gradient-to-br from-gold/15 to-white/5">
+          <ExtensionIcon name={extension.icon} className="h-6 w-6 text-gold" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
@@ -45,7 +45,7 @@ export function ExtensionCard({ extension }: { extension: ExtensionSummary }) {
       </div>
       {showsMarketplaceStats && (
       <div className="mt-auto flex items-center gap-4 pt-2 text-xs text-white/55">
-        <span className="flex items-center gap-1 text-[#C9A25E]">
+        <span className="flex items-center gap-1 text-gold">
           <Star className="h-3.5 w-3.5 fill-current" />
           {extension.stats.reviewCount > 0 ? extension.stats.averageRating.toFixed(1) : "—"}
         </span>

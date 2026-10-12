@@ -1,3 +1,4 @@
+import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
 import { LLM_CONNECTION_TIMEOUT_MS, LLM_REQUEST_TIMEOUT_MS, LLM_STREAM_INACTIVITY_TIMEOUT_MS } from "./constants.js";
@@ -201,7 +202,7 @@ export class AnthropicProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      yield { type: "error", content: `Anthropic error (${response.status}): ${error}` };
+      yield { type: "error", content: `Anthropic error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 
@@ -472,7 +473,7 @@ export class AnthropicProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text().catch(() => "");
-      yield { type: "error", content: `Anthropic error (${response.status}): ${error}` };
+      yield { type: "error", content: `Anthropic error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 

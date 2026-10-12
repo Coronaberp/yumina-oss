@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { eq, and, desc, asc, inArray } from "drizzle-orm";
-import { diffWorldSchemas } from "@yumina/engine";
+import { diffWorldSchemas, migrateWorldDefinition } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
 import { db } from "../db/index.js";
-import { worlds, studioConversations, worldSnapshots } from "../db/schema.js";
+import { worlds, studioConversations, worldSnapshots, agentRuns } from "../db/schema.js";
 import { summarizeSnapshotTimeline } from "../lib/studio-tools/snapshot-summary.js";
 import { authMiddleware } from "../middleware/auth.js";
 import type { AppEnv } from "../lib/types.js";
@@ -16,7 +16,9 @@ import {
   loadStudioConversationForDisplay,
   updateStudioConversationForWorld,
 } from "../lib/studio-conversations.js";
-import { writeStudioWorldSchema } from "../lib/pending-edit.js";
+import { resolveWorkingSchema, writeStudioWorldSchema } from "../lib/pending-edit.js";
+import { assertOwnedVnImageRef } from "../lib/studio-tools/asset-catalog.js";
+import { getStructuralPreflight } from "../lib/studio-tools/project-intelligence.js";
 
 const studioRoutes = new Hono<AppEnv>();
 
@@ -80,6 +82,31 @@ studioRoutes.post("/download-url", async (c) => {
   const url = resolveImageCdn(body.key) ?? body.key;
 
   return c.json({ data: { url } });
+});
+
+// GET /api/studio/:worldId/preflight — validate the creator's current working copy before play/export.
+studioRoutes.get("/:worldId/preflight", async (c) => {
+  const currentUser = c.get("user");
+  const worldId = c.req.param("worldId");
+  const [row] = await db.select({ schema: worlds.schema, status: worlds.status, isPublished: worlds.isPublished })
+    .from(worlds).where(and(eq(worlds.id, worldId), eq(worlds.creatorId, currentUser.id))).limit(1);
+  if (!row) return c.json({ error: "World not found or not authorized" }, 404);
+
+  const workingSchema = await resolveWorkingSchema(worldId, row.status ?? (row.isPublished ? "published" : "draft"), row.schema as Record<string, unknown>);
+  const world = migrateWorldDefinition(workingSchema as unknown as WorldDefinition);
+  const report = getStructuralPreflight(world);
+  const assetResults = await Promise.all(report.assetRefs.map(async (ref) => {
+    try {
+      await assertOwnedVnImageRef(currentUser.id, worldId, ref);
+      return null;
+    } catch (error) {
+      return { severity: "error" as const, code: "missing-image-asset", entityId: ref, evidence: ref,
+        message: `Image reference ${ref} is unavailable: ${error instanceof Error ? error.message : "ownership could not be verified"}.`,
+        fix: "Use an owned image @asset reference from this card or your asset library." };
+    }
+  }));
+  const blockingErrors = [...report.blockingErrors, ...assetResults.filter((item): item is NonNullable<typeof item> => item !== null)];
+  return c.json({ data: { ...report, clean: blockingErrors.length === 0, blockingErrors, warnings: report.warnings } });
 });
 
 // NOTE: /api/studio/playtest (lightweight LLM proxy for ephemeral playtest) was
@@ -245,6 +272,11 @@ studioRoutes.get("/:worldId/snapshots", async (c) => {
   // Optional filter: ?agentRunId=xxx returns the earliest snapshot for that run (for undo)
   const filterRunId = c.req.query("agentRunId");
   const includeSchema = c.req.query("includeSchema") === "true" && !!filterRunId;
+  if (filterRunId) {
+    const [run] = await db.select({ context: agentRuns.context }).from(agentRuns)
+      .where(and(eq(agentRuns.id, filterRunId), eq(agentRuns.worldId, worldId), eq(agentRuns.userId, currentUser.id))).limit(1);
+    if (run?.context?.studioAppliedChanges !== true) return c.json({ data: [] });
+  }
   const conditions = [eq(worldSnapshots.worldId, worldId)];
   if (filterRunId) conditions.push(eq(worldSnapshots.agentRunId, filterRunId));
 
@@ -258,7 +290,7 @@ studioRoutes.get("/:worldId/snapshots", async (c) => {
     })
     .from(worldSnapshots)
     .where(and(...conditions))
-    .orderBy(filterRunId ? worldSnapshots.createdAt : desc(worldSnapshots.createdAt))
+    .orderBy(filterRunId ? asc(worldSnapshots.createdAt) : desc(worldSnapshots.createdAt), asc(worldSnapshots.id))
     .limit(filterRunId ? 1 : 20);
 
   // Attach per-row change summaries for the dialog timeline (unfiltered list
@@ -307,13 +339,17 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
     );
   if (snapRows.length === 0) return c.json({ error: "Snapshot not found" }, 404);
 
-  // Capture CURRENT live state before rollback (so the rollback is itself
-  // revertible) — but only persist the backup if the rollback actually changes
-  // the live row (see below).
+  // Capture the creator's CURRENT working state before rollback (including a
+  // held published-world draft) so this restore remains reversible.
   const currentWorld = await db
-    .select({ schema: worlds.schema })
+    .select({ schema: worlds.schema, status: worlds.status, isPublished: worlds.isPublished })
     .from(worlds)
     .where(eq(worlds.id, worldId));
+  const workingSchema = currentWorld[0]
+    ? await resolveWorkingSchema(worldId, currentWorld[0].status ?? (currentWorld[0].isPublished ? "published" : "draft"), currentWorld[0].schema as Record<string, unknown>)
+    : null;
+  const targetSchema = snapRows[0]!.schemaData as Record<string, unknown>;
+  const rollbackChangesWorkingCopy = workingSchema !== null && JSON.stringify(workingSchema) !== JSON.stringify(targetSchema);
 
   // Apply the rollback through the SAME material-edit gate as a manual/Studio
   // save: on a PUBLISHED world a material rollback (entries/frontend) is parked
@@ -326,10 +362,9 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
     schema: snapRows[0]!.schemaData as Record<string, unknown>,
   });
 
-  // The "before rollback" backup only makes sense when the live row actually
-  // changed. When the rollback is held for review, live is untouched, so a
-  // backup would just duplicate the current state and clutter the timeline.
-  if (!held && currentWorld.length > 0) {
+  // Replace the prior auto-backup only when the working copy changed. On a
+  // published card, the backup is the held draft rather than the live schema.
+  if (rollbackChangesWorkingCopy && workingSchema) {
     // Keep only the latest auto-backup: prune older ones before inserting the new.
     await db
       .delete(worldSnapshots)
@@ -337,7 +372,7 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
     await db.insert(worldSnapshots).values({
       worldId,
       userId: currentUser.id,
-      schemaData: currentWorld[0]!.schema as Record<string, unknown>,
+      schemaData: workingSchema,
       label: BEFORE_ROLLBACK_LABEL,
     });
   }

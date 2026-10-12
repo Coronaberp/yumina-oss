@@ -108,13 +108,14 @@ export function useImageBatch({ proposal, worldId, conversationId, onUpdate }: {
       const body = action === "confirm" || action === "decline"
         ? { runId: current.runId, approved: action === "confirm", ...edits }
         : action === "retry" ? { itemIds: imageBatchRetryIds(current.batch!), requestId: crypto.randomUUID() } : {};
-      const { response, data } = await scope.request<{ data?: ImageBatchSnapshot; declined?: boolean; code?: string }>(url, {
+      const { response, data } = await scope.request<{ data?: ImageBatchSnapshot; declined?: boolean; acceptanceMessage?: string; code?: string }>(url, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error(data.code ?? `HTTP_${response.status}`);
       if (data.data) accept(data.data);
       else if (data.declined && action === "decline") {
-        const next = { ...current, status: "declined" as const };
+        const next = { ...current, status: "declined" as const,
+          ...(typeof data.acceptanceMessage === "string" ? { acceptanceMessage: data.acceptanceMessage } : {}) };
         latest.current.proposal = next;
         latest.current.onUpdate(next);
       } else throw new Error("REQUEST_FAILED");

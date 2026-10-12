@@ -100,7 +100,7 @@ describe("branchSession", () => {
     }
   });
 
-  it("uses current profile identity despite world and turn snapshots", { timeout: 30_000 }, async () => {
+  it("keeps the parent session identity despite global defaults and turn snapshots", { timeout: 30_000 }, async () => {
     const [selected] = await db.insert(userPersonas).values({
       userId: testUserId, name: "Updated A", backstory: "Updated A story", isActive: false,
     }).returning();
@@ -117,13 +117,14 @@ describe("branchSession", () => {
     assert.equal(result.status, 201);
     const id = result.body.data!.sessionId as string;
     const [saved] = await db.select().from(playSessions).where(eq(playSessions.id, id));
-    assert.equal(saved!.sessionPersona?.persona?.id, active!.id);
-    assert.equal(saved!.personaLocked, false);
-    assert.equal((saved!.state.metadata as Record<string, unknown>).personaName, "Current profile");
-    assert.equal((saved!.state.metadata as Record<string, unknown>).personaBackstory, "Current story");
+    assert.equal(saved!.sessionPersona?.persona?.id, selected!.id);
+    assert.equal(saved!.personaLocked, true);
+    assert.equal((saved!.state.metadata as Record<string, unknown>).personaName, "Stale A");
+    assert.equal((saved!.state.metadata as Record<string, unknown>).personaBackstory, "Old A story");
     assert.equal((saved!.state.variables as Record<string, unknown>).hp, 9);
     const [parent] = await db.select().from(playSessions).where(eq(playSessions.id, testSessionId));
-    assert.deepEqual(parent!.sessionPersona, binding);
+    assert.deepEqual(parent!.sessionPersona?.persona, binding.persona);
+    assert.equal(parent!.sessionPersona?.started, true);
   });
 
   it("inherits an explicit persona lock from the parent session", async () => {
@@ -182,6 +183,18 @@ describe("branchSession", () => {
     const parentMessages = await db.select().from(messages).where(eq(messages.sessionId, testSessionId)).orderBy(asc(messages.createdAt));
     assert.strictEqual(parentMessages.length, 5);
     assert.deepStrictEqual(parentMessages.map((m) => m.content), ["greeting", "hi", "reply 1", "go", "reply 2"]);
+  });
+
+  it("rejects a branch pivot without a historical story snapshot", async () => {
+    await db.update(playSessions).set({ state: {
+      variables: { hp: 8 },
+      story: { status: "playing", ending: { id: "ending-now", name: "Current ending", outcome: "won", mode: "authored", prose: "", guidance: "", selectedTurn: 5, operationId: "ending-now:5" } },
+    } }).where(eq(playSessions.id, testSessionId));
+    await db.update(messages).set({ stateSnapshot: null }).where(eq(messages.sessionId, testSessionId));
+    const result = await branchSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[2]! });
+    assert.equal(result.status, 409);
+    const children = await db.select().from(playSessions).where(eq(playSessions.parentSessionId, testSessionId));
+    assert.equal(children.length, 0);
   });
 
   it("copies session-scoped memories to the new session", async () => {

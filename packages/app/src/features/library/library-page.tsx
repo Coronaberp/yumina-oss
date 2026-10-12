@@ -8,6 +8,7 @@ import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { LibraryGameGrid } from "./library-game-grid";
 import { LibraryMyProjects } from "./library-my-projects";
+import { LibrarySharedExamples } from "./library-shared-examples";
 import { LibraryResourcesTab } from "./library-session-media";
 import { LibraryBundlesTab } from "@/edition/slots";
 import { useEdition } from "@/edition/edition";
@@ -110,7 +111,7 @@ export function LibraryPage() {
 
   const effectiveSelectedItem = selectedItem ?? searchSelectedItem;
   const effectiveActiveTab: LibraryTab = searchSelectedItem
-    ? searchSelectedItem.creatorId === userId
+    ? searchSelectedItem.creatorId === userId || !features.library
       ? "projects"
       : "games"
     : hiddenTabs.has(activeTab)
@@ -164,7 +165,7 @@ export function LibraryPage() {
       return worlds.filter((w) => libraryWorldIds.has(w.id));
     }
     if (effectiveActiveTab === "projects") {
-      return worlds.filter((w) => w.creatorId === userId);
+      return worlds.filter((w) => w.creatorId === userId || w.sharedInLibrary);
     }
     return [];
   }
@@ -188,7 +189,7 @@ export function LibraryPage() {
         allItems={getListForDetailPanel()}
         onSelectItem={handleSelectItem}
         onBack={handleBackFromDetail}
-        isProject={effectiveActiveTab === "projects"}
+        isProject={effectiveActiveTab === "projects" && effectiveSelectedItem.creatorId === userId}
         onRemixComplete={handleRemixComplete}
         userId={userId}
       />
@@ -271,6 +272,8 @@ export function LibraryPage() {
       )}
 
       {effectiveActiveTab === "projects" && (
+        <>
+        <LibrarySharedExamples worlds={worlds} userId={userId} searchQuery={searchQuery} onSelectItem={handleSelectItem} />
         <LibraryMyProjects
           worlds={worlds}
           userId={userId}
@@ -278,6 +281,7 @@ export function LibraryPage() {
           onSelectItem={handleSelectItem}
           loading={loading}
         />
+        </>
       )}
 
       {effectiveActiveTab === "assets" && <LibraryResourcesTab highlightedAssetId={view === "assets" ? assetId : undefined} showBindingHint />}

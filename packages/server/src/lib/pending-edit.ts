@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { planMaterialHold, type PendingEditRow } from "./pending-edit-plan.js";
 export { planMaterialHold, type PendingEditRow, type LiveMaterial } from "./pending-edit-plan.js";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
@@ -337,6 +338,8 @@ export async function writeStudioWorldSchema(args: {
   worldId: string;
   creatorId: string;
   schema: Record<string, unknown>;
+  /** Fail instead of overwriting a creator edit made after this working copy was read. */
+  expectedSchema?: Record<string, unknown>;
   /** Share the caller's transaction when saving a recoverable agent step. */
   database?: LedgerDatabase;
 }): Promise<{ held: boolean; reasons: MaterialChangeReason[] }> {
@@ -344,13 +347,16 @@ export async function writeStudioWorldSchema(args: {
   return (args.database ?? db).transaction(async (tx) => {
     const live = await lockVersionWorld(tx, worldId, creatorId);
     if (!live) return { held: false, reasons: [] };
+    const existing = live.status === "published" ? await getPendingEdit(worldId, tx) : null;
+    if (args.expectedSchema && !isDeepStrictEqual(existing?.schema ?? live.schema, args.expectedSchema)) {
+      throw new Error("STALE_STUDIO_WORLD_SCHEMA");
+    }
     const proposedName = typeof schema.name === "string" && schema.name.trim() ? schema.name : null;
     const nameSet = proposedName !== null && proposedName !== live.name ? { name: proposedName } : {};
     if (live.status !== "published") {
       await tx.update(worlds).set({ schema, ...nameSet, updatedAt: new Date() }).where(eq(worlds.id, worldId));
       return { held: false, reasons: [] };
     }
-    const existing = await getPendingEdit(worldId, tx);
     const plan = planMaterialHold({
       worldId, creatorId, live: { ...live, ageRating: live.ageRating ?? "all" },
       proposedSchema: schema,

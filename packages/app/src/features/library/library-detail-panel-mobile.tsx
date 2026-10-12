@@ -54,6 +54,7 @@ import { ReportDialog } from "@/components/report-dialog";
 import { usePlayWithLanguage } from "@/hooks/use-play-with-language";
 import { escapeHtml } from "@/lib/markdown";
 import { WorldDescription } from "@/components/world-description";
+import { PublishedCardShowcase } from "@/components/card-showcase";
 import { isOwnTranslationSource } from "@/lib/fork-attribution";
 import { VariantDownloadPicker } from "@/components/variant-download-picker";
 import { VariantForkPicker } from "@/components/variant-fork-picker";
@@ -106,6 +107,7 @@ export function LibraryDetailPanelMobile({
   const [sessionExportOpen, setSessionExportOpen] = useState(false);
   const [sharePickerOpen, setSharePickerOpen] = useState(false);
   const [shareSession, setShareSession] = useState<{ id: string; title: string; worldId: string } | null>(null);
+  const [lockPending, setLockPending] = useState(false);
   const [downloadPreparing, setDownloadPreparing] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [heroImageFailed, setHeroImageFailed] = useState(false);
@@ -122,6 +124,7 @@ export function LibraryDetailPanelMobile({
     historyInteraction: "play-click",
   });
   const deleteWorld = useWorldsStore((s) => s.deleteWorld);
+  const setEditingLocked = useWorldsStore((s) => s.setEditingLocked);
   const isFavorited = useFavoritesStore(s => s.isFavorited);
   const toggleFavorite = useFavoritesStore(s => s.toggleFavorite);
   // Subscribe to the `favorites` array (not just the `isFavorited` function
@@ -136,8 +139,14 @@ export function LibraryDetailPanelMobile({
 
   const isOriginalAuthor = !!userId && selectedItem.creatorId === userId && !selectedItem.sourceWorldId;
   const isOrphanedFork = !!selectedItem.sourceWorldId && selectedItem.sourceWorldTakenDown === true;
-  const canEditDirectly = !isOrphanedFork && (isProject || isOriginalAuthor);
-  const canDelete = !!userId && selectedItem.creatorId === userId;
+  const allWorlds = useWorldsStore((s) => s.worlds);
+  const currentWorld = allWorlds.find((world) => world.id === selectedItem.id);
+  const editingLocked = currentWorld?.editingLocked ?? selectedItem.editingLocked === true;
+  const canManageLock = !!userId && selectedItem.creatorId === userId;
+  const canInspectLocked = editingLocked && (selectedItem.sharedInLibrary || canManageLock);
+  const lockedOwner = editingLocked && canManageLock;
+  const canEditDirectly = !lockedOwner && !isOrphanedFork && (isProject || isOriginalAuthor);
+  const canDelete = !lockedOwner && !!userId && selectedItem.creatorId === userId;
   const canViewCreatorAnalytics = true;
 
   const deleteDialog = (
@@ -170,7 +179,6 @@ export function LibraryDetailPanelMobile({
   // server deploy where the new fields aren't shipping yet — still
   // render correctly. /api/worlds returns all published worlds the user
   // can see, so the original is typically in `allWorlds`.
-  const allWorlds = useWorldsStore((s) => s.worlds);
   const sourceWorldEntry = selectedItem.sourceWorldId
     ? allWorlds.find((w) => w.id === selectedItem.sourceWorldId) ?? null
     : null;
@@ -198,6 +206,16 @@ export function LibraryDetailPanelMobile({
         search: { worldId: undefined, view: undefined, assetId: undefined },
         replace: true,
       });
+    }
+  }
+
+  async function handleToggleEditingLock() {
+    if (lockPending || !canManageLock) return;
+    setLockPending(true);
+    try {
+      await setEditingLocked(selectedItem.id, !editingLocked);
+    } finally {
+      setLockPending(false);
     }
   }
 
@@ -395,12 +413,20 @@ export function LibraryDetailPanelMobile({
     setHeroImageFailed(false);
   }, [selectedItem.id]);
 
-  const secondaryActionLabel = canEditDirectly
+  const secondaryActionLabel = canInspectLocked
+    ? "View editor (read-only)"
+    : lockedOwner
+    ? "Unlock card"
+    : canEditDirectly
     ? t("detail.edit")
     : selectedItem.allowEdit !== false
       ? t("dialog.createCopy")
       : t("dialog.authorDoesNotAllowEditing");
-  const SecondaryActionIcon = canEditDirectly
+  const SecondaryActionIcon = canInspectLocked
+    ? Lock
+    : lockedOwner
+    ? Lock
+    : canEditDirectly
     ? Pencil
     : selectedItem.allowEdit !== false
       ? GitFork
@@ -409,10 +435,12 @@ export function LibraryDetailPanelMobile({
   // The blocked case is already spelled out on the control itself — a Lock icon
   // and the label "The author doesn't allow editing" — and the button below is
   // disabled, so there is nothing left for a pill to say.
-  const secondaryActionBlocked = !canEditDirectly && selectedItem.allowEdit === false;
+  const secondaryActionBlocked = canInspectLocked ? false : lockedOwner ? lockPending : !canEditDirectly && selectedItem.allowEdit === false;
 
   function handleSecondaryAction() {
-    if (canEditDirectly) handleEdit();
+    if (canInspectLocked) handleEdit();
+    else if (lockedOwner) void handleToggleEditingLock();
+    else if (canEditDirectly) handleEdit();
     else if (!secondaryActionBlocked) void handleEditClick();
   }
 
@@ -643,6 +671,17 @@ export function LibraryDetailPanelMobile({
                       <span>{t("detail.share")}</span>
                     </DropdownMenuItem>
                     )}
+                    {canManageLock && !lockedOwner && (
+                      <DropdownMenuItem
+                        onSelect={() => void handleToggleEditingLock()}
+                        disabled={lockPending}
+                        aria-label={editingLocked ? "Unlock card" : "Lock card"}
+                        className={mobileDropdownItemClass}
+                      >
+                        {lockPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Lock aria-hidden="true" />}
+                        <span>{editingLocked ? "Unlock card" : "Lock card"}</span>
+                      </DropdownMenuItem>
+                    )}
                     {canDownload && (
                       <DropdownMenuItem
                         onSelect={() => void handleDownloadJSON()}
@@ -783,6 +822,8 @@ export function LibraryDetailPanelMobile({
             ) : (
               <p className="mt-4 text-base leading-[1.6] text-foreground/80">{description}</p>
             )}
+            <PublishedCardShowcase worldId={selectedItem.id} showcase={selectedItem.cardShowcase ?? selectedItem.schema?.cardShowcase}
+              name={selectedItem.name} description={selectedItem.description ?? ""} cover={selectedItem.thumbnailUrl} className="mt-6 overflow-hidden rounded-xl" />
             <div className="mt-6 rounded-xl border border-white/8 bg-white/[0.035] p-4">
               <h3 className="text-sm font-bold text-muted-foreground">{t("detail.developmentStatus")}</h3>
               <div className="mt-2 flex items-center gap-2">
@@ -837,6 +878,8 @@ export function LibraryDetailPanelMobile({
                 )}
               </div>
 
+              <PublishedCardShowcase worldId={selectedItem.id} showcase={selectedItem.cardShowcase ?? selectedItem.schema?.cardShowcase}
+                name={selectedItem.name} description={selectedItem.description ?? ""} cover={selectedItem.thumbnailUrl} className="mt-5 overflow-hidden rounded-xl" />
               {tags && tags.length > 0 && (
                 <div className="mt-6 border-t border-white/8 pt-5">
                   <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">{t("detail.tags")}</h3>

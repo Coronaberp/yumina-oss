@@ -42,11 +42,11 @@ export function StateGuardModal({ open, onClose }: { open: boolean; onClose: () 
   }, [open, Boolean(picker), api.sessionId]);
   if (!open) return null;
   return <><SandboxPlatformOverlay>
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={(event) => {
+    <div data-vn-dialog-backdrop="" className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={(event) => {
       if (event.target === event.currentTarget && !picker) onClose();
     }}>
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label={text[0]} className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950 p-5 text-white shadow-2xl">
-        <div className="mb-4 flex items-center justify-between gap-4"><h2 className="text-lg font-semibold">{text[0]}</h2><button ref={closeButton} onClick={onClose} className="rounded px-3 py-2 hover:bg-white/10 focus-visible:outline focus-visible:outline-2">{text[13]}</button></div>
+      <div data-vn-dialog-surface="plain" ref={dialog} role="dialog" aria-modal="true" aria-label={text[0]} className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-card p-5 text-white shadow-2xl">
+        <div className="mb-4 flex items-center justify-between gap-4"><h2 data-vn-dialog-title="" className="text-lg font-semibold">{text[0]}</h2><button ref={closeButton} onClick={onClose} className="rounded px-3 py-2 hover:bg-white/10 focus-visible:outline focus-visible:outline-2">{text[13]}</button></div>
         <StateGuardHistory key={api.sessionId} records={validationRecords(api.messages)} language={api.language}>
         <StateGuardSettingsPanel key={api.sessionId} sessionId={api.sessionId} language={api.language} readOnly={api.readOnly} storyModel={api.selectedModel}
           load={async () => { const settings = await api.getStateGuardSettings(); setOfficialModels(settings.officialModels !== false); return settings; }} save={(patch) => api.setStateGuardSettings(patch)}

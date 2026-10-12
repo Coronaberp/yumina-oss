@@ -1,6 +1,6 @@
 import { and, asc, count, eq, ilike, inArray } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { assetFolders, userAssets, worldFolderBindings, worlds } from "../../db/schema.js";
+import { assets, assetFolders, userAssets, worldFolderBindings, worlds } from "../../db/schema.js";
 import { z } from "zod";
 const querySchema = z.object({
     scope: z.enum(["bound", "all"]).optional(),
@@ -72,4 +72,18 @@ export function formatAssetCatalog(catalog: Awaited<ReturnType<typeof loadAssetC
         + catalog.folders.filter(f => f.bound).map(f => `  Bound folder ${JSON.stringify(f.path)} id=${f.id}`).join("\n")
         + "\n" + catalog.assets.map(a => `  ${a.ref} ${JSON.stringify(a.filename)} [${a.type}] folder=${JSON.stringify(a.folder)}`).join("\n")
         + '\nUse list_assets to search filenames, browse a folder, or page with offset. scope="all" searches the entire owned library. An absent item in this page is NOT proof it does not exist.\n';
+}
+
+/** VN assignment tools accept images in this owned world or the creator's library. */
+export async function assertOwnedVnImageRef(userId: string, worldId: string, ref: unknown) {
+    if (typeof ref !== "string" || !/^@asset:[A-Za-z0-9_-]+$/.test(ref)) throw new Error("Use an owned image @asset reference.");
+    const id = ref.slice("@asset:".length);
+    const [owned] = await db.select({ id: worlds.id }).from(worlds)
+        .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId)));
+    if (!owned) throw new Error("World not found or not authorized");
+    const [library, worldImages] = await Promise.all([
+        db.select({ id: userAssets.id }).from(userAssets).where(and(eq(userAssets.id, id), eq(userAssets.userId, userId), eq(userAssets.type, "image"))).limit(1),
+        db.select({ id: assets.id }).from(assets).where(and(eq(assets.id, id), eq(assets.worldId, worldId), eq(assets.type, "image"))).limit(1),
+    ]);
+    if (!library.length && !worldImages.length) throw new Error("Image not found in this card or your asset library. Use list_assets or import_danbooru_image first.");
 }

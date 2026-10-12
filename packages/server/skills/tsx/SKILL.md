@@ -11,6 +11,8 @@ Two tools for modifying TSX:
 - **`edit_custom_ui`** — Search-replace for modifications. Sends only the changed section. **PREFER this for edits** — avoids output truncation on large files.
 - **`write_custom_ui`** — Full file replacement. Use for new files or complete rewrites.
 
+For **UI options → Visualizations**, follow the front-ui skill's **Player status visualizations** format. Edit settings in `status-config.ts` as literal JSON. Build bespoke content with `write_status_visualization` / `edit_status_visualization`; these update the tab's Custom layout. Preserve the managed status renderer and navigation.
+
 ## File System
 
 The inventory lists each file in the rootComponent:
@@ -925,3 +927,6 @@ Schema/TSX validation alone does not prove these behaviors.
 | `<Chat />` renders but no messages appear | The app component must be used in a play session. In editor preview, Chat renders as empty (no-op fallback). |
 | Using `<Chat />` inside a `renderBubble` callback | `<Chat>` is the whole chat; you can't recursively put it inside a single bubble. The bubble receives one message's content/role/meta as props — render just that. |
 
+## VN asset assignments
+
+For the Visual Novel interface, use `list_vn_assets` and `edit_vn_assets` for ordinary sprite/background assignments and ordering. These preserve the editable literal maps in `sprites.ts` and `scenes.ts`. Opening backgrounds use stable greeting IDs; Global backgrounds are shared. Read the front-ui core guidance for lookup precedence, Danbooru search/import Settings, and confirmed ComfyUI/OpenAI generation. Use transparent sprites and opaque background scenes; keep provider credentials in Settings.

@@ -60,6 +60,7 @@ interface ApiKeyEntry {
     defaultModel?: string;
   } | null;
   createdAt: string;
+  inherited?: boolean;
 }
 
 const apiBase = import.meta.env?.VITE_API_URL || "";
@@ -210,10 +211,19 @@ function dedupeModels(models: ModelInfo[]): ModelInfo[] {
   });
 }
 
-async function fetchApiKeyEntries(): Promise<ApiKeyEntry[]> {
-  const res = await fetch(`${apiBase}/api/keys`, { credentials: "include" });
+async function fetchApiKeyEntries(source: Extract<ReturnType<typeof resolveSource>, { kind: "private" }>): Promise<ApiKeyEntry[]> {
+  const [res, endpoints] = await Promise.all([
+    fetch(`${apiBase}/api/keys`, { credentials: "include" }),
+    source.activeKeyId ? Promise.resolve(null)
+      : fetch(`${apiBase}/api/keys/content-endpoints`, { credentials: 'include' }).catch(() => null),
+  ]);
   if (!res.ok) throw new Error("Failed to load private model profiles");
   const { data } = await res.json();
+  const selection = endpoints?.ok ? (await endpoints.json().catch(() => null))?.data : null;
+  const inherited = selection?.sfwApiKeyId === null ? selection.defaults?.sfw : null;
+  if (inherited && typeof inherited.provider === 'string' && typeof inherited.model === 'string' && inherited.model.trim()) {
+    return [{ id: 'admin-sfw-default', provider: inherited.provider, metadata: { defaultModel: inherited.model }, createdAt: '', inherited: true }];
+  }
   return Array.isArray(data) ? data : [];
 }
 
@@ -247,6 +257,7 @@ async function fetchLivePrivateModels(
   const targets = active ? [active] : entries;
   const models = await Promise.all(targets.map(async (target) => {
     const fallback = savedPrivateModels({ kind: "private", activeKeyId: target.id }, [target]);
+    if (target.inherited) return fallback;
     try {
       const res = await fetch(`${apiBase}/api/keys/${target.id}/list-models?refresh=auto`, {
         method: "POST",
@@ -274,7 +285,7 @@ export async function fetchPrivateModelCatalog(): Promise<ModelInfo[]> {
   const preferences = useUserProfileStore.getState().profile?.preferences;
   const activeKeyId = typeof preferences?.activeApiKeyId === "string" ? preferences.activeApiKeyId : null;
   const source = { kind: "private" as const, activeKeyId };
-  const entries = await fetchApiKeyEntries();
+  const entries = await fetchApiKeyEntries(source);
   const cached = savedPrivateModels(source, entries);
   return cached.length ? cached : fetchLivePrivateModels(source, entries);
 }
@@ -316,7 +327,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
         // Mirror the AI Configuration panel first. That panel displays saved
         // metadata.models, so Studio should not go blank just because an
         // upstream /models endpoint is temporarily unavailable.
-        const entries = await fetchApiKeyEntries();
+        const entries = await fetchApiKeyEntries(source);
         if (!isCurrent()) return;
         const cached = savedPrivateModels(source, entries);
         if (cached.length > 0) {

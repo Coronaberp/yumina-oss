@@ -1,18 +1,22 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { assets, worlds, userAssets } from "../db/schema.js";
+import { assets, worlds, userAssets, worldPendingEdits } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
 import {
   isS3Configured,
   generateUploadUrl,
   deleteObject,
+  storageKind,
+  getObjectBuffer,
+  putObject,
+  headObject,
 } from "../lib/s3.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import type { AppEnv } from "../lib/types.js";
 import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { applyWorldCover } from "../lib/pending-edit.js";
-import { resizeUploadedImageInBackground } from "../lib/image-resize.js";
+import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
 
 const assetRoutes = new Hono<AppEnv>();
 const ASSET_TYPES = ["image", "video", "audio", "font", "txt", "other"] as const;
@@ -158,27 +162,36 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
   }
 
   const mimeType = normalizeAssetMimeType(body.filename, body.mimeType);
+  if (body.type === "image") {
+    const [existing] = await db.select().from(assets).where(and(eq(assets.worldId, worldId), inArray(assets.url, [body.key, losslessWebpKey(body.key)]))).limit(1);
+    if (existing) {
+      const url = storageKind() === "local" ? `/cdn/${existing.id}` : resolveImageCdn(existing.url) ?? "";
+      return c.json({ data: { ...existing, url } }, 201);
+    }
+  }
+  const stored = body.type === "image"
+    ? await optimizeUploadedImage({ key: body.key, filename: body.filename, mimeType, sizeBytes: (await headObject(body.key)).contentLength }, { read: getObjectBuffer, write: putObject })
+    : { key: body.key, filename: body.filename, mimeType, sizeBytes: body.sizeBytes };
 
   const [result] = await db
     .insert(assets)
     .values({
       worldId,
       type: body.type,
-      filename: body.filename,
-      url: body.key, // Store S3 key, not presigned URL
-      sizeBytes: body.sizeBytes,
-      mimeType,
+      filename: stored.filename,
+      url: stored.key, // Store object key, not presigned URL
+      sizeBytes: stored.sizeBytes,
+      mimeType: stored.mimeType,
     })
     .returning();
 
-  // Cap oversized in-game image art in place — new uploads only, same URL +
-  // format, transparency preserved. Fire-and-forget: never blocks the response.
-  if (body.type === "image") {
-    resizeUploadedImageInBackground(result!.url, mimeType);
-  }
+  // Only discard the staging image after the converted object is registered.
+  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
 
   // Return with CDN URL
-  const downloadUrl = resolveImageCdn(body.key) ?? "";
+  const downloadUrl = storageKind() === "local"
+    ? `/cdn/${result!.id}`
+    : resolveImageCdn(stored.key) ?? "";
 
   return c.json(
     {
@@ -215,7 +228,7 @@ assetRoutes.get("/worlds/:worldId/assets", async (c) => {
   // Resolve URLs to CDN paths
   const withUrls = rows.map((row) => ({
     ...row,
-    url: resolveImageCdn(row.url) ?? row.url,
+    url: storageKind() === "local" ? `/cdn/${row.id}` : resolveImageCdn(row.url) ?? row.url,
   }));
 
   return c.json({ data: withUrls });
@@ -329,12 +342,24 @@ assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
     return c.json({ error: "Invalid thumbnail key" }, 400);
   }
 
+  if (!(await verifyWorldOwnership(worldId, currentUser.id))) {
+    return c.json({ error: "World not found or not authorized" }, 404);
+  }
+  const keys = [body.key, losslessWebpKey(body.key)];
+  const [pendingCover] = await db.select({ thumbnailUrl: worldPendingEdits.thumbnailUrl }).from(worldPendingEdits).where(and(eq(worldPendingEdits.worldId, worldId), inArray(worldPendingEdits.thumbnailUrl, keys))).limit(1);
+  if (pendingCover?.thumbnailUrl) return c.json({ data: { thumbnailUrl: resolveImageCdn(pendingCover.thumbnailUrl) ?? pendingCover.thumbnailUrl, heldForReview: true } });
+  const [currentCover] = await db.select({ thumbnailUrl: worlds.thumbnailUrl }).from(worlds).where(and(eq(worlds.id, worldId), inArray(worlds.thumbnailUrl, keys))).limit(1);
+  if (currentCover?.thumbnailUrl) return c.json({ data: { thumbnailUrl: resolveImageCdn(currentCover.thumbnailUrl) ?? currentCover.thumbnailUrl, heldForReview: false } });
+  const stored = await optimizeUploadedImage({ key: body.key, filename: body.key.split("/").pop()!, mimeType: normalizeAssetMimeType(body.key), sizeBytes: 0 }, { read: getObjectBuffer, write: putObject });
+
   // For a published world the cover is a material change: hold it for re-review
   // instead of overwriting the live cover.
-  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: body.key });
+  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: stored.key });
   if (!applied.ok) {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);
   }
+
+  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
 
   return c.json({ data: { thumbnailUrl: applied.thumbnailUrl, heldForReview: applied.held } });
 });

@@ -16,7 +16,6 @@ export interface PlanConfig {
    *  (recovery_cap_plan) — keep in sync. */
   monthlyRecoveryCap: number;
   memoryCap: number | null;   // null = unlimited (model's native limit)
-  storageCap: number;          // bytes — max asset storage per user
   unlimited: boolean;          // skip credit deduction entirely
   rateLimit: number;           // messages per minute
   maxConcurrent: number;
@@ -77,18 +76,15 @@ export const STRIPE_PLAN_TO_PRICE: Partial<Record<PlanId, string>> = {
   ultra: "price_1TUwUSAqpxe2iPkl2G5DtBZ7",
 };
 
-const MB = 1024 * 1024;
-const GB = 1024 * MB;
-
 // ─── Launch Promotion: 2× Credits ───────────────────────────────────
 // All plans get 2× monthly credits during launch period.
 // Original (post-promo) values: 1000 / 2000 / 7350 / 20000 / 41700.
 // To fully end the promotion, set monthlyCredits to those.
 export const PLANS: Record<PlanId, PlanConfig> = {
-  free:     { id: "free",     displayName: "Free",      monthlyCredits: 2000,    monthlyRecoveryCap: 1000,  memoryCap: 64_000,  storageCap: 100 * MB,  unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 0,    dailyRecoveryAmount: 200  },
-  go:       { id: "go",       displayName: "Gold",      monthlyCredits: 4000,    monthlyRecoveryCap: 2000,  memoryCap: 96_000,  storageCap: 500 * MB,  unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 500,  dailyRecoveryAmount: 500  },
-  plus:     { id: "plus",     displayName: "Platinum",  monthlyCredits: 14700,   monthlyRecoveryCap: 7350,  memoryCap: null,    storageCap: 2 * GB,    unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 1800, dailyRecoveryAmount: 1600 },
-  pro:      { id: "pro",      displayName: "Diamond",   monthlyCredits: 40000,   monthlyRecoveryCap: 20000, memoryCap: null,    storageCap: 5 * GB,    unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 4800, dailyRecoveryAmount: 4000 },
-  ultra:    { id: "ultra",    displayName: "Ascendant", monthlyCredits: 83400,   monthlyRecoveryCap: 41700, memoryCap: null,    storageCap: 20 * GB,   unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 9800, dailyRecoveryAmount: 8000 },
-  internal: { id: "internal", displayName: "Creator",   monthlyCredits: 1_000_000, monthlyRecoveryCap: 0, memoryCap: null,  storageCap: 50 * GB,   unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 0,    dailyRecoveryAmount: 0    },
+  free:     { id: "free",     displayName: "Free",      monthlyCredits: 2000,    monthlyRecoveryCap: 1000,  memoryCap: 64_000,  unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 0,    dailyRecoveryAmount: 200  },
+  go:       { id: "go",       displayName: "Gold",      monthlyCredits: 4000,    monthlyRecoveryCap: 2000,  memoryCap: 96_000,  unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 500,  dailyRecoveryAmount: 500  },
+  plus:     { id: "plus",     displayName: "Platinum",  monthlyCredits: 14700,   monthlyRecoveryCap: 7350,  memoryCap: null,    unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 1800, dailyRecoveryAmount: 1600 },
+  pro:      { id: "pro",      displayName: "Diamond",   monthlyCredits: 40000,   monthlyRecoveryCap: 20000, memoryCap: null,    unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 4800,  dailyRecoveryAmount: 4000 },
+  ultra:    { id: "ultra",    displayName: "Ascendant", monthlyCredits: 83400,   monthlyRecoveryCap: 41700, memoryCap: null,    unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 9800,  dailyRecoveryAmount: 8000 },
+  internal: { id: "internal", displayName: "Creator",   monthlyCredits: 1_000_000, monthlyRecoveryCap: 0, memoryCap: null,  unlimited: false, rateLimit: 20, maxConcurrent: 10, priceCents: 0,    dailyRecoveryAmount: 0    },
 };

@@ -1,6 +1,5 @@
 /**
- * Collect image `File`s from a paste or drop, checking BOTH places a browser may
- * expose them:
+ * Collect image `File`s from a paste or drop, preferring the browser's FileList:
  *
  *  - `data.files` (a FileList) — the reliable path for an image **file copied
  *    from the OS file manager** (Windows Explorer / macOS Finder). There the
@@ -12,7 +11,9 @@
  *
  * `getAsFile()` is called synchronously here; callers must invoke this before any
  * `await`, since the underlying clipboard/drag data is neutered afterwards.
- * The two sources usually expose the same payload, so results are de-duped.
+ * Use items only when the FileList has no images. Browsers can expose the same
+ * bitmap in both places as separate File objects with different timestamps;
+ * merging the sources would attach that image twice.
  *
  * Works for both `ClipboardEvent.clipboardData` and `DragEvent.dataTransfer`
  * (both are `DataTransfer`).
@@ -20,17 +21,11 @@
 export function getImageFilesFromTransfer(data: DataTransfer | null | undefined): File[] {
   if (!data) return [];
 
-  const fromItems = Array.from(data.items ?? [])
-    .filter((item) => item.kind === "file")
-    .map((item) => item.getAsFile());
+  const files = Array.from(data.files ?? []).filter((file) => file.type.startsWith("image/"));
+  if (files.length) return files;
 
-  const seen = new Set<string>();
-  return [...Array.from(data.files ?? []), ...fromItems]
-    .filter((file): file is File => file != null && file.type.startsWith("image/"))
-    .filter((file) => {
-      const key = `${file.name}:${file.size}:${file.lastModified}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return Array.from(data.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file != null && file.type.startsWith("image/"));
 }

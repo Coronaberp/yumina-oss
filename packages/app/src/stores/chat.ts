@@ -1,3 +1,6 @@
+import { findReplyRecoveryAnchor, hasReplyAfterAnchor } from "../features/chat/reply-recovery";
+import { pendingChoicesFromMessages } from "../features/chat/pending-choices";
+import { parseGenerateChoicesResponse } from "../lib/choices-response";
 import { create } from "zustand";
 import { feedback } from "@/lib/feedback";
 import { toPillText } from "@/lib/feedback-policy";
@@ -20,7 +23,10 @@ import { useCreditStore, syncCreditsFromMessageResponse, handleStreamCreditError
 import { useUserProfileStore } from "./user-profile";
 import { fallbackDecision, fallbackRecord, parseFallbackError, type ModelFallbackRetry } from "../lib/model-fallback";
 import { DEFAULT_MODEL_FALLBACK_POLICY, type ModelFallbackNotice, type ModelFallbackRecord } from "@yumina/shared";
-import type { WorldDefinition, Effect } from "@yumina/engine";
+import type { WorldDefinition, Effect, StoryProgress } from "@yumina/engine";
+
+type StoryState = { story?: StoryProgress };
+type EndingResponse = { data?: { message?: Message; state?: Record<string, unknown>; creditCost?: number }; error?: string };
 
 // ── Streaming Update Batcher ──
 //
@@ -81,6 +87,10 @@ function cancelStreamingBatch(): void {
 
 // Mix mode retry: tracks which models have been attempted during a single send cycle
 let _mixAttempted: Set<string> = new Set();
+// Completion is deliberately turn-triggered, never load-triggered. This set
+// prevents React/onDone duplication from issuing a second paid request.
+const endingAutoAttempts = new Set<string>();
+let endingRequestInFlight = false;
 const MIX_NO_RETRY_CODES = new Set([
   "NO_CREDITS",
   "SUSPENDED",
@@ -104,6 +114,7 @@ export interface Attachment {
 }
 
 export interface Message {
+  contentFlags?: import("@yumina/shared").ContentFlagAudit | null;
   stateValidation?: import("@yumina/shared").StateValidationAudit | null;
   id: string;
   sessionId: string;
@@ -120,7 +131,10 @@ export interface Message {
      *  parsing eats narrative or directives. Optional for backwards-compat
      *  with messages persisted before 2026-05. */
     rawContent?: string;
+    choices?: string[];
+    reasoningContent?: string;
     stateValidation?: import("@yumina/shared").StateValidationAudit;
+    contentFlags?: import("@yumina/shared").ContentFlagAudit;
     stateChanges?: Record<string, unknown>;
     stateSnapshot?: Record<string, unknown>;
     createdAt: string;
@@ -250,8 +264,11 @@ export interface Checkpoint {
 }
 
 export interface SessionData {
+  personaSelectable?: boolean;
   sessionPersona?: {
     selectionVersion?: string;
+    selection?: import("@yumina/shared").PersonaSelection;
+    started?: boolean;
     persona: {
       id?: string;
       name: string;
@@ -320,6 +337,7 @@ interface ChatState {
   isStreaming: boolean;
   isContinuing: boolean;
   streamingContent: string;
+  streamingTokenCount: number | null;
   streamingReasoning: string;
   streamingSegments: Record<string, unknown>[];
   streamingBg: string | null;
@@ -334,13 +352,17 @@ interface ChatState {
 
   // Error state
   error: string | null;
+  storyProgress: StoryProgress;
+  isCompletingEnding: boolean;
+  endingError: string | null;
   /** Bumped on every terminally-failed send (including "transient" toast-only
    *  failures that deliberately do NOT set `error`). The sandbox composer
    *  watches this to restore the swallowed text — a toast-class rejection
    *  (NO_CREDITS, MODEL_NOT_ALLOWED, …) must never eat a typed message. */
   sendFailureNonce: number;
   modelFallback: ModelFallbackNotice | null;
-  resolveModelFallback: (noticeId: string, model: string, remember?: boolean) => void;
+  resolveModelFallback: (noticeId: string, model: string, remember?: boolean, useBackup?: boolean) => void;
+
   cancelModelFallback: (noticeId: string) => void;
 
   // Actions
@@ -351,8 +373,12 @@ interface ChatState {
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   removeMessage: (id: string) => void;
-  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry) => void;
+  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry, retryMessageId?: string) => void;
+  retryPendingReply: (messageId: string) => void;
   regenerateMessage: (messageId: string, model?: string, retry?: ModelFallbackRetry) => void;
+  generateChoices: (messageId: string) => Promise<string[]>;
+  completeEnding: () => Promise<void>;
+  retryEnding: () => Promise<void>;
   stopGeneration: () => void;
   setPendingChoices: (choices: string[]) => void;
   clearPendingChoices: () => void;
@@ -368,8 +394,8 @@ interface ChatState {
 
   // Checkpoints
   checkpoints: Checkpoint[];
-  saveCheckpoint: () => Promise<void>;
-  loadCheckpoints: () => Promise<void>;
+  saveCheckpoint: (name?: string) => Promise<void>;
+  loadCheckpoints: () => Promise<Checkpoint[]>;
   restoreCheckpoint: (checkpointId: string) => Promise<void>;
   deleteCheckpoint: (checkpointId: string) => Promise<void>;
 
@@ -397,6 +423,14 @@ type ChatStateSetter = (
   partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 ) => void;
 
+function storyStatus(state: ChatState): StoryProgress["status"] {
+  return state.storyProgress?.status ?? "playing";
+}
+
+function storyGenerationBlocked(state: ChatState): boolean {
+  return state.isCompletingEnding || storyStatus(state) !== "playing";
+}
+
 /**
  * A 401 means the browser no longer has a usable Yumina session. Never show
  * the server's raw "Unauthorized" payload as a model/chat error: clean up the
@@ -411,6 +445,7 @@ function finishChatAuthLoss(
   setState((state) => ({
     isStreaming: false,
     streamingContent: "",
+    streamingTokenCount: null,
     streamingReasoning: "",
     streamingSegments: [],
     streamingBg: null,
@@ -428,6 +463,7 @@ function finishChatAuthLoss(
 }
 
 const apiBase = import.meta.env.VITE_API_URL || "";
+let choicesRequestInFlight = false;
 
 // Module-level abort controller for loadSession — prevents stale session data
 // when the user rapidly switches between sessions (#31).
@@ -485,6 +521,8 @@ async function recoverFromConnectionLoss(opts: {
   sessionId: string;
   sentContent: string | null;
   lastMessageIdAtSend: string | null;
+  /** A retry adopts this exact persisted user row, including after a reload. */
+  retryMessageId?: string;
   getState: () => ChatState;
   setState: (
     partial: Partial<ChatState> | ((s: ChatState) => Partial<ChatState>)
@@ -510,6 +548,7 @@ async function recoverFromConnectionLoss(opts: {
       setState({
         isStreaming: false,
         streamingContent: "",
+        streamingTokenCount: null,
         streamingReasoning: "",
         streamingSegments: [],
         streamingBg: null,
@@ -538,22 +577,17 @@ async function recoverFromConnectionLoss(opts: {
   /** Index of the message the reply must come AFTER (-1 = any tail works). */
   const findAnchor = (list: Message[]): number => {
     if (sentContent === null) return -1;
-    const prevIdx = lastMessageIdAtSend
-      ? list.findIndex((m) => m.id === lastMessageIdAtSend)
-      : -1;
-    for (let i = list.length - 1; i > prevIdx; i--) {
-      const m = list[i];
-      if (m && m.role === "user") {
-        return m.content === sentContent ? i : -1;
-      }
-    }
-    return -1;
+    return findReplyRecoveryAnchor(list, {
+      sentContent,
+      lastMessageIdAtSend,
+      retryMessageId: opts.retryMessageId,
+    });
   };
 
   const replyLanded = (list: Message[], anchorIdx: number): boolean => {
     const last = list[list.length - 1];
     if (!last || last.role !== "assistant") return false;
-    if (sentContent !== null) return anchorIdx !== -1 && list.length - 1 > anchorIdx;
+    if (sentContent !== null) return hasReplyAfterAnchor(list, anchorIdx);
     return last.id !== lastMessageIdAtSend;
   };
 
@@ -564,8 +598,10 @@ async function recoverFromConnectionLoss(opts: {
     _isSending = false;
     setState({
       messages: list,
+      pendingChoices: pendingChoicesFromMessages(list),
       isStreaming: false,
       streamingContent: "",
+      streamingTokenCount: null,
       streamingReasoning: "",
       streamingSegments: [],
       streamingBg: null,
@@ -580,7 +616,7 @@ async function recoverFromConnectionLoss(opts: {
   // seconds into the request (auth + session load first), so wait before
   // probing — an instant probe could race ahead of the insert and misread
   // a landed request as "never landed".
-  if (sentContent !== null) {
+  if (sentContent !== null && !opts.retryMessageId) {
     await new Promise((r) => window.setTimeout(r, 10_000));
     if (cancelled()) return;
   }
@@ -594,7 +630,7 @@ async function recoverFromConnectionLoss(opts: {
     const anchorIdx = findAnchor(first);
     if (anchorIdx === -1) {
       // Server reachable, no user row → the request never landed.
-      (opts.onNeverLanded ?? giveUp)();
+      (opts.retryMessageId ? giveUp : opts.onNeverLanded ?? giveUp)();
       return;
     }
     if (replyLanded(first, anchorIdx)) {
@@ -669,19 +705,20 @@ function pauseForModelFallback(
   const state = useChatStore.getState();
   if (state.session?.id !== sessionId) return true;
   const policy = useConfigStore.getState().modelFallback;
-  const decision = fallbackDecision(policy, failure.provider, activePrivateKey(), failure.requestedModel, !!retry?.attemptedFallback);
+  const failedKey = failure.backupMatchesProfile === undefined ? activePrivateKey() : failure.backupMatchesProfile ? policy?.privateKeyId ?? null : null;
+  const decision = fallbackDecision(policy, failure.provider, failedKey, failure.requestedModel, !!retry?.attemptedFallback);
   const notice: ModelFallbackNotice = {
     id: crypto.randomUUID(), sessionId,
     userMessageId: failure.userMessageId ?? retry?.userMessageId,
     requestedModel: retry?.requestedModel ?? failure.requestedModel,
     failedModel: failure.requestedModel,
-    suggestedModel: decision.suggestedModel,
+    suggestedModel: decision.suggestedModel, suggestedKeyId: decision.suggestedKeyId, backupMatchesProfile: failure.backupMatchesProfile,
     reason: failure.reason, provider: failure.provider, status: decision.status,
   };
   cancelStreamingBatch();
   _isSending = false;
   useChatStore.setState((s) => ({
-    isStreaming: false, streamingContent: "", streamingReasoning: "",
+    isStreaming: false, streamingContent: "", streamingTokenCount: null, streamingReasoning: "",
     streamingSegments: [], streamingBg: null, streamStartTime: null,
     abortController: null, error: null, modelFallback: notice,
     messages: s.messages.map((m) => m.id === tempUserMessageId && failure.userMessageId
@@ -699,12 +736,12 @@ function pauseForModelFallback(
   };
   if (decision.autoRetry) {
     // No timer-based loop: consume this turn's one automatic attempt once.
-    queueMicrotask(() => resumeModelFallback(notice.id, decision.suggestedModel, false, true));
+    queueMicrotask(() => resumeModelFallback(notice.id, decision.suggestedModel, false, true, true));
   }
   return true;
 }
 
-function resumeModelFallback(id: string, model: string, remember: boolean, automatic = false): void {
+function resumeModelFallback(id: string, model: string, remember: boolean, automatic = false, useBackup?: boolean): void {
   const state = useChatStore.getState();
   const notice = state.modelFallback;
   const replay = fallbackReplay;
@@ -719,14 +756,16 @@ function resumeModelFallback(id: string, model: string, remember: boolean, autom
     return;
   }
   fallbackReplay = null; // Consumed before dispatch: double clicks cannot send twice.
-  const isFallback = model !== notice.requestedModel;
-  if (remember && isFallback) {
+  const apiKeyId = (useBackup ?? model !== notice.requestedModel) && model === notice.suggestedModel ? notice.suggestedKeyId ?? undefined : undefined;
+  const providerChanged = !!apiKeyId && !(notice.backupMatchesProfile ?? apiKeyId === replay.keyId);
+  const isFallback = model !== notice.requestedModel || providerChanged;
+  if (remember && isFallback && (notice.provider === "official" || apiKeyId)) {
     const config = useConfigStore.getState();
     const policy = config.modelFallback ?? DEFAULT_MODEL_FALLBACK_POLICY;
     config.setConfig("modelFallback", {
       ...policy, mode: "auto",
       ...(notice.provider === "official" ? { officialModel: model }
-        : { privateModel: model, privateKeyId: activePrivateKey() }),
+        : { privateModel: model, privateKeyId: apiKeyId ?? activePrivateKey() }),
     });
   }
   useChatStore.setState({ modelFallback: isFallback
@@ -735,7 +774,7 @@ function resumeModelFallback(id: string, model: string, remember: boolean, autom
   replay.run(model, {
     requestedModel: notice.requestedModel, reason: notice.reason,
     automatic, attemptedFallback: replay.attemptedFallback || isFallback,
-    userMessageId: notice.userMessageId,
+    userMessageId: notice.userMessageId, apiKeyId, providerChanged,
   });
 }
 
@@ -750,6 +789,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   isContinuing: false,
   streamingContent: "",
+  streamingTokenCount: null,
   streamingReasoning: "",
   streamingSegments: [],
   streamingBg: null,
@@ -759,9 +799,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingSilentChanges: [],
   checkpoints: [],
   error: null,
+  storyProgress: { status: "playing" },
+  isCompletingEnding: false,
+  endingError: null,
   sendFailureNonce: 0,
   modelFallback: null,
-  resolveModelFallback: (id, model, remember = false) => resumeModelFallback(id, model, remember),
+  resolveModelFallback: (id, model, remember = false, useBackup) => resumeModelFallback(id, model, remember, false, useBackup),
   cancelModelFallback: (id) => {
     if (get().modelFallback?.id !== id || get().isStreaming) return;
     fallbackReplay = null;
@@ -770,7 +813,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSession: (session) => {
     if (session?.id !== get().session?.id) fallbackReplay = null;
-    set({ session, ...(session?.id !== get().session?.id && { modelFallback: null }), ...(session === null && { readOnly: false }) });
+    set({ session, ...(session?.id !== get().session?.id && {
+      modelFallback: null,
+      storyProgress: ((session?.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
+      isCompletingEnding: false,
+      endingError: null,
+    }), ...(session === null && { readOnly: false }) });
   },
   clearError: () => set({ error: null }),
   setMessages: (messages) => set({ messages }),
@@ -780,16 +828,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({ messages: [...s.messages, message] })),
 
   updateMessage: (id, updates) =>
-    set((s) => ({
-      messages: s.messages.map((m) =>
-        m.id === id ? { ...m, ...updates } : m
-      ),
-    })),
+    set((s) => {
+      const messages = s.messages.map(m => m.id === id ? {
+        ...m, ...updates,
+        ...(!Object.hasOwn(updates, "contentFlags") && ((updates.content !== undefined && updates.content !== m.content) || updates.swipes !== undefined || updates.activeSwipeIndex !== undefined) ? { contentFlags: null } : {}),
+      } : m);
+      return { messages, ...(updates.activeSwipeIndex !== undefined || updates.swipes !== undefined ? { pendingChoices: pendingChoicesFromMessages(messages) } : {}) };
+    }),
 
   removeMessage: (id) =>
-    set((s) => ({
-      messages: s.messages.filter((m) => m.id !== id),
-    })),
+    set((s) => {
+      const messages = s.messages.filter((m) => m.id !== id);
+      const removedPendingChoice = s.messages.at(-1)?.id === id && s.messages.at(-1)?.role === "user";
+      return { messages, pendingChoices: pendingChoicesFromMessages(messages), ...(removedPendingChoice ? { error: null } : {}) };
+    }),
 
   loadSession: async (sessionId: string) => {
     if (get().session?.id !== sessionId) { fallbackReplay = null; set({ modelFallback: null }); }
@@ -838,14 +890,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       >;
 
       const loadedMessages: Message[] = data.messages ?? [];
+      const loadedStory = ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress;
       const messageTotal: number = typeof data.messageTotal === "number" ? data.messageTotal : loadedMessages.length;
       set({
         session: data,
         messages: loadedMessages,
+        pendingChoices: pendingChoicesFromMessages(loadedMessages),
         messageTotal,
         hasEarlierMessages: messageTotal > loadedMessages.length,
         isLoadingEarlier: false,
         gameState,
+        storyProgress: loadedStory,
+        isCompletingEnding: false,
+        endingError: null,
         readOnly: Boolean(data.readOnly),
         error: null,
       });
@@ -945,6 +1002,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // pages the user had loaded (they can re-load via the earlier button).
         set({
           messages: data as Message[],
+          pendingChoices: pendingChoicesFromMessages(data as Message[]),
           ...(typeof meta?.hasMore === "boolean" ? { hasEarlierMessages: meta.hasMore } : {}),
         });
         return true;
@@ -974,7 +1032,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const res = await fetch(
         `${apiBase}/api/sessions/${session.id}/messages?${params.toString()}`,
         { credentials: "include" },
-      );
+);
+
       if (!res.ok) return false;
       const { data, meta } = await res.json();
       if (!Array.isArray(data)) return false;
@@ -995,9 +1054,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry) => {
+  retryPendingReply: (messageId: string) => {
+    const state = get(), latest = state.messages.at(-1);
+    if (storyGenerationBlocked(state)) throw new Error("The story ending is being completed.");
+    if (!state.session || state.readOnly || state.isStreaming || _isSending || choicesRequestInFlight) throw new Error("Wait for the current operation to finish.");
+    if (latest?.id !== messageId || latest.role !== "user") throw new Error("This choice has already changed. Refresh the conversation.");
+    if (state.modelFallback) throw new Error("Choose an available model before retrying.");
+    get().sendMessage(latest.content, undefined, undefined, undefined, messageId);
+  },
+
+  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry, existingUserMessageId?: string) => {
     const { session, isStreaming } = get();
-    if (!session || isStreaming || _isSending || get().readOnly || (get().modelFallback && !retry)) {
+    if (!session || isStreaming || _isSending || choicesRequestInFlight || get().readOnly || storyGenerationBlocked(get()) || (get().modelFallback && !retry)) {
       console.warn("[sendMessage] blocked:", { session: !!session, isStreaming, _isSending });
       return;
     }
@@ -1022,10 +1090,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // probe proves the request never reached the server.
     let neverLandedReattempted = false;
     // Add user message immediately so it appears in chat before AI responds
-    const tempUserMsgId = retry?.userMessageId ?? `__pending_${Date.now()}`;
+    const retryMessageId = retry?.userMessageId ?? existingUserMessageId;
+    const tempUserMsgId = retryMessageId ?? `__pending_${Date.now()}`;
     set((s) => ({
       isStreaming: true,
       streamingContent: "",
+      streamingTokenCount: null,
       streamingReasoning: "",
       streamingSegments: [],
       streamingBg: null,
@@ -1033,7 +1103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingChoices: [],
       pendingSilentChanges: [],
       error: null,
-      messages: retry?.userMessageId ? s.messages : [
+      messages: retryMessageId ? s.messages : [
         ...s.messages,
         {
           id: tempUserMsgId,
@@ -1069,7 +1139,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           content,
           model: modelId,
           modelFallback: fallbackRecord(retry, modelId),
-          ...(retry?.userMessageId && { retryMessageId: retry.userMessageId }),
+          ...(retry?.apiKeyId ? { fallbackApiKeyId: retry.apiKeyId } : {}),
+          ...(retryMessageId && { retryMessageId }),
           overrides: {
             ...overrides,
             ...kimiRepetitionOverride(modelId, config.repetitionPenalty),
@@ -1091,6 +1162,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
           onReasoning: (text) => {
             enqueueStreamingReasoning(text);
+          },
+          onProgress: ({ tokens }) => {
+            set(s => ({ streamingTokenCount: Math.max(s.streamingTokenCount ?? 0, tokens) }));
           },
           onSegment: (data) => {
             set((s) => ({
@@ -1116,6 +1190,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               id: (data.messageId as string) ?? crypto.randomUUID(),
               sessionId: session.id,
               role: "assistant",
+              status: "complete",
               content: doneContent,
               stateValidation: data.stateValidation as Message["stateValidation"],
               stateChanges: data.stateChanges as Record<string, unknown> | null,
@@ -1135,6 +1210,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 {
                   content: doneContent,
                   rawContent: (data.rawContent as string) || undefined,
+                  choices: (data.choices as string[]) ?? [],
+                  reasoningContent: (data.reasoningContent as string) || undefined,
                   stateChanges:
                     (data.stateChanges as Record<string, unknown>) ?? undefined,
                   createdAt: new Date().toISOString(),
@@ -1153,12 +1230,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
               (data.state as Record<string, unknown>)
                 ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>
             ) ?? state.gameState;
+            const newStoryProgress = ((data.state as StoryState | undefined)?.story ?? state.storyProgress) as StoryProgress;
 
             // Extract AI-provided choices
             const choices = data.choices as string[] | undefined;
-            if (choices && Array.isArray(choices) && choices.length > 0) {
-              get().setPendingChoices(choices);
-            }
+            get().setPendingChoices(Array.isArray(choices) ? choices : []);
 
             // CRITICAL: Save message FIRST, before any audio processing.
             // Audio/BGM code can throw (e.g. undefined track), which would
@@ -1181,13 +1257,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ],
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
               streamStartTime: null,
               abortController: null,
               gameState: newGameState,
+              storyProgress: newStoryProgress,
+              endingError: null,
             }));
+
+            // Only a freshly committed main send may start completion. Reload,
+            // regenerate, continue, and stale sessions never auto-pay here.
+            if (newStoryProgress.status === "ending-ready" && session.id === get().session?.id) {
+              const op = newStoryProgress.ending?.operationId;
+              if (op) {
+                const autoKey = `${session.id}:${assistantMsg.id}:${assistantMsg.activeSwipeIndex ?? 0}:${op}`;
+                if (!endingAutoAttempts.has(autoKey)) {
+                  endingAutoAttempts.add(autoKey);
+                  void get().completeEnding().catch(() => {});
+                }
+              }
+            }
 
             // Process audio effects (after message is safely saved)
             try {
@@ -1254,6 +1346,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
               if (typeof parsed.balance === "number") errorBalance = parsed.balance;
             } catch { /* use raw */ }
 
+            // A reload or a retry during server cleanup can miss the active
+            // reply. Adopt it by reading messages; never dispatch another model.
+            if (meta?.origin === "http" && errorCode === "TURN_IN_PROGRESS" && retryMessageId) {
+              cancelStreamingBatch();
+              set({ error: null });
+              void recoverFromConnectionLoss({
+                sessionId: session.id,
+                sentContent: content.trim(),
+                lastMessageIdAtSend,
+                retryMessageId,
+                getState: get,
+                setState: set,
+                giveUp: () => {
+                  _isSending = false;
+                  set({
+                    isStreaming: false,
+                    streamingContent: "",
+                    streamingTokenCount: null,
+                    streamingReasoning: "",
+                    streamingSegments: [],
+                    streamingBg: null,
+                    streamStartTime: null,
+                    abortController: null,
+                    error: "The reply has not arrived yet. Refresh to check its progress.",
+                  });
+                  reconcileMessagesWithRetry(get().refreshMessages);
+                },
+              });
+              return;
+            }
+
             // Network-layer failure: the server never said anything, so it may
             // STILL be generating (proxies don't propagate our disconnect) and
             // will persist + charge the reply. A retry here would duplicate the
@@ -1266,6 +1389,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 // Server stores the trimmed content — compare against that.
                 sentContent: content.trim(),
                 lastMessageIdAtSend,
+                retryMessageId,
                 getState: get,
                 setState: set,
                 onNeverLanded: () => {
@@ -1279,6 +1403,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     set((s) => ({
                       isStreaming: false,
                       streamingContent: "",
+                      streamingTokenCount: null,
                       streamingReasoning: "",
                       streamingSegments: [],
                       streamingBg: null,
@@ -1302,6 +1427,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   set((s) => ({
                     isStreaming: false,
                     streamingContent: "",
+                    streamingTokenCount: null,
                     streamingReasoning: "",
                     streamingSegments: [],
                     streamingBg: null,
@@ -1330,6 +1456,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 cancelStreamingBatch();
                 set({
                   streamingContent: "",
+                  streamingTokenCount: null,
                   streamingReasoning: "",
                   streamingSegments: [],
                   streamingBg: null,
@@ -1356,6 +1483,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               set((s) => ({
                 isStreaming: false,
                 streamingContent: "",
+                streamingTokenCount: null,
                 streamingReasoning: "",
                 streamingSegments: [],
                 streamingBg: null,
@@ -1373,6 +1501,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set((s) => ({
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
@@ -1409,9 +1538,94 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
   },
 
+  generateChoices: async (messageId: string) => {
+    const state = get();
+    const msg = state.messages.at(-1);
+    if (storyGenerationBlocked(state)) throw new Error("Choices are unavailable after the story ending begins.");
+    if (!state.session || state.readOnly || state.isStreaming || _isSending || choicesRequestInFlight) throw new Error("Wait for the current operation to finish.");
+    if (msg?.id !== messageId || msg.role !== "assistant" || msg.status !== "complete") throw new Error("Return to the latest completed reply first.");
+    const existing = pendingChoicesFromMessages(state.messages);
+    if (existing.length) return existing;
+    const sessionId = state.session.id;
+    const index = msg.activeSwipeIndex ?? 0;
+    const selected = msg.swipes?.[index];
+    choicesRequestInFlight = true;
+    try {
+      const response = await fetch(`${apiBase}/api/messages/${encodeURIComponent(messageId)}/generate-choices`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activeSwipeIndex: index, model: useConfigStore.getState().selectedModel }),
+        signal: AbortSignal.timeout(100_000),
+      });
+      const data = await parseGenerateChoicesResponse(response, messageId, index);
+      const current = get();
+      const target = current.messages.at(-1);
+      if (current.session?.id !== sessionId || target?.id !== messageId || (target.activeSwipeIndex ?? 0) !== index || target.swipes?.[index]?.content !== selected?.content || target.swipes?.[index]?.rawContent !== selected?.rawContent) throw new Error("The reply changed. Reload its choices before trying again.");
+      const next = current.messages.map(item => item.id === messageId ? { ...item, swipes: item.swipes?.map((swipe, i) => i === index ? { ...swipe, choices: data.choices } : swipe) } : item);
+      set({ messages: next, pendingChoices: pendingChoicesFromMessages(next) });
+      if (data.creditCost) void useCreditStore.getState().fetchCredits();
+      return data.choices;
+    } finally { choicesRequestInFlight = false; }
+  },
+
+  completeEnding: async () => {
+    const before = get();
+    if (!before.session || before.readOnly) throw new Error("Ending completion is unavailable.");
+    if (before.storyProgress.status === "completed") return;
+    if (before.storyProgress.status !== "ending-ready") throw new Error("No ending is ready.");
+    if (endingRequestInFlight) return;
+    const target = before.messages.at(-1);
+    if (!target || target.role !== "assistant" || target.status !== "complete") throw new Error("The latest reply is not complete.");
+    const sessionId = before.session.id;
+    const messageId = target.id;
+    const activeSwipeIndex = target.activeSwipeIndex ?? 0;
+    const operationId = before.storyProgress.ending?.operationId;
+    if (!operationId) throw new Error("The ending is missing its operation ID.");
+    endingRequestInFlight = true;
+    set({ isCompletingEnding: true, endingError: null });
+    try {
+      const response = await fetch(`${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/ending`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operationId, messageId, activeSwipeIndex, model: useConfigStore.getState().selectedModel }),
+      });
+      const result = await response.json() as EndingResponse;
+      if (!response.ok) throw new Error(result.error || "Could not complete the ending.");
+      const current = get();
+      if (current.session?.id !== sessionId || current.messages.at(-1)?.id !== messageId || (current.messages.at(-1)?.activeSwipeIndex ?? 0) !== activeSwipeIndex || current.storyProgress.ending?.operationId !== operationId) {
+        throw new Error("The session changed while completing the ending.");
+      }
+      const payload = result.data;
+      const closing = payload?.message;
+      const nextState = payload?.state;
+      if (!closing || closing.id !== messageId || !nextState || (nextState as StoryState).story?.status !== "completed" || (nextState as StoryState).story?.ending?.operationId !== operationId) throw new Error("The ending response was incomplete. Retry the ending.");
+      set((s) => ({
+        messages: s.messages.map(message => message.id === messageId ? closing : message),
+        gameState: (nextState?.variables as ChatState["gameState"]) ?? s.gameState,
+        storyProgress: (nextState as StoryState).story!,
+        pendingChoices: [],
+        isCompletingEnding: false,
+        endingError: null,
+        session: s.session ? { ...s.session, state: nextState ?? s.session.state } : s.session,
+      }));
+      if (payload?.creditCost) void useCreditStore.getState().fetchCredits();
+    } catch (error) {
+      if (get().session?.id === sessionId) set({ isCompletingEnding: false, endingError: error instanceof Error ? error.message : "Could not complete the ending." });
+      throw error;
+    } finally {
+      endingRequestInFlight = false;
+    }
+  },
+
+  retryEnding: async () => {
+    const current = get();
+    if (current.storyProgress.status !== "ending-ready" || current.isCompletingEnding) return;
+    await current.completeEnding();
+  },
+
   regenerateMessage: (messageId: string, model?: string, retry?: ModelFallbackRetry) => {
     const { session, isStreaming } = get();
-    if (!session || isStreaming || _isSending || get().readOnly || (get().modelFallback && !retry)) return;
+    if (!session || isStreaming || _isSending || choicesRequestInFlight || get().readOnly || storyGenerationBlocked(get()) || (get().modelFallback && !retry)) return;
     _isSending = true;
 
     const config = useConfigStore.getState();
@@ -1423,6 +1637,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       isStreaming: true,
       streamingContent: "",
+      streamingTokenCount: null,
       streamingReasoning: "",
       streamingSegments: [],
       streamingBg: null,
@@ -1438,6 +1653,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         body: {
           model: useModel,
           modelFallback: fallbackRecord(retry, useModel),
+          ...(retry?.apiKeyId ? { fallbackApiKeyId: retry.apiKeyId } : {}),
           overrides: {
             maxTokens: config.maxTokens,
             maxContext: config.maxContext,
@@ -1464,6 +1680,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
           onReasoning: (text) => {
             enqueueStreamingReasoning(text);
+          },
+          onProgress: ({ tokens }) => {
+            set(s => ({ streamingTokenCount: Math.max(s.streamingTokenCount ?? 0, tokens) }));
           },
           onSegment: (data) => {
             set((s) => ({
@@ -1494,6 +1713,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   {
                     content: newContent,
                     rawContent: (data.rawContent as string) || undefined,
+                    choices: (data.choices as string[]) ?? [],
+                    reasoningContent: (data.reasoningContent as string) || undefined,
                     stateChanges:
                       (data.stateChanges as Record<string, unknown>) ??
                       undefined,
@@ -1512,7 +1733,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 );
                 return {
                   ...m,
+                  status: "complete" as const,
+                  errorMessage: null,
                   content: newContent,
+                  contentFlags: null,
                   stateChanges: data.stateChanges as Record<
                     string,
                     unknown
@@ -1532,6 +1756,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }),
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
@@ -1541,11 +1766,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ((data.state as Record<string, unknown>)
                   ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ??
                 state.gameState,
+              storyProgress: ((data.state as StoryState | undefined)?.story ?? state.storyProgress) as StoryProgress,
             }));
 
             const choices = data.choices as string[] | undefined;
-            if (choices && Array.isArray(choices) && choices.length > 0) {
-              get().setPendingChoices(choices);
+            get().setPendingChoices(Array.isArray(choices) ? choices : []);
+            if ((data.state as StoryState | undefined)?.story?.status === "ending-ready" && session.id === get().session?.id) {
+              const op = (data.state as StoryState).story?.ending?.operationId;
+              if (op) {
+                const key = `${session.id}:${messageId}:${data.swipeIndex ?? 0}:${op}`;
+                if (!endingAutoAttempts.has(key)) { endingAutoAttempts.add(key); void get().completeEnding().catch(() => {}); }
+              }
             }
             syncCreditBalance(credits);
 
@@ -1601,6 +1832,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               set({
                 isStreaming: false,
                 streamingContent: "",
+                streamingTokenCount: null,
                 streamingReasoning: "",
                 streamingSegments: [],
                 streamingBg: null,
@@ -1614,6 +1846,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
@@ -1634,7 +1867,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // "Continue" = generate the next AI message without user input.
     // Works for: AI never replied (case 1) + user wants AI to keep going (case 3).
     const { session, isStreaming } = get();
-    if (!session || isStreaming || _isSending || get().readOnly || (get().modelFallback && !retry)) return;
+    if (!session || isStreaming || _isSending || choicesRequestInFlight || get().readOnly || storyGenerationBlocked(get()) || (get().modelFallback && !retry)) return;
     _isSending = true;
 
     const config = useConfigStore.getState();
@@ -1650,6 +1883,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       isStreaming: true,
       streamingContent: "",
+      streamingTokenCount: null,
       streamingReasoning: "",
       streamingSegments: [],
       streamingBg: null,
@@ -1666,6 +1900,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           continue: true,
           model: useModel,
           modelFallback: fallbackRecord(retry, useModel),
+          ...(retry?.apiKeyId ? { fallbackApiKeyId: retry.apiKeyId } : {}),
           overrides: {
             maxTokens: config.maxTokens,
             maxContext: config.maxContext,
@@ -1693,6 +1928,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           onReasoning: (text) => {
             enqueueStreamingReasoning(text);
           },
+          onProgress: ({ tokens }) => {
+            set(s => ({ streamingTokenCount: Math.max(s.streamingTokenCount ?? 0, tokens) }));
+          },
           onSegment: (data) => {
             set((s) => ({
               streamingSegments: [...s.streamingSegments, data.segment],
@@ -1716,6 +1954,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               id: messageId,
               sessionId: session!.id,
               role: "assistant",
+              status: "complete",
               content,
               stateSnapshot: (data.state as Record<string, unknown>) ?? null,
               tokenCount: data.tokenCount as number | undefined,
@@ -1725,12 +1964,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
               creditCost: credits?.cost ?? null,
               creditBalanceAfter: credits?.balance ?? null,
               createdAt: new Date().toISOString(),
+              swipes: [{
+                content,
+                rawContent: (data.rawContent as string) || undefined,
+                choices: (data.choices as string[]) ?? [],
+                reasoningContent: (data.reasoningContent as string) || undefined,
+                createdAt: new Date().toISOString(),
+                model: (data.model as string) ?? useModel,
+              }],
+              activeSwipeIndex: 0,
             };
 
             set((s) => ({
               messages: [...s.messages, newMsg],
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
@@ -1741,8 +1990,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ??
                 state.gameState,
               pendingChoices: (data.choices as string[]) ?? [],
+              storyProgress: ((data.state as StoryState | undefined)?.story ?? state.storyProgress) as StoryProgress,
             }));
             syncCreditBalance(credits);
+            if ((data.state as StoryState | undefined)?.story?.status === "ending-ready" && session!.id === get().session?.id) {
+              const op = (data.state as StoryState).story?.ending?.operationId;
+              if (op) {
+                const key = `${session!.id}:${messageId}:0:${op}`;
+                if (!endingAutoAttempts.has(key)) { endingAutoAttempts.add(key); void get().completeEnding().catch(() => {}); }
+              }
+            }
 
             try {
               const audioEffects = data.audioEffects as import("@yumina/engine").AudioEffect[] | undefined;
@@ -1798,6 +2055,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   set({
                     isStreaming: false,
                     streamingContent: "",
+                    streamingTokenCount: null,
                     streamingReasoning: "",
                     streamingSegments: [],
                     streamingBg: null,
@@ -1826,6 +2084,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               set({
                 isStreaming: false,
                 streamingContent: "",
+                streamingTokenCount: null,
                 streamingReasoning: "",
                 streamingSegments: [],
                 streamingBg: null,
@@ -1839,6 +2098,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({
               isStreaming: false,
               streamingContent: "",
+              streamingTokenCount: null,
               streamingReasoning: "",
               streamingSegments: [],
               streamingBg: null,
@@ -1881,6 +2141,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({
         isStreaming: false,
         streamingContent: "",
+        streamingTokenCount: null,
         streamingReasoning: "",
         streamingSegments: [],
         streamingBg: null,
@@ -1932,8 +2193,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
       set({
         messages: data.messages ?? [],
+        pendingChoices: pendingChoicesFromMessages(data.messages ?? []),
         gameState: newGameState,
-        pendingChoices: [],
+        storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
         pendingSilentChanges: [],
       });
     } catch {
@@ -1968,8 +2230,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
       set({
         messages: data.messages ?? [],
+        pendingChoices: pendingChoicesFromMessages(data.messages ?? []),
         gameState: newGameState,
-        pendingChoices: [],
+        storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
         pendingSilentChanges: [],
       });
     } catch {
@@ -2038,8 +2301,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       set({
         messages: data.messages ?? [],
+        pendingChoices: pendingChoicesFromMessages(data.messages ?? []),
         gameState: newGameState,
-        pendingChoices: [],
+        storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
         pendingSilentChanges: [],
         error: null,
       });
@@ -2048,13 +2312,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  saveCheckpoint: async () => {
+  saveCheckpoint: async (name) => {
     const { session, isStreaming } = get();
-    if (!session || isStreaming) return;
+    if (!session || isStreaming) throw new Error("Checkpoint saving is unavailable right now.");
     const fail = () =>
       feedback.error(
         chatPill("feedback.checkpointSaveFailed", "Couldn't save the checkpoint"),
-        retryAction(() => void get().saveCheckpoint()),
       );
 
     try {
@@ -2062,12 +2325,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify(name === undefined ? {} : { name }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Save failed" }));
         console.warn("Checkpoint save failed:", (err as { error: string }).error);
-        fail();
-        return;
+        throw new Error("Could not save the checkpoint. Please try again.");
       }
       const { data } = await res.json();
       // Add to local checkpoints list
@@ -2082,25 +2345,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...s.checkpoints,
         ],
       }));
-    } catch {
-      fail();
+    } catch (error) {
+      // Named saves have an open modal that owns retry and error feedback.
+      if (name === undefined) fail();
+      throw error;
     }
   },
 
   loadCheckpoints: async () => {
     const { session } = get();
-    if (!session) return;
+    if (!session) throw new Error("No active story session.");
 
-    try {
-      const res = await fetch(`${apiBase}/api/sessions/${session.id}/checkpoints`, {
-        credentials: "include",
-      });
-      if (!res.ok) return;
-      const { data } = await res.json();
-      set({ checkpoints: data ?? [] });
-    } catch {
-      // Silently fail
-    }
+    const res = await fetch(`${apiBase}/api/sessions/${session.id}/checkpoints`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error("Could not load saved checkpoints. Please try again.");
+    const { data } = await res.json();
+    set({ checkpoints: data ?? [] });
+    return data ?? [];
   },
 
   restoreCheckpoint: async (checkpointId: string) => {
@@ -2131,8 +2393,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
       set({
         messages: data.messages ?? [],
+        pendingChoices: pendingChoicesFromMessages(data.messages ?? []),
         gameState: newGameState,
-        pendingChoices: [],
+        storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
       });
     } catch {
       fail();
@@ -2324,6 +2587,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Update the greeting message locally
         get().updateMessage(greetingMsg.id, {
           content: data.content,
+          contentFlags: data.contentFlags ?? null,
           activeSwipeIndex: data.activeSwipeIndex,
           stateChanges: data.stateChanges,
           stateSnapshot: data.state ?? null,
@@ -2336,7 +2600,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           | Record<string, number | string | boolean | Record<string, unknown> | unknown[]>
           | null;
         if (nextGameState && data.stateRestored !== false) {
-          set({ gameState: nextGameState });
+          set({ gameState: nextGameState, storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress });
         }
       })
       .catch(() => {});

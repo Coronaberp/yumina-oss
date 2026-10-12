@@ -39,6 +39,11 @@ export const USAGE_ENDPOINT_BILLING_POLICY: Record<string, "billed" | "free-by-d
   music: "billed",
   regenerate: "billed",
   continue: "billed",
+  "generate-choices": "billed",
+  "complete-ending": "billed",
+  "complete-ending-unapplied": "free-by-design",
+  // A stale or otherwise unapplied choice-only result is never charged.
+  "generate-choices-unapplied": "free-by-design",
   // Empty replies are never charged (2026-05-31 empty-reply policy) — logged
   // under distinct endpoints purely for failure-rate monitoring.
   send_empty: "free-by-design",
@@ -51,6 +56,8 @@ export const USAGE_ENDPOINT_BILLING_POLICY: Record<string, "billed" | "free-by-d
   continue_repetitive: "free-by-design",
   // Official correction charges commit atomically with the saved turn.
   "state-update-guard": "billed",
+  "character-identity-review": "billed",
+  "character-identity-correction": "billed",
   "studio-agent": "billed",
   "studio-playtest": "billed",
   "side-completion": "billed",
@@ -62,6 +69,7 @@ export const USAGE_ENDPOINT_BILLING_POLICY: Record<string, "billed" | "free-by-d
   summaryception: "billed",
   // Runs exclusively on the caller's own API key (see memory-extractor.ts).
   "memory-extract": "byok-only",
+  "storyhaven-memory": "byok-only",
   // Community-content translation: the result is cached and served to every
   // viewer, so charging the one user who happened to trigger it would bill
   // them for shared infrastructure. Platform cost, owner-reviewed 2026-08-12.

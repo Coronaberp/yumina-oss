@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, X, Plus, Link2, Code2 } from "lucide-react";
+import { Check, X, Plus, Code2, BarChart3, LayoutGrid } from "lucide-react";
 import { LoreBindingsPanel } from "../components/lore-bindings-panel";
 import { FieldError } from "@/components/ui/field-error";
 import { useEditorStore } from "@/stores/editor";
@@ -8,7 +8,9 @@ import { compileTSX } from "@/features/studio/lib/tsx-compiler";
 import { normalizeCardFileName, starterCardFile } from "@/features/studio/lib/card-file-names";
 import { cn } from "@/lib/utils";
 import { getBundleColor } from "@/lib/entry-constants";
-import { DebouncedInput, DebouncedTextarea } from "../components/debounced-field";
+import { DebouncedTextarea } from "../components/debounced-field";
+import { InterfaceOptions } from "../components/interface-options";
+import { VisualizationsPanel } from "../components/visualizations-panel";
 import {
   Dialog,
   DialogContent,
@@ -92,6 +94,9 @@ export function ComponentsSection() {
   const [newFileName, setNewFileName] = useState("");
   const [newFileError, setNewFileError] = useState<string | null>(null);
   const activeTab = useEditorStore((s) => s.customUiTab);
+  const [advancedPane, setAdvancedPane] = useState<"code" | "bindings">("code");
+  const topTab = activeTab === "code" || activeTab === "bindings" ? "advanced" : activeTab;
+  const pane = activeTab === "code" || activeTab === "bindings" ? activeTab : advancedPane;
   const setActiveTab = useEditorStore((s) => s.setCustomUiTab);
 
   // If active file was deleted, fall back to entry file
@@ -200,52 +205,17 @@ export function ComponentsSection() {
         </div>
       </div>
 
-      <div className="flex shrink-0 gap-1 border-b border-border px-6" data-tour="components-tabs">
-        <button
-          type="button"
-          onClick={() => setActiveTab("code")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors",
-            activeTab === "code"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Code2 className="h-3.5 w-3.5" />
-          {t("components.tabCode")}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("bindings")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors",
-            activeTab === "bindings"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Link2 className="h-3.5 w-3.5" />
-          {t("components.tabBindings")}
-        </button>
+      <div className="flex shrink-0 gap-1 border-b border-border px-3 sm:px-6" data-tour="components-tabs">
+        {(["layouts", "visualizations", "advanced"] as const).map(tab => {
+          const Icon = tab === "layouts" ? LayoutGrid : tab === "visualizations" ? BarChart3 : Code2;
+          return <button key={tab} type="button" onClick={() => setActiveTab(tab)} aria-pressed={topTab === tab} className={cn("flex min-h-11 items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium", topTab === tab ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}><Icon className="h-3.5 w-3.5" />{t(tab === "layouts" ? "components.tabLayouts" : tab === "advanced" ? "components.tabAdvanced" : "components.tabVisualizations", tab[0].toUpperCase() + tab.slice(1))}</button>;
+        })}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        {activeTab === "bindings" ? (
-          <LoreBindingsPanel />
-        ) : (
-        <div className="space-y-4 pb-8">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-              {t("components.componentName")}
-            </label>
-            <DebouncedInput
-              type="text"
-              value={rootComponent.name}
-              onCommit={(name) => updateRootComponent({ name })}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
-            />
-          </div>
-
+      <div className="min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6">
+        {topTab === "layouts" ? <InterfaceOptions /> : topTab === "visualizations" ? <VisualizationsPanel /> : <div className="space-y-4">
+          <div className="flex gap-2">{(["code", "bindings"] as const).map(value => <button key={value} type="button" aria-pressed={pane === value} onClick={() => { setAdvancedPane(value); setActiveTab("advanced"); }} className={cn("min-h-10 rounded-lg px-3 text-xs", pane === value ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>{t(value === "code" ? "components.tabCode" : "components.tabBindings")}</button>)}</div>
+          {pane === "bindings" ? <LoreBindingsPanel /> : <div className="space-y-4 pb-8">
           <CompileIndicator tsxCode={activeFileCode} />
 
           {/* overflow-x-auto keeps a long file list scrolling inside the
@@ -324,7 +294,8 @@ export function ComponentsSection() {
                   files: { ...rootComponent.files, [activeFile]: code },
                 });
               }}
-              syncKey={safeActiveFile}
+              key={`${rootComponent.interfaceId ?? rootComponent.id}:${safeActiveFile}`}
+              syncKey={`${rootComponent.interfaceId ?? rootComponent.id}:${safeActiveFile}`}
               delay={500}
               rows={24}
               spellCheck={false}
@@ -344,8 +315,8 @@ export function ComponentsSection() {
               <div><code className="text-primary">{"<LoreSlot id=\"slot-id\" />"}</code> — {t("components.toolLoreSlot")}</div>
             </div>
           </div>
-        </div>
-        )}
+          </div>}
+        </div>}
       </div>
 
       <Dialog open={!!fileDialog} onOpenChange={(open) => { if (!open) setFileDialog(null); }}>

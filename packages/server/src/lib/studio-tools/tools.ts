@@ -1,6 +1,7 @@
 import { getSmartImageCapabilities, SMART_IMAGE_MODEL, SMART_IMAGE_MODELS,
   SMART_IMAGE_ASPECTS, SMART_IMAGE_RESOLUTIONS, MAX_IMAGE_BATCH_ITEMS } from "@yumina/shared";
 import type { ToolDefinition } from "../llm/types.js";
+import { NAME_READ_TOOLS, NAME_PROFILES_TOOL_SCHEMA } from "./name-tools.js";
 
 /** The assistant picks its own model, so the schema advertises the union across
  *  all of them and normalizeImageProposal narrows the pair down to what the
@@ -30,6 +31,19 @@ const IMAGE_TOOL_CAPABILITIES = {
   resolutions: SMART_IMAGE_RESOLUTIONS,
 };
 
+// A condition's value remains required even when valueRef supplies the RHS.
+// Publish the actual engine shape instead of leaving the model to invent it.
+const STORY_CONDITION_TOOL_SCHEMA = {
+  type: "object",
+  properties: {
+    variableId: { type: "string", description: "Declared gameplay variable ID or dot path, e.g. trust, stats.trust or party.0.hp. Use dot syntax for arrays, not brackets." },
+    operator: { type: "string", enum: ["eq", "neq", "gt", "gte", "lt", "lte", "contains"] },
+    value: { description: "Literal comparison value. Required even with valueRef; use a placeholder such as 0 in that case.", anyOf: [{ type: "number" }, { type: "string" }, { type: "boolean" }, { type: "object" }, { type: "array", items: {} }] },
+    valueRef: { type: "string", description: "Optional declared variable ID or dot path to compare against instead of value." },
+  },
+  required: ["variableId", "operator", "value"],
+};
+
 // ── Studio AI: 8-tool agent (Claude Code pattern) ──
 //
 // The model makes multiple write_* calls in one response (parallel tool use).
@@ -39,6 +53,51 @@ const IMAGE_TOOL_CAPABILITIES = {
 // ── Read Tools (auto-execute, no approval) ──
 
 export const READ_TOOLS: ToolDefinition[] = [
+  ...NAME_READ_TOOLS,
+  {
+    type: "function", function: {
+      name: "get_image_sources",
+      description: "Check whether image generation is available and whether the creator enabled Danbooru artwork search in Settings. Returns setup help and connection status, never credentials. Call before proposing image generation or using Danbooru.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "search_danbooru_images",
+      description: "Search existing Danbooru artwork using space-separated Danbooru tags. Requires the creator to enable Danbooru in Settings → AI Configuration. Returns bounded post metadata and attribution; this does not generate or save images. Choose a result, import it, then assign its owned @asset ref with edit_vn_assets.",
+      parameters: { type: "object", properties: {
+        tags: { type: "string", description: "Space-separated Danbooru search tags; underscores within tags." },
+        limit: { type: "integer", minimum: 1, maximum: 20 },
+        page: { type: "integer", minimum: 1, maximum: 100 },
+      }, required: ["tags"] },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "list_vn_assets",
+      description: "Read Visual Novel sprite/background assignments, default images, NPC defaults, stable opening IDs, and sortable row IDs. Sprites are shared across openings. Omit openingId for Global backgrounds, or supply a greeting ID for an opening collection. Returns help, editability, and pagination; never executes custom source.",
+      parameters: { type: "object", properties: {
+        kind: { type: "string", enum: ["sprites", "backgrounds"] },
+        openingId: { type: "string", description: "Stable greeting entry ID; backgrounds only. Omit for Global." },
+        npcGender: { type: "string", enum: ["male", "female"], description: "Read an NPC sprite pool instead of character expressions." },
+        name: { type: "string", description: "Exact character/scene name filter." },
+        offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 },
+      } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_templates",
+      description: "Browse the platform's official starting templates, separate from personal assets and world components. Omit id to list the installed catalog. Pass a catalog ID (e.g. vn-scene-engine) to retrieve that template's metadata, required variables, and complete source. Read the source before adapting it with write_custom_ui; this tool does not install or modify anything.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Official template catalog ID. Omit to browse all official templates." },
+        },
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -56,6 +115,24 @@ export const READ_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "view_image",
+      description: "Open an existing owned image from the asset library or a card as a visual input. Use its @asset reference from list_assets or list_vn_assets. Inspect hair, clothing, colors, composition and other visible details before assigning a sprite or claiming it matches. Returns dimensions and whether pixels are transparent; the actual picture is delivered to your vision input. Read-only; never generates or modifies an image. Text-only profiles cannot inspect images.",
+      parameters: { type: "object", properties: {
+        assetRef: { type: "string", description: "Owned image @asset reference. Arbitrary paths and external URLs are not accepted." },
+      }, required: ["assetRef"], additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_image_job",
+      description: "Read the status of an approved background image job. A succeeded job includes saved @asset refs. Continue independent work while queued/running. Check when an image-dependent task needs the result; if still drawing, tell the creator and end the turn instead of repeatedly polling or submitting another image.",
+      parameters: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"], additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "read_entities",
       description:
         "Read full details of one or more entities. The inventory in your context shows IDs, names, and metadata — use this tool to get complete content (entry text, TSX code, behavior effects, conditions, etc.) when you need it before making changes. Batch multiple reads in one call. For large TSX files, use offset_lines/limit_lines to read a specific range — the usual workflow is grep_world to find line numbers, then read_entities with offset_lines/limit_lines around the match.",
@@ -66,7 +143,7 @@ export const READ_TOOLS: ToolDefinition[] = [
             type: "array",
             items: { type: "string" },
             description:
-              'Array of entity IDs to read. Can mix entity types (entries, variables, behaviors, rules, customUI, audio). Special ID: "settings" returns world settings.',
+              'Array of entity IDs to read. Can mix entity types (entries, variables, behaviors, rules, routes, endings, customUI, audio). Special IDs: "settings" returns world settings; "card-showcase" returns published-card HTML/CSS.',
           },
           offset_lines: {
             type: "number",
@@ -110,13 +187,13 @@ export const READ_TOOLS: ToolDefinition[] = [
     function: {
       name: "load_skill",
       description:
-        "Load detailed domain knowledge for a specific topic. Call this BEFORE writing audio tracks or lore-heavy content — these domains have specific conventions not covered by tool definitions alone. Core skills (entries, variables, tsx, front-ui, world-design, rules) are already in your context.",
+        "Load detailed domain instructions before working in that domain. Consult the on-demand-skills catalog in your context; load the relevant skill when its full instructions are not already present.",
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: 'Skill name: "audio" (audio tracks) or "lore" (advanced worldbuilding: codeification, layered faction systems, multiplayer canon). Core skills (entries, variables, tsx, front-ui, world-design, rules) are already loaded — do not reload them.',
+            description: 'Name from the on-demand-skills catalog, such as "entries", "variables", "tsx", "front-ui", "world-design", "rules", "audio", or "lore". Do not reload a skill whose full instructions are already present.',
           },
         },
         required: ["name"],
@@ -128,11 +205,72 @@ export const READ_TOOLS: ToolDefinition[] = [
     function: {
       name: "validate_world",
       description:
-        "Scan the current world for structural issues: undefined variable references in conditions/effects/macros, chat-history entries with no keywords that will never trigger, behaviors that can fire in infinite loops, duplicate IDs across entity types, and more. Returns a structured report with errors (definitely broken) and warnings (risky, may be intentional). Call this after a batch of writes for any system touching variables, behaviors, or entries — it catches reference breakage and logic bombs before the creator sees runtime bugs. Auto-executes, no approval needed, no parameters.",
+        "Scan the current world for structural issues: undefined variable references in conditions/effects/macros, broken route bindings, incomplete enabled endings, missing explicit unconditional-ending opt-in, chat-history entries with no keywords that will never trigger, behaviors that can fire in infinite loops, duplicate IDs across entity types, and more. Returns a structured report with errors (definitely broken) and warnings (risky, may be intentional). Call this after a batch of writes touching routes, endings, variables, behaviors, or entries. Auto-executes, no approval needed, no parameters.",
       parameters: {
         type: "object",
         properties: {},
       },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "audit_project_completeness",
+      description: "Deterministically report missing day/evening/night VN scene variants, character portraits/sprites/lore, and enabled routes without an eligible enabled ending. Uses literal maps and authored links only; custom code is reported as an inspection limit. Read-only.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "get_visual_audit_inputs",
+      description: "Return a bounded page of background or character portrait/sprite references with character descriptions. Call view_image only for items marked inspectable that have an assetRef beginning @asset:; external or malformed references are explicitly uninspectable and must be reported as unchecked. Read-only.",
+      parameters: { type: "object", properties: {
+        kind: { type: "string", enum: ["characters", "backgrounds"] },
+        offset: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 20 },
+      }, required: ["kind"], additionalProperties: false },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "get_dependency_graph",
+      description: "Return a paginated, evidence-bearing dependency graph connecting scenes, assets, entries/lore, variables, characters, routes, and endings. Every edge is labeled direct or inferred; inferred name mentions are navigation hints, not authored links.",
+      parameters: { type: "object", properties: {
+        offset: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      }, additionalProperties: false },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "preflight_world",
+      description: "Run structural preflight for broken references, VN map limitations, missing owned image assets, invalid variable IDs, and route-ending coverage. Errors are definite blockers; warnings may be continued past. Read-only.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "set_acceptance_criteria",
+      description: "Persist a bounded acceptance goal for this agent run. Use when the creator says not to stop until named coverage is complete. Supported predicates are explicit scene periods, all-character portrait/sprite/lore coverage, required variable IDs, and clean preflight. Omitted fields are not required; an empty object clears the goal.",
+      parameters: { type: "object", properties: {
+        criteria: { type: "object", properties: {
+          scenePeriods: { type: "object", properties: {
+            periods: { type: "array", items: { type: "string", enum: ["day", "evening", "night"] }, minItems: 1, uniqueItems: true },
+            scope: { type: "string", enum: ["global", "all-contexts"] },
+          }, required: ["periods"], additionalProperties: false },
+          characterCoverage: { type: "object", properties: {
+            portrait: { type: "boolean" }, sprite: { type: "boolean" }, lore: { type: "boolean" },
+          }, additionalProperties: false },
+          requiredVariableIds: { type: "array", items: { type: "string", minLength: 1 }, maxItems: 100, uniqueItems: true },
+          cleanPreflight: { type: "boolean" },
+        }, additionalProperties: false },
+      }, required: ["criteria"], additionalProperties: false },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "check_acceptance_criteria",
+      description: "Re-evaluate this run's saved acceptance criteria against the current working world and report exactly what remains unmet. Read-only.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -152,6 +290,109 @@ export const READ_TOOLS: ToolDefinition[] = [
 // ── Write Tools (collected, validated atomically, approval classified) ──
 
 export const WRITE_TOOLS: ToolDefinition[] = [
+  {
+    type: "function",
+    function: {
+      name: "write_route",
+      description: "Create or partially update a built-in story route for Classic, VN or custom interfaces. Read existing IDs with read_entities first. Reusing an ID preserves omitted fields; a new globally unique ID creates a route. The engine selects by conditions then descending priority and lexical ID for ties. Validate with validate_world after changes.",
+      parameters: { type: "object", properties: {
+        id: { type: "string", description: "Existing route ID for an edit, or a new globally unique kebab-case ID." }, name: { type: "string" },
+        enabled: { type: "boolean", description: "New routes default to true. False retains the definition but excludes it from new selection." },
+        priority: { type: "integer", description: "Higher wins among eligible routes; defaults to 0." },
+        guidance: { type: "string", description: "Narrative direction captured on route entry and included in gameplay prompts." },
+        conditions: { type: "array", items: STORY_CONDITION_TOOL_SCHEMA, description: "Replaces the complete condition list. Empty means immediately eligible." },
+        conditionLogic: { type: "string", enum: ["all", "any"], description: "Defaults to all (every condition); any requires one matching condition." },
+        lockOnEntry: { type: "boolean", description: "Defaults false. True locks the captured route against later route switches and definition edits." },
+      }, required: ["id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_ending",
+      description: "Create or partially update a built-in fixed-outcome ending for Classic, VN or custom interfaces. Read existing IDs with read_entities first; reusing an ID preserves omitted fields. New endings default disabled so unfinished drafts cannot end play. Enable only after supplying an outcome, valid conditions/route bindings, and authored prose or AI guidance. Validate with validate_world. Definition edits do not rewrite already captured session endings.",
+      parameters: { type: "object", properties: {
+        id: { type: "string", description: "Existing ending ID for an edit, or a new globally unique kebab-case ID." }, name: { type: "string" },
+        enabled: { type: "boolean", description: "Defaults false on creation. True makes a complete ending eligible." },
+        priority: { type: "integer", description: "Higher wins among eligible endings; lexical ID breaks ties. Defaults to 0." },
+        routeIds: { type: "array", items: { type: "string" }, description: "Replaces route restrictions with existing route IDs. Empty permits any route, including no active route." },
+        conditions: { type: "array", items: STORY_CONDITION_TOOL_SCHEMA, description: "Replaces the complete condition list; use a specific finale variable to avoid ending as soon as a route is entered." },
+        conditionLogic: { type: "string", enum: ["all", "any"] },
+        allowUnconditional: { type: "boolean", description: "Defaults false. Must explicitly be true for an ending with no conditions; route restrictions still apply." },
+        outcome: { type: "string", description: "Nonempty fixed result that the ending presentation must preserve." },
+        mode: { type: "string", enum: ["authored", "ai"], description: "Defaults authored: exact creator prose. ai: generated closing prose constrained by outcome and guidance." },
+        prose: { type: "string", description: "Required nonempty text when an authored ending is enabled." },
+        guidance: { type: "string", description: "Required nonempty closing instructions when an AI ending is enabled." },
+      }, required: ["id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_status_visualization",
+      description: "Create or replace the custom player status layout inside UI options → Visualizations. Use this for bespoke status designs instead of changing status-view.tsx or status-sheet.tsx. The layout is mounted inside the existing right Status sheet; Menu, Back, Close, and confirmed state remain wired. Read status-layout.tsx and status-config.ts first. Export a default React component accepting {config, variables, preview}. Variables are the latest confirmed game state. React and Icons are globals; local status-data and status-widgets helpers may be imported. Use edit_status_visualization for small edits.",
+      parameters: { type: "object", properties: {
+        layoutCode: { type: "string", description: "Complete React layout source with a default export. Render within the sheet content; bind actual variables, preserve data-driven field configuration, use scoped styles and responsive markup." },
+      }, required: ["layoutCode"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_character_showcase_css",
+      description: "Update CSS for Publish → Character showcase on the PUBLISHED story/world card's profile page. Read card-showcase with read_entities first. Preserve existing CSS rules during small edits. This changes only the public card presentation, never character entries or the playable story UI. CSS is isolated inside the card profile. Use .card-showcase or :scope for its root. Empty CSS restores default styling while retaining the public HTML.",
+      parameters: { type: "object", properties: {
+        css: { type: "string", maxLength: 30000, description: "Complete CSS for the published card profile. Preserve existing rules during small edits; empty string clears styles." },
+      }, required: ["css"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_card_showcase",
+      description: "Create or edit Publish → Character showcase: custom public HTML/CSS on the published story/world card's PROFILE page, like a styled introduction with images, sections and badges. Read card-showcase first. Supply only the fields being changed; omitted HTML/CSS is preserved. This does not edit game characters, their popup viewer, dialogue or the playable layout. Keep the HTML public-facing. Scripts and embedded apps are unavailable; use responsive HTML/CSS, .card-showcase as the root, and @asset:ID for owned images.",
+      parameters: { type: "object", properties: {
+        html: { type: "string", maxLength: 100000, description: "Public HTML fragment. Empty HTML uses the card name, cover and description. Never copy private lore or hidden character profiles into this public content." },
+        css: { type: "string", maxLength: 30000, description: "CSS for this public profile; empty CSS clears its styles." },
+      } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_status_visualization",
+      description: "Edit the current custom layout in UI options → Visualizations. Changes only status-layout.tsx, preserving the managed renderer, right sheet and Back action. Read status-layout.tsx with read_entities, then provide a unique current snippet and its replacement. The component must retain its default export and live variable bindings.",
+      parameters: { type: "object", properties: {
+        old_code: { type: "string", description: "Exact current layout snippet that appears once." },
+        new_code: { type: "string", description: "Replacement layout snippet." },
+      }, required: ["old_code", "new_code"] },
+    },
+  },
+  {
+    type: "function", function: {
+      name: "edit_vn_assets",
+      description: "Assign/remove a sprite expression or background period, set/clear a collection's default background, reorder existing cards, or configure NPC defaults. Send operations as one validated batch when handling multiple independent assignments. Read list_vn_assets first. Use owned image @asset refs from list_assets or generated image jobs. Preserves authored runtime code and unrelated assignments; rejects custom executable maps. Global backgrounds omit openingId; opening collections use stable greeting IDs. Order accepts returned row IDs and preserves hidden slots when reordering a subset.",
+      parameters: { type: "object", properties: {
+        operations: { type: "array", minItems: 1, maxItems: 50, description: "Validated batch of operations; use this instead of the single-operation fields when assigning multiple assets.", items: { type: "object", properties: {
+          kind: { type: "string", enum: ["sprites", "backgrounds"] },
+          action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults"] },
+          openingId: { type: "string" }, npcGender: { type: "string", enum: ["male", "female"] }, name: { type: "string" },
+          variant: { type: "string" }, assetRef: { type: "string" }, order: { type: "array", items: { type: "string" } },
+          disabled: { type: "boolean" }, mode: { type: "string", enum: ["a", "b"] },
+        }, required: ["kind", "action"] } },
+        kind: { type: "string", enum: ["sprites", "backgrounds"] },
+        action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults"] },
+        openingId: { type: "string", description: "Greeting entry ID for opening backgrounds; omit for Global." },
+        npcGender: { type: "string", enum: ["male", "female"] },
+        name: { type: "string", description: "Character name, scene ID, or NPC sprite name." },
+        variant: { type: "string", description: "Expression (default normal) or time of day (default day)." },
+        assetRef: { type: "string", description: "Owned image's @asset reference." },
+        order: { type: "array", items: { type: "string" }, description: "Unique row IDs from list_vn_assets in the desired order." },
+        disabled: { type: "boolean", description: "Whether fallback NPC sprites are disabled." },
+        mode: { type: "string", enum: ["a", "b"], description: "Fallback NPC sprite set." },
+      }, required: ["kind", "action"] },
+    },
+  },
   {
     type: "function",
     function: {
@@ -264,7 +505,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx'). Non-filename IDs write to the entry file." },
+          id: { type: "string", description: "Filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx', 'status-config.ts'). New .ts/.tsx/.js/.jsx files are created separately from the entry. Status visualization settings use a literal JSON statusConfig export; see front-ui skill. Non-filename IDs write to the entry file." },
           name: { type: "string" },
           language: { type: "string", enum: ["tsx", "html", "markdown"], description: "Component language. 'tsx' (default): React with useYumina() hook. 'html': raw HTML/CSS/JS with window.yumina global. 'markdown': static content." },
           tsxCode: { type: "string", description: "Component source code. TSX for language='tsx', HTML for language='html', markdown for language='markdown'. Use useYumina() SDK only — never fetch/localStorage/window.location directly." },
@@ -284,7 +525,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx'). Non-filename IDs target the entry file." },
+          id: { type: "string", description: "Existing filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx', 'status-config.ts'). For status visualizations, edit status-config.ts while preserving the literal JSON export and unrelated fields. Non-filename IDs target the entry file." },
           old_code: { type: "string", description: "Exact code snippet to find. Must appear exactly once. Include surrounding lines if needed for uniqueness." },
           new_code: { type: "string", description: "Replacement code snippet." },
         },
@@ -327,6 +568,8 @@ export const WRITE_TOOLS: ToolDefinition[] = [
           maxTokens: { type: "number" },
           temperature: { type: "number" },
           playerName: { type: "string" },
+          nameGeneratorProfiles: NAME_PROFILES_TOOL_SCHEMA,
+          storyStructureEnabled: { type: "boolean", description: "Whether structured route and ending progression is enabled. Defaults on; disable for an open-ended story." },
           topP: { type: "number" },
           frequencyPenalty: { type: "number" },
           presencePenalty: { type: "number" },
@@ -405,7 +648,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
     function: {
       name: "delete_entities",
       description:
-        "Delete one or more entities by ID. Each ID is looked up across all entity types (entries, variables, behaviors, rules, customUI, audio, worldbooks, lore bindings). Always requires user approval.",
+        "Delete one or more entities by ID. Each ID is looked up across all entity types (entries, variables, behaviors, rules, routes, endings, customUI, audio, worldbooks, lore bindings). Always requires user approval.",
       parameters: {
         type: "object",
         properties: {
@@ -427,6 +670,16 @@ export const WRITE_TOOLS: ToolDefinition[] = [
 
 const CONTROL_TOOLS: ToolDefinition[] = [
   {
+    type: "function", function: {
+      name: "import_danbooru_image",
+      description: "Import a selected Danbooru post into the creator's owned image library, preserving source attribution, and return its @asset ref. Requires Danbooru enabled in Settings. Use an integer postId returned by search_danbooru_images. Reuses a prior import of the same post. It imports existing artwork and does not generate variations, remove backgrounds, or assign it automatically. Use edit_vn_assets in the next turn with the returned ref.",
+      parameters: { type: "object", properties: {
+        postId: { type: "integer", minimum: 1 },
+        filename: { type: "string", description: "Optional descriptive library filename." },
+      }, required: ["postId"] },
+    },
+  },
+  {
     type: "function",
     function: {
       name: "ask_user",
@@ -437,11 +690,24 @@ const CONTROL_TOOLS: ToolDefinition[] = [
         properties: {
           question: {
             type: "string",
-            description: "The question to show the user. Include any options inline as a short list.",
+            description: "The question to show the user. Keep it direct; put selectable answers in options instead of an inline list.",
           },
           rationale: {
             type: "string",
             description: "Optional one-line reason for asking instead of proceeding on your own.",
+          },
+          options: {
+            type: "array",
+            maxItems: 4,
+            description: "Optional short answer choices. The creator can also write a custom answer.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Short selectable answer." },
+                description: { type: "string", description: "Optional one-line detail." },
+              },
+              required: ["label"],
+            },
           },
         },
         required: ["question"],
@@ -453,13 +719,33 @@ const CONTROL_TOOLS: ToolDefinition[] = [
     function: {
       name: "generate_image",
       description:
-        "Propose a new picture from Yumina's built-in image generator. Nothing is generated and nothing is charged until the creator presses Generate on the card this shows; they can edit the prompt there first. Use ONLY when the creator needs an image that does not exist yet (a map, a portrait, a scene, a cover) and asked for one or clearly wants one — never to decorate on your own initiative. Write `prompt` as a concrete visual description in English: subject, setting, style, lighting, composition. Never ask for text, letters or UI inside the picture. MUST NOT be combined with any other tool call in the same turn. After the creator confirms you receive the delivered @asset ref(s) and can place them with edit_custom_ui or write_entry (a cover is picked by the creator in the editor; no tool sets it).",
+        "Queue one picture as a cancellable background job. Resolve owned character, scene, style and creator references automatically, label their roles, and keep the references attached to the job. For a first canonical character sprite or scene background, prefer local ComfyUI Anima and let the creator choose any installed Anima checkpoint in the card. For later SFW variations with references, default to Codex native image generation through GPT-6.1 Sol xhigh; Codex currently chooses its own image submodel. If the creator explicitly requests Krea or Krea2-Anime, set imageWorkflow=krea for that job even when it is SFW. For explicit NSFW requests, use local Krea2-Anime v2.0 INT4 for character sprites and scene backgrounds; never send NSFW prompts or references to Codex or Forge Neo. Krea2-Anime is NSFW-capable. NSFW backgrounds use imageKind=background, contentRating=nsfw and remain opaque. Use 8 or more steps and do not add a 4-step Turbo LoRA to this fine-tune. Set contentRating=nsfw only when the creator requests NSFW content. Set transparent=true only when a transparent cutout is requested or needed for a VN overlay sprite; opaque art and scene backgrounds must keep their generated background. The queued card exposes a transparent-background checkbox for sprite jobs. The queued card also lets the creator switch among available workflows, select the Anima model, set CFG/steps, choose random or fixed seed, and choose SFW/NSFW only when the selected local model supports it. Never pass URLs, storage keys, file paths, or refs that did not come from the asset tools. Call get_image_sources first. Anima and Krea run segmentation only when transparent=true; opaque outputs preserve their background. Codex requests native alpha only when transparent=true and is SFW-only. Use imageKind background for opaque scenes; never run background removal for scene backgrounds. For multiple pictures, make one generate_image call per picture together in the same turn; local GPU jobs are bounded to one at a time. Continue other work while they run. Background job status supplies completed @asset refs for assignment. If still drawing, say so and do not poll repeatedly or claim success. Each image call starts one configured generation.",
       parameters: {
         type: "object",
         properties: {
+          source: { type: "string", enum: ["codex", "comfyui", "forgeneo"], description: "Image connection. Usually choose via imageWorkflow; omit for the automatic first-reference Anima or SFW referenced Codex default." },
+          imageWorkflow: { type: "string", enum: ["anima", "krea", "codex"], description: "Optional workflow override. If the creator explicitly requests Krea or Krea2-Anime, select krea even for SFW requests. Anima creates the canonical sprite or background; Krea2-Anime v2.0 INT4 makes local reference-guided follow-ups and can handle NSFW; Codex uses its native SFW image tool through GPT-6.1 Sol xhigh and selects the image submodel internally. The creator can change this in the queued card." },
+          contentRating: { type: "string", enum: ["sfw", "nsfw"], description: "Set nsfw only when requested by the creator. NSFW is accepted only for local Krea or an installed Anima checkpoint tagged NSFW-capable; Codex and Forge Neo are SFW-only." },
+          animaModel: { type: "string", description: "Optional installed Anima checkpoint. The creator can choose any available checkpoint from the image card." },
+          cfg: { type: "number", minimum: 0.5, maximum: 8, description: "Local Anima/Krea guidance scale; defaults to 1." },
+          steps: { type: "integer", minimum: 1, maximum: 20, description: "Local Anima/Krea sampling steps; defaults to 8." },
+          seedMode: { type: "string", enum: ["random", "fixed"], description: "Local generation seed mode. Use random by default; fixed requires seed." },
+          seed: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: "Optional reproducible local generation seed." },
+          imageKind: { type: "string", enum: ["sprite", "background", "image"], description: "Use sprite for character artwork; background for an opaque environment; image for other artwork. Scene backgrounds are opaque and never use background removal." },
+          transparent: { type: "boolean", description: "Set true only when a transparent PNG cutout is needed, such as a character sprite layered over a VN scene. Otherwise preserve the generated background. Scene backgrounds stay opaque." },
+          referenceAssetRefs: { type: "array", maxItems: 5, items: { type: "string" }, description: "Optional exact @asset refs from list_assets or list_vn_assets. Only owned project-library images are accepted. They can guide local Anima/Krea or Codex generation; never send URLs or file paths." },
+          target: {
+            type: "object",
+            description: "Optional exact asset destination. Usually omit this; the server infers an exact character, scene, and time period from the creator's request when possible. Ambiguous results stay in the library.",
+            properties: {
+              kind: { type: "string", enum: ["background", "sprite", "portrait", "cg", "library"] },
+              sceneId: { type: "string" }, period: { type: "string" }, openingId: { type: "string" },
+              characterId: { type: "string" }, expression: { type: "string" },
+            },
+          },
           prompt: {
             type: "string",
-            description: "The visual description to generate from (English, concrete, no text in the image).",
+            description: "Concrete artwork prompt with identity, outfit, expression and pose details. Set transparent=true only for a requested cutout; Anima/Krea segmentation and legacy chroma removal are skipped otherwise. Krea can generate NSFW backgrounds; keep those opaque. No text or UI inside the image unless requested.",
           },
           model: {
             type: "string",
@@ -506,7 +792,7 @@ const CONTROL_TOOLS: ToolDefinition[] = [
     function: {
       name: "generate_images",
       description:
-        "Prepare one batch of independently described images for ONE creator confirmation. Use for multiple characters, scenes, or freeform requests such as '10 women with different hair colors'. Write one item and distinct English prompt per requested output; these are separate pictures, not a collage or variations of a single prompt. No images are generated or billed before confirmation; assistant preparation still has its normal cost. Default to the least expensive suitable model. Omit target to save in the asset library. For character portraits use an existing entry_portrait target, or first wire custom UI once to the managed characterImages module and use component_image targets. Existing pictures are skipped. The backend generates, saves and binds the entire confirmed batch without calling you per image. Call this tool ALONE and end the turn; do not launch generate_image repeatedly or ask the creator to return for every picture. Maximum 30 images per batch; for a larger request clarify the first batch size rather than silently dropping items.",
+        "Prepare one batch of independently described safe images for ONE creator confirmation. If the request or any reference is NSFW, DO NOT USE IMAGE GENERATION; tell the user it is disabled for NSFW requests. Uploaded or owned-file references require individual generate_image calls with source codex; do not omit them or use this batch tool. Use for multiple characters, scenes, or freeform requests such as '10 women with different hair colors'. Write one item and distinct English prompt per requested output; these are separate pictures, not a collage or variations of a single prompt. No images are generated or billed before confirmation; assistant preparation still has its normal cost. Default to the least expensive suitable model. Omit target to save in the asset library. For character portraits use an existing entry_portrait target, or first wire custom UI once to the managed characterImages module and use component_image targets. Existing pictures are skipped. The backend generates, saves and binds the entire confirmed batch without calling you per image. Call this tool ALONE and end the turn; do not launch generate_image repeatedly or ask the creator to return for every picture. Maximum 30 images per batch; for a larger request clarify the first batch size rather than silently dropping items.",
       parameters: {
         type: "object",
         properties: {
@@ -514,6 +800,7 @@ const CONTROL_TOOLS: ToolDefinition[] = [
           model: { type: "string", enum: IMAGE_TOOL_MODELS.map(model => model.id),
             description: IMAGE_TOOL_MODELS.map(model => model.line).join("\n") + `\nDefault ${SMART_IMAGE_MODEL}.` },
           modelReason: { type: "string", description: "Brief reason for the selected model in the creator's language." },
+          referenceAssetRefs: { type: "array", maxItems: 5, items: { type: "string" }, description: "If references are needed, use separate generate_image calls with Codex and pass the exact owned @asset refs there. This batch tool does not accept visual references." },
           aspectRatio: { type: "string", enum: [...IMAGE_TOOL_CAPABILITIES.aspectRatios] },
           resolution: { type: "string", enum: [...IMAGE_TOOL_CAPABILITIES.resolutions] },
           items: {

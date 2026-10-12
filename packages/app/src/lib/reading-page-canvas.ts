@@ -41,7 +41,7 @@ export function installReadingPageCanvas(document: Document, canvas: ReadingPage
   if (!canvas) return releaseMode;
   const style = root.style;
   const opacity = Number.isFinite(canvas.opacity) ? Math.min(1, Math.max(0, canvas.opacity)) : 1;
-  const veil = `rgba(11, 10, 16, ${(1 - opacity).toFixed(3)})`;
+  const veil = `rgba(20, 19, 18, ${(1 - opacity).toFixed(3)})`;
   const image = JSON.stringify(canvas.imageUrl.replace(/[\n\r\f]/g, ""));
   // Navigation/edge color belongs to the shared critical stylesheet. Wallpaper
   // brightness must not change it between routes or during startup hydration.

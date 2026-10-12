@@ -16,6 +16,7 @@ import { SessionHeader } from "./session-header";
 import { type YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
 import { safeParseWorldDef } from "@/lib/utils";
 import { absoluteImageUrl } from "@/lib/asset-url";
+import { readPlayerPresentation } from "@/lib/persona-profile";
 import { expandMacros } from "@yumina/engine";
 import { resolveDisplayMacros } from "@/lib/resolve-display-macros";
 import { TOP_EDGE_ALWAYS_PX, TOP_EDGE_PX } from "@/lib/top-edge-gate";
@@ -26,6 +27,7 @@ import { isIOS, useTouchDevice } from "@/hooks/use-touch-device";
 import { usePlaytimeTracker } from "./use-playtime-tracker";
 import { CombatPanel } from "./combat-panel";
 import { WorldRenderer } from "./world-renderer";
+import { StoryEndingStatus } from "./story-ending-status";
 import { PersonaManagerDialog } from "./persona-manager-dialog";
 import { SharePlaythroughModal } from "./share-playthrough-modal";
 import { TipModal } from "@/edition/slots";
@@ -57,6 +59,9 @@ import {
   getImmersiveExitLayout,
   scheduleMobileExitAutoCollapse,
 } from "./immersive-exit-layout";
+
+import { vnDialogTheme } from "../../../../../interfaces/vn/dialog-theme";
+import { activateVnDialogTheme } from "@/lib/vn-dialog-theme";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -228,7 +233,12 @@ export function ChatView({
   // effects (keyboard shortcut, fullscreen API) still fire.
   const fullScreenMode = Boolean(worldDef?.rootComponent);
   const pendingChoices = useChatStore(s => s.pendingChoices);
+  const storyProgress = useChatStore(s => s.storyProgress);
+  const isCompletingEnding = useChatStore(s => s.isCompletingEnding);
+  const endingError = useChatStore(s => s.endingError);
+  const checkpoints = useChatStore(s => s.checkpoints);
   const streamingReasoning = useChatStore(s => s.streamingReasoning);
+  const streamingTokenCount = useChatStore(s => s.streamingTokenCount);
   const hasEarlierMessages = useChatStore(s => s.hasEarlierMessages);
   const isLoadingEarlier = useChatStore(s => s.isLoadingEarlier);
   const sendFailureNonce = useChatStore(s => s.sendFailureNonce);
@@ -280,7 +290,10 @@ export function ChatView({
     // account-identity value we have. Leaving it undefined would make the
     // engine fall through to playerName directly, which skips the username
     // layer users expect for {{user}}.
-    if (!metadata.personaName) {
+    const root = worldDef.rootComponent;
+    const vnPerspective = root?.interfaceId === "vn" || /className="vn"/.test(root?.files["__user-root.tsx"] ?? root?.files[root.entryFile] ?? "");
+    if (vnPerspective) metadata.personaName = "{{user}}";
+    else if (!metadata.personaName) {
       const u = (session as any)?.currentUser as
         | { username?: string | null; displayUsername?: string | null; name?: string | null }
         | undefined;
@@ -373,7 +386,7 @@ export function ChatView({
         useUiStore.getState().toggleTheaterMode();
       }
     }
-    (window as any).__yuminaToggleImmersive = toggleImmersive;
+    (window as any).__yuminaToggleImmersive = () => setDisplayMode(!useUiStore.getState().theaterMode);
     let hadSystemFullscreen = Boolean(document.fullscreenElement);
     const onFsChange = () => {
       const active = Boolean(document.fullscreenElement);
@@ -399,7 +412,7 @@ export function ChatView({
       document.removeEventListener("fullscreenchange", onFsChange);
       delete (window as any).__yuminaToggleImmersive;
     };
-  }, [fullScreenMode, toggleImmersive, isActive, isTouch, mobileAutoSystemFullscreen, autoFullscreenOnPlay, shouldAskAutoFullscreen, fullscreenPendingChoice]);
+  }, [fullScreenMode, toggleImmersive, setDisplayMode, isActive, isTouch, mobileAutoSystemFullscreen, autoFullscreenOnPlay, shouldAskAutoFullscreen, fullscreenPendingChoice]);
 
   // ESC: first press exits immersive mode, second press navigates to library
   useEffect(() => {
@@ -446,34 +459,17 @@ export function ChatView({
   //   4. currentUser.name (user-editable display name, last account fallback)
   //   5. worldDef.settings.playerName (creator default)
   //   6. "Player" (never literal "User" — see engine/macros.ts userHandler)
-  const displayUserName = useMemo(() => {
-    const meta = (session as any)?.state?.metadata;
-    const u = (session as any)?.currentUser as
-      | { username?: string | null; displayUsername?: string | null; name?: string | null }
-      | undefined;
-    return (meta?.personaName as string)
-      || u?.username
-      || u?.displayUsername
-      || u?.name
-      || (worldDef?.settings as any)?.playerName
-      || "Player";
-  }, [session, worldDef]);
+  const displayUserName = useMemo(
+    () => readPlayerPresentation(session, worldDef?.settings?.playerName || "Player").name,
+    [session, worldDef],
+  );
 
   // Persona-aware user object pushed into the sandbox as `useYumina().user`.
   // Same branching as displayUserName for the name; avatar is persona.avatarUrl
   // when active else account image. Creators writing `<img src={user.avatar}/>`
   // in custom TSX get the correct identity without branching on persona state.
   const sandboxUser = useMemo(() => {
-    const meta = (session as any)?.state?.metadata;
-    const u = (session as any)?.currentUser as
-      | { username?: string | null; displayUsername?: string | null; name?: string | null; image?: string | null }
-      | undefined;
-    const name = (meta?.personaName as string)
-      || u?.username
-      || u?.displayUsername
-      || u?.name
-      || (worldDef?.settings as any)?.playerName
-      || "Player";
+    const identity = readPlayerPresentation(session, worldDef?.settings?.playerName || "Player");
     // MUST be absolute: this value crosses into the sandbox iframe, where a raw
     // S3 key ("users/<id>/image/<file>.jpg") or a root-relative "/cdn/..." is
     // resolved against the SANDBOX document, not the app origin. The SPA
@@ -482,9 +478,11 @@ export function ChatView({
     // avatar. Only OAuth accounts (image = full https URL) ever worked, which
     // is why this survived: uploaded avatars are stored as bare S3 keys.
     // absoluteImageUrl is idempotent, so http(s) values pass through unchanged.
-    const avatar =
-      absoluteImageUrl((meta?.personaImage as string | undefined) || u?.image) ?? null;
-    return { name, avatar };
+    const sprites = identity.sprites && Object.fromEntries(Object.entries(identity.sprites)
+      .map(([expression, ref]) => [expression, absoluteImageUrl(ref)])
+      .filter(([, url]) => typeof url === "string"));
+    return { name: identity.name, avatar: absoluteImageUrl(identity.avatar) ?? null,
+      ...(sprites && Object.keys(sprites).length ? { sprites: sprites as import("@yumina/shared").PersonaSprites } : {}) };
   }, [session, worldDef]);
 
   const displayCharName = useMemo(() => {
@@ -492,13 +490,21 @@ export function ChatView({
     return charEntry?.name ?? "Assistant";
   }, [worldDef]);
 
+  // Preserve the player token for VN speaker parsing; its renderer substitutes
+  // the session persona name locally. Classic resolves the display macro here.
+  const rootInterface = worldDef?.rootComponent;
+  const vnPerspective = rootInterface?.interfaceId === "vn" || /className="vn"/.test(rootInterface?.files["__user-root.tsx"] ?? rootInterface?.files[rootInterface.entryFile] ?? "");
+  useLayoutEffect(() => {
+    if (isActive && !hasSessionMismatch && vnPerspective) return activateVnDialogTheme(document);
+  }, [isActive, hasSessionMismatch, vnPerspective]);
+
   // Resolve macros in message content before passing to sandbox
   const resolvedMessages = useMemo(() =>
     messages.map((m) => ({
       ...m,
-      content: resolveDisplayMacros(m.content, displayUserName, displayCharName),
+      content: resolveDisplayMacros(m.content, displayUserName, displayCharName, vnPerspective),
     })),
-    [messages, displayUserName, displayCharName],
+    [messages, displayUserName, displayCharName, vnPerspective],
   );
 
   // `api.setVariable("hunger", …)` has to land on the variable's id, not create
@@ -511,6 +517,13 @@ export function ChatView({
   const yuminaAPI = useMemo<YuminaAPI>(
     () => ({
       sendMessage: (text: string, attachments?: import("@yumina/shared").ChatImageInput[]) => useChatStore.getState().sendMessage(text, undefined, attachments),
+      generateChoices: (messageId: string) => useChatStore.getState().generateChoices(messageId),
+      retryPendingReply: (messageId: string) => useChatStore.getState().retryPendingReply(messageId),
+      storyProgress,
+      isCompletingEnding,
+      endingError,
+      completeEnding: () => useChatStore.getState().completeEnding(),
+      retryEnding: () => useChatStore.getState().retryEnding(),
       setVariable: (id: string, value: number | string | boolean | Record<string, unknown> | unknown[]) =>
         useChatStore.getState().setVariableDirectly(resolveVariableKey(id), value),
       executeAction: (actionId: string) =>
@@ -548,7 +561,7 @@ export function ChatView({
         return s.masterVolume;
       },
     }),
-    [gameState, resolvedMessages, resolveVariableKey, worldDef?.name, session?.currentUser, session?.room, session?.userId, session?.world?.id, session?.world?.thumbnailUrl]
+    [gameState, resolvedMessages, resolveVariableKey, storyProgress, isCompletingEnding, endingError, worldDef?.name, session?.currentUser, session?.room, session?.userId, session?.world?.id, session?.world?.thumbnailUrl]
   );
 
   // Fullscreen components (like VN) handle streaming internally via
@@ -564,24 +577,36 @@ export function ChatView({
   }, [gameState, isStreaming, streamingBg]);
 
   const resolvedGreetingContent = useMemo(
-    () => (greetingContent ? resolveDisplayMacros(greetingContent, displayUserName, displayCharName) : null),
-    [greetingContent, displayUserName, displayCharName],
+    () => (greetingContent ? resolveDisplayMacros(greetingContent, displayUserName, displayCharName, vnPerspective) : null),
+    [greetingContent, displayUserName, displayCharName, vnPerspective],
   );
+  const storyCapabilities = useMemo(() => ({
+    canSendMessage: storyProgress.status === "playing" && !isCompletingEnding && !readOnly,
+    canPersistSession: true,
+    canUseSessionApis: true,
+    requiresAuth: false,
+  }), [storyProgress.status, isCompletingEnding, readOnly]);
   const fullScreenAPI = useMemo<YuminaAPI>(
     () => ({
       ...yuminaAPI,
       variables: fullScreenVariables,
+      capabilities: storyCapabilities,
+      personaSelectable: session?.personaSelectable === true,
       isStreaming,
       streamingContent: isStreaming ? stripDirectivesForSandbox(streamingContent ?? "") : "",
       // WorldRenderer reads these directly off api (legacy path passes them
       // via extraProps={canvasExtraProps} instead). Mirror them here so
       // rootComponent worlds get greetingContent / pendingChoices / etc.
       pendingChoices: pendingChoices ?? [],
+      storyProgress,
+      isCompletingEnding,
+      endingError,
       error: error ?? null,
       sendFailureNonce,
       streamingReasoning: streamingReasoning ?? "",
+      streamingTokenCount,
       readOnly,
-      checkpoints: [],
+      checkpoints,
       greetingContent: resolvedGreetingContent,
       selectedModel,
       mixMode,
@@ -594,8 +619,8 @@ export function ChatView({
       isLoadingEarlier,
     } as YuminaAPI),
     [
-      yuminaAPI, fullScreenVariables, isStreaming, streamingContent,
-      pendingChoices, error, sendFailureNonce, streamingReasoning, readOnly,
+      yuminaAPI, fullScreenVariables, storyCapabilities, session?.personaSelectable, isStreaming, streamingContent,
+      pendingChoices, storyProgress, isCompletingEnding, endingError, error, sendFailureNonce, streamingReasoning, streamingTokenCount, readOnly, checkpoints,
       resolvedGreetingContent, selectedModel, mixMode, modelPool, userPlan, memorySummaryEnabled, installedExtensions, preferredProvider,
       hasEarlierMessages, isLoadingEarlier,
     ]
@@ -621,9 +646,10 @@ export function ChatView({
     pendingChoices: pendingChoices ?? [],
     error: error ?? null,
     streamingReasoning: streamingReasoning ?? "",
+    streamingTokenCount,
     readOnly,
-    checkpoints: [],
-    greetingContent: greetingContent ? resolveDisplayMacros(greetingContent, displayUserName, displayCharName) : null,
+    checkpoints,
+    greetingContent: greetingContent ? resolveDisplayMacros(greetingContent, displayUserName, displayCharName, vnPerspective) : null,
     selectedModel,
     mixMode,
     modelPool,
@@ -631,7 +657,7 @@ export function ChatView({
     memorySummaryEnabled,
     installedExtensions,
     preferredProvider,
-  }), [isStreaming, pendingChoices, error, streamingReasoning, readOnly, greetingContent, displayUserName, displayCharName, selectedModel, mixMode, modelPool, userPlan, memorySummaryEnabled, installedExtensions, preferredProvider]);
+  }), [isStreaming, pendingChoices, error, streamingReasoning, streamingTokenCount, readOnly, checkpoints, greetingContent, displayUserName, displayCharName, vnPerspective, selectedModel, mixMode, modelPool, userPlan, memorySummaryEnabled, installedExtensions, preferredProvider]);
 
   // sharedChatExtraProps is consumed through api/user channels into v2 WorldRenderer.
   void sharedChatExtraProps;
@@ -720,7 +746,8 @@ export function ChatView({
       data-admin-review-preview={moderationGroupKey ? "true" : undefined}
       style={playZoomStyle}
     >
-      {fullScreenMode && !theaterMode && (
+      <style>{vnDialogTheme}</style>
+      {fullScreenMode && !theaterMode && !vnPerspective && (
         <FullscreenFloatingBar
           moderationGroupKey={moderationGroupKey}
           onBack={navigateBackFromPlay}
@@ -728,17 +755,20 @@ export function ChatView({
           memorySummaryEnabled={memorySummaryEnabled}
         />
       )}
-      {theaterMode && <ImmersiveExitButton />}
+      {theaterMode && !vnPerspective && <ImmersiveExitButton />}
       <StateGuardHost />
       {!fullScreenMode && <StateGuardHostButton />}
       {!fullScreenMode && !theaterMode && <SessionHeader showSidebarToggle={false} onBack={navigateBackFromPlay} />}
+      <StoryEndingStatus overlay={vnPerspective} />
       <WorldRenderer
+        dialogTheme={vnPerspective ? "vn" : undefined}
         entryFile={rc.entryFile}
         files={rc.files}
         precompiled={rc.compiled}
         variables={fullScreenVariables}
         variableDefs={worldDef?.variables ?? []}
         api={fullScreenAPI}
+        capabilities={storyCapabilities}
         sessionId={sessionId}
         worldId={session?.worldId ?? ""}
         user={sandboxUser}
@@ -1203,7 +1233,7 @@ function FullscreenFloatingBar({
       )}
       <div
         data-admin-review-preview={moderationGroupKey ? "true" : undefined}
-        className={`animate-float-bar-in fixed left-1/2 z-50 flex max-w-[calc(100vw-1rem)] items-center gap-1.5 rounded-2xl border border-gold/25 bg-[#14151a]/88 p-1.5 shadow-[0_18px_45px_rgba(0,0,0,0.42),0_0_28px_rgba(201,162,94,0.08)] backdrop-blur-xl transition-[top,opacity] duration-500 ${
+        className={`animate-float-bar-in fixed left-1/2 z-50 flex max-w-[calc(100vw-1rem)] items-center gap-1.5 rounded-2xl border border-gold/25 bg-muted/88 p-1.5 shadow-[0_18px_45px_rgba(0,0,0,0.42),0_0_28px_rgba(212,194,146,0.08)] backdrop-blur-xl transition-[top,opacity] duration-500 ${
           visible
             ? "top-[max(1rem,env(safe-area-inset-top))] opacity-100"
             : "pointer-events-none -top-32 opacity-0"

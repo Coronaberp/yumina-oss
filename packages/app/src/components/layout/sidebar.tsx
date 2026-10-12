@@ -269,7 +269,7 @@ export function Sidebar() {
               </div>
               <span
                 aria-hidden="true"
-                className="-mt-0.5 select-none text-[10px] font-medium lowercase tracking-[0.18em] text-[#C9A25E]/70 transition-colors duration-300 group-hover:text-[#F5E6B8]"
+                className="-mt-0.5 select-none text-[10px] font-medium lowercase tracking-[0.18em] text-gold/70 transition-colors duration-300 group-hover:text-foreground"
               >
                 yumina
               </span>

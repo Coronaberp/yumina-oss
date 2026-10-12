@@ -1,7 +1,9 @@
 import sharp from "sharp";
 import { createHash } from "node:crypto";
+import { isAnimatedPng } from "./image-optimization.js";
 export const MEDIA_INPUT_LIMIT = 16 * 1024 * 1024;
-export const MEDIA_OUTPUT_LIMIT = 2 * 1024 * 1024;
+// Full-resolution lossless masters need room comparable to accepted uploads.
+export const MEDIA_OUTPUT_LIMIT = 16 * 1024 * 1024;
 export const MEDIA_THUMB_LIMIT = 128 * 1024;
 export const MEDIA_RESERVATION = MEDIA_OUTPUT_LIMIT + MEDIA_THUMB_LIMIT;
 export const MEDIA_MIMES = ["image/jpeg", "image/png", "image/webp"];
@@ -16,13 +18,13 @@ export async function prepareSessionImage(input: Buffer) {
     try {
         const options = { limitInputPixels: 40000000, failOn: "warning" as const, animated: true };
         const info = await sharp(input, options).metadata();
-        if (!["jpeg", "png", "webp"].includes(info.format ?? "") || (info.pages ?? 1) !== 1) {
+        if (!["jpeg", "png", "webp"].includes(info.format ?? "") || (info.pages ?? 1) !== 1 || isAnimatedPng(input) || info.depth !== "uchar") {
             throw new Error("MEDIA_UNSUPPORTED_IMAGE");
         }
         // Rotation consumes EXIF orientation; default sharp output strips EXIF/GPS.
         const image = await sharp(input, options).rotate()
-            .resize(2048, 2048, { fit: "inside", withoutEnlargement: true })
-            .webp({ quality: 86, effort: 3 }).timeout({ seconds: 15 }).toBuffer({ resolveWithObject: true });
+            .keepIccProfile().webp({ lossless: true, exact: true, effort: 6 }).timeout({ seconds: 15 }).toBuffer({ resolveWithObject: true });
+        // The thumbnail is a display derivative; full-size reads use the exact master.
         const thumb = await sharp(image.data).resize(320, 320, { fit: "inside", withoutEnlargement: true })
             .webp({ quality: 72, effort: 2 }).timeout({ seconds: 5 }).toBuffer();
         if (image.data.length > MEDIA_OUTPUT_LIMIT || thumb.length > MEDIA_THUMB_LIMIT)

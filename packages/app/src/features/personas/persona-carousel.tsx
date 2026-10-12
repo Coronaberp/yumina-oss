@@ -50,7 +50,7 @@ function PersonaAvatar({ persona, size, className = "" }: PersonaAvatarProps) {
 interface PersonaCarouselProps {
   disabled?: boolean;
   onEdit: (persona: Persona | null) => void;
-  sessionSelection?: { personaId: string | null; hasPersona: boolean; onSelect: (id: string | null) => Promise<void> };
+  sessionSelection?: { personaId: string | null; hasPersona: boolean; onSelect: (id: string) => Promise<void> };
 }
 
 export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: PersonaCarouselProps) {
@@ -85,8 +85,8 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
   }, [storedPersonas, sessionSelection?.personaId]);
 
   const total = personas.length;
-  // Slots: personas + "No persona" + "New".
-  const totalSlots = total + 2;
+  // Session selection always has a persona; standalone account defaults remain optional.
+  const totalSlots = total + (sessionSelection ? 1 : 2);
 
   const prev = () => setActiveIndex((i) => (i - 1 + totalSlots) % totalSlots);
   const next = () => setActiveIndex((i) => (i + 1) % totalSlots);
@@ -94,8 +94,8 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
   const leftIndex = (activeIndex - 1 + totalSlots) % totalSlots;
   const rightIndex = (activeIndex + 1) % totalSlots;
 
-  const isNoPersonaSlot = (idx: number) => idx === total;
-  const isNewSlot = (idx: number) => idx === total + 1;
+  const isNoPersonaSlot = (idx: number) => !sessionSelection && idx === total;
+  const isNewSlot = (idx: number) => idx === total + (sessionSelection ? 0 : 1);
 
   const handleActivate = async (persona: Persona) => {
     if (disabled) return;
@@ -107,7 +107,7 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
 
   const handleDeactivate = async () => {
     if (disabled) return;
-    if (sessionSelection) return sessionSelection.onSelect(null);
+    if (sessionSelection) return;
     if (savingSelection || !personas.some((p) => p.isActive)) return;
     setSaveFailed(false);
     setSaveFailed(!await deactivatePersonas());
@@ -188,7 +188,7 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
             <button
               onClick={prev}
               aria-label="Previous persona"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sub/60 transition-all hover:border-gold/40 hover:bg-gold/10 hover:text-gold active:scale-95"
+              className="persona-carousel-arrow flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sub/60 transition-all hover:border-gold/40 hover:bg-gold/10 hover:text-gold active:scale-95"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -210,7 +210,7 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
             </div>
 
             {/* Center card (active slot) */}
-            <div className="w-44 shrink-0 transition-all duration-300">
+            <div className="persona-carousel-center w-44 shrink-0 transition-all duration-300">
               <CenterCard
                 disabled={disabled || (!sessionSelection && savingSelection)}
                 selectLabel={t("persona.session.select")}
@@ -254,20 +254,21 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
             <button
               onClick={next}
               aria-label="Next persona"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sub/60 transition-all hover:border-gold/40 hover:bg-gold/10 hover:text-gold active:scale-95"
+              className="persona-carousel-arrow flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sub/60 transition-all hover:border-gold/40 hover:bg-gold/10 hover:text-gold active:scale-95"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
 
           {/* Dots */}
-          <div className="flex items-center gap-1.5">
+          <div className="persona-carousel-pagination flex items-center gap-1.5">
             {Array.from({ length: totalSlots }).map((_, i) => (
               <button
                 key={i}
                 onClick={() => setActiveIndex(i)}
                 aria-label={`Go to persona ${i + 1}`}
-                className={`rounded-full transition-all duration-300 ${
+                aria-current={i === activeIndex ? "true" : undefined}
+                className={`persona-carousel-dot rounded-full transition-all duration-300 ${
                   i === activeIndex
                     ? "h-2 w-4 bg-gold"
                     : "h-2 w-2 bg-white/20 hover:bg-white/40"
@@ -465,7 +466,8 @@ function CenterCard({
 
   return (
     <div
-      className={`relative flex flex-col items-center gap-3 rounded-2xl border-2 py-5 px-4 transition-all duration-300 ${
+      data-active={persona.isActive}
+      className={`persona-carousel-card relative flex flex-col items-center gap-3 rounded-2xl border-2 py-5 px-4 transition-all duration-300 ${
         persona.isActive
           ? "border-gold/30 bg-gold/[0.05] shadow-[0_0_30px_rgba(255,215,0,0.1)]"
           : "cursor-pointer border-white/10 bg-white/[0.02] hover:border-gold/20 hover:bg-white/[0.04]"
@@ -486,7 +488,7 @@ function CenterCard({
       <button type="button" aria-pressed={persona.isActive}
         disabled={disabled || (!allowReselect && persona.isActive)}
         onClick={() => onActivate(persona)}
-        className="flex w-full flex-col items-center gap-3 rounded-xl disabled:cursor-default disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold">
+        className="persona-carousel-selection flex w-full flex-col items-center gap-3 rounded-xl disabled:cursor-default disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold">
       {/* Avatar */}
       <PersonaAvatar
         persona={persona}
@@ -516,7 +518,7 @@ function CenterCard({
       <span className="text-xs text-gold">{selectLabel}</span>
       </button>
       {/* Action buttons are siblings of the selection button. */}
-      <div className="flex items-center gap-2">
+      <div className="persona-carousel-actions flex items-center gap-2">
         <button
           onClick={(e) => {
             e.stopPropagation();

@@ -2,10 +2,12 @@
  * Strips state-change directives from streaming text so they are never visible to the user.
  * Uses the same patterns as the engine's ResponseParser.
  */
-import { isPartialLeadingSpeakerTag, parseLeadingSpeakerTag } from "@yumina/engine";
+import { isPartialLeadingSpeakerTag, parseLeadingSpeakerTag, stripVariableUpdateTags } from "@yumina/engine";
 
 // [variableId: operation value]
 const STANDARD = /\[([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
+// Compatibility with the malformed wrapper some models emit: [var: id op value].
+const VAR_WRAPPER = /\[\s*var:\s*[\w\p{L}\p{N}.$-]+\s+(?:set|add|subtract|multiply|append|toggle|\+|-|\*)\s*(?:"(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/giu;
 // [audio: trackId action ...]
 const AUDIO = /\[audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\]/gu;
 // [variableId: op {json}] or [variableId: op [json]]
@@ -18,10 +20,11 @@ const STRUCTURAL_XML = /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSO
 const TRAILING_INCOMPLETE = /\[[\w\p{L}\p{N}.$-]+:[^\]]*$/u;
 
 export function stripDirectives(text: string): string {
-  return text
+  return stripVariableUpdateTags(text)
     .replace(UPDATE_VAR, "")
     .replace(AUDIO, "")
     .replace(JSON_DIR, "")
+    .replace(VAR_WRAPPER, "")
     .replace(STANDARD, "")
     .replace(STRUCTURAL_XML, "")
     .replace(TRAILING_INCOMPLETE, "");

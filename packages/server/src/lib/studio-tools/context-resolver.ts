@@ -5,6 +5,7 @@ import type {
   CustomUIComponent,
 } from "@yumina/engine";
 import type { Reaction } from "@yumina/engine";
+import { isVnInterface, readVnAssetMap, readVnOpeningScenes, vnAssetRows } from "@yumina/engine";
 import { loadAssetCatalog, formatAssetCatalog } from "./asset-catalog.js";
 
 // ── Types ──
@@ -248,6 +249,23 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
   parts.push(`World: "${world.name || "(unnamed)"}"`);
   if (world.description) parts.push(`Description: ${world.description}`);
 
+  // Story definitions are platform data in Classic, VN and custom interfaces.
+  // Keep IDs and selection metadata discoverable; read long prose on demand.
+  const structured = world.settings?.storyStructureEnabled !== false;
+  const storyPreview = (text: string = "") => JSON.stringify(text.length > 160 ? `${text.slice(0, 160)}…` : text);
+  parts.push(`\nSTORY STRUCTURE: storyStructureEnabled=${structured} (${structured ? "structured progression" : "open-ended; definitions retained"})`);
+  const routes = world.routes ?? [];
+  parts.push(`ROUTES (${routes.length}):`);
+  for (const route of routes) {
+    parts.push(`  ${route.id}: ${JSON.stringify(route.name)}${route.enabled === false ? " DISABLED" : ""} priority=${route.priority ?? 0} lockOnEntry=${route.lockOnEntry ?? false} conditionLogic=${route.conditionLogic ?? "all"} conditions=${JSON.stringify(route.conditions ?? [])} guidance=${storyPreview(route.guidance)}`);
+  }
+  const endings = world.endings ?? [];
+  parts.push(`ENDINGS (${endings.length}):`);
+  for (const ending of endings) {
+    parts.push(`  ${ending.id}: ${JSON.stringify(ending.name)}${ending.enabled ? "" : " DISABLED"} priority=${ending.priority ?? 0} routeIds=${JSON.stringify(ending.routeIds ?? [])} mode=${ending.mode ?? "authored"} conditionLogic=${ending.conditionLogic ?? "all"} allowUnconditional=${ending.allowUnconditional ?? false} conditions=${JSON.stringify(ending.conditions ?? [])} outcome=${storyPreview(ending.outcome)} guidance=${storyPreview(ending.guidance)} proseChars=${ending.prose?.length ?? 0} prosePreview=${storyPreview(ending.prose)}`);
+  }
+  parts.push("Use read_entities with route/ending IDs for full definitions; write_route / write_ending edit them. These are separate from lore entries and gameplay variables.");
+
   // Entries inventory (compact but rich — includes keywords, not just count)
   if (world.entries.length > 0) {
     parts.push(`\nENTRIES (${world.entries.length}):`);
@@ -356,6 +374,8 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
     }
   }
 
+  parts.push(`\nPUBLIC CARD SHOWCASE (Publish → Character showcase): card-showcase — ${(world.cardShowcase?.html ?? "").length} HTML chars, ${(world.cardShowcase?.css ?? "").length} CSS chars. Read with read_entities; edit with write_card_showcase / write_character_showcase_css. This is the published card profile.`);
+
   // Custom UI / Root Component
   if (world.rootComponent) {
     // Worlds with rootComponent: show it as the rendered app component
@@ -363,6 +383,16 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
     const fileNames = Object.keys(rc.files);
     parts.push(`\nROOT COMPONENT:`);
     parts.push(`  ${rc.id}: "${rc.name}" entry=${rc.entryFile}`);
+    if (isVnInterface(rc)) {
+      try {
+        const sprites = vnAssetRows(readVnAssetMap(rc.files["sprites.ts"] ?? "", "sprites"), "sprites");
+        const backgrounds = vnAssetRows(readVnAssetMap(rc.files["scenes.ts"] ?? "", "backgrounds"), "backgrounds");
+        const openings = readVnOpeningScenes(rc.files["scenes.ts"] ?? "");
+        parts.push(`  VN ASSETS: ${sprites.length} sprite expressions; ${backgrounds.length} Global backgrounds; ${Object.keys(openings).length} opening collections. Use list_vn_assets for help, defaults, and stable IDs; edit_vn_assets for assignments/order.`);
+      } catch {
+        parts.push("  VN ASSETS: custom source; use list_vn_assets for editability and read_entities before changing authored maps.");
+      }
+    }
     // List each file with its size — agent uses filenames as IDs for read_entities and
     // write_custom_ui, and the size tells it which files to page through rather than read whole.
     for (const fn of fileNames) {
@@ -401,6 +431,8 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
     if (s.maxTokens) settingParts.push(`maxTokens=${s.maxTokens}`);
     if (s.temperature != null) settingParts.push(`temp=${s.temperature}`);
     if (s.playerName) settingParts.push(`playerName="${s.playerName}"`);
+    if (s.nameGeneratorProfiles?.length) settingParts.push(`name profiles: ${s.nameGeneratorProfiles.map(profile =>
+      `${profile.id}=${JSON.stringify(profile.label)} (${profile.style ?? "random"}, ${profile.format ?? "given"})`).join("; ")}`);
     if (settingParts.length > 0) {
       parts.push(`\nSETTINGS: ${settingParts.join(", ")}`);
     }
@@ -629,6 +661,7 @@ export async function resolveContext(
 
   // Match custom UI if request mentions UI-related terms
   const uiKeywords = ["component", "renderer", "ui", "tsx", "interface", "hud", "overlay", "panel", "screen", "visual", "display",
+    "status", "visualization", "visualizations", "showcase", "css", "状态", "狀態", "可视化", "視覺化",
     "前端", "界面", "组件", "样式", "背景", "显示", "渲染", "主题", "皮肤", "外观"];
   // Also match if the request mentions a specific rootComponent filename
   const rcFileNames = world.rootComponent

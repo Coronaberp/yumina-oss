@@ -20,6 +20,8 @@ const BACKGROUND_BILLING_LABELS: Record<string, string> = {
   "session-memory": "Session memory update",
   "summaryception": "Layered summary",
   "state-update-guard": "State update correction",
+  "character-identity-review": "Character identity check",
+  "character-identity-correction": "Character identity correction",
 };
 
 export function backgroundBillingLabel(endpoint: string): string {

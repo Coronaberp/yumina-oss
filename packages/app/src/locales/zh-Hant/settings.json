@@ -361,5 +361,10 @@
     "messageOfficial": "私信 {{username}}",
     "emailSupport": "郵件支援",
     "emailCopied": "已複製郵箱：{{email}}"
+  },
+  "memoryEmbeddings": {
+    "description": "故事記憶預設使用管理員的嵌入連線。啟用個人設定即可使用自己的連線。更改向量空間會重新索引記憶。",
+    "adminDefault": "管理員預設設定",
+    "updateAdminDefault": "使用更新後的管理員設定重新索引"
   }
 }

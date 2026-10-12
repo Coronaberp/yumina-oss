@@ -20,6 +20,14 @@ function imageTool() {
   };
 }
 
+test("Codex image proposals keep the fixed Sol xhigh helper and require one image per approval", () => {
+  assert.ok(imageTool().properties.source?.enum?.includes("codex"));
+  const proposal = normalizeImageProposal({ source: "codex", prompt: "Gold star", model: "different-model", imageKind: "sprite", batchSize: 4 });
+  assert.equal(proposal?.source, "codex");assert.equal(proposal?.model, "GPT-6.1 Sol · xhigh");assert.equal(proposal?.batchSize, 1);
+  const tool = STUDIO_TOOLS.find(entry => entry.function.name === "generate_image")!;
+  assert.match(tool.function.description, /NSFW.*DO NOT USE IMAGE GENERATION/);
+});
+
 test("the tool offers every model the registry has", () => {
   assert.deepEqual(imageTool().properties.model?.enum, SMART_IMAGE_MODELS.map(model => model.id),
     "the assistant picks its own generator; hiding one removes a capability silently");

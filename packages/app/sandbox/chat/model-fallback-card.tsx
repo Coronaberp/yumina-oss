@@ -18,15 +18,17 @@ export function ModelFallbackCard({ notice }: { notice: ModelFallbackNotice }) {
   const privateMode = notice.provider === "private";
   const info = privateMode ? undefined : PLAY_MODELS.find((m) => m.id === model);
   const allowed = privateMode || (!!info && PLAN_HIERARCHY.indexOf(api.userPlan as typeof PLAN_HIERARCHY[number]) >= PLAN_HIERARCHY.indexOf(info.minPlan as typeof PLAN_HIERARCHY[number]));
-  const canUseBackup = !!model && model !== notice.requestedModel && allowed;
+  const savedProviderBackup = !!notice.suggestedKeyId && model === notice.suggestedModel;
+  const canUseBackup = !!model && (model !== notice.requestedModel || savedProviderBackup) && allowed;
+  const canRemember = !privateMode || savedProviderBackup;
   const chosenName = formatModelId(switching ? notice.suggestedModel : model);
   const busy = submitting || api.readOnly || api.isStreaming;
   const button = "min-h-8 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40";
 
-  const submit = async (selected: string, persist: boolean) => {
+  const submit = async (selected: string, persist: boolean, useBackup = true) => {
     if (submitting) return;
     setSubmitting(true); setActionError(false);
-    try { await api.resolveModelFallback(notice.id, selected, persist); }
+    try { await api.resolveModelFallback(notice.id, selected, persist && canRemember, useBackup); }
     catch { setSubmitting(false); setActionError(true); }
   };
 
@@ -36,7 +38,7 @@ export function ModelFallbackCard({ notice }: { notice: ModelFallbackNotice }) {
         {switching ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 motion-safe:animate-spin" /> : <AlertCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-60" />}
         <span className="min-w-0 break-words">{switching ? t("switching", { model: chosenName }) : notice.status === "failed" ? t("failed") : notice.status === "stopped" ? t("stopped") : t("title", { model: formatModelId(notice.failedModel) })}</span>
         {switching ? <button type="button" className={button} onClick={() => api.stopGeneration()}>{t("stop")}</button> : <>
-          <button type="button" disabled={busy} onClick={() => void submit(notice.requestedModel, false)} className={button}>{t("compactRetry")}</button>
+          <button type="button" disabled={busy} onClick={() => void submit(notice.requestedModel, false, false)} className={button}>{t("compactRetry")}</button>
           <button type="button" disabled={busy} onClick={() => { void api.cancelModelFallback(notice.id).catch(() => setActionError(true)); }} className={`${button} opacity-60`}>{t("compactCancel")}</button>
         </>}
       </div>
@@ -54,10 +56,10 @@ export function ModelFallbackCard({ notice }: { notice: ModelFallbackNotice }) {
           <details className="group min-w-0 basis-auto open:basis-full">
             <summary className="w-fit cursor-pointer py-1 hover:text-muted-foreground">{t("compactOptions")}</summary>
             <div className="mt-1 space-y-2 border-l border-border/50 pl-3 text-muted-foreground">
-              <label className="flex min-h-8 cursor-pointer items-center gap-2">
+              {canRemember && <label className="flex min-h-8 cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={remember} disabled={busy || !canUseBackup} onChange={(e) => setRemember(e.target.checked)} className="h-3.5 w-3.5 shrink-0 accent-primary" />
                 <span>{t("remember")}</span>
-              </label>
+              </label>}
               <p>{t("rememberHint")}</p>
               <p>{t(privateMode ? "privateBilling" : "billing")}</p>
               {[{ label: "original" as const, id: notice.requestedModel }, { label: "current" as const, id: model }].map(({ label, id }) => {
@@ -69,7 +71,7 @@ export function ModelFallbackCard({ notice }: { notice: ModelFallbackNotice }) {
             </div>
           </details>
         </div>
-        {model === notice.requestedModel && <p className="mt-1 text-[11px]">{t("sameModel")}</p>}
+        {model === notice.requestedModel && !savedProviderBackup && <p className="mt-1 text-[11px]">{t("sameModel")}</p>}
         {actionError && <p role="alert" className="mt-1 text-xs text-destructive">{t("stopped")}</p>}
         <ModelPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} selectedModel={model} onSelectModel={(id) => { setModel(id); setRemember(false); setPickerOpen(false); }} providerOverride={notice.provider} title={t("backup")} subtitle={t("onlyTurn")} />
       </div>}

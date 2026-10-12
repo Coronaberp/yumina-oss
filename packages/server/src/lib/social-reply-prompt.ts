@@ -76,8 +76,8 @@ export function buildSocialReplyPrompt(job: SocialJob, lore: SocialLore[], perso
     // Apply the same limits as persona editing to bound legacy snapshots too.
     // Players paste chat-pipeline scenario text into the persona; resolve its
     // {{user}} macro here since nothing else on this path interpolates it.
-    const named = (text: string | null | undefined, max: number) => text?.slice(0, max).replace(/\{\{user\}\}/gi, persona!.name.trim() || "the player");
-    const personaText = clip(buildPersonaSystemMessage(persona && {
+    const named = (text: string | null | undefined, max: number) => text?.slice(0, max);
+    const personaText = buildPersonaSystemMessage(persona && {
         name: persona.name.slice(0, MAX_PERSONA_NAME),
         appearance: named(persona.appearance, MAX_PERSONA_APPEARANCE),
         personality: named(persona.personality, MAX_PERSONA_PERSONALITY),
@@ -86,7 +86,7 @@ export function buildSocialReplyPrompt(job: SocialJob, lore: SocialLore[], perso
             title: entry.title,
             content: named(entry.content, MAX_PERSONA_ENTRY_CONTENT) ?? "",
         })),
-    }) ?? "", PERSONA_MAX_CHARS);
+    }, PERSONA_MAX_CHARS - 1000) ?? "";
     // Cards written for the chat pipeline reference the <game-state> block for
     // the cast (e.g. "登场成员以 selected-members 为准"). Point it at THIS reply's
     // allowed speakers, never the whole session cast: listing all thirteen here

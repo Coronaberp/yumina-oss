@@ -11,6 +11,7 @@ export interface WorldItem {
   name: string;
   description: string | null;
   schema: Record<string, unknown>;
+  cardShowcase?: import("@yumina/engine").CardShowcase | null;
   thumbnailUrl: string | null;
   coverCrop?: CoverCropSettings | null;
   galleryCoverCrop?: CoverCropSettings | null;
@@ -19,6 +20,9 @@ export interface WorldItem {
   isNsfw: boolean | null;
   blurCover?: boolean | null;
   allowEdit: boolean | null;
+  editingLocked?: boolean;
+  /** Explicit examples shared by the operator of a local installation. */
+  sharedInLibrary?: boolean;
   allowReviews?: boolean | null;
   downloadCount: number;
   messageCount?: number | null;
@@ -71,6 +75,7 @@ interface WorldsState {
   _cachedLang: string;
   fetchWorlds: () => Promise<void>;
   deleteWorld: (id: string) => Promise<boolean>;
+  setEditingLocked: (id: string, locked: boolean) => Promise<boolean>;
   invalidate: () => void;
 }
 
@@ -149,6 +154,22 @@ export const useWorldsStore = create<WorldsState>((set, get) => ({
       return true;
     } catch {
       failed();
+      return false;
+    }
+  },
+
+  setEditingLocked: async (id, locked) => {
+    try {
+      const response = await fetch(`${apiBase}/api/worlds/${id}/editing-lock`, {
+        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locked }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.data?.id !== id || typeof body.data.editingLocked !== "boolean") throw new Error(body?.error ?? "Could not change the card lock");
+      set(s => ({ worlds: s.worlds.map(world => world.id === id ? { ...world, editingLocked: body.data.editingLocked } : world) }));
+      return true;
+    } catch (error) {
+      feedback.error(error instanceof Error ? error.message : "Could not change the card lock");
       return false;
     }
   },

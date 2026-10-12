@@ -27,3 +27,13 @@ test("custom entries survive snapshots and legacy recovery without aliasing or p
   const recovered = legacySessionPersona({ metadata: { personaActive: true, personaName: "Alex", personaEntries: source.entries } });
   assert.deepEqual(recovered.persona?.entries, [{ title: "Weapon", content: "Changed" }]);
 });
+
+test("VN expression sprites are frozen into the selected persona snapshot", () => {
+  const sprites = { normal: "https://cdn.example/normal.png", angry: "https://cdn.example/angry.png" };
+  const captured = captureSessionPersona({ name: "Alex", sprites });
+  sprites.normal = "changed.png";
+  assert.deepEqual(captured.persona?.sprites, {
+    normal: "https://cdn.example/normal.png",
+    angry: "https://cdn.example/angry.png",
+  });
+});

@@ -9,8 +9,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuthModalStore } from "@/stores/auth-modal";
+import { useEdition } from "@/edition/edition";
 
 export function AuthModal() {
+  const {auth}=useEdition();
   const { t } = useTranslation();
   const { isOpen, contextMessage, close } = useAuthModalStore();
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -70,16 +72,16 @@ export function AuthModal() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-opacity hover:opacity-90"
           >
             <LogIn className="h-4 w-4" />
-            {t("auth.signIn")}
+            {auth.emailPassword?t("auth.signIn"):"Sign in with GitHub"}
           </Link>
-          <Link
+          {auth.emailPassword&&<Link
             to="/register"
             onClick={close}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-[#1A1A1C] py-3 text-sm font-bold text-foreground transition-colors hover:bg-white/10"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-input py-3 text-sm font-bold text-foreground transition-colors hover:bg-white/10"
           >
             <UserPlus className="h-4 w-4" />
             {t("auth.createAccount")}
-          </Link>
+          </Link>}
         </div>
       </DialogContent>
     </Dialog>

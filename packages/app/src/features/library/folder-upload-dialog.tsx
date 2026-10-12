@@ -5,7 +5,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useSession } from "@/lib/auth-client";
 import { importProgress } from "@/lib/asset-import-task";
 import { assetImportStore, useAssetImportStore } from "@/stores/asset-import";
-import { useUserAssetStore } from "@/stores/user-assets";
 
 export type { FolderUploadSelection } from "@/lib/asset-import-task";
 const mb = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1) + " MB";
@@ -37,14 +36,12 @@ export function FolderUploadDialog() {
   const { t } = useTranslation("library");
   const task = useAssetImportStore(s => s.task);
   const open = useAssetImportStore(s => s.detailOpen);
-  const storage = useUserAssetStore(s => s.storage);
   if (!task) return null;
   const actions = assetImportStore.getState();
   const { plan, parentLabel } = task.selection;
   const ready = task.status === "ready";
   const running = task.status === "running";
   const done = task.status === "complete";
-  const overQuota = ready && storage.used + plan.totalBytes - task.completedBytes > storage.limit;
   const progress = importProgress(task);
   const current = plan.files.find(entry => entry.path === task.currentPath);
   const currentPercent = Math.round(Math.min(1, Math.max(0, task.progress?.fraction ?? 0)) * 100);
@@ -82,14 +79,13 @@ export function FolderUploadDialog() {
           <p className="text-xs tabular-nums text-muted-foreground">{mb(progress.bytes)} / {mb(plan.totalBytes)}</p>
         </div>}
         {plan.skipped.length > 0 && <details className="text-xs text-muted-foreground"><summary>{t("assets.skippedImportFiles", { count: plan.skipped.length })}</summary><ul className="mt-2 max-h-24 overflow-auto space-y-1">{plan.skipped.map((path, i) => <li className="break-all" key={path + "-" + i}>{path}</li>)}</ul></details>}
-        {overQuota && !done && <p role="alert" className="text-xs text-destructive">{t("assets.folderStorageExceeded")}</p>}
         {task.status === "failed" && <p role="alert" className="text-xs text-destructive">{t("assets.importRetryHint")}</p>}
         {task.failed.length > 0 && <details open className="text-xs text-destructive"><summary>{t("assets.failedImportFiles", { count: task.failed.length })}</summary><ul className="mt-2 max-h-24 overflow-auto space-y-1">{task.failed.map(path => <li className="break-all" key={path}>{path}</li>)}</ul></details>}
         {!done && <p className="text-xs text-muted-foreground">{t("assets.backgroundUploadHint")}</p>}
         <div className="flex flex-wrap justify-end gap-2">
           {running ? <><button className={secondary} onClick={actions.cancel}>{t("assets.cancelUpload")}</button><button className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground" onClick={actions.hide}>{t("assets.backgroundUpload")}</button></> : <>
             <button className={secondary} onClick={actions.dismiss}>{done ? t("assets.importDone") : t("assets.importCancel")}</button>
-            {!done && <button disabled={overQuota || !plan.files.length} onClick={() => void actions.start()} className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50">{ready ? t("assets.startFolderImport", { count: plan.files.length }) : t("assets.retryImportFiles")}</button>}
+            {!done && <button disabled={!plan.files.length} onClick={() => void actions.start()} className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50">{ready ? t("assets.startFolderImport", { count: plan.files.length }) : t("assets.retryImportFiles")}</button>}
           </>}
         </div>
       </DialogContent>

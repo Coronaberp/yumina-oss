@@ -1,4 +1,4 @@
-import type { ImageBatchProposal, ImageBatchSnapshot } from "@yumina/shared";
+import type { ImageBatchProposal, ImageBatchSnapshot, StudioTraceItem } from "@yumina/shared";
 
 /** A tool call returned by the LLM */
 export interface ToolCall {
@@ -40,12 +40,49 @@ export interface StudioCreditPause {
   resumable?: boolean;
 }
 
-export type StudioImageProposalStatus = "pending" | "generating" | "done" | "failed" | "declined" | "stillGenerating";
+export type StudioImageProposalStatus = "pending" | "generating" | "done" | "failed" | "declined" | "stillGenerating" | "cancelled";
+export interface StudioQuestionPrompt {
+  question: string;
+  rationale?: string;
+  options: Array<{ label: string; description?: string }>;
+}
+export interface StudioImageTarget {
+  kind: "background" | "sprite" | "portrait" | "cg" | "library";
+  sceneId?: string;
+  period?: string;
+  openingId?: string;
+  characterId?: string;
+  expression?: string;
+}
 
-/** The assistant proposed a picture; the creator decides on the card. */
+/** Configured pictures start automatically; each card can be cancelled. */
 export interface StudioImageProposal {
   runId: string;
   toolCallId: string;
+  /** Present for generation through the creator's configured provider. */
+  /** `openai` is retained only for rendering persisted pre-migration chat cards. */
+  source?: "codex" | "comfyui" | "forgeneo" | "openai";
+  imageWorkflow?: "anima" | "krea" | "codex";
+  contentRating?: "sfw" | "nsfw";
+  transparent?: boolean;
+  workflowOptions?: { anima: boolean; krea: boolean; codex: boolean };
+  workflowEditable?: boolean;
+  imageKind?: "sprite" | "background" | "image";
+  animaEnabled?: boolean;
+  animaModel?: string;
+  animaModels?: Array<{ name: string; nsfwCapable: boolean }>;
+  animaModelEditable?: boolean;
+  seedMode?: "random" | "fixed";
+  seed?: number;
+  cfg?: number;
+  steps?: number;
+  generationOptionsEditable?: boolean;
+  progressPhase?: string;
+  progressPercent?: number;
+  referenceImages?: Array<{ key: string; url: string; name: string; assetRef?: string; role?: "identity" | "environment" | "style" | "creator"; origin?: "upload" | "manual" | "automatic" }>;
+  target?: StudioImageTarget;
+  styleInstructions?: string;
+  unassignedReason?: string;
   prompt: string;
   purpose?: string;
   aspectRatio: string;
@@ -63,8 +100,17 @@ export interface StudioImageProposal {
   estimatedMushies: number;
   status: StudioImageProposalStatus;
   jobId?: string;
+  jobStatus?: string;
+  referenceEditable?: boolean;
+  referencePrepareUntil?: number;
+  assetStatus?: "queued" | "generated" | "assigned" | "verified" | "unassigned" | "failed" | "cancelled" | string;
+  assetReason?: string;
+  retryCount?: number;
+  taskSummary?: { total: number; queued: number; running: number; failed: number; completed: number; assigned: number; verified: number; unassigned?: number; phase: string };
+  taskPreflight?: { clean: boolean; analysisComplete: boolean; errors: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }> };
   elapsed?: number;
   assetIds?: string[];
+  errorCode?: string;
   costMushies?: number;
   error?: string;
 }
@@ -75,6 +121,7 @@ export interface StudioImageBatchProposal extends ImageBatchProposal {
   unitMushies: number;
   estimatedMushies: number;
   status: "pending" | "declined" | "submitted";
+  acceptanceMessage?: string;
   batch?: ImageBatchSnapshot;
 }
 
@@ -99,6 +146,8 @@ export interface StudioChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Follow-up instruction delivered to the same running task. */
+  steering?: { status: "sending" | "queued" | "applied" | "failed"; createdAt: string; beforeIteration?: number };
   /** File attachments (images) on this message */
   attachments?: ChatAttachment[];
   /** Tool calls made by the assistant in this turn */
@@ -112,11 +161,15 @@ export interface StudioChatMessage {
   /** A generate_image card attached to this assistant turn */
   imageProposal?: StudioImageProposal;
   imageBatchProposal?: StudioImageBatchProposal;
+  /** Compact tool activity; excluded from model input by its empty content. */
+  activityTrace?: { runId: string; model: string; items: StudioTraceItem[]; startedAt?: number; completedAt?: number };
   /** Links assistant messages to the agent run that produced them (for undo/rollback) */
   agentRunId?: string;
   /** Server-assigned ID for a committed text turn (`assistant_turn_commit` event).
    *  Used to dedup live commits vs recovery hydration — one bubble per commitId. */
   commitId?: string;
+  /** Structured clarification payload on ask_user turns. */
+  questionPrompt?: StudioQuestionPrompt;
   /** Message was cut short because the user pressed Stop — show a subtle marker. */
   stopped?: boolean;
   /** This bubble is the "connection dropped" card rather than model output. It
@@ -143,9 +196,12 @@ export function serializeStudioChatMessages(messages: StudioChatMessage[]): Arra
     proposalStatus,
     imageProposal,
     imageBatchProposal,
+    activityTrace,
     agentRunId,
     commitId,
     stopped,
+    steering,
+    questionPrompt,
   }) => ({
     id,
     role,
@@ -157,10 +213,28 @@ export function serializeStudioChatMessages(messages: StudioChatMessage[]): Arra
     ...(proposalStatus && { proposalStatus }),
     ...(imageProposal && { imageProposal }),
     ...(imageBatchProposal && { imageBatchProposal }),
+    ...(activityTrace && { activityTrace }),
     ...(agentRunId && { agentRunId }),
     ...(commitId && { commitId }),
     ...(stopped && { stopped }),
+    ...(steering && { steering }),
+    ...(questionPrompt && { questionPrompt }),
   }));
+}
+
+/** Match each question to its first reply without changing the saved agent history. */
+export function getStudioQuestionReplies(messages: readonly StudioChatMessage[]): Map<string, StudioChatMessage> {
+  const replies = new Map<string, StudioChatMessage>();
+  let pendingQuestionId: string | undefined;
+  for (const message of messages) {
+    if (message.role === "assistant" && message.questionPrompt) {
+      pendingQuestionId = message.id;
+    } else if (message.role === "user" && pendingQuestionId !== undefined) {
+      if (!message.steering && message.content.trim()) replies.set(pendingQuestionId, message);
+      pendingQuestionId = undefined;
+    }
+  }
+  return replies;
 }
 
 export interface StudioChatContext {
@@ -190,6 +264,8 @@ export const READ_TOOL_NAMES = new Set([
   "load_skill",
   // V2 tools
   "read_entities",
+  "generate_names",
+  "list_name_profiles",
 ]);
 
 export function isReadTool(name: string): boolean {

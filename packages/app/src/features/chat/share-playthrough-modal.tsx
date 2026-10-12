@@ -69,8 +69,8 @@ export function SharePlaythroughModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[95] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/78 animate-in fade-in duration-150" onClick={onClose} />
-      <div className="relative z-10 mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.07] bg-[#1B1C22] shadow-[0_24px_70px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in-95 duration-200">
+      <div data-vn-dialog-backdrop="" className="absolute inset-0 bg-black/78 animate-in fade-in duration-150" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={t("share.title")} data-vn-dialog-surface="structured" className="relative z-10 mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.07] bg-popover shadow-[0_24px_70px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in-95 duration-200">
         {/* gold top accent — same motif as the card-page Author's Note */}
         <div className="h-1 w-full bg-gradient-to-r from-primary/60 via-amber-400/70 to-transparent" />
 
@@ -80,14 +80,14 @@ export function SharePlaythroughModal({
               <Share2 className="h-4 w-4" />
             </span>
             <div className="min-w-0 flex-1 pt-0.5">
-              <h2 className="text-[0.95rem] font-semibold text-foreground">
+              <h2 data-vn-dialog-title="" className="text-[0.95rem] font-semibold text-foreground">
                 {visibility === "unlisted" ? t("share.titlePrivate") : t("share.title")}
               </h2>
               <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground/55">
                 {visibility === "unlisted" ? t("share.subtitlePrivate") : t("share.subtitle")}
               </p>
             </div>
-            <button
+            <button data-vn-dialog-close=""
               onClick={onClose}
               aria-label={t("share.close")}
               className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:bg-white/5 hover:text-muted-foreground"
@@ -140,7 +140,7 @@ export function SharePlaythroughModal({
           )}
 
           <div className="flex justify-end gap-2">
-            <button
+            <button data-vn-dialog-close=""
               onClick={onClose}
               className="rounded-lg border border-white/10 px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
             >
@@ -149,7 +149,7 @@ export function SharePlaythroughModal({
             <button
               onClick={() => void handleShare()}
               disabled={submitting || !title.trim()}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-[0_0_18px_rgba(201,162,94,0.18)] transition-all hover:bg-primary/90 hover:shadow-[0_0_26px_rgba(201,162,94,0.3)] disabled:opacity-40 disabled:shadow-none"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-[0_0_18px_rgba(212,194,146,0.18)] transition-all hover:bg-primary/90 hover:shadow-[0_0_26px_rgba(212,194,146,0.3)] disabled:opacity-40 disabled:shadow-none"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
               {t("share.confirm")}

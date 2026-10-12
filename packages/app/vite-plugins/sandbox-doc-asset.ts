@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import type { Plugin } from "vite";
+import { build, type InlineConfig, type Plugin } from "vite";
+import { inlineSandboxDocument } from "./sandbox-inline-doc";
 
 /** Emit the BUILT sandbox document a second time under a content-hashed name
  *  in /assets/, and point the app at that copy.
@@ -24,14 +25,20 @@ const SUFFIX = ".html";
  *  an equal-length swap leaves every sourcemap offset in the chunk valid. */
 const HASH_LEN = SENTINEL.length - `/${PREFIX}`.length - SUFFIX.length;
 
-export function sandboxDocAsset(): Plugin {
+export function sandboxDocAsset(makeInlineConfig: () => InlineConfig): Plugin {
+  let inlineLocal = false;
+  let mode = "production";
   return {
     name: "yumina:sandbox-doc-asset",
     apply: "build",
     // The document is written by vite:build-html in generateBundle, so we have
     // to run after it to hash the final bytes rather than a half-built shell.
     enforce: "post",
-    generateBundle(_options, bundle) {
+    configResolved(config) {
+      inlineLocal = config.env.VITE_EDITION === "local";
+      mode = config.mode;
+    },
+    async generateBundle(_options, bundle) {
       const doc = bundle[SOURCE_DOC];
       if (!doc || doc.type !== "asset") {
         this.error(
@@ -41,6 +48,17 @@ export function sandboxDocAsset(): Plugin {
         );
       }
 
+      if (inlineLocal) {
+        // A separate entry is necessary: Rollup cannot inline dynamic imports
+        // in the app's multi-entry build. Use the same aliases/CSS transforms.
+        const result = await build({ ...makeInlineConfig(), mode });
+        if (Array.isArray(result) || !("output" in result)) {
+          this.error("sandbox-doc-asset: expected one sandbox build output");
+        }
+        doc.source = inlineSandboxDocument(
+          Object.fromEntries(result.output.map((item) => [item.fileName, item])),
+        );
+      }
       const source =
         typeof doc.source === "string" ? doc.source : Buffer.from(doc.source).toString("utf8");
       const hash = crypto.createHash("sha256").update(source).digest("hex").slice(0, HASH_LEN);

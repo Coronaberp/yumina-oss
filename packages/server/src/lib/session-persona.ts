@@ -1,18 +1,24 @@
 import type { ActivePersonaLike } from "./persona-metadata.js";
-import { personaEntriesSchema } from "@yumina/shared";
+import { personaEntriesSchema, personaSpritesSchema } from "@yumina/shared";
+import type { PersonaSelection } from "@yumina/shared";
 
 /** Stored outside game state so restoring a turn cannot change the player's identity. */
 export interface SessionPersona {
   /** Optimistic write token; lives outside rewindable game state. */
   selectionVersion?: string;
+  selection?: PersonaSelection;
+  /** Irreversible within a save, including rewinds; reset creates a new greeting. */
+  started?: boolean;
   persona: (ActivePersonaLike & { id?: string }) | null;
 }
 
 export function captureSessionPersona(persona: (ActivePersonaLike & { id?: string }) | null): SessionPersona {
   if (!persona) return { persona: null };
   const { id, name, avatarUrl, appearance, personality, backstory, entries } = persona;
+  const sprites = personaSpritesSchema.safeParse(persona.sprites);
   return { persona: { id, name, avatarUrl, appearance, personality, backstory,
     ...(entries ? { entries: entries.map(entry => ({ title: entry.title, content: entry.content })) } : {}),
+    ...(sprites.success && Object.keys(sprites.data).length ? { sprites: { ...sprites.data } } : {}),
   } };
 }
 

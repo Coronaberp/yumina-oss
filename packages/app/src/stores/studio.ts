@@ -1,16 +1,21 @@
+import { mergeStudioSteering, studioTaskStart } from "@/features/studio/lib/steering";
+import { createStudioRecoveryRequestCoordinator } from "@/lib/studio-recovery-request";
+import { mergeStudioImageJobs } from "@/features/studio/lib/image-job-state";
+import { mergeStudioToolTrace, endStudioToolTrace, startStudioToolTrace } from "@/features/studio/lib/tool-trace-state";
 import { create } from "zustand";
 import { useEditorStore } from "./editor";
 import { useCreditStore } from "@/edition/slots.state";
 import { serializeStudioChatMessages } from "@/features/studio/lib/types";
 import type { StudioImageProposal, StudioImageBatchProposal } from "@/features/studio/lib/types";
 import { matchingImageBatch, proposalWithImageBatch } from "@/features/studio/lib/image-batch-state";
-import { SMART_IMAGE_MODEL } from "@yumina/shared";
+import { SMART_IMAGE_MODEL, describeStudioTrace } from "@yumina/shared";
 import type {
   StudioChatMessage,
   ToolCall,
   ToolResult,
   ChatAttachment,
   StudioCreditPause,
+  StudioQuestionPrompt,
 } from "@/features/studio/lib/types";
 import { selectScopedStudioHistory, shouldAcceptStudioChatScope } from "@/features/studio/lib/agent-history-scope";
 import { feedback } from "@/lib/feedback";
@@ -27,6 +32,7 @@ import posthog from "posthog-js";
 import { isAnalyticsEnabled } from "@/lib/analytics-enabled";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
+const recoveryRequests = createStudioRecoveryRequestCoordinator({ apiBase });
 
 // Studio surfaces all render through the `editor` namespace, so it is loaded
 // wherever these failures can happen.
@@ -204,6 +210,8 @@ interface StudioAgentScope {
 }
 
 // Invalidates callbacks even when navigation returns to the same conversation.
+let steeringSubmissionEpoch = 0;
+let unacknowledgedSteering: { id: string; content: string; worldId: string; conversationId: string | null; runId: string; epoch: number; files?: File[]; attachments?: ChatAttachment[] } | null = null;
 let studioAgentEpoch = 0;
 let creditRefreshEpoch = 0;
 
@@ -236,6 +244,8 @@ function isActiveStudioStreamScope(scope: StudioAgentScope, runId: string | null
 export type { StudioChatMessage, ToolCall, ToolResult, StudioCreditPause };
 
 interface StudioState {
+  /** A saved Visualizations request, adopted by the normal chat lifecycle. */
+  pendingVisualizationTask: { worldId: string; prompt: string } | null;
   // Chat
   chatMessages: StudioChatMessage[];
   isChatStreaming: boolean;
@@ -246,6 +256,9 @@ interface StudioState {
 
   // Agent (server-side)
   isAgentWorking: boolean;
+  isSendingSteering: boolean;
+  agentHistoryTokens: number | null;
+  agentCompaction: { status: string; beforeTokens: number; afterTokens?: number; targetTokens: number } | null;
   agentIteration: number;
   agentMaxIterations: number;
   reasoningChars: number;
@@ -290,7 +303,8 @@ interface StudioState {
   activePanel: string;
 
   // Actions
-  sendChatMessage: (worldId: string, content: string, model: string, conversationId?: string | null) => Promise<void>;
+  steerChatMessage: (worldId: string, content: string, conversationId?: string | null) => Promise<boolean>;
+  sendChatMessage: (worldId: string, content: string, model: string, conversationId?: string | null) => Promise<void | false>;
   resumeCreditPause: () => Promise<void>;
   refreshCreditPause: (worldId: string, conversationId?: string | null, runId?: string) => Promise<void>;
   /** Re-attach to a run whose stream died, from the "connection dropped" card.
@@ -325,24 +339,26 @@ interface StudioState {
 interface AgentStreamCallbacks {
   scope?: StudioAgentScope;
   isActive?: () => boolean;
-  onRunStarted?: (runId: string) => void;
+  onRunStarted?: (runId: string, model?: string) => void;
+  onSteering?: (data: { runId: string; items: unknown }) => void;
+  onCompaction?: (data: { runId: string; status: string; beforeTokens: number; afterTokens?: number; targetTokens: number }) => void;
   onReasoning?: (content: string) => void;
   onText: (content: string) => void;
-  onIteration: (iteration: number, max: number) => void;
+  onIteration: (iteration: number, max: number, historyTokens?: number) => void;
   onToolStart: (data: { index: number; id: string; name: string }) => void;
   onToolDelta?: (data: { index: number; arguments: string }) => void;
   onToolEnd: (data: { index: number; id: string; name: string; arguments: string }) => void;
+  onToolTrace?: (data: unknown) => void;
   onProposal: (data: { runId: string; textContent: string; writeToolCalls: ToolCall[]; readResults: ToolResult[]; approvalReason?: string }) => void;
-  /** The assistant proposed a picture (generate_image). Terminal like a proposal:
-   *  the run waits in awaiting_approval until the creator answers the card. */
-  onImageProposal?: (data: Omit<StudioImageProposal, "status"> & { textContent: string }) => void;
+  /** Automatic image cards keep the main stream open. Saved approval cards pause it. */
+  onImageProposal?: (data: Omit<StudioImageProposal, "status"> & { textContent: string; status?: StudioImageProposal["status"] }) => void;
   onImageBatchProposal?: (data: Omit<StudioImageBatchProposal, "status"> & { textContent: string; status?: StudioImageBatchProposal["status"] }) => void;
   onImageProgress?: (data: { runId: string; toolCallId: string; jobId: string; status: string; elapsed: number }) => void;
-  onImageResult?: (data: { runId: string; toolCallId: string; jobId: string; status: "done" | "failed" | "pending"; assetIds?: string[]; costMushies?: number; errorCode?: string }) => void;
+  onImageResult?: (data: { runId: string; toolCallId: string; jobId: string; status: "done" | "failed" | "pending"; proposal?: StudioImageProposal; assetIds?: string[]; costMushies?: number; errorCode?: string }) => void;
   /** Server has committed one assistant text turn as a persistent chat bubble.
    *  The ONLY code path that appends an assistant message to chatMessages during a run —
    *  replaces the old split where onReadToolsExecuted and onDone both tried to commit. */
-  onAssistantTurnCommit: (data: { runId: string; iteration: number; textContent: string; commitId: string; writeToolCalls?: ToolCall[] }) => void;
+  onAssistantTurnCommit: (data: { runId: string; iteration: number; textContent: string; commitId: string; writeToolCalls?: ToolCall[]; questionPrompt?: StudioQuestionPrompt }) => void;
   /** Run terminated. Payload is intentionally tiny — all bubble content arrives via
    *  assistant_turn_commit, and the client just cleans up streaming/working state here. */
   onDone: (data: { runId: string }) => void;
@@ -424,13 +440,14 @@ async function tryRecoverAgentRun(
       const commitId = (turn as { commitId?: unknown })?.commitId;
       if (typeof commitId !== "string" || emittedCommitIds.has(commitId)) continue;
       emittedCommitIds.add(commitId);
-      const t = turn as { iteration?: number; textContent?: string; writeToolCalls?: unknown };
+      const t = turn as { iteration?: number; textContent?: string; writeToolCalls?: unknown; questionPrompt?: StudioQuestionPrompt };
       callbacks.onAssistantTurnCommit({
         runId: recoveredRunId,
         iteration: t.iteration ?? 0,
         textContent: t.textContent ?? "",
         commitId,
         writeToolCalls: Array.isArray(t.writeToolCalls) ? (t.writeToolCalls as ToolCall[]) : undefined,
+        questionPrompt: t.questionPrompt,
       });
     }
     return turns.length;
@@ -458,7 +475,7 @@ async function tryRecoverAgentRun(
     // reset every clock that could cut the run short and poll immediately.
     lastProgressAt = Date.now();
     consecutiveNetErrs = 0;
-    poke();
+    if (!recoveryRequests.nudge({ worldId, conversationId: callbacks.scope?.conversationId ?? null, runId: effectiveRunId })) poke();
   };
   window.addEventListener("online", onOnline);
   window.addEventListener(AGENT_RECOVERY_NUDGE, onNudge);
@@ -480,12 +497,7 @@ async function tryRecoverAgentRun(
       if (callbacks.isActive && !callbacks.isActive()) return true;
 
       try {
-        const statusUrl = effectiveRunId
-          ? `${apiBase}/api/studio/${worldId}/agent/status?runId=${effectiveRunId}`
-          : `${apiBase}/api/studio/${worldId}/agent/status${callbacks.scope ? `?conversationId=${encodeURIComponent(callbacks.scope.conversationId ?? "")}` : ""}`;
-        const res = await fetch(statusUrl, { credentials: "include" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const { data } = await res.json();
+        const { data } = await recoveryRequests.request<{ data: Awaited<ReturnType<Response["json"]>> }>({ worldId, conversationId: callbacks.scope?.conversationId ?? null, runId: effectiveRunId });
         if (callbacks.isActive && !callbacks.isActive()) return true;
         consecutiveNetErrs = 0;
 
@@ -512,7 +524,14 @@ async function tryRecoverAgentRun(
         }
 
         const recoveredRunId = effectiveRunId ?? data.id ?? runId ?? "";
-        callbacks.onRunStarted?.(recoveredRunId);
+        callbacks.onRunStarted?.(recoveredRunId, data.model);
+        if ((!callbacks.isActive || callbacks.isActive()) && Array.isArray(data.imageJobs)) {
+          useStudioStore.setState(state => ({ chatMessages: mergeStudioToolTrace(
+            mergeStudioImageJobs(state.chatMessages, data.imageJobs, recoveredRunId), data.toolTrace, true) }));
+        }
+        callbacks.onSteering?.({ runId: recoveredRunId, items: data.steering });
+        if (data.compaction) callbacks.onCompaction?.({ ...data.compaction, runId: recoveredRunId });
+        callbacks.onIteration(data.iteration ?? 0, data.maxIterations ?? 0, data.historyTokens);
 
         if (data.status === "awaiting_credits" || data.creditPause?.resumable === true || data.status === "error") {
           emitTurns(data.committedTurns, recoveredRunId);
@@ -543,22 +562,9 @@ async function tryRecoverAgentRun(
           return true;
         }
         if (data.status === "awaiting_approval" && data.pendingToolCalls?.[0]?.function?.name === "generate_image" && data.pendingToolCalls.length === 1) {
-          const call = data.pendingToolCalls[0];
-          let args: Record<string, unknown> = {};
-          try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* unusable args: still show the card */ }
-          let unitMushies = 0;
-          try {
-            const res = await fetch(`${apiBase}/api/generation/templates`, { credentials: "include" });
-            const body = await res.json();
-            unitMushies = Number(body?.smartEstimates?.[SMART_IMAGE_MODEL] ?? 0) || 0;
-          } catch { /* estimate unknown after a reload; the card says so */ }
-          const batchSize = Math.min(4, Math.max(1, Math.round(Number(args.batchSize ?? 1)) || 1));
-          callbacks.onImageProposal?.({
-            runId: recoveredRunId, toolCallId: call.id, textContent: data.textContent ?? "",
-            prompt: typeof args.prompt === "string" ? args.prompt : "", purpose: typeof args.purpose === "string" ? args.purpose : undefined,
-            aspectRatio: typeof args.aspectRatio === "string" ? args.aspectRatio : "1:1", batchSize,
-            model: SMART_IMAGE_MODEL, unitMushies, estimatedMushies: Math.ceil(unitMushies * batchSize * 10) / 10,
-          });
+          const proposal = await hydratePendingImageProposal(data.pendingToolCalls[0], recoveredRunId, data.textContent ?? "");
+          if (callbacks.isActive?.() === false) return false;
+          callbacks.onImageProposal?.(proposal);
           return true;
         }
         if (data.status === "awaiting_approval" && data.pendingToolCalls) {
@@ -580,6 +586,7 @@ async function tryRecoverAgentRun(
           && !data.creditPause.billingUnavailable && data.creditPause.reason !== "STALE_WORLD"
           && !/stopped by user|superseded/i.test(String(data.error ?? ""));
         if (data.status === "error" && !waitingForClaimRecovery) {
+          emitTurns(data.committedTurns, recoveredRunId);
           callbacks.onError(data.error ?? "Agent failed while disconnected");
           return true;
         }
@@ -617,6 +624,8 @@ async function tryRecoverAgentRun(
         // an outage — ~2.5 min of back-to-back poll failures before we give up.
         consecutiveNetErrs++;
         if (consecutiveNetErrs >= 30) return false;
+      } finally {
+        if (!callbacks.isActive || callbacks.isActive()) useStudioStore.setState({ isReconnecting: false });
       }
     }
     return false;
@@ -625,6 +634,32 @@ async function tryRecoverAgentRun(
     window.removeEventListener(AGENT_RECOVERY_NUDGE, onNudge);
     document.removeEventListener("visibilitychange", onVisibility);
   }
+}
+
+/** Restore the immutable provider choice from the server's normalized tool call. */
+async function hydratePendingImageProposal(call: ToolCall, runId: string, textContent: string): Promise<Omit<StudioImageProposal, "status"> & { textContent: string }> {
+  let args: Record<string, unknown> = {};
+  try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* unusable args: still show the card */ }
+  const source = args.source === "codex" || args.source === "comfyui" || args.source === "forgeneo" || args.source === "openai" ? args.source : undefined;
+  const imageKind = args.imageKind === "sprite" || args.imageKind === "background" || args.imageKind === "image" ? args.imageKind : undefined;
+  let unitMushies = 0;
+  if (!source) {
+    try {
+      const res = await fetch(`${apiBase}/api/generation/templates`, { credentials: "include" });
+      const body = await res.json();
+      unitMushies = Number(body?.smartEstimates?.[SMART_IMAGE_MODEL] ?? 0) || 0;
+    } catch { /* estimate unknown after a reload; the card says so */ }
+  }
+  const batchSize = source ? 1 : Math.min(4, Math.max(1, Math.round(Number(args.batchSize ?? 1)) || 1));
+  return {
+    runId, toolCallId: call.id, textContent, source, imageKind,
+    referenceImages: Array.isArray(args.referenceImages) ? args.referenceImages.filter((ref): ref is { key: string; url: string; name: string } =>
+      !!ref && typeof ref === "object" && typeof ref.key === "string" && typeof ref.url === "string" && typeof ref.name === "string").slice(0, 5) : undefined,
+    prompt: typeof args.prompt === "string" ? args.prompt : "", purpose: typeof args.purpose === "string" ? args.purpose : undefined,
+    aspectRatio: typeof args.aspectRatio === "string" ? args.aspectRatio : "1:1", batchSize,
+    model: source && typeof args.model === "string" ? args.model : SMART_IMAGE_MODEL,
+    unitMushies, estimatedMushies: Math.ceil(unitMushies * batchSize * 10) / 10,
+  };
 }
 
 /** Fired when the creator presses Reconnect while the recovery poller is already
@@ -920,7 +955,7 @@ function connectAgentSSE(
                   if (parsed.content) callbacks.onText(parsed.content);
                   break;
                 case "iteration":
-                  callbacks.onIteration(parsed.iteration, parsed.maxIterations);
+                  callbacks.onIteration(parsed.iteration, parsed.maxIterations, parsed.historyTokens);
                   break;
                 case "tool_start":
                   callbacks.onToolStart(parsed);
@@ -931,12 +966,15 @@ function connectAgentSSE(
                 case "tool_end":
                   callbacks.onToolEnd(parsed);
                   break;
+                case "tool_trace":
+                  callbacks.onToolTrace?.(parsed);
+                  break;
                 case "proposal":
                   receivedTerminalEvent = true; // V1: server closes stream after proposal
                   callbacks.onProposal(parsed);
                   break;
                 case "image_proposal":
-                  receivedTerminalEvent = true; // the run waits for the creator's answer
+                  receivedTerminalEvent = parsed.status === undefined || parsed.status === "pending";
                   callbacks.onImageProposal?.(parsed);
                   break;
                 case "image_batch_proposal":
@@ -955,6 +993,12 @@ function connectAgentSSE(
                   break;
                 case "read_tools_executed":
                   callbacks.onReadToolsExecuted(parsed);
+                  break;
+                case "compaction":
+                  callbacks.onCompaction?.(parsed);
+                  break;
+                case "steering":
+                  callbacks.onSteering?.(parsed);
                   break;
                 case "assistant_turn_commit":
                   if (parsed.commitId) callbacks.onAssistantTurnCommit(parsed);
@@ -982,8 +1026,9 @@ function connectAgentSSE(
                 case "run_started":
                   if (parsed.runId && parsed.runId !== runId) {
                     runId = parsed.runId;
-                    callbacks.onRunStarted?.(parsed.runId);
+                    callbacks.onRunStarted?.(parsed.runId, parsed.model);
                   }
+                  else if (parsed.runId) callbacks.onRunStarted?.(parsed.runId, parsed.model);
                   break;
                 case "heartbeat":
                   break; // keepalive — no action needed
@@ -1143,26 +1188,39 @@ function creditPauseReasonError(pause: StudioCreditPause): string | null {
 function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | null = null, rejection = false): AgentStreamCallbacks {
   const epoch = studioAgentEpoch;
   let streamRunId = initialRunId;
+  let streamModel = "";
   const set = useStudioStore.setState;
   const active = () => epoch === studioAgentEpoch && isActiveStudioChatScope(scope);
   const activeRun = () => active() && isActiveStudioRunScope(scope, streamRunId);
   const activeStream = () => active() && isActiveStudioStreamScope(scope, streamRunId);
-  const ended = { isChatStreaming: false, chatStreamContent: "", isAgentWorking: false,
+  const ended = { isSendingSteering: false, isChatStreaming: false, chatStreamContent: "", isAgentWorking: false,
     isRecovering: false, isReconnecting: false, isResumingCredits: false, agentIteration: 0, toolGenName: null,
     toolGenChars: 0, _agentAbortController: null, _currentRunId: null };
   return {
     scope, isActive: active,
-    onRunStarted: runId => {
+    onRunStarted: (runId, model) => {
       if (!active() || (initialRunId && runId !== initialRunId)) return;
       streamRunId = runId;
-      set({ _currentRunId: runId, creditPause: null, creditPauseError: null, isResumingCredits: false });
+      if (model) streamModel = model;
+      if (initialRunId) set({ _currentRunId: runId, creditPause: null, creditPauseError: null, isResumingCredits: false });
+      else set(s => ({ _currentRunId: runId, creditPause: null, creditPauseError: null, isResumingCredits: false,
+        chatMessages: startStudioToolTrace(s.chatMessages, runId, streamModel || "Agent") }));
+    },
+    onSteering: data => {
+      if (!activeRun() || data.runId !== streamRunId) return;
+      set(s => ({ chatMessages: mergeStudioSteering(s.chatMessages, data.runId, data.items) }));
+    },
+    onCompaction: data => {
+      if (!activeRun() || data.runId !== streamRunId) return;
+      set({ agentCompaction: data, ...(typeof data.afterTokens === "number" ? { agentHistoryTokens: data.afterTokens } : {}) });
     },
     onReasoning: content => { if (activeRun()) bufferStreamReasoning(content); },
     onText: text => { if (activeRun()) bufferStreamText(text); },
-    onIteration: (iteration, max) => {
+    onIteration: (iteration, max, historyTokens) => {
       if (!activeRun()) return;
       flushStreamNow();
-      set({ agentIteration: iteration, agentMaxIterations: max, reasoningChars: 0, reasoningContent: "", appliedCount: 0 });
+      set({ agentIteration: iteration, agentMaxIterations: max, reasoningChars: 0, reasoningContent: "", appliedCount: 0,
+        ...(typeof historyTokens === "number" ? { agentHistoryTokens: historyTokens } : {}) });
     },
     onStepRestarted: () => {
       if (!activeRun()) return;
@@ -1173,7 +1231,12 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
     },
     onToolStart: data => { if (activeRun()) set({ toolGenName: data.name, toolGenChars: 0 }); },
     onToolDelta: data => { if (activeRun()) set(s => ({ toolGenChars: s.toolGenChars + (data.arguments?.length ?? 0) })); },
-    onToolEnd: () => { if (activeRun()) set({ toolGenName: null, toolGenChars: 0 }); },
+    onToolEnd: data => {
+      if (!activeRun()) return;
+      set(s => ({ toolGenName: null, toolGenChars: 0, chatMessages: mergeStudioToolTrace(s.chatMessages,
+        { runId: streamRunId, model: streamModel || "Agent", items: [describeStudioTrace({ id: data.id, function: { name: data.name, arguments: data.arguments } })] }, true) }));
+    },
+    onToolTrace: data => { if (activeRun()) set(s => ({ chatMessages: mergeStudioToolTrace(s.chatMessages, data, true) })); },
     onReadToolsExecuted: data => {
       if (!activeRun()) return;
       flushStreamNow();
@@ -1185,6 +1248,7 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       set(s => s.chatMessages.some(message => message.commitId === data.commitId) ? {} : {
         chatMessages: [...s.chatMessages, { id: nextMsgId(), role: "assistant" as const, content: data.textContent,
           agentRunId: data.runId, commitId: data.commitId,
+          ...(data.questionPrompt ? { questionPrompt: data.questionPrompt } : {}),
           ...(data.writeToolCalls?.length ? { toolCalls: data.writeToolCalls, proposalStatus: "approved" as const } : {}) }],
         chatStreamContent: "",
       });
@@ -1219,16 +1283,18 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       if (!activeRun()) return;
       flushStreamNow();
       const { textContent, ...rest } = data;
-      const proposal: StudioImageProposal = { ...rest, status: "pending" };
+      const proposal: StudioImageProposal = { ...rest, status: rest.status ?? "pending" };
       set(s => {
         // commitTextTurn already put the assistant's sentence in a bubble; hang the card on it.
-        const idx = [...s.chatMessages].reverse().findIndex(m => m.role === "assistant" && m.agentRunId === data.runId && !m.imageProposal && m.content === textContent);
-        const at = idx >= 0 ? s.chatMessages.length - 1 - idx : -1;
+        const existing = s.chatMessages.findIndex(m => m.imageProposal?.runId === data.runId && m.imageProposal.toolCallId === data.toolCallId);
+        const idx = [...s.chatMessages].reverse().findIndex(m => m.role === "assistant" && m.agentRunId === data.runId && !m.imageProposal && !m.imageBatchProposal && !m.activityTrace && m.content === textContent);
+        const at = existing >= 0 ? existing : idx >= 0 ? s.chatMessages.length - 1 - idx : -1;
         const chatMessages = at >= 0
           ? s.chatMessages.map((m, i) => i === at ? { ...m, imageProposal: proposal } : m)
           : [...s.chatMessages, { id: nextMsgId(), role: "assistant" as const, content: textContent, agentRunId: data.runId, imageProposal: proposal }];
-        return { ...ended, chatMessages, creditPause: null, creditPauseError: null,
-          _pendingImage: { runId: data.runId, toolCallId: data.toolCallId }, _currentRunId: data.runId };
+        return proposal.status === "pending" ? { ...ended, chatMessages, creditPause: null, creditPauseError: null,
+          _pendingImage: { runId: data.runId, toolCallId: data.toolCallId }, _currentRunId: data.runId }
+          : { chatMessages };
       });
       flushRefresh();
     },
@@ -1259,8 +1325,8 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
     onImageResult: data => {
       if (!activeRun()) return;
       set(s => ({ chatMessages: s.chatMessages.map(m => m.imageProposal?.toolCallId === data.toolCallId
-        ? { ...m, imageProposal: { ...m.imageProposal!, jobId: data.jobId,
-          status: data.status === "done" ? "done" as const : data.status === "failed" ? "failed" as const : "stillGenerating" as const,
+        ? { ...m, imageProposal: { ...m.imageProposal!, ...data.proposal, jobId: data.jobId,
+          status: data.errorCode === "USER_CANCELLED" ? "cancelled" as const : data.status === "done" ? "done" as const : data.status === "failed" ? "failed" as const : "stillGenerating" as const,
           assetIds: data.assetIds, costMushies: data.costMushies, error: data.errorCode } } : m) }));
       if (data.status === "done") void useCreditStore.getState().forceFetchCredits().catch(() => {});
     },
@@ -1268,11 +1334,15 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       if (!activeRun()) return;
       flushStreamNow();
       set(s => {
-        const last = s.chatMessages[s.chatMessages.length - 1];
+        const settledMessages = endStudioToolTrace(s.chatMessages, streamRunId).map(message => message.agentRunId === streamRunId
+          && message.steering && ["sending", "queued"].includes(message.steering.status)
+          ? { ...message, steering: { ...message.steering, status: "failed" as const } } : message);
+        const last = settledMessages[settledMessages.length - 1];
         const chatMessages = rejection && !(last?.role === "assistant" && last.commitId)
-          ? [...s.chatMessages, { id: nextMsgId(), role: "assistant" as const, content: "Understood. Let me know how you'd like to proceed." }]
-          : s.chatMessages;
-        return { ...ended, chatMessages, creditPause: null, creditPauseError: null };
+          ? [...settledMessages, { id: nextMsgId(), role: "assistant" as const, content: "Understood. Let me know how you'd like to proceed." }]
+          : settledMessages;
+        return { ...ended, chatMessages, creditPause: null, creditPauseError: null,
+          ...(s.agentCompaction?.status === "summarizing" ? { agentCompaction: { ...s.agentCompaction, status: "cancelled" } } : {}) };
       });
       flushRefresh();
     },
@@ -1293,7 +1363,8 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       if (!pause) return;
       flushStreamNow();
       syncStudioCreditBalance(data);
-      set({ ...ended, creditPause: pause, creditPauseError: creditPauseReasonError(pause), _pendingApproval: null });
+      set(s => ({ ...ended, creditPause: pause, creditPauseError: creditPauseReasonError(pause), _pendingApproval: null,
+        ...(s.agentCompaction?.status === "summarizing" ? { agentCompaction: { ...s.agentCompaction, status: "paused" } } : {}) }));
       flushRefresh();
     },
     onError: (error, code) => {
@@ -1303,11 +1374,14 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       const pause = current && current.worldId === scope.worldId && current.conversationId === scope.conversationId ? current : null;
       const disconnected = code === "DISCONNECTED" || code === "RECOVERY_FAILED";
       set(s => ({ ...ended,
+        ...(s.agentCompaction?.status === "summarizing" ? { agentCompaction: { ...s.agentCompaction, status: disconnected ? "disconnected" : "failed" } } : {}),
         ...(pause ? { creditPause: { ...pause,
           ...(code === "STALE_WORLD" ? { reason: code, resumable: false } : {}),
           ...(code === "BILLING_DETAILS_MISSING" ? { billingUnavailable: true, resumable: false } : {}),
         }, creditPauseError: creditPauseFailure(code) }
-          : { chatMessages: [...s.chatMessages, disconnected
+          : { chatMessages: [...(disconnected ? s.chatMessages : endStudioToolTrace(s.chatMessages, streamRunId)).map(message => !disconnected && message.agentRunId === streamRunId
+            && message.steering && ["sending", "queued"].includes(message.steering.status)
+            ? { ...message, steering: { ...message.steering, status: "failed" as const } } : message), disconnected
             // A dropped stream is not a failed task. The agent usually finishes
             // server-side, so offer to re-attach to THAT run rather than leaving
             // "Error: network error" whose only exit is a second, billed run.
@@ -1329,9 +1403,81 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
   };
 }
 
+/** Image completions start on the server. This connection only displays those
+ * fresh turns; opening/reconnecting it never starts another model request. */
+export function watchStudioImageNotifications(scope: StudioAgentScope): () => void {
+  const apiBase = import.meta.env.VITE_API_URL || "";
+  const source = new EventSource(`${apiBase}/api/studio/${encodeURIComponent(scope.worldId)}/agent/image-notifications?conversationId=${encodeURIComponent(scope.conversationId ?? "")}`, { withCredentials: true });
+  let callbacks: AgentStreamCallbacks | null = null;
+  let notificationRunId: string | null = null;
+  let controller: AbortController | null = null;
+  const begin = (data: { runId: string; model?: string; taskRunId?: string }) => {
+    if (!isActiveStudioChatScope(scope) || typeof data.runId !== "string") return false;
+    const state = useStudioStore.getState();
+    if (state.isAgentWorking && state._currentRunId && state._currentRunId !== data.runId && state._currentRunId !== data.taskRunId) return false;
+    if (notificationRunId === data.runId && callbacks?.isActive?.()) return true;
+    notificationRunId = data.runId;
+    ++studioAgentEpoch;
+    controller = new AbortController();
+    useStudioStore.setState({ isAgentWorking: true, isChatStreaming: true, isRecovering: false, isReconnecting: false,
+      chatStreamContent: "", reasoningContent: "", reasoningChars: 0, toolGenName: null, toolGenChars: 0,
+      _currentRunId: null, _agentAbortController: controller });
+    callbacks = studioAgentCallbacks(scope);
+    callbacks.onRunStarted?.(data.runId, data.model);
+    return true;
+  };
+  type NotificationEvent = {
+    runId: string; model?: string; taskRunId?: string; status: string;
+    notification?: { taskRunId?: string };
+    committedTurns?: Array<Omit<Parameters<AgentStreamCallbacks["onAssistantTurnCommit"]>[0], "runId">>;
+    content?: string; iteration: number; maxIterations: number; historyTokens?: number; error?: string; code?: string;
+  };
+  const listen = (event: string, handler: (data: NotificationEvent) => void) => source.addEventListener(event, message => {
+    if (!isActiveStudioChatScope(scope)) return;
+    try { handler(JSON.parse((message as MessageEvent).data)); } catch { /* Reconnect/snapshot recovers a missed event. */ }
+  });
+  listen("agent_notification", begin);
+  listen("notification_snapshot", data => {
+    const state = useStudioStore.getState();
+    const turns = Array.isArray(data.committedTurns) ? data.committedTurns : [];
+    if (data.status === "completed" && turns.every((turn: { commitId: string }) => state.chatMessages.some(message => message.commitId === turn.commitId))) return;
+    if (!["running", "completed", "error"].includes(data.status)) {
+      void state.refreshCreditPause(scope.worldId, scope.conversationId, data.runId);return;
+    }
+    if (!begin({ ...data, taskRunId: data.notification?.taskRunId })) return;
+    for (const turn of turns) callbacks?.onAssistantTurnCommit({ ...turn, runId: data.runId });
+    if (data.status === "completed") callbacks?.onDone({ runId: data.runId });
+    if (data.status === "error") callbacks?.onError(data.error ?? "The image notification continuation failed.");
+  });
+  const direct: Record<string, keyof AgentStreamCallbacks> = {
+    tool_start: "onToolStart", tool_delta: "onToolDelta", tool_end: "onToolEnd", tool_trace: "onToolTrace",
+    proposal: "onProposal", image_proposal: "onImageProposal", image_batch_proposal: "onImageBatchProposal",
+    image_progress: "onImageProgress", image_result: "onImageResult", done: "onDone",
+    read_tools_executed: "onReadToolsExecuted", compaction: "onCompaction", steering: "onSteering",
+    assistant_turn_commit: "onAssistantTurnCommit", applied: "onApplied", credits: "onCredits",
+    credits_paused: "onCreditsPaused", step_restarted: "onStepRestarted",
+  };
+  for (const [event, callback] of Object.entries(direct)) listen(event, data => {
+    const handler = callbacks?.[callback];if (typeof handler === "function") (handler as (data: unknown) => void)(data);
+  });
+  listen("text", data => { if (data.content) callbacks?.onText(data.content); });
+  listen("reasoning", data => { if (data.content) callbacks?.onReasoning?.(data.content); });
+  listen("iteration", data => callbacks?.onIteration(data.iteration, data.maxIterations, data.historyTokens));
+  listen("error", data => { if (data.error) callbacks?.onError(data.error, data.code); });
+  source.onerror = () => {
+    if (notificationRunId && callbacks && controller && isActiveStudioChatScope(scope)
+      && useStudioStore.getState()._currentRunId === notificationRunId) {
+      callbacks.onStreamInterrupted?.();
+      void tryRecoverAgentRun(notificationRunId, callbacks);
+    }
+  };
+  return () => { source.close(); };
+}
+
 // ── Store ──
 
 export const useStudioStore = create<StudioState>((set, get) => ({
+  pendingVisualizationTask: null,
   chatMessages: [],
   isChatStreaming: false,
   chatStreamContent: "",
@@ -1341,6 +1487,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   // Agent state (server-side)
   isAgentWorking: false,
+  isSendingSteering: false,
+  agentHistoryTokens: null,
+  agentCompaction: null,
   agentIteration: 0,
   agentMaxIterations: 10,
   reasoningChars: 0,
@@ -1369,8 +1518,86 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   // ── Server-Side Agent ──
 
+  steerChatMessage: async (worldId, content, conversationId = null): Promise<boolean> => {
+    const state = get();
+    const runId = state._currentRunId;
+    const scope = { worldId, conversationId };
+    if (!content.trim() || state.isSendingSteering || !state.isAgentWorking || !isActiveStudioChatScope(scope)) return false;
+    if (!runId) {
+      feedback.error(tr("editor:studio.aiChat.steeringNotReady", "The task is still connecting. Try sending your instruction again in a moment."));
+      return false;
+    }
+    const remembered = unacknowledgedSteering;
+    const files = state.chatAttachments.filter(file => file.type.startsWith("image/"));
+    const sameFiles = (remembered?.files ?? []).length === files.length && files.every((file, index) => remembered?.files?.[index] === file);
+    const retryId = remembered?.epoch === steeringSubmissionEpoch && remembered.worldId === worldId
+      && remembered.conversationId === conversationId && remembered.runId === runId && remembered.content === content.trim() && sameFiles
+      ? remembered.id : undefined;
+    const retry = [...state.chatMessages].reverse().find(message => message.agentRunId === runId
+      && message.content === content.trim() && (message.id === retryId || (!files.length && message.steering?.status === "failed")));
+    // A recovered server acknowledgement answers the original submission.
+    // Sending the still-retained draft must not enqueue the instruction twice.
+    if (retryId && retry?.steering && ["queued", "applied"].includes(retry.steering.status)) {
+      unacknowledgedSteering = null;
+      set(s => ({ chatAttachments: s.chatAttachments.filter(file => !files.includes(file)) }));
+      return true;
+    }
+    const submissionEpoch = ++steeringSubmissionEpoch;
+    const id = retry?.id ?? crypto.randomUUID();
+    unacknowledgedSteering = { id, content: content.trim(), worldId, conversationId, runId, epoch: submissionEpoch, files,
+      ...(retryId && remembered?.attachments ? { attachments: remembered.attachments } : {}) };
+    const createdAt = retry?.steering?.createdAt ?? new Date().toISOString();
+    const current = () => steeringSubmissionEpoch === submissionEpoch && isActiveStudioChatScope(scope) && get()._currentRunId === runId;
+    set(s => ({ isSendingSteering: true, chatMessages: retry
+      ? s.chatMessages.map(message => message.id === id ? { ...message, steering: { status: "sending" as const, createdAt } } : message)
+      : [...s.chatMessages, { id, role: "user" as const, content: content.trim(), agentRunId: runId,
+        steering: { status: "sending" as const, createdAt } }] }));
+    const acknowledgement = new AbortController();
+    const acknowledgementTimer = setTimeout(() => acknowledgement.abort(), 15_000);
+    try {
+      const attachments = files.length ? (retryId && remembered?.attachments ? remembered.attachments : await uploadAttachments(files)) : undefined;
+      if (!current()) return false;
+      if (unacknowledgedSteering?.epoch === submissionEpoch) unacknowledgedSteering.attachments = attachments;
+      if (attachments?.length) set(s => ({ chatMessages: s.chatMessages.map(message => message.id === id ? { ...message, attachments } : message) }));
+      const response = await fetch(`${apiBase}/api/studio/${encodeURIComponent(worldId)}/agent/steer`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId, conversationId, id, message: content.trim(), ...(attachments?.length ? { attachments } : {}) }), signal: acknowledgement.signal,
+      });
+      const result = await response.json();
+      if (!response.ok || result.data?.runId !== runId || !Array.isArray(result.data.items)
+        || !result.data.items.some((item: { id: string }) => item.id === id)) throw new Error(result.error ?? "STEERING_FAILED");
+      if (unacknowledgedSteering?.epoch === submissionEpoch) unacknowledgedSteering = null;
+      if (!current()) return steeringSubmissionEpoch === submissionEpoch && isActiveStudioChatScope(scope)
+        && get()._currentRunId === null && get().chatMessages.some(message => message.id === id && message.agentRunId === runId && message.steering?.status === "applied");
+      set(s => ({ chatMessages: mergeStudioSteering(s.chatMessages, runId, result.data.items) }));
+      const delivered = result.data.items?.some((item: { id: string; status: string }) => item.id === id && item.status !== "failed") === true;
+      if (delivered) set(s => ({ chatAttachments: s.chatAttachments.filter(file => !files.includes(file)) }));
+      return delivered;
+    } catch (error) {
+      if (current()) {
+        set(s => ({ chatMessages: s.chatMessages.map(message => message.id === id && message.steering?.status !== "applied"
+          ? { ...message, steering: { status: "failed" as const, createdAt } } : message) }));
+        if (get().chatMessages.find(message => message.id === id)?.steering?.status === "applied") {
+          if (unacknowledgedSteering?.epoch === submissionEpoch) unacknowledgedSteering = null;
+          return true;
+        }
+        feedback.error(error instanceof Error && error.message === "RUN_FINISHED"
+          ? tr("editor:studio.aiChat.steeringFinished", "This task has finished. Your instruction is still in the input.")
+          : tr("editor:studio.aiChat.steeringFailed", "Could not deliver your instruction. Try sending it again."));
+      }
+      return false;
+    } finally {
+      clearTimeout(acknowledgementTimer);
+      if (steeringSubmissionEpoch === submissionEpoch) set({ isSendingSteering: false });
+    }
+  },
+
   sendChatMessage: async (worldId, content, model, conversationId) => {
-    if (get().isAgentWorking) return;
+    if (get().isAgentWorking) {
+      await get().steerChatMessage(worldId, content, conversationId ?? null);
+      return;
+    }
+    set({ agentHistoryTokens: null, agentCompaction: null });
     const preparationEpoch = ++studioAgentEpoch;
     creditRefreshEpoch++;
 
@@ -1405,7 +1632,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           attachments = await uploadAttachments(imageFiles);
         } catch (err) {
           console.error("Failed to upload attachments:", err);
-          feedback.error(tr("editor:studio.aiChat.attachmentUploadFailed", "Sent without the images"));
+          feedback.error(tr("editor:studio.aiChat.referenceUploadFailed", "Image upload failed. Your message was not sent. Try again."));
+          return false;
         }
       }
     }
@@ -1442,7 +1670,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       chatMessages: updatedMessages,
       isChatStreaming: true,
       chatStreamContent: "",
-      chatAttachments: [],
+      chatAttachments: get().chatAttachments.filter(file => !chatAttachments.includes(file)),
       chatWorldId: worldId,
       chatConversationId: conversationId ?? null,
       isAgentWorking: true,
@@ -1511,7 +1739,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   },
 
   reconnectAgent: async (worldId, conversationId = null, runId) => {
-    if (get().isReconnecting || get().isAgentWorking) return;
+    if (get().isReconnecting) return;
+    if (get().isAgentWorking) { get().nudgeRecovery();return; }
     // Drop the card first. It is the thing being answered, and the rescue path
     // in refreshCreditPause deliberately refuses to hydrate a run that already
     // has a bubble in this transcript.
@@ -1532,8 +1761,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       // Nothing on the server: say so plainly and leave only the honest option.
       set(state => ({ chatMessages: [...state.chatMessages, {
         id: nextMsgId(), role: "assistant" as const,
-        content: tr("editor:studio.aiChat.disconnectedDeadBody",
-          "That task did not finish, and the card was not changed."),
+        content: tr("editor:studio.aiChat.reconnectNoNewWork",
+          "No newer result is available. Completed work is kept; send a new request to continue."),
         disconnected: { dead: true },
       }] }));
     } finally {
@@ -1550,16 +1779,33 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const previous = get().creditPause;
     set({ isRefreshingCreditPause: true });
     try {
-      const query = runId ? `runId=${encodeURIComponent(runId)}` : `conversationId=${encodeURIComponent(conversationId ?? "")}`;
-      const response = await fetch(`${apiBase}/api/studio/${encodeURIComponent(worldId)}/agent/status?${query}`, { credentials: "include" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const { data } = await response.json();
+      const { data } = await recoveryRequests.request<{ data: Awaited<ReturnType<Response["json"]>> }>({ worldId, conversationId, runId });
       if (!current()) return;
       if (!data) { set({ creditPause: null, creditPauseError: null }); return; }
       if (typeof data.id !== "string" || (runId && data.id !== runId) || data.conversationId !== conversationId) return;
+      // Decide whether work was missed before restoring an image-only bubble.
+      // Such a bubble must not hide a missing final answer or revive an undone turn.
+      const beforeRecovery = get().chatMessages;
+      const hadRunReply = beforeRecovery.some(message => message.agentRunId === data.id
+        && !message.imageProposal && !message.imageBatchProposal && !message.activityTrace && !message.disconnected);
+      const restoreImageRun = wasAbandonedHere(data.id) || beforeRecovery.at(-1)?.role === "user"
+        || ["running", "awaiting_approval", "awaiting_credits"].includes(data.status) ? data.id : undefined;
+      set(state => ({ chatMessages: mergeStudioSteering(state.chatMessages, data.id, data.steering) }));
+      set(state => ({ chatMessages: mergeStudioImageJobs(state.chatMessages, data.imageJobs, restoreImageRun) }));
+      set(state => ({ chatMessages: mergeStudioToolTrace(state.chatMessages, data.toolTrace, !!restoreImageRun) }));
+      set({ ...(typeof data.historyTokens === "number" ? { agentHistoryTokens: data.historyTokens } : {}),
+        agentCompaction: data.compaction ?? null });
       if (data.status === "awaiting_approval" && data.imageBatchProposal) {
         set({ _currentRunId: data.id });
         studioAgentCallbacks(scope, data.id).onImageBatchProposal?.({ ...data.imageBatchProposal, runId: data.id });
+        return;
+      }
+      if (data.status === "awaiting_approval" && data.pendingToolCalls?.length === 1
+        && data.pendingToolCalls[0]?.function?.name === "generate_image") {
+        const proposal = await hydratePendingImageProposal(data.pendingToolCalls[0], data.id, data.textContent ?? "");
+        if (!current()) return;
+        set({ _currentRunId: data.id });
+        studioAgentCallbacks(scope, data.id).onImageProposal?.(proposal);
         return;
       }
       // A confirmation can finish on the server before the debounced transcript
@@ -1604,9 +1850,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         && wasAbandonedHere(data.id)
         && Array.isArray(data.committedTurns) && data.committedTurns.length > 0
         && !/stopped by user|superseded/i.test(String(data.error ?? ""))
-        && !get().chatMessages.some(message => message.agentRunId === data.id);
+        && !hadRunReply;
       if (abandonedResult) forgetAbandonedRun(data.id);
-      const turns = ((pause && !terminal) || abandonedResult) && Array.isArray(data.committedTurns)
+      const turns = ((pause && !terminal) || abandonedResult || data.status === "error") && Array.isArray(data.committedTurns)
         ? data.committedTurns : [];
       set(state => {
         const messages = [...state.chatMessages];
@@ -1617,6 +1863,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         }
         return { chatMessages: messages };
       });
+      if (data.status === "error" && !pause) {
+        const errorText = `Error: ${data.error ?? "The saved agent task stopped."}`;
+        set(state => ({ isAgentWorking: false, isChatStreaming: false, isRecovering: false, isReconnecting: false,
+          creditPause: null, creditPauseError: null, _currentRunId: null,
+          chatMessages: state.chatMessages.some(message => message.agentRunId === data.id && message.content === errorText)
+            ? endStudioToolTrace(state.chatMessages, data.id) : [...endStudioToolTrace(state.chatMessages, data.id), { id: nextMsgId(), role: "assistant", content: errorText, agentRunId: data.id }] }));
+        return;
+      }
       if (pause) syncStudioCreditBalance(rawPause!);
       if (pause && (data.status === "awaiting_credits" || pause.resumable === true)) {
         set({ creditPause: pause, creditPauseError: creditPauseReasonError(pause) });
@@ -1702,6 +1956,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   },
 
   stopAgent: () => {
+    steeringSubmissionEpoch++;
+    unacknowledgedSteering = null;
     studioAgentEpoch++;
     creditRefreshEpoch++;
     const { _agentAbortController, _currentRunId } = get();
@@ -1732,8 +1988,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       // Completed turns are already committed as bubbles via assistant_turn_commit.
       // Only the in-flight tail (chatStreamContent) can be lost on Stop — preserve it.
       const partial = s.chatStreamContent;
-      const messages = s.chatMessages.map((m) =>
-        m.proposalStatus === "pending"
+      const messages = endStudioToolTrace(s.chatMessages, runId).map((m) =>
+        m.agentRunId === runId && m.steering && ["sending", "queued"].includes(m.steering.status)
+          ? { ...m, steering: { ...m.steering, status: "failed" as const } }
+          : m.proposalStatus === "pending"
           ? { ...m, proposalStatus: "rejected" as const }
           : m
       );
@@ -1748,6 +2006,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       }
       return {
         chatMessages: messages,
+        isSendingSteering: false,
+        ...(s.agentCompaction?.status === "summarizing" ? { agentCompaction: { ...s.agentCompaction, status: "cancelled" } } : {}),
         isChatStreaming: false,
         chatStreamContent: "",
         isAgentWorking: false,
@@ -1775,7 +2035,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const worldId = useEditorStore.getState().serverWorldId;
     if (!worldId) return;
     const requestedScope = { worldId, conversationId: get().chatConversationId };
-    let streamRunId: string | null = _pendingApproval.runId;
+    const streamRunId: string | null = _pendingApproval.runId;
     if (!isActiveStudioRunScope(requestedScope, streamRunId)) return;
     studioAgentEpoch++;
     creditRefreshEpoch++;
@@ -1814,7 +2074,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const worldId = useEditorStore.getState().serverWorldId;
     if (!worldId) return;
     const requestedScope = { worldId, conversationId: get().chatConversationId };
-    let streamRunId: string | null = _pendingApproval.runId;
+    const streamRunId: string | null = _pendingApproval.runId;
     if (!isActiveStudioRunScope(requestedScope, streamRunId)) return;
     studioAgentEpoch++;
     creditRefreshEpoch++;
@@ -1864,7 +2124,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }));
     const controller = connectAgentSSE(
       `/api/studio/${worldId}/agent/generate-image`,
-      { runId: streamRunId, approved: true, ...edits },
+      { runId: streamRunId, toolCallId: _pendingImage.toolCallId, approved: true, ...edits },
       studioAgentCallbacks(requestedScope, streamRunId),
     );
     if (isActiveStudioRunScope(requestedScope, streamRunId)) set({ _agentAbortController: controller });
@@ -1888,7 +2148,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }));
     const controller = connectAgentSSE(
       `/api/studio/${worldId}/agent/generate-image`,
-      { runId: streamRunId, approved: false },
+      { runId: streamRunId, toolCallId: _pendingImage.toolCallId, approved: false },
       studioAgentCallbacks(requestedScope, streamRunId, true),
     );
     if (isActiveStudioRunScope(requestedScope, streamRunId)) set({ _agentAbortController: controller });
@@ -1922,7 +2182,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   clearChat: () => {
     get().stopAgent();
-    set({
+    steeringSubmissionEpoch++;
+    unacknowledgedSteering = null;
+    set({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null,
       chatMessages: [],
       chatWorldId: null,
       chatConversationId: null,
@@ -1955,6 +2217,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         if (msgs[i]!.role === "user") { lastUserIdx = i; break; }
       }
       if (lastUserIdx < 0) return;
+      lastUserIdx = studioTaskStart(msgs, lastUserIdx);
       // Collect agentRunId from assistant messages in this turn
       let agentRunId: string | undefined;
       for (let i = lastUserIdx + 1; i < msgs.length; i++) {
@@ -2016,7 +2279,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       if (msgs[i]!.role === "user") { lastUserMsg = msgs[i]; break; }
     }
     if (!lastUserMsg) return;
-    const content = lastUserMsg.content;
+    const start = studioTaskStart(msgs, msgs.indexOf(lastUserMsg));
+    const content = msgs.slice(start).filter(message => message.role === "user"
+      && (!message.steering || (message.steering.status === "applied" && message.content.trim() !== "/summarize"))).map(message => message.content).join("\n\n");
     // Undo first
     await get().undoLastTurn(worldId, conversationId);
     // Resend
@@ -2054,20 +2319,24 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 // reads/streams even for A -> B -> A navigation before those promises settle.
 useStudioStore.subscribe((state, previous) => {
   if (state.chatWorldId === previous.chatWorldId && state.chatConversationId === previous.chatConversationId) return;
+  steeringSubmissionEpoch++;
+  unacknowledgedSteering = null;
   studioAgentEpoch++;
   creditRefreshEpoch++;
   previous._agentAbortController?.abort();
   if (_streamFlushTimer) { clearTimeout(_streamFlushTimer); _streamFlushTimer = undefined; }
   _textBuf = ""; _reasoningBuf = ""; _reasoningCharsBuf = 0;
-  useStudioStore.setState({ creditPause: null, creditPauseError: null, isResumingCredits: false,
+  useStudioStore.setState({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false,
     isRefreshingCreditPause: false, _agentAbortController: null, _currentRunId: null, _pendingImageBatch: null });
 });
 
 useEditorStore.subscribe((state, previous) => {
   if (state.serverWorldId === previous.serverWorldId) return;
+  steeringSubmissionEpoch++;
+  unacknowledgedSteering = null;
   studioAgentEpoch++;
   creditRefreshEpoch++;
   if (_streamFlushTimer) { clearTimeout(_streamFlushTimer); _streamFlushTimer = undefined; }
   _textBuf = ""; _reasoningBuf = ""; _reasoningCharsBuf = 0;
-  useStudioStore.setState({ creditPause: null, creditPauseError: null, isResumingCredits: false, isRefreshingCreditPause: false, _pendingImageBatch: null });
+  useStudioStore.setState({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false, isRefreshingCreditPause: false, _pendingImageBatch: null });
 });

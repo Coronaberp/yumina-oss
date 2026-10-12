@@ -36,7 +36,7 @@ export function PopupDonePage() {
   }, [error]);
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#0f0f11] px-6 text-center text-white">
+    <div className="fixed inset-0 flex items-center justify-center bg-background px-6 text-center text-white">
       <div className="max-w-xs space-y-3">
         {standalone ? (
           <CheckCircle2 className="mx-auto size-8 text-emerald-400" aria-hidden="true" />

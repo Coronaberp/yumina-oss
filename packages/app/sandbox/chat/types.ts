@@ -11,6 +11,7 @@ export interface SandboxMessageAttachment {
 }
 
 export interface SandboxSwipe {
+  contentFlags?: import("@yumina/shared").ContentFlagAudit;
   modelFallback?: import("@yumina/shared").ModelFallbackRecord;
   content: string;
   /** Full pre-parse LLM output (segments + directives + JSON wrappers).
@@ -18,6 +19,8 @@ export interface SandboxSwipe {
    *  Exposed so the bubble's "view raw" toggle can show the unparsed response
    *  when narrative or directives get eaten by the parser. */
   rawContent?: string;
+  /** Saved provider trace for this reply version; display only. */
+  reasoningContent?: string;
   stateSnapshot?: Record<string, unknown> | null;
   tokenCount?: number | null;
   creditCost?: number | null;
@@ -25,6 +28,7 @@ export interface SandboxSwipe {
 }
 
 export interface SandboxMessage {
+  contentFlags?: import("@yumina/shared").ContentFlagAudit | null;
   id: string;
   sessionId: string;
   role: "user" | "assistant" | "system";

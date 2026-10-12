@@ -1,11 +1,12 @@
 import "../test/database-fixture.js";
-import { describe, it, beforeEach, afterEach, after } from "node:test";
+import { describe, it, beforeEach, afterEach, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "../db/index.js";
-import { playSessions, messages, worlds, user, userPersonas, userWorldPersonas } from "../db/schema.js";
+import { playSessions, messages, worlds, user, userPersonas, userWorldPersonas, checkpoints } from "../db/schema.js";
 import { eq, asc } from "drizzle-orm";
-import { revertSession } from "./sessions.js";
+import { revertSession, sessionRoutes } from "./sessions.js";
 import { pruneSessionSnapshots } from "../lib/snapshot.js";
+import { auth } from "../lib/auth.js";
 
 // Mirrors sessions-branch.test.ts: call revertSession() directly as a plain
 // async function, bypassing Hono + auth. The fixtures model REAL play data —
@@ -272,6 +273,70 @@ describe("revertSession", () => {
     const [s] = await db.select().from(playSessions).where(eq(playSessions.id, testSessionId));
     assert.strictEqual((s!.state as any).variables.hp, 42);
   });
+
+  it("rejects a missing historical story snapshot before deleting messages", async () => {
+    await db.update(playSessions).set({ state: {
+      variables: { hp: 8 },
+      story: { status: "playing", route: { id: "route-now", name: "Current route", guidance: "", enteredTurn: 2, locked: true } },
+    } }).where(eq(playSessions.id, testSessionId));
+    await db.update(messages).set({ stateSnapshot: null }).where(eq(messages.sessionId, testSessionId));
+    const result = await revertSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[0]! });
+    assert.equal(result.status, 409);
+    const remaining = await db.select().from(messages).where(eq(messages.sessionId, testSessionId));
+    assert.equal(remaining.length, messageIds.length);
+  });
+
+  it("restores a complete pre-route snapshot without borrowing the live route", async () => {
+    await db.update(playSessions).set({ state: {
+      variables: { hp: 8 }, turnCount: 5,
+      story: { status: "playing", route: { id: "route-now", name: "Current route", guidance: "", enteredTurn: 2, locked: true } },
+    } }).where(eq(playSessions.id, testSessionId));
+    await db.update(messages).set({ stateSnapshot: null }).where(eq(messages.sessionId, testSessionId));
+    await db.update(messages).set({ stateSnapshot: { variables: { hp: 10 }, turnCount: 0 } }).where(eq(messages.id, messageIds[0]!));
+
+    const result = await revertSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[0]! });
+    assert.equal(result.status, 200);
+    const restored = result.body.data!.state as Record<string, unknown>;
+    assert.equal((restored.variables as Record<string, unknown>).hp, 10);
+    assert.equal(restored.turnCount, 0);
+    assert.equal(restored.story, undefined);
+  });
+
+  it("restores an older full checkpoint that predates story state", async () => {
+    await db.update(playSessions).set({ state: {
+      variables: { hp: 8 }, turnCount: 5,
+      story: { status: "playing", ending: { id: "ending-now", name: "Current ending", outcome: "won", mode: "authored", prose: "", guidance: "", selectedTurn: 5, operationId: "ending-now:5" } },
+    } }).where(eq(playSessions.id, testSessionId));
+    const [checkpoint] = await db.insert(checkpoints).values({
+      sessionId: testSessionId, name: "Old checkpoint", messages: [], state: { variables: { hp: 6 }, turnCount: 3 },
+    }).returning();
+    const [account] = await db.select().from(user).where(eq(user.id, testUserId));
+    const login = mock.method(auth.api, "getSession", async () => ({ user: account!, session: { id: "history-test", userId: testUserId, expiresAt: new Date(Date.now() + 60_000) } }));
+    try {
+      const response = await sessionRoutes.request(`/${testSessionId}/checkpoints/${checkpoint!.id}/restore`, { method: "POST" });
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = await response.json() as { data: { state: Record<string, unknown> } };
+      assert.equal((body.data.state.variables as Record<string, unknown>).hp, 6);
+      assert.equal(body.data.state.turnCount, 3);
+      assert.equal(body.data.state.story, undefined);
+    } finally {
+      login.mock.restore();
+    }
+  });
+it("rejects a selected-story snapshot missing story state at or after route entry", async () => {
+  await db.update(playSessions).set({ state: { variables: { hp: 8 }, turnCount: 3, story: { status: "playing", route: { id: "r", name: "R", guidance: "", enteredTurn: 3, locked: false } } } }).where(eq(playSessions.id, testSessionId));
+  await db.update(messages).set({ stateSnapshot: { variables: { hp: 9 }, turnCount: 3 } }).where(eq(messages.id, messageIds[2]!));
+  const result = await revertSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[2]! });
+  assert.equal(result.status, 409);
+});
+
+it("accepts a missing story field in a snapshot before route entry", async () => {
+  await db.update(playSessions).set({ state: { variables: { hp: 8 }, turnCount: 4, story: { status: "playing", route: { id: "r", name: "R", guidance: "", enteredTurn: 3, locked: false } } } }).where(eq(playSessions.id, testSessionId));
+  await db.update(messages).set({ stateSnapshot: { variables: { hp: 9 }, turnCount: 2 } }).where(eq(messages.id, messageIds[2]!));
+  const result = await revertSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[2]! });
+  assert.equal(result.status, 200);
+});
+
 });
 
 after(async () => { await (db as unknown as { $client: { close(): Promise<void> } }).$client.close(); });

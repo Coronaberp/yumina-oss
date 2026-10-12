@@ -1,8 +1,16 @@
+import { modelFallbackReason } from "./openrouter.js";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
 import { DEFAULT_LOCAL_CONTEXT } from "./local-bridge.js";
 
 const DEFAULT_OLLAMA_BASE = "http://localhost:11434";
+
+/** GPT-OSS supports effort levels; on/off models use their fastest mode for low. */
+function ollamaThinking(model: string, params: GenerateParams): boolean | string {
+  const effort = params.reasoningEffort ?? "low";
+  if (/gpt-oss/i.test(model)) return params.disableReasoning || effort === "none" || effort === "minimal" ? "low" : effort;
+  return !params.disableReasoning && (effort === "medium" || effort === "high");
+}
 
 /** Validate that a URL is safe to use as an Ollama base (blocks SSRF vectors) */
 function validateOllamaUrl(raw: string): string {
@@ -113,6 +121,7 @@ export class OllamaProvider implements LLMProvider {
           model,
           messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
           stream: true,
+          think: ollamaThinking(model, params),
           options: {
             // Ollama otherwise runs at ITS default window, not the one our
             // prompt budget was computed against, and drops the overflow
@@ -139,7 +148,7 @@ export class OllamaProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      yield { type: "error", content: `Ollama error (${response.status}): ${error}` };
+      yield { type: "error", content: `Ollama error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 
@@ -220,6 +229,7 @@ export class OllamaProvider implements LLMProvider {
           model,
           messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
           stream: false,
+          think: ollamaThinking(model, params),
           options: {
             // Ollama otherwise runs at ITS default window, not the one our
             // prompt budget was computed against, and drops the overflow
@@ -246,7 +256,7 @@ export class OllamaProvider implements LLMProvider {
 
     if (!response.ok) {
       const error = await response.text().catch(() => "");
-      yield { type: "error", content: `Ollama error (${response.status}): ${error}` };
+      yield { type: "error", content: `Ollama error (${response.status}): ${error}`, fallbackReason: modelFallbackReason(response.status, error) };
       return;
     }
 

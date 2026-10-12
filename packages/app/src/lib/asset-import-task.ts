@@ -19,10 +19,8 @@ export interface AssetImportTask {
   stage: AssetUploadStage | "folders";
   progress: UploadProgress | null;
   failed: string[];
-  quotaExceeded: boolean;
 }
 interface Dependencies {
-  storage: () => { used: number; limit: number };
   createFolder: (name: string, parentId: string | undefined, signal: AbortSignal, requestId: string) => Promise<{ id: string } | null>;
   upload: (file: File, type: UploadAssetType, folderId: string | undefined, signal: AbortSignal,
     onProgress: (progress: UploadProgress) => void, onStage: (stage: AssetUploadStage) => void, requestId: string) => Promise<unknown>;
@@ -58,20 +56,13 @@ export function createAssetImportStore(deps: Dependencies) {
       requestIds = new Map();
       importState = { folderIds: new Map(), completed: new Set() };
       set({ detailOpen: true, task: { ownerId, selection, status: "ready", completed: 0, completedBytes: 0,
-        currentPath: "", stage: "folders", progress: null, failed: [], quotaExceeded: false } });
+        currentPath: "", stage: "folders", progress: null, failed: [] } });
       return true;
     },
     async start() {
       const task = get().task;
       if (!task || controller || task.status === "complete" || !task.selection.plan.files.length) return;
       const { plan } = task.selection;
-      const remainingBytes = plan.files.reduce((sum, entry) => sum + (importState.completed.has(entry.path) ? 0 : entry.file.size), 0);
-      const storage = deps.storage();
-      // Retries must reach the server: a lost response may already consume quota.
-      // The prepare endpoint reconciles the request ID before checking new bytes.
-      if (task.status === "ready" && storage.used + remainingBytes > storage.limit) {
-        set({ task: { ...task, quotaExceeded: true } }); return;
-      }
       const run = generation;
       const state = importState;
       const abort = new AbortController();
@@ -80,7 +71,7 @@ export function createAssetImportStore(deps: Dependencies) {
       const update = (patch: Partial<AssetImportTask>) => {
         if (generation === run && get().task) set({ task: { ...get().task!, ...patch } });
       };
-      update({ status: "running", failed: [], quotaExceeded: false, progress: null });
+      update({ status: "running", failed: [], progress: null });
       try {
         const failures = await importFolderFiles(plan, state, {
           parentFolderId: task.selection.parentFolderId ?? undefined,

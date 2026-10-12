@@ -46,18 +46,14 @@ export function ImageLightbox({
   const { t } = useTranslation("common");
   const isTouch = useTouchDevice();
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const pointerStarts = useRef(new Map<number, { x: number; y: number }>());
+  const dragged = useRef(false);
   const [scale, setScale] = useState(1);
 
   const imageList = image ? (images?.length ? images : [image]) : [];
   const activeIndex = Math.min(Math.max(index, 0), Math.max(imageList.length - 1, 0));
   const activeImage = imageList[activeIndex] ?? null;
   const canNavigate = imageList.length > 1;
-
-  // Keep the desktop zoom-button disabled state in sync when the image changes
-  // (the TransformWrapper remounts via `key`, resetting to scale 1).
-  useEffect(() => {
-    setScale(1);
-  }, [activeImage?.src]);
 
   useEffect(() => {
     if (!activeImage) return;
@@ -86,7 +82,28 @@ export function ImageLightbox({
       className="fixed inset-0 z-[200] overflow-hidden bg-black/90"
       role="dialog"
       aria-modal="true"
-      onClick={onClose}
+      aria-label={activeImage.alt}
+      onPointerDownCapture={event => {
+        dragged.current = pointerStarts.current.size > 0;
+        pointerStarts.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      }}
+      onPointerMoveCapture={event => {
+        const start = pointerStarts.current.get(event.pointerId);
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) dragged.current = true;
+      }}
+      onPointerUpCapture={event => {
+        const start = pointerStarts.current.get(event.pointerId);
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) dragged.current = true;
+        pointerStarts.current.delete(event.pointerId);
+      }}
+      onPointerCancelCapture={event => {
+        pointerStarts.current.delete(event.pointerId);
+        dragged.current = true;
+      }}
+      onClick={() => {
+        if (!dragged.current) onClose();
+        dragged.current = false;
+      }}
     >
       {/* Prominent, always-visible close button (top-right). */}
       <button
@@ -191,6 +208,11 @@ export function ImageLightbox({
         centerOnInit
         wheel={{ step: 0.2 }}
         doubleClick={{ mode: "toggle", animationTime: 200 }}
+        onInit={() => {
+          setScale(1);
+          pointerStarts.current.clear();
+          dragged.current = false;
+        }}
         onTransform={(_ref, state) => setScale(state.scale)}
       >
         <TransformComponent

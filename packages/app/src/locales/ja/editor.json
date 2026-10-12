@@ -1,4 +1,15 @@
 {
+  "visualNovel": {
+    "move": "{{name}} — {{variant}} を移動",
+    "dragHint": "ハンドルをドラッグしてカードを並べ替えます。保存すると順序が保持されます。",
+    "settingsChanged": "カードまたは画像の設定が変更されました。もう一度お試しください。",
+    "backgroundCollection": "背景コレクション",
+    "globalBackgrounds": "グローバル",
+    "openingBackgrounds": "オープニング：{{name}}",
+    "openingNumber": "オープニング {{number}}",
+    "globalBackgroundsHint": "すべてのオープニングで共有されます。各オープニングの背景を編集しても、このコレクションは変更されません。",
+    "openingBackgroundsHint": "このオープニングを選ぶと使用されます。同じシーンはこの背景が優先され、その他はグローバル背景が使用されます。"
+  },
   "twoTapConfirm": "もう一度タップして確認",
   "shell": {
     "namePlaceholder": "ワールドに名前を付けて...",
@@ -21,7 +32,8 @@
       "content": "コンテンツ",
       "presentation": "表示",
       "publish": "公開",
-      "creation": "AI制作"
+      "creation": "AI制作",
+      "story": "Story"
     },
     "switchSimple": "シンプルモード",
     "versionHistoryMenu": "バージョン履歴",
@@ -38,14 +50,19 @@
     "lorebook": "ロアブック",
     "variables": "変数",
     "behaviors": "ビヘイビア",
-    "customUI": "カスタムUI",
+    "customUI": "UIオプション",
     "audio": "オーディオ",
     "assets": "アセット",
     "overview": "概要",
     "bundles": "バンドル",
-    "aiGeneration": "AI生成"
+    "aiGeneration": "AI生成",
+    "routes": "Routes",
+    "endings": "Endings"
   },
   "firstMessage": {
+    "nameLabel": "挨拶の名前",
+    "namePlaceholder": "例：学院への入学",
+    "nameHint": "ルート選択画面に表示されます。",
     "title": "最初のメッセージ",
     "description": "プレイヤーが新しいセッションを開始したときに表示される冒頭のメッセージです。複数の挨拶を追加して、プレイヤーがスワイプで切り替えられるようにできます。",
     "addGreeting": "挨拶を追加",
@@ -58,7 +75,7 @@
     "noFirstMessageDesc": "最初のメッセージは舞台を設定します。世界観や登場人物を紹介し、プレイヤーが反応できるきっかけを与えます。",
     "createFirstMessage": "最初のメッセージを作成",
     "learnMore": "クリエイターガイド →",
-    "dragHint": "番号をドラッグして順序を変更"
+    "dragHint": "挨拶をドラッグして順序を変更"
   },
   "entries": {
     "unnamed": "名称未設定",
@@ -282,8 +299,8 @@
     }
   },
   "components": {
-    "title": "カスタムUI",
-    "description": "メッセージやアプリ全体UI用のカスタムTSXコンポーネント",
+    "title": "UIオプション",
+    "description": "プレイヤーのレイアウトとステータス画面を設定します。",
     "addComponent": "コンポーネントを追加",
     "surfaceMessage": "メッセージ",
     "surfaceApp": "アプリ",
@@ -337,7 +354,9 @@
     "htmlCode": "HTML",
     "htmlPlaceholder": "<div>ここにHTMLを記述</div>\n<script>window.yumina.onChange(function() { ... });</script>",
     "markdownCode": "Markdown",
-    "markdownPlaceholder": "# 見出し\n\nここにMarkdownコンテンツを記述..."
+    "markdownPlaceholder": "# 見出し\n\nここにMarkdownコンテンツを記述...",
+    "tabLayouts": "レイアウト",
+    "tabAdvanced": "詳細設定"
   },
   "audio": {
     "title": "オーディオ",
@@ -897,7 +916,7 @@
       "overview": "概要",
       "previewControls": "プレビュー操作",
       "canvas": "キャンバス",
-      "aiAssistant": "AIアシスタント",
+      "aiAssistant": "Little Idot",
       "playtest": "プレイテスト",
       "marketplace": "マーケットプレイス"
     },
@@ -974,6 +993,9 @@
         "balanceUnknown": "残高を取得できません。状態を更新してください。"
       },
       "resizeInput": "入力欄のサイズを変更",
+      "outputLanguage": "出力言語",
+      "outputLanguageHint": "Little Idot の返信と要約に使う言語です。次の返信から適用されます。",
+      "languageSaveFailed": "出力言語を保存できませんでした。もう一度お試しください。",
       "conversations": "会話",
       "newConversation": "新しい会話",
       "clearChat": "チャットをクリア",
@@ -1052,7 +1074,6 @@
           "skipped": "スキップ",
           "binding_failed": "割り当て失敗"
         },
-        "pausedStorageNote": "保存容量が不足しています。素材を整理してから続行してください。",
         "pausedUnavailableNote": "画像生成を一時的に利用できません。完成した画像は保存済みです。",
         "pausedGenericNote": "一時停止中です。完成した画像は保存済みです。しばらくしてから続行してください。"
       }

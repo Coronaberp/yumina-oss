@@ -24,6 +24,7 @@ import { DOCS_URLS } from "@/lib/docs-urls";
 import { useEditorStore } from "@/stores/editor";
 import { estimateTokens } from "@yumina/engine";
 import { DebouncedTextarea } from "../components/debounced-field";
+import { GreetingNameField } from "../components/greeting-name-field";
 import { ImageInsertButton, useImageInsert } from "../components/image-insert";
 
 const EMPTY_WB: import("@yumina/engine").Worldbook[] = [];
@@ -52,7 +53,7 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // Drag-reorder the numbered greeting tabs. Greetings sort by `position`
+  // Drag-reorder the greeting tabs. Greetings sort by `position`
   // among themselves only, so passing just the greeting ids renumbers them
   // without touching any lorebook entry's hand-set position.
   function handleReorderGreetings(newGreetingIds: string[]) {
@@ -173,7 +174,7 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
                         <SortableGreetingTab
                           key={g.id}
                           id={g.id}
-                          label={i + 1}
+                          label={g.name.trim() || String(i + 1)}
                           active={i === clampedIndex}
                           onSelect={() => { setActiveIndex(i); setConfirmDelete(false); }}
                         />
@@ -184,6 +185,8 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
                 <p className="text-[11px] text-muted-foreground/40">{t("firstMessage.dragHint")}</p>
               </div>
             )}
+
+            {activeGreeting && <GreetingNameField greeting={activeGreeting} onCommit={(name) => updateEntry(activeGreeting.id, { name })} />}
 
             {/* Content textarea */}
             {activeGreeting && (
@@ -338,7 +341,7 @@ function SortableGreetingTab({
   onSelect,
 }: {
   id: string;
-  label: number;
+  label: string;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -350,6 +353,8 @@ function SortableGreetingTab({
       onClick={onSelect}
       {...attributes}
       {...listeners}
+      title={label}
+      aria-pressed={active}
       className={cn(
         "flex h-8 min-w-[32px] cursor-grab touch-none items-center justify-center rounded-lg px-3 text-sm font-medium transition-all active:cursor-grabbing",
         isDragging && "z-10 opacity-80 shadow-md",
@@ -358,7 +363,7 @@ function SortableGreetingTab({
           : "border border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground"
       )}
     >
-      {label}
+      <span className="max-w-[12rem] truncate">{label}</span>
     </button>
   );
 }

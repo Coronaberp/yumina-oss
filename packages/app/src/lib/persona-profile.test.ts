@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readPersonaProfile } from "./persona-profile";
+import { readPersonaProfile, readPlayerPresentation } from "./persona-profile";
 
 const persona = { id: "B", name: "Robin", appearance: "red coat", personality: "curious", backstory: "teacher", note: "PRIVATE", userId: "owner", avatarUrl: "private-avatar" };
 const legacyState = { metadata: { personaActive: true, personaName: "Legacy A", personaAppearance: "blue coat", personaPersonality: "quiet", personaBackstory: "farmer" } };
+
+test("player presentation follows the session persona and never substitutes the account portrait", () => {
+  const currentUser = { username: "Account", image: "account.png" };
+  assert.deepEqual(readPlayerPresentation({ sessionPersona: { persona: { name: "Robin", avatarUrl: "robin.png" } }, currentUser, state: legacyState }), { name: "Robin", avatar: "robin.png" });
+  assert.deepEqual(readPlayerPresentation({ sessionPersona: { persona: { name: "Robin", avatarUrl: "robin.png", sprites: { normal: "robin-normal.png", happy: "robin-happy.png" } } }, currentUser }), {
+    name: "Robin", avatar: "robin.png", sprites: { normal: "robin-normal.png", happy: "robin-happy.png" },
+  });
+  assert.deepEqual(readPlayerPresentation({ sessionPersona: { persona: { name: "Robin", avatarUrl: null } }, currentUser }), { name: "Robin", avatar: null });
+  assert.deepEqual(readPlayerPresentation({ sessionPersona: { persona: null }, currentUser, state: legacyState }), { name: "Account", avatar: "account.png" });
+  assert.deepEqual(readPlayerPresentation({ currentUser, state: { metadata: { personaActive: true, personaName: "Legacy", personaImage: "legacy.png" } } }), { name: "Legacy", avatar: "legacy.png" });
+});
 
 test("sandbox imports copy custom entries and discard non-roleplay entry fields", () => {
   const entries = [{ title: "Weapon", content: "Sword", note: "PRIVATE" }];

@@ -211,6 +211,9 @@ function mergeRootComponent(
 
 /** Collections merged by entity `id`. */
 const ID_COLLECTIONS = [
+  "personaPresets",
+  "routes",
+  "endings",
   "entries",
   "variables",
   "rules",
@@ -226,6 +229,7 @@ const ID_COLLECTIONS = [
  * through from server; a field the user changed is preserved.
  */
 const FIELD_KEYS = [
+  "interfaceDrafts",
   "name",
   "description",
   "author",
@@ -290,6 +294,21 @@ export function mergeWorldDefinition(
     const bv = (b as unknown as Record<string, unknown>)[key];
     const sv = (server as unknown as Record<string, unknown>)[key];
     merged[key] = deepEqual(lv, bv) ? sv : lv;
+  }
+
+  // HTML and CSS are edited independently by the editor and Studio agent.
+  if (b.cardShowcase || local.cardShowcase || server.cardShowcase) {
+    const showcase = { html: "", css: "" };
+    for (const key of ["html", "css"] as const) {
+      const lv = local.cardShowcase?.[key] ?? "";
+      const bv = b.cardShowcase?.[key] ?? "";
+      const sv = server.cardShowcase?.[key] ?? "";
+      if (lv !== bv && sv !== bv && lv !== sv) {
+        conflicts.push({ collection: "field", id: `cardShowcase.${key}`, reason: "both-edited" });
+      }
+      showcase[key] = lv === bv ? sv : lv;
+    }
+    merged.cardShowcase = showcase;
   }
 
   return { merged: merged as unknown as WorldDefinition, conflicts };

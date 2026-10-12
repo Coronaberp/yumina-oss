@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { apiKeys, user } from "../db/schema.js";
 import { decryptApiKey } from "./crypto.js";
@@ -10,7 +10,8 @@ import { RETIRED_PLAY_MODEL_IDS } from "@yumina/shared";
 import { isOfficialModel } from "./model-price-cache.js";
 import { ensureWallet } from "./credit-service.js";
 import { resolveEffectivePlanWithEventEntitlements } from "./event-plan-entitlements.js";
-import { env } from "./env.js";
+import { env, IS_LOCAL_EDITION } from "./env.js";
+import { isStrataLocalEndpoint } from "./ssrf.js";
 import { allowsOfficialKeyFallback } from "./provider-selection-policy.js";
 
 export type ApiKeyTier = "regular" | "invited" | "byok";
@@ -28,7 +29,15 @@ export async function getUserApiKey(
   userId: string,
   provider = "openrouter"
 ): Promise<string | null> {
-  const activeId = await getActiveApiKeyId(userId);
+  return (await getUserKeyProfile(userId, provider))?.apiKey ?? null;
+}
+
+/** Keep the selected profile's generation settings alongside its key. */
+async function getUserKeyProfile(
+  userId: string,
+  provider: string,
+): Promise<{ apiKey: string; metadata: ApiKeyMetadata | null } | null> {
+  const { activeId, nsfwId } = await getProfileIds(userId);
 
   if (activeId) {
     const [active] = await db
@@ -37,7 +46,7 @@ export async function getUserApiKey(
       .where(and(eq(apiKeys.id, activeId), eq(apiKeys.userId, userId), eq(apiKeys.provider, provider)));
     if (active) {
       const key = sanitizeDecrypted(decryptApiKey(active.encryptedKey, active.keyIv, active.keyTag));
-      if (key) return key;
+      if (key) return { apiKey: key, metadata: active.metadata };
       // Corrupted / empty key — fall through to try other rows
     }
   }
@@ -45,13 +54,14 @@ export async function getUserApiKey(
   const rows = await db
     .select()
     .from(apiKeys)
-    .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, provider)))
+    .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, provider), nsfwId ? ne(apiKeys.id, nsfwId) : undefined))
     .orderBy(desc(apiKeys.createdAt))
     .limit(1);
 
   if (rows.length === 0) return null;
   const row = rows[0]!;
-  return sanitizeDecrypted(decryptApiKey(row.encryptedKey, row.keyIv, row.keyTag));
+  const apiKey = sanitizeDecrypted(decryptApiKey(row.encryptedKey, row.keyIv, row.keyTag));
+  return apiKey ? { apiKey, metadata: row.metadata } : null;
 }
 
 /** Treat empty / whitespace-only / "null" plaintext as a missing key.
@@ -73,7 +83,7 @@ function sanitizeDecrypted(key: string | null): string | null {
 async function getUserCustomKey(
   userId: string
 ): Promise<{ apiKey: string; baseUrl: string; metadata: ApiKeyMetadata | null } | null> {
-  const activeId = await getActiveApiKeyId(userId);
+  const { activeId, nsfwId } = await getProfileIds(userId);
 
   let row: typeof apiKeys.$inferSelect | undefined;
 
@@ -89,7 +99,7 @@ async function getUserCustomKey(
     const rows = await db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, "custom")))
+      .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, "custom"), nsfwId ? ne(apiKeys.id, nsfwId) : undefined))
       .orderBy(desc(apiKeys.createdAt))
       .limit(1);
     row = rows[0];
@@ -98,7 +108,8 @@ async function getUserCustomKey(
   if (!row) return null;
   if (!row.baseUrl) return null; // misconfigured row — treat as absent
   const apiKey = decryptApiKey(row.encryptedKey, row.keyIv, row.keyTag);
-  if (!apiKey) return null; // corrupted key data
+  const allowsKeylessStrata = IS_LOCAL_EDITION && isStrataLocalEndpoint(row.baseUrl);
+  if (apiKey === null || (!apiKey.trim() && !allowsKeylessStrata)) return null; // corrupted key data
   return {
     apiKey,
     baseUrl: row.baseUrl,
@@ -124,19 +135,24 @@ async function getUserMeta(userId: string): Promise<{
   return {
     plan: effectivePlan,
     preferredProvider:
-      prefs?.preferredProvider === "private" ? "private" : "official",
+      // Local builds are BYOK-only, matching the frontend's private catalog.
+      IS_LOCAL_EDITION || prefs?.preferredProvider === "private" ? "private" : "official",
   };
 }
 
-/** Read user.preferences.activeApiKeyId — the user-selected "active" connection profile. */
-async function getActiveApiKeyId(userId: string): Promise<string | null> {
+/** Current/SFW profile and the separate NSFW slot. Legacy fallback must not
+ * silently start using the NSFW connection just because its key is newer. */
+async function getProfileIds(userId: string): Promise<{ activeId: string | null; nsfwId: string | null }> {
   const [row] = await db
     .select({ preferences: user.preferences })
     .from(user)
     .where(eq(user.id, userId));
   const prefs = row?.preferences as Record<string, unknown> | null;
-  const id = prefs?.activeApiKeyId;
-  return typeof id === "string" && id.length > 0 ? id : null;
+  const active = prefs?.activeApiKeyId, nsfw = prefs?.nsfwApiKeyId;
+  return {
+    activeId: typeof active === "string" && active.length > 0 ? active : null,
+    nsfwId: typeof nsfw === "string" && nsfw.length > 0 ? nsfw : null,
+  };
 }
 
 /**
@@ -223,14 +239,14 @@ export async function resolveProviderForModel(
       // No custom key configured — do NOT fall back to OpenRouter for custom/* models
       return null;
     }
-    const apiKey = await getUserApiKey(userId, providerName);
-    if (apiKey) {
-      return { provider: createByokProvider(providerName, apiKey), providerName, isByok: true, apiKeyTier: "byok" };
+    const profile = await getUserKeyProfile(userId, providerName);
+    if (profile) {
+      return { provider: createByokProvider(providerName, profile.apiKey, undefined, profile.metadata), providerName, isByok: true, apiKeyTier: "byok" };
     }
     if (providerName !== "openrouter") {
-      const orKey = await getUserApiKey(userId, "openrouter");
-      if (orKey) {
-        return { provider: createByokProvider("openrouter", orKey), providerName: "openrouter" as ProviderName, isByok: true, apiKeyTier: "byok" };
+      const orProfile = await getUserKeyProfile(userId, "openrouter");
+      if (orProfile) {
+        return { provider: createByokProvider("openrouter", orProfile.apiKey, undefined, orProfile.metadata), providerName: "openrouter" as ProviderName, isByok: true, apiKeyTier: "byok" };
       }
     }
     if (options?.forcePrivate) return null;
@@ -263,14 +279,14 @@ export async function resolveProviderForModel(
       }
       return null;
     }
-    const apiKey = await getUserApiKey(userId, providerName);
-    if (apiKey) {
-      return { provider: createByokProvider(providerName, apiKey), providerName, isByok: true, apiKeyTier: "byok" };
+    const profile = await getUserKeyProfile(userId, providerName);
+    if (profile) {
+      return { provider: createByokProvider(providerName, profile.apiKey, undefined, profile.metadata), providerName, isByok: true, apiKeyTier: "byok" };
     }
     if (providerName !== "openrouter") {
-      const orKey = await getUserApiKey(userId, "openrouter");
-      if (orKey) {
-        return { provider: createByokProvider("openrouter", orKey), providerName: "openrouter" as ProviderName, isByok: true, apiKeyTier: "byok" };
+      const orProfile = await getUserKeyProfile(userId, "openrouter");
+      if (orProfile) {
+        return { provider: createByokProvider("openrouter", orProfile.apiKey, undefined, orProfile.metadata), providerName: "openrouter" as ProviderName, isByok: true, apiKeyTier: "byok" };
       }
     }
   }

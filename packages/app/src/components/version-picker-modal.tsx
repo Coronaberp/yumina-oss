@@ -79,24 +79,26 @@ export function VersionPickerModal({
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center">
       <div
+        data-vn-dialog-backdrop=""
         className="absolute inset-0 bg-black/78 animate-in fade-in duration-150"
         onClick={onClose}
       />
       <div
         ref={contentRef}
+        data-vn-dialog-surface="structured"
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.06] bg-[#1A1B20] shadow-[0_18px_60px_rgba(0,0,0,0.42)] animate-in fade-in zoom-in-95 duration-200 mx-4 outline-none"
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.06] bg-card shadow-[0_18px_60px_rgba(0,0,0,0.42)] animate-in fade-in zoom-in-95 duration-200 mx-4 outline-none"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pb-3 pt-5">
+        <div data-vn-dialog-header="" className="flex items-center justify-between px-5 pb-3 pt-5">
           <div>
-            <h2 className="text-[0.95rem] font-semibold text-foreground">
+            <h2 data-vn-dialog-title="" className="text-[0.95rem] font-semibold text-foreground">
               {worldName ?? t("selectVersionLabel")}
             </h2>
           </div>
-          <button
+          <button data-vn-dialog-close=""
             type="button"
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:bg-white/5 hover:text-muted-foreground"

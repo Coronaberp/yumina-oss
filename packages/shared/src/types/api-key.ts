@@ -11,8 +11,32 @@ export type PromptPostProcessing =
   | "strict_tools"  // strict + keep tool messages intact
   | "single";       // collapse all into one user message
 
+/** Exact OpenRouter endpoint slugs, saved independently for each model. */
+export type OpenRouterProviderSelections = Record<string, string[]>;
+
+export interface OpenRouterProviderEndpoint {
+  slug: string;
+  name: string;
+  contextLength?: number;
+  pricing?: { prompt: number; completion: number };
+}
+
+/** Starting point for creative stories with focused word choices. */
+export const PROFILE_SAMPLING_DEFAULTS = { temperature: 0.8, topP: 0.95, topK: 40 } as const;
+
 /** Metadata for a user API key. Most fields only meaningful for provider='custom'. */
 export interface ApiKeyMetadata {
+  /** Per-profile creativity controls. Null/absent uses PROFILE_SAMPLING_DEFAULTS. */
+  temperature?: number | null;
+  topP?: number | null;
+  /** Zero omits top-k filtering and uses the provider's default. */
+  topK?: number | null;
+  /** OpenRouter only. Missing model entries use the account's routing defaults. */
+  openRouterProviders?: OpenRouterProviderSelections;
+  /** Saved effort for this endpoint. Absent profiles use the request effort, then low. */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  /** Total endpoint window (input plus output). Null/absent uses automatic detection. */
+  contextWindow?: number | null;
   /** Whitelist of upstream model names. Stored WITHOUT the "custom/" prefix. */
   models?: string[];
   /** Last successful upstream catalog, used to distinguish discovered and manual IDs. */

@@ -58,16 +58,16 @@ export function VerificationPending({ email }: VerificationPendingProps) {
 
   return (
     <AuthLayout wide>
-        <div className="rounded-2xl border border-white/[0.08] bg-[#212124]/80 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
+        <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl text-center">
           {/* Email icon */}
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gold/10 shadow-[0_0_30px_rgba(201,162,94,0.1)]">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gold/10 shadow-[0_0_30px_rgba(212,194,146,0.1)]">
             <svg className="h-8 w-8 text-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
           </div>
 
-          <h2 className="mb-2 text-xl font-bold text-[#E6E4DD]">{t("register.verification.title")}</h2>
-          <p className="mb-1 text-sm text-[#B9B6AE]">
+          <h2 className="mb-2 text-xl font-bold text-foreground">{t("register.verification.title")}</h2>
+          <p className="mb-1 text-sm text-sub">
             {t("register.verification.sentTo")}
           </p>
           <p className="mb-8 text-sm font-semibold text-gold">{email}</p>
@@ -82,12 +82,12 @@ export function VerificationPending({ email }: VerificationPendingProps) {
             <button
               onClick={handleResend}
               disabled={resending || resent || cooldown > 0}
-              className="w-full rounded-xl border border-white/[0.08] bg-[#1A1A1C] px-4 py-3 text-sm font-semibold text-[#E6E4DD] transition-all hover:border-white/[0.15] hover:bg-white/[0.06] disabled:opacity-40"
+              className="w-full rounded-xl border border-white/[0.08] bg-input px-4 py-3 text-sm font-semibold text-foreground transition-all hover:border-white/[0.15] hover:bg-white/[0.06] disabled:opacity-40"
             >
               {resent ? `\u2713 ${t("register.verification.resent")}` : resending ? t("register.verification.resending") : cooldown > 0 ? `${t("register.verification.resend")} (${cooldown}s)` : t("register.verification.resend")}
             </button>
             <Link to="/login" className="block">
-              <button className="w-full rounded-xl px-4 py-3 text-sm font-medium text-[#B9B6AE]/60 transition-colors hover:text-[#E6E4DD]">
+              <button className="w-full rounded-xl px-4 py-3 text-sm font-medium text-sub/60 transition-colors hover:text-foreground">
                 {t("register.verification.backToSignIn")}
               </button>
             </Link>

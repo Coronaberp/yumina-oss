@@ -819,6 +819,20 @@ export function BehaviorsSection({ compact, mobileListMode }: { compact?: boolea
 // WHEN Editor
 // ══════════════════════════════════════════════
 
+function ThresholdRepeatField({ value, onChange }: {
+  value?: number; onChange: (value: number | undefined) => void;
+}) {
+  const { t } = useTranslation("editor");
+  return <div className="space-y-1.5">
+    <label className="text-[13px] font-bold text-foreground">{t("behaviors.whenFields.repeatEvery")}</label>
+    <NumberInput min={0} value={value ?? ""}
+      aria-label={t("behaviors.whenFields.repeatEvery")}
+      placeholder={t("behaviors.whenFields.noRepeat")}
+      onChange={next => onChange(next === "" || next <= 0 ? undefined : next)} />
+    <p className="text-xs text-muted-foreground">{t("behaviors.whenFields.repeatEveryHint")}</p>
+  </div>;
+}
+
 function LegacyTriggerFields({ trigger, variables, onChange }: {
   trigger: TriggerConfig; variables: Variable[]; onChange: (next: TriggerConfig) => void;
 }) {
@@ -853,6 +867,7 @@ function LegacyTriggerFields({ trigger, variables, onChange }: {
       <label className="block text-sm">{t("behaviors.whenFields.value")}</label>
       <input className={fieldInputClass} type="number" value={trigger.threshold ?? ""}
         onChange={e => update({ threshold: e.target.value === "" ? undefined : Number(e.target.value) })} />
+      <ThresholdRepeatField value={trigger.repeatEvery} onChange={repeatEvery => update({ repeatEvery })} />
     </div>;
   }
   if (trigger.type === "turn-count") {
@@ -1095,6 +1110,16 @@ function WhenEditor({
             </div>
           );
         })}
+      {!reaction.when._legacyTrigger && currentPreset?.id === "var-crossed" && (
+        <ThresholdRepeatField
+          value={typeof reaction.when.match?.repeatEvery?.value === "number" ? reaction.when.match.repeatEvery.value : undefined}
+          onChange={repeatEvery => {
+            const match = { ...reaction.when.match };
+            if (repeatEvery === undefined) delete match.repeatEvery;
+            else match.repeatEvery = { operator: "eq", value: repeatEvery };
+            onUpdate({ when: { ...reaction.when, match } });
+          }} />
+      )}
     </div>
   );
 }

@@ -11,6 +11,11 @@ import { MAX_WORLD_TAGS } from "@yumina/shared";
 import * as schema from "./schema.js";
 import { USER_MUTES_STATEMENTS } from "./user-mutes-ddl.js";
 import { WORLD_AUDIENCE_DDL } from "./world-audience-ddl.js";
+import { CUSTOM_UI_PRESETS_DDL } from "./custom-ui-presets-ddl.js";
+import { CONTENT_FLAGS_DDL } from "./content-flags-ddl.js";
+import { IMAGE_GENERATION_DDL } from "./image-generation-ddl.js";
+import { DANBOORU_DDL } from "./danbooru-ddl.js";
+import { MEMORY_APP_DDL } from "../memory/app-ddl.js";
 import {
   PLAN_ENTITLEMENT_SOURCE_CHECK,
   PLAN_ENTITLEMENT_SOURCE_CONSTRAINT_DDL,
@@ -275,6 +280,7 @@ export async function executeSqlScript(text: string): Promise<void> {
 export async function ensureSessionPersonaColumn() {
   await db.execute(sql`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS session_persona JSONB`);
   await db.execute(sql`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS persona_locked BOOLEAN NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS persona_control_mode TEXT NOT NULL DEFAULT 'player'`);
 }
 
 const TABLE_DDLS = [
@@ -345,6 +351,7 @@ const TABLE_DDLS = [
     schema JSONB NOT NULL DEFAULT '{}', thumbnail_url TEXT,
     is_published BOOLEAN DEFAULT false, status TEXT NOT NULL DEFAULT 'draft',
     is_nsfw BOOLEAN DEFAULT false, allow_edit BOOLEAN DEFAULT true,
+    editing_locked BOOLEAN NOT NULL DEFAULT false,
     allow_custom_api BOOLEAN NOT NULL DEFAULT true,
     allow_reviews BOOLEAN NOT NULL DEFAULT true,
     age_rating TEXT NOT NULL DEFAULT 'all', visibility TEXT NOT NULL DEFAULT 'public',
@@ -409,7 +416,7 @@ const TABLE_DDLS = [
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES play_sessions(id) ON DELETE CASCADE,
     role TEXT NOT NULL, content TEXT NOT NULL,
-    state_changes JSONB,
+    state_changes JSONB, content_flags JSONB,
     swipes JSONB DEFAULT '[]', active_swipe_index INTEGER DEFAULT 0,
     model TEXT, token_count INTEGER, generation_time_ms INTEGER,
     compacted BOOLEAN NOT NULL DEFAULT false, summaryception_compacted BOOLEAN NOT NULL DEFAULT false, state_snapshot JSONB, attachments JSONB,
@@ -453,6 +460,7 @@ const TABLE_DDLS = [
     name TEXT NOT NULL, messages JSONB NOT NULL, state JSONB NOT NULL, summary TEXT,
     created_at TIMESTAMP DEFAULT NOW()
   )`,
+  CUSTOM_UI_PRESETS_DDL,
   `CREATE TABLE IF NOT EXISTS prompt_folders (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
@@ -481,6 +489,7 @@ const TABLE_DDLS = [
     user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     avatar_url TEXT, appearance TEXT, personality TEXT, backstory TEXT,
+    sprites JSONB NOT NULL DEFAULT '{}'::jsonb,
     note TEXT,
     is_active BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()
@@ -818,6 +827,7 @@ const TABLE_DDLS = [
 ];
 
 const INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS user_custom_ui_presets_owner_idx ON user_custom_ui_presets(user_id)`,
   `CREATE INDEX IF NOT EXISTS session_user_id_idx ON session(user_id)`,
   `CREATE INDEX IF NOT EXISTS account_user_id_idx ON account(user_id)`,
   `CREATE INDEX IF NOT EXISTS worlds_creator_id_idx ON worlds(creator_id)`,
@@ -918,6 +928,7 @@ const COLUMN_ALTERS = [
   `ALTER TABLE user_blocks ADD COLUMN IF NOT EXISTS hide_own_worlds BOOLEAN NOT NULL DEFAULT true`,
   `ALTER TABLE user_blocks ADD COLUMN IF NOT EXISTS hide_blocked_activity BOOLEAN NOT NULL DEFAULT true`,
   `ALTER TABLE worlds ADD COLUMN IF NOT EXISTS custom_ui_loc INTEGER`,
+  `ALTER TABLE worlds ADD COLUMN IF NOT EXISTS editing_locked BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE worlds ADD COLUMN IF NOT EXISTS has_audio BOOLEAN`,
   `ALTER TABLE worlds ADD COLUMN IF NOT EXISTS cover_crop JSONB`,
   `ALTER TABLE worlds ADD COLUMN IF NOT EXISTS gallery_cover_crop JSONB`,
@@ -929,6 +940,7 @@ const COLUMN_ALTERS = [
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_enabled BOOLEAN NOT NULL DEFAULT true`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_model TEXT`,
   `ALTER TABLE messages ADD COLUMN IF NOT EXISTS state_validation JSONB`,
+  `ALTER TABLE messages ADD COLUMN IF NOT EXISTS content_flags JSONB`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS summaryception_model TEXT`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS summary_implementation TEXT NOT NULL DEFAULT 'localdev'`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS summary_mode TEXT NOT NULL DEFAULT 'threshold'`,
@@ -1004,6 +1016,7 @@ const COLUMN_ALTERS = [
   // this code deploys; this entry keeps PGlite/fresh local DBs in sync.
   `ALTER TABLE user_personas ADD COLUMN IF NOT EXISTS note TEXT`,
   `ALTER TABLE user_personas ADD COLUMN IF NOT EXISTS entries JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE user_personas ADD COLUMN IF NOT EXISTS sprites JSONB NOT NULL DEFAULT '{}'::jsonb`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS session_persona JSONB`,
   `ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS persona_locked BOOLEAN NOT NULL DEFAULT false`,
 ];
@@ -1485,7 +1498,15 @@ export async function ensureTables() {
   }
   await ensureWorldsSchemaDerived();
   await ensureMessagesSwipeCount();
+  await ensureContentFlags();
+  await ensureStoryhavenMemoryTables();
+  await ensureDanbooruTables();
+  await ensureImageGenerationTables();
   console.log("[DEV] PGlite tables + indexes created");
+}
+
+export async function ensureStoryhavenMemoryTables(): Promise<void> {
+  for (const ddl of MEMORY_APP_DDL) await db.execute(sql.raw(ddl));
 }
 
 // Hot-path indexes for real Postgres. ensureTables() above is PGlite-only, so
@@ -1537,6 +1558,7 @@ export async function ensureHotPathIndexes(): Promise<void> {
  * The EXCEPTION guard means a world save can never fail because of these.
  */
 export async function ensureWorldsSchemaDerived() {
+  await db.execute(sql.raw(`ALTER TABLE worlds ADD COLUMN IF NOT EXISTS editing_locked BOOLEAN NOT NULL DEFAULT false`));
   await db.execute(sql.raw(`
     CREATE OR REPLACE FUNCTION worlds_sync_schema_derived() RETURNS trigger AS $fn$
     BEGIN
@@ -1592,6 +1614,10 @@ export async function ensureWorldsSchemaDerived() {
  * fallback so it stays correct while the batched backfill runs. The EXCEPTION
  * guard means a message write can never fail because of the trigger.
  */
+export async function ensureContentFlags(): Promise<void> {
+  for (const ddl of CONTENT_FLAGS_DDL) await db.execute(sql.raw(ddl));
+}
+
 export async function ensureMessagesSwipeCount() {
   await db.execute(sql.raw(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS swipe_count INTEGER`));
   await db.execute(sql.raw(`
@@ -2373,6 +2399,7 @@ export async function ensureExtensionTables() {
  */
 export async function ensureSessionContextColumns() {
   if (IS_PGLITE) return;
+  await ensureContentFlags();
   await db.execute(sql.raw(`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_enabled BOOLEAN NOT NULL DEFAULT true`));
   await db.execute(sql.raw(`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_model TEXT`));
   await db.execute(sql.raw(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS state_validation JSONB`));
@@ -3683,3 +3710,11 @@ export async function readForEdit(viewerId: string | null | undefined, ownerId: 
 
 export { db, dbRead };
 export type Database = typeof db;
+
+export async function ensureDanbooruTables(): Promise<void> {
+  for (const ddl of DANBOORU_DDL) await db.execute(sql.raw(ddl));
+}
+
+export async function ensureImageGenerationTables(): Promise<void> {
+  for (const ddl of IMAGE_GENERATION_DDL) await db.execute(sql.raw(ddl));
+}

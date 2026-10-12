@@ -1,3 +1,4 @@
+import { PersonasSection } from "./sections/personas";
 import { useStoryNavigation } from "@/hooks/use-story-navigation";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,8 +16,10 @@ import {
   BookOpen,
   Variable,
   LayoutGrid,
+  Palette,
   Music,
-  FolderOpen,
+  Image as ImageIcon,
+  Users,
   Play,
   Wand2,
   MoreVertical,
@@ -27,6 +30,8 @@ import {
   History,
   Package,
   SlidersHorizontal,
+  GitBranch,
+  Flag,
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
@@ -45,13 +50,18 @@ import { saveEditorMode, saveGlobalEditorMode } from "./quick-create-editor";
 import { VariantTabBar } from "./variant-tab-bar";
 import { ReviewStateControl } from "./review-state-control";
 import { GuestEditorReadOnly } from "./components/guest-editor-readonly";
+import { LockedEditorFields } from "./components/locked-editor-fields";
 import { FirstMessageSection } from "./sections/first-message";
 import { KnowledgeBasesSection } from "./sections/knowledge-bases";
 import { VariablesSection } from "./sections/variables";
 import { BehaviorsSection } from "./sections/behaviors-section";
 import { ComponentsSection } from "./sections/components";
+import { RoutesSection } from "./sections/routes";
+import { EndingsSection } from "./sections/endings";
 import { AudioSection } from "./sections/audio";
-import { AssetsSection } from "./sections/assets";
+import { CharacterShowcaseSection } from "./sections/character-showcase";
+import { VnSpritesSection, VnBackgroundsSection } from "./sections/visual-novel";
+import { isVnInterface } from "./lib/vn-assets";
 import { OverviewSection } from "./sections/overview";
 import { BundlesSection, GenerationEditorSection, WorldPublishModal } from "@/edition/slots";
 import { useEdition } from "@/edition/edition";
@@ -68,13 +78,18 @@ const apiBase = import.meta.env.VITE_API_URL || "";
 const SECTION_KEYS: { id: EditorSection; labelKey: string; icon: typeof FileText }[] =
   [
     { id: "first-message", labelKey: "sections.firstMessage", icon: MessageCircle },
+    { id: "personas", labelKey: "sections.personas", icon: Users },
     { id: "entries", labelKey: "sections.lorebook", icon: BookOpen },
     { id: "variables", labelKey: "sections.variables", icon: Variable },
     { id: "rules", labelKey: "sections.behaviors", icon: Zap },
+    { id: "routes", labelKey: "sections.routes", icon: GitBranch },
+    { id: "endings", labelKey: "sections.endings", icon: Flag },
     { id: "components", labelKey: "sections.customUI", icon: LayoutGrid },
+    { id: "character-showcase", labelKey: "sections.characterShowcase", icon: Palette },
     { id: "audio", labelKey: "sections.audio", icon: Music },
     { id: "generation", labelKey: "sections.aiGeneration", icon: Sparkles },
-    { id: "assets", labelKey: "sections.assets", icon: FolderOpen },
+    { id: "vn-sprites", labelKey: "sections.vnSprites", icon: Users },
+    { id: "vn-backgrounds", labelKey: "sections.vnBackgrounds", icon: ImageIcon },
     { id: "overview", labelKey: "sections.overview", icon: FileText },
     { id: "bundles", labelKey: "sections.bundles", icon: Package },
   ];
@@ -83,20 +98,27 @@ const SECTION_KEYS: { id: EditorSection; labelKey: string; icon: typeof FileText
 // Bundles is intentionally absent — it lives as a standalone "marketplace"
 // card at the sidebar bottom (separate visual treatment from regular sections).
 const SECTION_GROUPS: { groupKey: string; ids: EditorSection[] }[] = [
-  { groupKey: "content", ids: ["first-message", "entries", "variables", "rules"] },
+  { groupKey: "content", ids: ["first-message", "personas", "entries", "variables", "rules"] },
+  { groupKey: "story", ids: ["routes", "endings"] },
   { groupKey: "creation", ids: ["generation"] },
-  { groupKey: "presentation", ids: ["components", "audio", "assets"] },
-  { groupKey: "publish", ids: ["overview"] },
+  { groupKey: "presentation", ids: ["components", "audio"] },
+  { groupKey: "visualNovel", ids: ["vn-sprites", "vn-backgrounds"] },
+  { groupKey: "publish", ids: ["overview", "character-showcase"] },
 ];
 
 const SECTION_COMPONENTS: Record<EditorSection, React.FC> = {
   "first-message": FirstMessageSection,
+  personas: PersonasSection,
   entries: KnowledgeBasesSection,
   variables: VariablesSection,
   rules: BehaviorsSection,
+  routes: RoutesSection,
+  endings: EndingsSection,
   components: ComponentsSection,
+  "character-showcase": CharacterShowcaseSection,
   audio: AudioSection,
-  assets: AssetsSection,
+  "vn-sprites": VnSpritesSection,
+  "vn-backgrounds": VnBackgroundsSection,
   generation: GenerationEditorSection,
   overview: OverviewSection,
   bundles: BundlesSection,
@@ -151,7 +173,8 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
   const saveDraft = useEditorStore(s => s.saveDraft);
   const pendingEdit = useEditorStore(s => s.pendingEdit);
   const variants = useEditorStore(s => s.variants);
-  const readOnlyInspect = useEditorStore(s => s.readOnlyInspect);
+  const editingLocked = useEditorStore(s => s.editingLocked);
+  const readOnlyInspect = useEditorStore(s => s.readOnlyInspect || s.editingLocked);
   const guestMode = useEditorStore(s => s.guestMode);
   // Edition gates: publishing/review, hub translations (variant bar), bundles.
   const { features } = useEdition();
@@ -199,9 +222,10 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
       SECTION_KEYS.filter(
         (s) =>
           (s.id !== "overview" || !isNonPrimaryVariant)
-          && (s.id !== "generation" || features.imageGeneration),
+          && (s.id !== "generation" || features.imageGeneration)
+          && (!s.id.startsWith("vn-") || isVnInterface(worldDraft.rootComponent)),
       ),
-    [isNonPrimaryVariant, features.imageGeneration],
+    [isNonPrimaryVariant, features.imageGeneration, worldDraft.rootComponent],
   );
 
   // Group → visible sections (drops empty groups for non-primary variants)
@@ -232,12 +256,18 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
       entries: entryCount,
       variables: worldDraft.variables.length,
       rules: worldDraft.rules.length + reactionCount,
+      personas: (worldDraft.personaPresets ?? []).length,
+      routes: (worldDraft.routes ?? []).length,
+      endings: (worldDraft.endings ?? []).length,
       components: componentFiles,
       audio: worldDraft.audioTracks.length,
     };
   }, [
+    worldDraft.personaPresets,
     worldDraft.entries,
     worldDraft.variables,
+    worldDraft.routes,
+    worldDraft.endings,
     worldDraft.rules,
     worldDraft.reactions,
     worldDraft.rootComponent,
@@ -439,8 +469,8 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
                 value={worldDraft.name}
                 onChange={(e) => setField("name", e.target.value)}
                 placeholder={t("shell.namePlaceholder")}
-                readOnly={guestMode}
-                aria-readonly={guestMode}
+                readOnly={guestMode || editingLocked}
+                aria-readonly={guestMode || editingLocked}
                 tabIndex={guestMode ? -1 : undefined}
                 autoFocus={!guestMode && !worldDraft.name}
                 className={cn(
@@ -604,7 +634,7 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
               className="min-h-full"
               contentClassName="flex flex-col overflow-hidden"
             >
-              <ActiveComponent />
+              <LockedEditorFields locked={editingLocked}><ActiveComponent /></LockedEditorFields>
             </GuestEditorReadOnly>
           </div>
         </div>
@@ -677,8 +707,8 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
               value={worldDraft.name}
               onChange={(e) => setField("name", e.target.value)}
               placeholder={t("shell.namePlaceholder")}
-              readOnly={guestMode}
-              aria-readonly={guestMode}
+              readOnly={guestMode || editingLocked}
+              aria-readonly={guestMode || editingLocked}
               tabIndex={guestMode ? -1 : undefined}
               autoFocus={!guestMode && !worldDraft.name}
               className={cn(
@@ -801,7 +831,7 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
 
             {readOnlyInspect && (
               <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
-                🔍 Admin Preview
+                {editingLocked ? "Locked · Read-only" : "🔍 Admin Preview"}
               </span>
             )}
           </div>
@@ -935,7 +965,7 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
                 className="flex-1 overflow-hidden"
                 contentClassName="flex flex-col overflow-hidden"
               >
-                <ActiveComponent />
+                <LockedEditorFields locked={editingLocked}><ActiveComponent /></LockedEditorFields>
               </GuestEditorReadOnly>
             </div>
           </div>

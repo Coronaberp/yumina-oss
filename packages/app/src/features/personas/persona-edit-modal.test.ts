@@ -23,7 +23,7 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
     "@/components/ui/button": { Button: ({ variant: _, ...props }: Record<string, unknown>) => createElement("button", props) },
     "@/components/ui/field-error": { FieldError: ({ message }: { message?: string }) => message ? createElement("div", { role: "alert" }, message) : null },
     "@/stores/personas": { usePersonasStore: () => ({ updatePersona: async (_: string, input: Partial<typeof saved>) => { saves++; saved = { ...saved, ...input }; return saved; } }) },
-    "@/stores/user-assets": { useUserAssetStore: () => ({ uploadAsset: async () => null }) },
+    "@/stores/user-assets": { useUserAssetStore: () => ({ uploadAsset: async () => ({ url: "https://cdn.example/normal.png" }) }) },
     "@/lib/asset-url": { resolveImageUrl: () => null },
   };
   const module = { exports: {} as { PersonaEditModal: ComponentType<{ isOpen: boolean; onClose: () => void; persona: typeof saved }> } };
@@ -43,6 +43,13 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
   }
   try {
     await act(async () => render(true));
+    for (const expression of ["normal", "happy", "sad", "angry", "shy", "smug"]) {
+      assert.ok(dom.window.document.querySelector(`button[aria-label="Upload ${expression} sprite"]`), `missing ${expression} sprite upload`);
+    }
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Upload normal sprite"]')!.click());
+    const spriteInput = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="VN sprite image file"]')!;
+    Object.defineProperty(spriteInput, "files", { configurable: true, value: [new dom.window.File(["image"], "normal.png", { type: "image/png" })] });
+    await act(async () => { spriteInput.dispatchEvent(new dom.window.Event("change", { bubbles: true })); await Promise.resolve(); });
     await act(async () => button("persona.modal.addEntry").click());
     await fill(dom.window.document.querySelector<HTMLInputElement>('input[placeholder="persona.modal.entryTitlePlaceholder"]')!, "Weapons");
     await act(async () => button("persona.modal.save").click());
@@ -53,6 +60,7 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
     assert.equal(saves, 1);
     assert.equal(saved.backstory, "Keep this story");
     assert.deepEqual(saved.entries, [{ title: "Weapons", content: "A steel sword." }]);
+    assert.deepEqual((saved as typeof saved & { sprites?: Record<string, string> }).sprites, { normal: "https://cdn.example/normal.png" });
     await act(async () => render(false));
     await act(async () => render(true));
     assert.equal(dom.window.document.querySelector<HTMLInputElement>('input[placeholder="persona.modal.entryTitlePlaceholder"]')!.value, "Weapons");

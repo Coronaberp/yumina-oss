@@ -11,6 +11,30 @@ import { connectSSE } from "./sse";
 
 const realFetch = globalThis.fetch;
 
+test("numeric generation progress arrives before a buffered reply finishes", async () => {
+  const encoder = new TextEncoder();
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  globalThis.fetch = async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }));
+  const progress: number[] = [], texts: string[] = [], dones: unknown[] = [];
+  const abort = connectSSE("http://test.local/api/x", { method: "POST", body: {}, callbacks: {
+    onText: text => texts.push(text), onProgress: data => progress.push(data.tokens),
+    onDone: data => dones.push(data), onError: error => assert.fail(error),
+  } });
+  try {
+    await settle();
+    body.enqueue(encoder.encode('event: progress\ndata: {"tokens":128}\n\n'));
+    await settle();
+    assert.deepEqual(progress, [128]);
+    assert.deepEqual(texts, []);
+    assert.deepEqual(dones, []);
+    body.enqueue(encoder.encode('event: progress\ndata: {"tokens":256}\n\nevent: done\ndata: {"content":"Finished"}\n\n'));
+    body.close();
+    await settle();
+    assert.deepEqual(progress, [128, 256]);
+    assert.deepEqual(dones, [{ content: "Finished" }]);
+  } finally { abort.abort(); globalThis.fetch = realFetch; }
+});
+
 /** Let queued microtasks + already-due callbacks run. */
 async function settle() {
   for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r));

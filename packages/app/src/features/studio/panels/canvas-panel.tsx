@@ -361,7 +361,7 @@ function RootComponentCanvas({ previewVars }: {
         >
           <div
             style={{
-              background: "#1a1b1e", color: "rgba(255,255,255,0.7)", padding: "20px 24px",
+              background: "var(--color-card)", color: "var(--color-sub)", padding: "20px 24px",
               borderRadius: "12px", fontSize: "13px", maxWidth: "320px", textAlign: "center",
             }}
             onClick={(e) => e.stopPropagation()}
@@ -391,7 +391,7 @@ function RootComponentCanvas({ previewVars }: {
         >
           <div
             style={{
-              background: "#1a1b1e", color: "rgba(255,255,255,0.7)", padding: "20px 24px",
+              background: "var(--color-card)", color: "var(--color-sub)", padding: "20px 24px",
               borderRadius: "12px", fontSize: "13px", maxWidth: "320px", textAlign: "center",
             }}
             onClick={(e) => e.stopPropagation()}

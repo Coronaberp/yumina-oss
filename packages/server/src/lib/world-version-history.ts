@@ -5,6 +5,7 @@ import { MAX_AUTO_VERSIONS_PER_WORLD } from "@yumina/shared";
 import type { db } from "../db/index.js";
 import { user, worlds, worldPendingEdits, worldReviewSubmissions, worldVersions } from "../db/schema.js";
 import { estimateWorldCopyTokens } from "./world-copy-material.js";
+import { assertWorldEditable } from "./world-edit-lock.js";
 
 export type VersionExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
 export type VersionWorld = typeof worlds.$inferSelect;
@@ -15,6 +16,7 @@ type AutomaticSource = "publish" | "live" | "backup";
 export async function lockVersionWorld(tx: VersionExecutor, worldId: string, creatorId: string) {
   const [world] = await tx.select().from(worlds)
     .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, creatorId))).for("update").limit(1);
+  if (world) await assertWorldEditable(worldId, world.editingLocked);
   return world ?? null;
 }
 

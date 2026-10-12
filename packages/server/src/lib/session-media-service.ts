@@ -111,7 +111,7 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
       (SELECT COALESCE(SUM(reserved_bytes),0) FROM session_media_uploads WHERE user_id=${userId})::text AS reserved`);
         return { used: Number(old?.bytes ?? 0) + Number(row?.bytes ?? 0), mediaBytes: Number(row?.bytes ?? 0), reserved: Number(row?.reserved ?? 0) };
     }
-    async function reserve(userId: string, limit: number, input: {
+    async function reserve(userId: string, input: {
         id: string;
         sessionId: string;
         entryId: string;
@@ -147,9 +147,6 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
         FROM session_media_uploads WHERE user_id=${userId} AND created_at>now()-interval '1 hour'`);
             if ((rate?.count ?? 0) >= 60 || Number(rate?.bytes ?? 0) + input.size > 128 * 1024 * 1024 || (rate?.pending ?? 0) >= 4)
                 throw new MediaError("MEDIA_RATE_LIMIT", 429);
-            const used = await usage(userId, tx);
-            if (used.used + used.reserved + input.size + MEDIA_RESERVATION > limit)
-                throw new MediaError("MEDIA_QUOTA_EXCEEDED", 413);
             const [row] = await mediaRows<Upload>(tx, sql `INSERT INTO session_media_uploads
         (id,user_id,session_id,entry_id,filename,content_type,input_bytes,reserved_bytes,metadata,temp_key,expires_at)
         VALUES(${input.id},${userId},${input.sessionId},${input.entryId},${input.filename},${input.contentType},${input.size},${input.size + MEDIA_RESERVATION},${JSON.stringify(metadata)}::jsonb,${mediaPrefix(userId) + "pending/" + input.id},now()+interval '10 minutes') RETURNING *`);
@@ -160,7 +157,7 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
         const seconds = Math.max(1, Math.min(600, Math.floor((Date.parse(upload.expires_at) - Date.now()) / 1000)));
         return { id: upload.id, uploadUrl: await storage.signUpload(upload.temp_key, upload.content_type, Number(upload.input_bytes), seconds), complete: false };
     }
-    async function complete(userId: string, uploadId: string, limit: number) {
+    async function complete(userId: string, uploadId: string) {
         await requireReady();
         const attempt = randomUUID();
         const upload = await db.transaction(async (tx) => {
@@ -177,12 +174,10 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
             if (row.attempts.length >= 3)
                 throw new MediaError("MEDIA_UPLOAD_EXPIRED", 409);
             await ownSession(tx, userId, row.session_id);
-            const extraReservation = row.attempts.length ? MEDIA_RESERVATION : 0;
-            if (extraReservation) {
-                const used = await usage(userId, tx);
-                if (used.used + used.reserved + extraReservation > limit)
-                    throw new MediaError("MEDIA_QUOTA_EXCEEDED", 413);
-            }
+            // Pending uploads may have been reserved before the lossless output
+            // limit increased. Cover this attempt and every retained candidate
+            // under the owner lock before allocating or writing any output.
+            const extraReservation = Math.max(0, Number(row.input_bytes) + (row.attempts.length + 1) * MEDIA_RESERVATION - Number(row.reserved_bytes));
             await tx.execute(sql `UPDATE session_media_uploads SET status='processing',attempt=${attempt},attempts=attempts || ${JSON.stringify([attempt])}::jsonb,processing_at=now(),reserved_bytes=reserved_bytes+${extraReservation} WHERE id=${uploadId}`);
             return row;
         });
@@ -207,16 +202,13 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
                 const [current] = await mediaRows<Upload>(tx, sql `SELECT * FROM session_media_uploads WHERE id=${uploadId} FOR UPDATE`);
                 if (current?.status !== "processing" || current.attempt !== attempt)
                     throw new MediaError("MEDIA_UPLOAD_CONFLICT", 409);
-                const used = await usage(userId, tx);
                 let [file] = await mediaRows<FileRow>(tx, sql `SELECT * FROM session_media WHERE user_id=${userId} AND hash=${image.hash} AND status='ready'`);
                 // Keep originals, failed attempts and deduplicated candidates reserved
                 // until cleanup. The successful new file moves into used storage.
                 const remainingReservation = Number(upload.input_bytes) + (current.attempts.length - 1) * MEDIA_RESERVATION + (file ? image.size : 0);
-                if (used.used + used.reserved - Number(current.reserved_bytes) + remainingReservation + (file ? 0 : image.size) > limit)
-                    throw new MediaError("MEDIA_QUOTA_EXCEEDED", 413);
                 if (!file) {
                     [file] = await mediaRows<FileRow>(tx, sql `INSERT INTO session_media(id,user_id,filename,hash,object_key,thumbnail_key,size_bytes,width,height)
-            VALUES(${randomUUID()},${userId},${upload.filename},${image.hash},${keys.main},${keys.thumbnail},${image.size},${image.width},${image.height}) RETURNING *`);
+            VALUES(${randomUUID()},${userId},${`${upload.filename.replace(/\.[^./\\]+$/, "") || "image"}.webp`},${image.hash},${keys.main},${keys.thumbnail},${image.size},${image.width},${image.height}) RETURNING *`);
                 }
                 const [entry] = await mediaRows<{
                     media_id: string;
@@ -408,8 +400,10 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
                 await storage.remove(row.temp_key);
                 if (row.metadata.purpose === 'creative-asset') {
                     const finalKey = `users/${row.user_id}/registered/${createHash('sha256').update(row.temp_key).digest('hex')}`;
-                    const [registered] = await mediaRows(db, sql `SELECT id FROM user_assets WHERE user_id=${row.user_id} AND url=${finalKey}`);
-                    if (!registered) await storage.remove(finalKey);
+                    for (const candidate of [finalKey, `${finalKey}.lossless.webp`]) {
+                        const [registered] = await mediaRows(db, sql `SELECT id FROM user_assets WHERE user_id=${row.user_id} AND url=${candidate}`);
+                        if (!registered) await storage.remove(candidate);
+                    }
                 }
                 for (const candidate of row.attempts) {
                     const keys = attemptKeys(row, candidate);

@@ -52,7 +52,7 @@ test("reconciled uploads do not count storage twice and clear rejects late uploa
 
 test("auth cleanup aborts background upload synchronously without a mounted host", async () => {
   let aborted = false, assetClears = 0;
-  const task = createAssetImportStore({ storage: () => ({ used: 0, limit: 100 }), createFolder: async () => ({ id: "folder" }),
+  const task = createAssetImportStore({ createFolder: async () => ({ id: "folder" }),
     upload: async (_file, _type, _folder, signal) => new Promise(resolve => signal.addEventListener("abort", () => { aborted = true; resolve(null); }, { once: true })) });
   task.getState().select({ parentFolderId: null, parentLabel: "Root", plan: planFolderImport([{ path: "folder/a.txt", file: new File(["a"], "a.txt") }]) }, "alice");
   const run = task.getState().start();

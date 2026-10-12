@@ -18,6 +18,7 @@ async function session(id: string) {
 }
 before(async () => {
   await db.execute(sql`CREATE TABLE play_sessions (id text PRIMARY KEY, user_id text, state jsonb, session_persona jsonb, persona_locked boolean NOT NULL DEFAULT false, updated_at timestamp)`);
+  await db.execute(sql`CREATE TABLE messages (id text PRIMARY KEY, session_id text, role text, model text)`);
   await db.execute(sql`CREATE TABLE user_personas (id text PRIMARY KEY, user_id text, name text, avatar_url text, appearance text, personality text, backstory text, entries jsonb NOT NULL DEFAULT '[]'::jsonb, note text, is_active boolean, created_at timestamp, updated_at timestamp)`);
   await db.execute(sql`CREATE TABLE user_world_personas (user_id text, world_id text, persona_id text, created_at timestamp, updated_at timestamp)`);
 });
@@ -31,39 +32,43 @@ beforeEach(async () => {
 });
 after(async () => { await (db as unknown as { $client: { close(): Promise<void> } }).$client.close(); });
 
-test("profile selection controls new and existing chats despite stale pins and snapshots", async () => {
+test("profile defaults affect new stories while existing sessions retain their own identity", async () => {
   for (const expected of [A, B, A]) {
     await db.execute(sql`UPDATE user_personas SET is_active=(id=${expected.id}) WHERE user_id='tester'`);
     assert.equal((await resolvePersonaForWorld("tester", "world"))?.id, expected.id);
     for (const id of ["A", "B"]) {
       const saved = await session(id);
       const actual = await resolvePersonaForSession(saved);
-      assert.equal(actual?.id, expected.id);
+      const identity = id === "A" ? A : B;
+      assert.equal(actual?.id, identity.id);
       const displayed = structuredClone(saved.state);
       applyPersonaMetadataToState(displayed, actual, { username: "tester" });
-      assert.equal((displayed.metadata as Record<string, unknown>).personaName, expected.name);
+      assert.equal((displayed.metadata as Record<string, unknown>).personaName, identity.name);
       assert.deepEqual(displayed.variables, { hp: 9 });
       const prompt = buildPersonaSystemMessage(actual)!;
-      assert.ok(prompt.includes(expected.backstory));
+      assert.ok(prompt.includes(identity.backstory));
       assert.ok(!prompt.includes("PRIVATE NOTE"));
       for (const kind of ["post", "message", "refresh"] as const) {
         const social = buildSocialReplyPrompt({ id: "job", targetId: "target", kind, members: ["character"], status: "running" }, [], actual);
-        assert.ok(social.includes(expected.backstory));
+        assert.ok(social.includes(identity.backstory));
         assert.ok(!social.includes("PRIVATE NOTE"));
       }
-      assert.deepEqual(await session(id), saved, "resolution must not rewrite gameplay/history");
+      assert.deepEqual((await session(id)).state, saved.state, "resolution must not rewrite gameplay/history");
     }
   }
 });
 
-test("legacy and no-persona snapshots follow the current profile without migration", async () => {
+test("legacy empty snapshots capture the current profile once", async () => {
   await db.execute(sql`UPDATE play_sessions SET session_persona=NULL WHERE id='A'`);
   await db.execute(sql`UPDATE play_sessions SET session_persona='{"persona":null}' WHERE id='B'`);
   assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A");
   assert.equal((await resolvePersonaForSession(await session("B")))?.id, "A");
+  await setAccountPersona("tester", "B");
+  assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A");
 });
 
 test("in-chat selection locks only its session and preserves the profile and other sessions", async () => {
+  await resolvePersonaForSession(await session("A"));
   const stale = await session("A");
   const result = await setSessionPersona("tester", "B", "B");
   assert.equal(result.data?.persona?.id, "B");
@@ -76,7 +81,7 @@ test("in-chat selection locks only its session and preserves the profile and oth
   assert.equal((await resolvePersonaForWorld("tester", "world"))?.id, "A");
 });
 
-test("a locked session stays on its persona while unlocked sessions follow profile changes", async () => {
+test("every session retains its persona while greeting edits to that profile remain available", async () => {
   const lockResult = await setSessionPersonaLock("tester", "A", true, "B");
   assert.equal(lockResult.data?.personaLocked, true);
   assert.equal(lockResult.data?.sessionPersona.persona?.id, "B");
@@ -87,49 +92,50 @@ test("a locked session stays on its persona while unlocked sessions follow profi
   assert.equal((await resolvePersonaForSession(await session("B")))?.id, "B");
   await setAccountPersona("tester", "A");
   assert.equal((await resolvePersonaForSession(await session("A")))?.id, "B", "locked session stays on B");
-  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "A", "unlocked session follows A");
-  assert.equal((await session("B")).personaLocked, false);
+  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "B", "session B stays on B");
+  assert.equal((await session("B")).personaLocked, true);
 
   await db.execute(sql`UPDATE user_personas SET backstory='B_EDITED' WHERE id='B'`);
   assert.equal((await resolvePersonaForSession(await session("A")))?.backstory, "B_EDITED", "lock follows edits to the same persona ID");
 
   const unlocked = await setSessionPersonaLock("tester", "A", false);
-  assert.equal(unlocked.data?.personaLocked, false);
-  assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A", "unlock immediately resumes following the profile");
+  assert.equal(unlocked.error, "Each session must have one persona");
+  assert.equal((await resolvePersonaForSession(await session("A")))?.id, "B");
 });
 
-test("locking explicit no-persona is independent from the account selection", async () => {
-  await setSessionPersonaLock("tester", "A", true, null);
-  assert.equal(await resolvePersonaForSession(await session("A")), null);
-  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "A");
+test("explicit no-persona is rejected without altering either session", async () => {
+  assert.ok((await setSessionPersonaLock("tester", "A", true, null)).error);
+  assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A");
+  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "B");
 });
 
 test("selection and disabling are owner scoped; invalid selections preserve the current persona", async () => {
   await db.execute(sql`INSERT INTO user_personas (id,user_id,name,is_active) VALUES ('foreign','stranger','Foreign',true)`);
   const originalSession = await session("A");
   assert.deepEqual(await setSessionPersona("stranger", "A", "B"), { error: "Session not found" });
-  assert.deepEqual(await setSessionPersona("tester", "missing", null), { error: "Session not found" });
+  assert.deepEqual(await setSessionPersona("tester", "missing", "B"), { error: "Session not found" });
   assert.deepEqual(await setSessionPersona("tester", "A", "foreign"), { error: "Persona not found" });
   assert.deepEqual(await setSessionPersonaLock("stranger", "A", true, "foreign"), { error: "Session not found" });
   assert.deepEqual(await setSessionPersonaLock("tester", "missing", true, "A"), { error: "Session not found" });
   assert.deepEqual(await setSessionPersonaLock("tester", "A", true, "foreign"), { error: "Persona not found" });
   assert.deepEqual(await session("A"), originalSession, "invalid selections do not change the session binding");
   assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A");
-  assert.equal((await setSessionPersona("tester", "A", null)).data?.persona, null);
-  assert.equal(await resolvePersonaForSession(await session("A")), null);
-  assert.equal((await session("A")).personaLocked, true, "no-persona is an explicit session choice");
-  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "A", "disabling one session leaves other sessions following the profile");
+  assert.equal((await setSessionPersona("tester", "A", null)).error, "Each session must have one persona");
+  assert.equal((await resolvePersonaForSession(await session("A")))?.id, "A");
+  assert.equal((await session("A")).personaLocked, true);
+  assert.equal((await resolvePersonaForSession(await session("B")))?.id, "B");
   assert.equal((await resolvePersonaForWorld("tester", "world"))?.id, "A");
   assert.equal((await resolvePersonaForWorld("stranger", null))?.id, "foreign");
 });
 
-test("profile edits and deletion take effect without resurrecting cached details", async () => {
+test("greeting edits apply to the selected profile and deletion preserves its session snapshot", async () => {
   await db.execute(sql`UPDATE user_personas SET backstory='CHANGED' WHERE id='A'`);
-  assert.equal((await resolvePersonaForSession(await session("B")))?.backstory, "CHANGED");
+  assert.equal((await resolvePersonaForSession(await session("A")))?.backstory, "CHANGED");
   await db.execute(sql`DELETE FROM user_personas WHERE id='A'`);
   const actual = await resolvePersonaForSession(await session("A"));
-  assert.equal(actual, null);
-  assert.equal(buildPersonaSystemMessage(actual), null);
+  assert.equal(actual?.id, "A");
+  assert.equal(actual?.backstory, "A_STORY");
+  assert.ok(buildPersonaSystemMessage(actual)?.includes("A_STORY"));
 });
 
 test("same-named personas switch by ID and replace the prompt's public details", async () => {

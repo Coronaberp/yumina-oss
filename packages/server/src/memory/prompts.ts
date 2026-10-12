@@ -1,0 +1,65 @@
+import type { FactDraft } from './types.js';
+import type { CoreCluster } from './ranking.js';
+export interface PromptNeighbor {id:string;text:string}
+export const EXTRACT_EXAMPLE = "{\"facts\": [{\"text\": \"Bandits ambushed the caravan on the Kelder road.\", \"fact_type\": \"event\", \"participants\": [], \"importance\": 4, \"valence\": -1},\n{\"text\": \"Mira was stabbed in the left shoulder during the ambush.\", \"fact_type\": \"state\", \"participants\": [\"Mira\"], \"importance\": 5, \"valence\": -2},\n{\"text\": \"Tomas swore to protect Mira after she saved his life.\", \"fact_type\": \"relationship\", \"participants\": [\"Tomas\", \"Mira\"], \"importance\": 4, \"valence\": 2},\n{\"text\": \"Kael is a proud swordsman who refuses to use magic.\", \"fact_type\": \"profile\", \"participants\": [\"Kael\"], \"importance\": 3, \"valence\": 0},\n{\"text\": \"The mine outside Kelder collapsed.\", \"fact_type\": \"world\", \"participants\": [], \"importance\": 3, \"valence\": -1},\n{\"text\": \"The caravan is due to reach Kelder in three days.\", \"fact_type\": \"promise\", \"participants\": [], \"importance\": 3, \"valence\": 0}],\n\"char_state\": {\"doing\": \"tending to Mira's wound\", \"location\": \"the collapsed mine entrance\", \"npcs\": [\"Mira\", \"Tomas\", \"Kael\"]}}";
+export function buildExtractPrompt(transcript:string,charName:string,userName:string,language:string,castNames?:string[]|null):string {
+ const cast=castNames?.join(', ');
+ const who=castNames?.length?`${userName} and these characters: ${cast}`:`${userName} and ${charName}`;
+ const stateOwner=castNames?.length?'the group':charName;
+ const npcExclusion=castNames?.length?`excluding ${userName} and every listed character (${cast})`:`excluding ${charName} and ${userName}`;
+ return `Analyze this roleplay story between ${who}.
+List facts worth remembering many scenes from now, and the current scene state.
+Fact types: event (something already happened), state (a generic ongoing unresolved condition not covered by a more specific type below), relationship (how two people relate), world (a fact about the world involving no specific person), profile (a lasting trait of a person, e.g. their appearance, personality, or background — stays true until the story shows it changing), promise (a commitment one character made to another, or any specific future occurrence the story has established but not yet happened — a plan, an appointment, a scheduled event — not yet fulfilled or resolved, e.g. "Kael promised to meet Alice at the docks at dawn", "the tournament begins in three days", "Mira's exam is next Tuesday"), conflict (an unresolved disagreement or antagonism between characters, e.g. "Kael and the merchant are in open conflict over the stolen goods"), injury (a physical wound or harm the character is currently suffering, e.g. "Kael's arm is bleeding from the sword strike"), illness (a sickness or ailment the character is currently afflicted with, e.g. "Kael has contracted a fever from the swamp water"), inventory (an item the character possesses but isn't actively using, e.g. "Kael is carrying three healing potions"), equipment (an item the character is currently wearing or wielding, e.g. "Kael is wielding the enchanted longsword"), mood (a longer-lasting emotional disposition, distinct from a passing in-scene reaction, e.g. "Kael has grown deeply suspicious of strangers since the ambush"). Only turn an emotional state into a mood fact if it reflects something lasting (e.g. a grudge, a fear taking hold), not a passing reaction to one line.
+Never record a fact about the conversation itself — that a question or topic has come up again, that the exchange feels repetitive, or any other observation about the pattern of the dialogue rather than the story world. Only record what is true in the story.
+A fact must reflect something the story actually confirmed or showed happening, not something merely mentioned, asked about, rumored, or hedged (heard, apparently, might be, supposedly). A secondhand or hedged remark about someone who has not appeared in this exchange is not confirmed information about them — either leave it out, or if it is worth keeping, record it as what was said or rumored rather than as a settled trait of that person.
+Each fact: one short third-person sentence in ${language}; copy proper names exactly as written; participants = the people the fact is about; importance 1 (a trivial aside) to 5 (pivotal, changes the story) — a first meeting or a minor injury is about 3, a deliberate choice or commitment that will shape the story going forward is about 4, a betrayal, death, oath, or life-changing revelation is 5; valence -2 (very negative) to 2 (very positive). Prefer a few high-signal facts over many trivial ones. facts is [] if nothing lasting happened.
+char_state: doing = a short phrase (in ${language}) describing what ${stateOwner} is doing or experiencing right now, or empty string; location = a short phrase (in ${language}) describing where the current scene is taking place, or empty string; npcs = proper names of named characters mentioned in this exchange, ${npcExclusion} — empty array if none. Never translate, transliterate, or alter proper names in any field.
+
+Example output:
+${EXTRACT_EXAMPLE}
+
+Transcript:
+${transcript}
+
+Reply with only a JSON object in exactly the example's format.`;
+}
+export function buildReconcilePrompt(drafts:FactDraft[],neighbors:PromptNeighbor[][]):string {
+ const newLines=drafts.map((draft,i)=>`${i}. ${draft.text}`);
+ const neighborLines=drafts.map((_,i)=>`${i}. ${neighbors[i]?.length?neighbors[i].map(n=>`[id=${n.id}] ${n.text}`).join('; '):'(none)'}`);
+ return "You maintain a story's memory database. For each NEW fact, compare it with its SIMILAR existing facts and decide exactly one action:\n- \"add\": genuinely new information, unrelated to any similar fact shown\n- \"reinforce\": restates an existing fact with no new detail (give that fact's id as target_id)\n- \"supersede\": the same recurring pattern, condition, or behavior as an existing fact, just with different specific details this time (a different list of things someone is preoccupied with, a different specific worry, an updated version of an ongoing habit or state) — OR a fact that contradicts and replaces an existing one that is no longer current (give the existing fact's id as target_id, and the new fact's own text becomes the merged/updated version)\n\nPrefer \"supersede\" over \"add\" whenever a NEW fact is thematically the same recurring pattern about the same participant(s) as one of its SIMILAR existing facts, even if the specific details differ — this keeps one evolving fact instead of many near-duplicate entries piling up over a long story. Example: existing fact \"Alice is repeatedly preoccupied with a rutted trail and a tavern crowd\" and a NEW fact \"Alice is preoccupied with a stone bridge and a swollen river\" describe the SAME recurring behavior — this should be \"supersede\", not \"add\".\n\nBut do NOT supersede when the two facts are about different people, or are two distinct unresolved commitments that both still stand, even about the same person — two separate promises, debts, injuries, or duel challenges are each their own \"add\", never merge one away, even if they share a surface pattern. Example: existing fact \"Tarion challenged Diane to a duel\" and a NEW fact \"Tarion challenged Fenn to a duel\" are two separate open challenges — this is \"add\", not \"supersede\".\n\nNEW facts:\n" + newLines.join("\n") + "\n\nSIMILAR existing facts:\n" + neighborLines.join("\n") + "\n\nExample output:\n[{\"index\": 0, \"action\": \"supersede\", \"target_id\": \"mf_abc\"}]\n\nReply with only a JSON array containing exactly one decision per NEW fact, in exactly the example's format.";
+}
+export function buildLoreUpdatePrompt(drafts:FactDraft[],neighbors:PromptNeighbor[][]):string {
+ const newLines=drafts.map((draft,i)=>`${i}. ${draft.text}`);
+ const neighborLines=drafts.map((_,i)=>`${i}. ${neighbors[i]?.length?neighbors[i].map(n=>`[lore_id=${n.id}] ${n.text}`).join('; '):'(none)'}`);
+ return "You maintain a story's world lorebook. For each NEW fact, check its NEARBY existing lore entries — does this fact make any of them factually outdated (a change of ruler, an overthrown government, a destroyed location, a died character)? Most facts update nothing — only flag a genuine, clear contradiction or supersession, not a minor detail or something that could simply be added alongside the existing lore without contradicting it.\n\nNever override a lore entry's core identity (a character's name, species, occupation, role, or allegiance) on the strength of a fact that is itself hedged, secondhand, or not something the story has actually confirmed happened on-screen. Overriding core identity requires a real, witnessed event or a direct statement in the story, never a rumor, a passing remark from someone else, or a description of a character who never appeared in the scene. Example: a NEW fact that only reports a rumor about a character who was not present in the scene (\"heard she's apparently a bit strange\") must NOT override that character's established occupation or role in the NEARBY lore entry — that is not a genuine contradiction, it is hearsay about someone unconfirmed.\n\nNEW facts:\n" + newLines.join("\n") + "\n\nNEARBY lore entries:\n" + neighborLines.join("\n") + "\n\nExample output (only include facts that genuinely update lore):\n[{\"index\": 0, \"lore_id\": \"l_abc\", \"new_content\": \"The government was overthrown by the player; the old ruling council no longer holds power.\"}]\n\nReply with only a JSON array — one entry per fact that updates lore, [] if none do.";
+}
+export function buildSecretRevealPrompt(drafts:FactDraft[],neighbors:PromptNeighbor[][]):string {
+ const newLines=drafts.map((draft,i)=>`${i}. ${draft.text}`);
+ const neighborLines=drafts.map((_,i)=>`${i}. ${neighbors[i]?.length?neighbors[i].map(n=>`[secret_id=${n.id}] ${n.text}`).join('; '):'(none)'}`);
+ return "You maintain a story's hidden lore secrets — facts the players don't know yet until the story itself reveals them. For each NEW fact, check its NEARBY hidden secrets — does this fact show that a secret has genuinely come to light in the story (a character learns it, witnesses it, or it's stated outright)? Most facts reveal nothing — only flag a secret when the story has clearly and specifically surfaced that exact information, not just something adjacent or suggestive of it.\n\nNEW facts:\n" + newLines.join("\n") + "\n\nNEARBY hidden secrets:\n" + neighborLines.join("\n") + "\n\nExample output (only include facts that genuinely reveal a secret):\n[{\"index\": 0, \"secret_id\": \"lsec_abc\"}]\n\nReply with only a JSON array — one entry per fact that reveals a secret, [] if none do.";
+}
+export function buildClusterPrompt(facts:{text:string}[],previousSummary?:string|null):string {
+ const factLines=facts.map(f=>`- ${f.text}`).join('\n');
+ if(previousSummary) return `Here is the story so far:
+
+${previousSummary}
+
+New facts have since occurred. Write an updated "story so far" paragraph that folds these new facts into the existing narrative — a few flowing sentences describing the overall arc up to and including these new events, not a bulleted list and not another fact-by-fact recap. Compress or drop earlier detail that's no longer central to keep the paragraph compact.
+
+New facts:
+${factLines}
+
+Reply with only the updated summary paragraph, no preamble.`;
+ return `Summarize the following story facts into one compact narrative paragraph — a few flowing sentences describing the overall arc of what has happened so far, not a bulleted list and not another fact-by-fact recap.
+
+Facts:
+${factLines}
+
+Reply with only the summary paragraph, no preamble.`;
+}
+export function buildClusterAssignPrompt(existing:CoreCluster[],facts:{text:string}[]):string {
+ const lines:string[]=[];
+ if(existing.length){lines.push('Existing narrative clusters:');for(const c of existing)lines.push(`id="${c.id}" title="${c.title||'(untitled)'}" summary="${c.summary_text}"`);lines.push('');}
+ lines.push('New facts (referenced by index):');facts.forEach((f,i)=>lines.push(`${i}. ${f.text}`));lines.push('');
+ lines.push("Assign every new fact to the best matching narrative cluster: an ongoing arc, relationship, location, or thread. Prefer an existing cluster when a fact continues it; start a new cluster only when a fact begins a genuinely new thread. For each cluster you touch, write an updated one-paragraph summary folding in the fact(s) assigned to it (for an existing cluster, extend its current summary; for a new cluster, summarize just the new facts).\n\nReply with only JSON: {\"clusters\": [{\"id\": \"<existing cluster id>\", \"summary\": \"...\", \"fact_indices\": [0, 2]}, {\"title\": \"short new cluster title\", \"summary\": \"...\", \"fact_indices\": [1]}]}. Every fact index must appear in exactly one cluster.");return lines.join('\n');
+}

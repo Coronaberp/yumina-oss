@@ -11,7 +11,7 @@ type IdentityResponse = { data: ReturnType<typeof personaIdentityReceipt> & { pe
 
 after(async () => { const client = (db as unknown as { $client: { closed?: boolean; close(): Promise<void> } }).$client; if (!client.closed) await client.close(); });
 
-test("session HTTP create, lock, conflict, reload, explicit none and unlock use one committed identity", async () => {
+test("session HTTP selection, conflict and reload keep one identity and reject disabling", async () => {
   const uid = crypto.randomUUID();
   const [account] = await db.insert(user).values({ id: uid, name: "Account", username: `u${uid}`, email: `${uid}@test.local` }).returning();
   // Replace only proof of login; real ownership middleware, routes and DB run.
@@ -24,6 +24,7 @@ test("session HTTP create, lock, conflict, reload, explicit none and unlock use 
     assert.equal(created.status, 201, await created.clone().text());
     const { data: initial } = await created.json() as IdentityResponse;
     assert.equal(initial.sessionPersona.persona?.id, a!.id);
+    assert.equal(initial.personaLocked, true);
     assert.equal(initial.state.metadata.personaName, "A");
     const id = initial.id;
     const put = await request(`/${id}/persona-lock`, "PUT", { locked: true, personaId: b!.id, expectedVersion: "" });
@@ -39,19 +40,39 @@ test("session HTTP create, lock, conflict, reload, explicit none and unlock use 
     assert.deepEqual(reloaded.sessionPersona, receipt.sessionPersona);
     for (const [key, value] of Object.entries(receipt.state.metadata)) assert.deepEqual(reloaded.state.metadata[key], value);
     const none = await request(`/${id}/persona`, "PUT", { personaId: null, expectedVersion: receipt.sessionPersona.selectionVersion });
-    assert.equal(none.status, 200);
-    const { data: empty } = await none.json() as IdentityResponse;
-    assert.equal(empty.persona, null, "legacy response shape remains available");
-    assert.equal(empty.sessionPersona.persona, null);
-    assert.equal(empty.state.metadata.personaName, account!.username);
-    assert.deepEqual(empty.state.metadata.personaEntries, []);
-    const unlock = await request(`/${id}/persona-lock`, "PUT", { locked: false, expectedVersion: empty.sessionPersona.selectionVersion });
-    assert.equal(unlock.status, 200);
-    const { data: following } = await unlock.json() as IdentityResponse;
-    assert.equal(following.sessionPersona.persona?.id, a!.id);
-    assert.equal(following.personaLocked, false);
-    assert.ok(!JSON.stringify(following).includes("SECRET"));
+    assert.equal(none.status, 400);
+    const unlock = await request(`/${id}/persona-lock`, "PUT", { locked: false, expectedVersion: receipt.sessionPersona.selectionVersion });
+    assert.equal(unlock.status, 400);
+    const { data: preserved } = await (await request(`/${id}`)).json() as IdentityResponse;
+    assert.deepEqual(preserved.sessionPersona, receipt.sessionPersona);
+    assert.equal(preserved.personaLocked, true);
+    assert.ok(!JSON.stringify(preserved.sessionPersona).includes("SECRET"));
     assert.equal((await request(`/${id}/persona-lock`, "PUT", { locked: true, personaId: a!.id, expectedVersion: 2 })).status, 400);
-    assert.equal((await request(`/${crypto.randomUUID()}/persona-lock`, "PUT", { locked: false, expectedVersion: "" })).status, 404);
+    assert.equal((await request(`/${crypto.randomUUID()}/persona-lock`, "PUT", { locked: true, personaId: a!.id, expectedVersion: "" })).status, 404);
+  } finally { login.mock.restore(); await db.delete(user).where(eq(user.id, uid)); }
+});
+
+test("creator persona expression sprites survive selection into the saved session", async () => {
+  const uid = crypto.randomUUID();
+  const [account] = await db.insert(user).values({ id: uid, name: "Account", username: `u${uid}`, email: `${uid}@test.local` }).returning();
+  const login = mock.method(auth.api, "getSession", async () => ({ user: account, session: { id: "test-login", userId: uid, expiresAt: new Date(Date.now() + 60000) } }));
+  const request = (path: string, method = "GET", body?: object) => sessionRoutes.request(path, { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const sprites = { normal: "https://cdn.example/creator-normal.png", happy: "https://cdn.example/creator-happy.png" };
+  try {
+    const [world] = await db.insert(worlds).values({ creatorId: uid, name: "Test", schema: {
+      name: "Test", entries: [], variables: [], firstMessage: "Hello {{user}}",
+      personaPresets: [{ id: "creator-player", name: "Creator player", sprites }],
+    } }).returning();
+    const created = await request("/", "POST", { worldId: world!.id, ephemeral: true });
+    assert.equal(created.status, 201, await created.clone().text());
+    const initial = (await created.json() as IdentityResponse).data;
+    const selected = await request(`/${initial.id}/persona-selection`, "PUT", {
+      selection: { kind: "preset", id: "creator-player" }, expectedVersion: initial.sessionPersona.selectionVersion,
+    });
+    assert.equal(selected.status, 200, await selected.clone().text());
+    const receipt = (await selected.json() as IdentityResponse).data;
+    assert.deepEqual(receipt.sessionPersona.persona?.sprites, sprites);
+    const loaded = await request(`/${initial.id}`);
+    assert.deepEqual(((await loaded.json() as IdentityResponse).data).sessionPersona.persona?.sprites, sprites);
   } finally { login.mock.restore(); await db.delete(user).where(eq(user.id, uid)); }
 });

@@ -11,6 +11,7 @@ export const Route = createFileRoute("/reset-password")({
     beforeLoad: async () => {
       const edition = await ensureEditionLoaded();
       if (edition.auth.mode === "single-user") throw redirect({ to: "/app/library" });
+      if (!edition.auth.emailPassword) throw redirect({to:"/login"});
     },
     component: ResetPasswordPage,
     validateSearch: (search: Record<string, unknown>): ResetPasswordSearch => ({

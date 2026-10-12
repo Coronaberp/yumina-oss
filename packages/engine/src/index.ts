@@ -72,6 +72,7 @@ export type {
   Directive,
   RuleRuntimeState,
 } from "./types/index.js";
+export type { StoryRoute, StoryEnding, StoryProgress, CapturedStoryRoute, CapturedStoryEnding } from "./types/story.js";
 
 // Component types
 export type {
@@ -127,10 +128,14 @@ export {
   eventPatternSchema,
   reactionEffectSchema,
   reactionSchema,
+  storyRouteSchema,
+  storyEndingSchema,
+  storyProgressSchema,
 } from "./world/schema.js";
 
 // State
 export { GameStateManager } from "./state/game-state-manager.js";
+export { upgradePersonaRoot, upgradePersonaWorld } from "./world/persona-runtime-upgrade.js";
 
 // Rules
 export { createEmptyRuleState } from "./rules/rule-state.js";
@@ -141,12 +146,17 @@ export {
   NARRATOR_SPEAKER,
   portraitCharacters,
   displayCharacterName,
+  characterIdentifiers,
+  canonicalCharacterName,
   speakerTagEnabled,
   parseLeadingSpeakerTag,
   isPartialLeadingSpeakerTag,
   buildSpeakerFormatBlock,
+  CHOICE_TEXT_FORMAT,
 } from "./prompts/speaker-tag.js";
 export type { SpeakerTagParse } from "./prompts/speaker-tag.js";
+export { standardizeSpeakerMarkup } from "./parser/presentation-markup.js";
+export { maskPresentationLiterals, presentationLiteralRanges, isPresentationLiteral, presentationQuoteEnd } from "./parser/presentation-literals.js";
 export type { ChatMessage, UserPrompt, PromptCostBreakdown, PromptCostBlock } from "./prompts/prompt-builder.js";
 export { expandMacros } from "./prompts/macros.js";
 export type { MacroContext } from "./prompts/macros.js";
@@ -344,3 +354,21 @@ export * from "./social/simulator.js";
 export { parseGuardedResponse, validateAiBatch } from "./parser/guarded-response.js";
 export type { GuardedParseResult, StateDiagnostic } from "./parser/guarded-response.js";
 export { StateReceiptFilter, stripStateReceipts } from "./parser/state-receipt.js";
+export { extractResponseChoices, normalizeChoices } from "./parser/response-choices.js";
+export { stripZeroWidthSpaces } from "./parser/text-normalization.js";
+export { stripGameStateDump, stripVariableUpdateTags } from "./parser/response-metadata.js";
+
+// Data-only VN asset editing shared by the editor and Studio agent.
+export * from "./world/vn-assets.js";
+export * from "./world/character-showcase.js";
+export * from "./world/card-showcase.js";
+export { VN_BACKGROUND_TEMPLATE } from "./world/vn-background-template.js";
+
+// Shared shipped-status compatibility for editor, play and Studio agent reads.
+export { upgradeStatusFiles, upgradeStatusRoot, upgradeStatusWorld, isManagedStatusHelper, installStatusLayoutFiles } from "./world/status-visualizations-upgrade.js";
+export { legacyStatusTemplates } from "./world/legacy-status-templates.js";
+
+export { resolveStoryProgress, completeStoryEnding, getStoryValidationIssues, storyPromptBlock } from "./story/progression.js";
+export type { StoryProgressOptions, StoryValidationIssue } from "./story/progression.js";
+export { personaPresetSchema, personaPresetsSchema } from "./world/persona-presets.js";
+export type { PersonaPreset } from "./world/persona-presets.js";

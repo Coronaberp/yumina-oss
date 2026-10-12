@@ -19,7 +19,7 @@ test("committed persona receipts match resolved identity; stale and concurrent w
       { userId: uid, name: "Same", note: "PRIVATE B" },
     ]).returning();
     let version = "";
-    for (const [locked, target] of [[true, b!.id], [true, null], [false, null]] as const) {
+    for (const [locked, target] of [[true, b!.id], [true, a!.id], [true, b!.id]] as const) {
       const result = await setSessionPersonaLock(uid, session!.id, locked, target, version);
       assert.ok(result.data);
       const receipt = personaIdentityReceipt(session!.id, result.data, account);

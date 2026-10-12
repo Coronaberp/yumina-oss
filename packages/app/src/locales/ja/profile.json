@@ -102,11 +102,13 @@
     "storyMemory": "ストーリー記憶",
     "storyMemorySuggested": "推奨",
     "storyMemoryDesc": "過去の会話をどれだけ残すか。それより前は要約になります。世界設定はここに含まれません。",
-    "overallLimit": "全体の上限",
-    "overallUncapped": "上限なし",
-    "overallLimitDesc": "1 リクエストの合計上限（世界設定込み）。通常は上限なしのままで。",
-    "overallLimitCapped": "このプランが送れる世界設定の上限です。超えた分は削られ、ストーリー記憶は影響を受けません。",
-    "storyMemoryShort": "残す過去の会話"
+    "overallLimit": "プロンプトのコンテキスト長",
+    "overallUncapped": "最大値を使う",
+    "overallLimitDesc": "各ストーリーリクエストの入力トークン上限。指示、世界設定、想起した記憶、最近の会話を含みます。選択したモデルにより上限が下がる場合があります。",
+    "overallLimitCapped": "各ストーリーリクエストの入力トークン上限。プランや選択したモデルにより上限が下がる場合があります。",
+    "storyMemoryShort": "残す過去の会話",
+    "recallMemory": "想起する記憶の長さ",
+    "recallMemoryDesc": "ストーリープロンプトに含める事実や世界設定の既定トークン数。最近の会話とは別です。メニュー → 記憶のチャット別設定が優先されます。"
   },
   "aiProvider": {
     "yuminaApi": "Yumina API",

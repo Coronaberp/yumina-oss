@@ -15,6 +15,16 @@ packages/server/dev.db
 # Built frontend copied next to the server by `pnpm start`
 packages/server/public/
 
+# Local application data, deployment backups, and private verification output
+.yumina-data/
+.yumina-deploy-backups/
+output/
+docs/qa/
+docs/plans/
+docs/superpowers/
+interfaces/vn/qa/
+worlds/
+
 # Editor and OS noise
 .vscode/
 .idea/

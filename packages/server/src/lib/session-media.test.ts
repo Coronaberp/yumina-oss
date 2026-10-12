@@ -46,23 +46,22 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
                 throw new Error('offline'); objects.delete(key); },
         });
         const image = await sharp({ create: { width: 30, height: 20, channels: 4, background: '#123456aa' } }).png().toBuffer();
-        const quota = 100 * 1024 * 1024;
         const request = (entryId: string) => ({ id: randomUUID(), sessionId: 'save', entryId, filename: 'map.png', contentType: 'image/png', size: image.length, metadata: { title: 'Map', a: 1 } });
         const first = request('one');
-        await assert.rejects(service.reserve('bob', quota, first), /MEDIA_NOT_FOUND/);
-        const reserved = await service.reserve('alice', quota, first);
+        await assert.rejects(service.reserve('bob', first), /MEDIA_NOT_FOUND/);
+        const reserved = await service.reserve('alice', first);
         assert.ok(reserved.uploadUrl!.startsWith('private-session-media/'));
         objects.set(reserved.uploadUrl!, image);
-        const reservedAgain = await service.reserve('alice', quota, { ...first, metadata: { a: 1, title: 'Map' } });
+        const reservedAgain = await service.reserve('alice', { ...first, metadata: { a: 1, title: 'Map' } });
         assert.equal(reservedAgain.id, reserved.id);
         const before = await service.usage('alice');
         assert.equal(before.reserved, image.length + MEDIA_RESERVATION);
-        const complete = await service.complete('alice', first.id, quota);
-        assert.deepEqual(await service.complete('alice', first.id, quota), complete);
+        const complete = await service.complete('alice', first.id);
+        assert.deepEqual(await service.complete('alice', first.id), complete);
         assert.equal((await service.scopeList({ sessionId: 'save' })).items.length, 1);
         await assert.rejects(service.detail('bob', complete.mediaId!), /MEDIA_NOT_FOUND/);
         const initial = await service.detail('alice', complete.mediaId!);
-        const routes = createSessionMediaRoutes({ db, sessionMedia: service, sessionMediaLimit: async () => quota, sessionMediaUploadsEnabled: () => false, isS3Configured: () => true,
+        const routes = createSessionMediaRoutes({ db, sessionMedia: service, sessionMediaUploadsEnabled: () => false, isS3Configured: () => true,
             authMiddleware: async (c, next) => { const id = c.req.header('x-test-user'); if (!id)
                 return c.json({ error: 'Unauthorized' }, 401); c.set('user', { id } as SessionUser); await next(); } });
         assert.equal((await routes.request('/session/save')).status, 401);
@@ -85,9 +84,9 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         assert.equal((await service.scopeList({ sessionId: 'save' })).items.length, 0);
         assert.equal((await service.scopeList({ shareId: 'share' })).items.length, 1);
         const second = request('two');
-        const secondReservation = await service.reserve('alice', quota, second);
+        const secondReservation = await service.reserve('alice', second);
         objects.set(secondReservation.uploadUrl!, image);
-        assert.equal((await service.complete('alice', second.id, quota)).mediaId, complete.mediaId, 'same-account content dedup');
+        assert.equal((await service.complete('alice', second.id)).mediaId, complete.mediaId, 'same-account content dedup');
         assert.equal((await service.scopeList({ shareId: 'share' })).items.length, 1, 'share does not acquire later additions');
         await db.transaction(tx => service.restore(tx, 'alice', 'save', 'checkpoint'));
         const restored = await service.scopeList({ sessionId: 'save' });
@@ -103,22 +102,33 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         assert.equal((await service.scopeList({ sessionId: 'branch' })).items.length, 1);
         assert.equal((await service.scopeList({ sessionId: 'foreign' })).items.length, 0);
         const retryRequest=request('retry');
-        const retryReservation=await service.reserve('alice',quota,retryRequest);
+        const retryReservation=await service.reserve('alice',retryRequest);
         objects.set(retryReservation.uploadUrl!,image);
         failWrite=true;
-        await assert.rejects(service.complete('alice',retryRequest.id,quota),/MEDIA_PROCESSING_FAILED/);
+        await assert.rejects(service.complete('alice',retryRequest.id),/MEDIA_PROCESSING_FAILED/);
         assert.ok(!(await service.scopeList({sessionId:'save'})).items.some(item=>item.entryId==='retry'),'failed object writes never bind an entry');
-        assert.equal((await service.complete('alice',retryRequest.id,quota)).mediaId,complete.mediaId);
-        // Exactly one of two concurrent reservations can claim the remaining room.
-        const current = await service.usage('alice');
-        const limit = current.used + current.reserved + image.length + MEDIA_RESERVATION;
-        const races = await Promise.allSettled([service.reserve('alice', limit, request('race1')), service.reserve('alice', limit, request('race2'))]);
-        assert.equal(races.filter(x => x.status === 'fulfilled').length, 1);
+        assert.equal((await service.complete('alice',retryRequest.id)).mediaId,complete.mediaId);
+        // A pending upload from the old 2 MB policy must top up its reservation
+        // before writing under the new 16 MB lossless policy.
+        const legacyRequest = request('legacy-reservation');
+        const legacyReservation = await service.reserve('alice', legacyRequest);
+        objects.set(legacyReservation.uploadUrl!, image);
+        const oldReservation = image.length + 2 * 1024 * 1024 + 128 * 1024;
+        await db.execute(sql`UPDATE session_media_uploads SET reserved_bytes=${oldReservation} WHERE id=${legacyRequest.id}`);
+        const oldUsage = await service.usage('alice');
+        assert.ok(oldUsage.reserved > 0, 'pending work remains visible in storage usage');
+        failWrite = true;
+        await assert.rejects(service.complete('alice', legacyRequest.id), /MEDIA_PROCESSING_FAILED/);
+        const legacyRows = await pg.query<{reserved_bytes:string}>(`SELECT reserved_bytes FROM session_media_uploads WHERE id='${legacyRequest.id}'`);
+        assert.equal(Number(legacyRows.rows[0]!.reserved_bytes), image.length + MEDIA_RESERVATION);
+        // Concurrent uploads are governed by upload-rate limits, not account storage usage.
+        const races = await Promise.allSettled([service.reserve('alice', request('race1')), service.reserve('alice', request('race2'))]);
+        assert.equal(races.filter(x => x.status === 'fulfilled').length, 2);
         const latest = await service.detail('alice', complete.mediaId!);
         failDelete = true;
         assert.equal((await service.remove('alice', complete.mediaId!, latest.revision)).pending, true);
         assert.equal((await service.scopeList({ shareId: 'share' })).items[0]?.url, null, 'revoked immediately for new grants');
-        assert.ok((await service.usage('alice')).used > 0, 'failed cleanup still consumes quota');
+        assert.ok((await service.usage('alice')).used > 0, 'failed cleanup remains visible in stored-byte usage');
         failDelete = false;
         await service.remove('alice', complete.mediaId!, latest.revision);
         assert.equal((await service.usage('alice')).used, 0);
@@ -130,6 +140,7 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         const orphanKey = `users/alice/registered/${createHash('sha256').update(tempKey).digest('hex')}`;
         objects.set(tempKey, image);
         objects.set(orphanKey, image);
+        objects.set(`${orphanKey}.lossless.webp`, image);
         await db.execute(sql`INSERT INTO session_media_uploads(id,user_id,entry_id,filename,content_type,input_bytes,reserved_bytes,metadata,temp_key,expires_at)
           VALUES(${randomUUID()},'alice','creative','map.png','image/png',${image.length},${image.length},'{"purpose":"creative-asset"}',${tempKey},now()-interval '1 hour')`);
         await service.sweep();
@@ -208,8 +219,23 @@ test("image processing rejects false formats and strips metadata while preservin
     const original = await sharp({ create: { width: 3000, height: 500, channels: 4, background: '#aabbcc80' } }).withMetadata().png().toBuffer();
     const result = await prepareSessionImage(original);
     const decoded = await sharp(result.main).metadata();
-    assert.equal(decoded.width, 2048);
+    assert.equal(decoded.width, 3000);
+    assert.equal(decoded.height, 500);
     assert.equal(decoded.hasAlpha, true);
     assert.equal(decoded.exif, undefined);
+    assert.deepEqual(await sharp(result.main).ensureAlpha().raw().toBuffer(), await sharp(original).ensureAlpha().raw().toBuffer());
     assert.ok(result.thumbnail.length < 128 * 1024);
+});
+
+test("private chat images above the old 2 MB output cap retain all pixels", async () => {
+    const pixels = Buffer.alloc(1024 * 768 * 4);
+    let random = 42;
+    for (let i = 0; i < pixels.length; i++) {
+        random ^= random << 13; random ^= random >>> 17; random ^= random << 5;
+        pixels[i] = random & 255;
+    }
+    const original = await sharp(pixels, { raw: { width: 1024, height: 768, channels: 4 } }).png({ compressionLevel: 0 }).toBuffer();
+    const result = await prepareSessionImage(original);
+    assert.ok(result.main.length > 2 * 1024 * 1024);
+    assert.deepEqual(await sharp(result.main).ensureAlpha().raw().toBuffer(), pixels);
 });

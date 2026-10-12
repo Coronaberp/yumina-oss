@@ -148,7 +148,7 @@ test("large, animated and unreadable PNGs complete the uploader with original by
   }
 });
 
-test("cover resizing runs only for proven still images", async () => {
+test("cover uploads preserve original pixels for lossless server compression", async () => {
   const originals = ["document", "createImageBitmap"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   let decodes = 0;
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
@@ -175,13 +175,9 @@ test("cover resizing runs only for proven still images", async () => {
           return Response.json({ data: { id: "asset" } });
         },
       });
-      if (file === still) {
-        assert.ok(uploaded instanceof File);
-        assert.equal(uploaded.type, "image/jpeg");
-        assert.equal(uploaded.size, 7);
-      } else assert.equal(uploaded, file);
+      assert.equal(uploaded, file);
     }
-    assert.equal(decodes, 1, "animated and unknown files must never enter the canvas");
+    assert.equal(decodes, 0, "uploads must never enter a lossy canvas encoder");
   } finally {
     for (const [key, descriptor] of originals) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

@@ -1,3 +1,4 @@
+import type { PersonaSelection } from "@yumina/shared";
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { useNavigate } from "@tanstack/react-router";
@@ -187,7 +188,7 @@ export function PlaySessionPickerHost() {
     resolveCurrentFlow();
   }, []);
 
-  const handleCreateSession = useCallback(async (worldId: string) => {
+  const handleCreateSession = useCallback(async (worldId: string, personaSelection?: PersonaSelection) => {
     if (creatingInFlight) return;
 
     const state = usePlaySessionPickerStore.getState();
@@ -205,7 +206,7 @@ export function PlaySessionPickerHost() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ worldId, discoveryAttribution: discoveryAttribution(state.feedOrigin) }),
+        body: JSON.stringify({ worldId, personaSelection, discoveryAttribution: discoveryAttribution(state.feedOrigin) }),
         signal: controller.signal,
       });
 

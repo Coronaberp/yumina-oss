@@ -2,6 +2,11 @@ import type { Effect, AudioEffect } from "../types/index.js";
 import { ThinkingTagFilter } from "./thinking-tag-filter.js";
 import { parseLeadingSpeakerTag } from "../prompts/speaker-tag.js";
 import { stripStateReceipts } from "./state-receipt.js";
+import { extractResponseChoices } from "./response-choices.js";
+import { stripGameStateDump, stripVariableUpdateTags } from "./response-metadata.js";
+import { stripZeroWidthSpaces } from "./text-normalization.js";
+import { isActiveDirectiveFence, isPresentationLiteral, presentationLiteralRanges, maskPresentationLiterals } from "./presentation-literals.js";
+import { standardizeSpeakerMarkup } from "./presentation-markup.js";
 
 export interface ParseResult {
   cleanText: string;
@@ -11,6 +16,7 @@ export interface ParseResult {
    *  lower-cased "narrator" for narration, undefined when there was no tag.
    *  Never a state effect — it names who is talking, not a variable. */
   speaker?: string;
+  choices?: string[];
 }
 
 /**
@@ -22,6 +28,9 @@ export interface ParseResult {
 export class ResponseParser {
   private pattern: RegExp;
   private audioPattern: RegExp;
+  // Some models wrap legacy variable updates as `[var: id operation value]`
+  // instead of emitting the documented `[id: operation value]` form.
+  private varWrapperPattern = /\[\s*var:\s*([\w\p{L}\p{N}.$-]+)\s+(set|add|subtract|multiply|toggle|append|\+|-|\*)\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/giu;
   // JSON directives use a bracket-balancing scanner, not a regex — non-greedy
   // regexes mis-terminate on nested `[]`/`{}` inside the value (e.g. `"comments":[]`).
   private jsonVarIdPattern = /[\w\p{L}\p{N}.$-]+/u;
@@ -37,24 +46,28 @@ export class ResponseParser {
     this.audioPattern = /\[\s*audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\s*\]/gu;
   }
 
-  parse(responseText: string, jsonVarId?: string): ParseResult {
+  parse(responseText: string, jsonVarId?: string, declaredVariables?: readonly string[]): ParseResult {
+    responseText = standardizeSpeakerMarkup(stripZeroWidthSpaces(responseText), [], false);
     const effects: Effect[] = [];
     const audioEffects: AudioEffect[] = [];
     this.pattern.lastIndex = 0;
     this.audioPattern.lastIndex = 0;
 
     // Strip leaked thinking/reasoning blocks (e.g. Gemini Flash Lite outputs <fiction-mode>...</fiction-mode>)
-    const stripped = stripStateReceipts(ThinkingTagFilter.strip(responseText));
+    const stripped = stripVariableUpdateTags(stripGameStateDump(stripStateReceipts(ThinkingTagFilter.strip(responseText))));
 
     // The speaker tag sits at the very start and must never reach the
     // standard directive pattern below, which would read it as `[speaker: set …]`.
-    const speakerTag = parseLeadingSpeakerTag(stripped);
+    const choiceResult = extractResponseChoices(stripped);
+    const speakerTag = parseLeadingSpeakerTag(choiceResult.text);
 
     // Extract <UpdateVariable> JSON Patch blocks (SillyTavern compatibility)
     let text = this.extractJsonPatch(speakerTag.text, effects, jsonVarId ?? "game_state");
 
     // Extract fenced ```json directive blocks (Gemini 3.1 Pro drift format)
     text = this.extractFencedDirectives(text, effects);
+    const literals = maskPresentationLiterals(text);
+    text = literals.text;
 
     // Extract audio directives
     text = text.replace(this.audioPattern, (_match, trackId: string, action: string, value?: string, chainTo?: string) => {
@@ -75,8 +88,21 @@ export class ResponseParser {
     // pattern so the bare-word pattern never catches fragments of a JSON value).
     text = this.extractJsonDirectives(text, effects);
 
+    // Normalize the observed `[var: player-reputation +0]` variant before the
+    // standard parser. The `var` label is a wrapper, not the actual variable ID.
+    this.varWrapperPattern.lastIndex = 0;
+    text = text.replace(this.varWrapperPattern, (_match, variableId: string, op: string, rawValue?: string) => {
+      if (declaredVariables && !declaredVariables.includes(variableId.split(".")[0]!)) return "";
+      const effect = this.parseDirective(variableId, op, rawValue);
+      if (effect) effects.push(effect);
+      return "";
+    });
+
     // Then extract standard state change directives
     const cleanText = text.replace(this.pattern, (_match, variableId: string, op?: string, rawValue?: string) => {
+      // VN presentation tags must survive into the completed scene renderer.
+      if (!op && /^(scene|speaker|name)$/i.test(variableId)) return _match;
+      if (!op && declaredVariables && !declaredVariables.includes(variableId.split(".")[0]!)) return _match;
       const effect = this.parseDirective(variableId, op, rawValue);
       if (effect) effects.push(effect);
       return "";
@@ -86,9 +112,10 @@ export class ResponseParser {
       .replace(/^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim, "")
       .replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 
-    return speakerTag.speaker
-      ? { cleanText, effects, audioEffects, speaker: speakerTag.speaker }
-      : { cleanText, effects, audioEffects };
+    return { cleanText: literals.restore(cleanText), effects, audioEffects,
+      ...(speakerTag.speaker ? { speaker: speakerTag.speaker } : {}),
+      ...(choiceResult.choices !== undefined ? { choices: choiceResult.choices } : {}),
+    };
   }
 
   private parseDirective(
@@ -362,7 +389,8 @@ export class ResponseParser {
    */
   private extractFencedDirectives(text: string, effects: Effect[]): string {
     const fencePattern = /```[ \t]*[A-Za-z]*[ \t]*\r?\n?([\s\S]*?)```/g;
-    return text.replace(fencePattern, (match, body: string) => {
+    return text.replace(fencePattern, (match, body: string, index: number) => {
+      if (!isActiveDirectiveFence(text, index)) return match;
       const parsed = this.tryParseDirectiveBlock(body);
       if (!parsed) return match;
       effects.push(...parsed);
@@ -455,8 +483,9 @@ export class ResponseParser {
    */
   private extractJsonPatch(text: string, effects: Effect[], rootVarId: string): string {
     const updateVarPattern = /<UpdateVariable>[\s\S]*?<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>[\s\S]*?<\/UpdateVariable>/gi;
-
-    return text.replace(updateVarPattern, (_match, patchJson: string) => {
+    const literals = presentationLiteralRanges(text);
+    return text.replace(updateVarPattern, (_match, patchJson: string, index: number) => {
+      if (isPresentationLiteral(literals, index)) return _match;
       try {
         const patches = JSON.parse(patchJson) as Array<{
           op: string;

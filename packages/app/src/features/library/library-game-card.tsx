@@ -1,4 +1,4 @@
-import { Play, Heart, Trash2, Download, Pencil, Check, Loader2 } from "lucide-react";
+import { Play, Heart, Trash2, Download, Pencil, Check, Loader2, Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { WorldItem } from "@/stores/worlds";
 import { CroppedImage } from "@/lib/cover-crop";
@@ -13,6 +13,9 @@ interface LibraryGameCardProps {
   onCopyToProject?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  editingLocked?: boolean;
+  onToggleEditingLock?: () => void;
+  lockPending?: boolean;
   deleteTitle?: string;
   onPlay?: () => void;
   /** The session for this card is being created: spinner on Play, no double-fire. */
@@ -34,6 +37,9 @@ export function LibraryGameCard({
   playPending,
   onEdit,
   onDelete,
+  editingLocked,
+  onToggleEditingLock,
+  lockPending,
   deleteTitle,
   onDownload,
   onCopyToProject,
@@ -44,6 +50,7 @@ export function LibraryGameCard({
   onSelectChange,
 }: LibraryGameCardProps) {
   const { t } = useTranslation("library");
+  const isEditingLocked = editingLocked ?? item.editingLocked ?? false;
   const handleCardClick = (e: React.MouseEvent) => {
     if (selectable) {
       e.stopPropagation();
@@ -96,6 +103,13 @@ export function LibraryGameCard({
 
         {hasUpdate && !selectable && (
           <div className="absolute top-2 right-2 z-20 h-3 w-3 rounded-full bg-blue-500 ring-2 ring-zinc-900" />
+        )}
+
+        {isEditingLocked && (
+          <div className="absolute top-10 right-2.5 z-20 inline-flex items-center gap-1 rounded-full border border-white/20 bg-black/75 px-2 py-1 text-[10px] font-semibold text-white shadow">
+            <Lock size={11} aria-hidden="true" />
+            <span>Locked</span>
+          </div>
         )}
 
         {selectable && selected && (
@@ -182,20 +196,20 @@ export function LibraryGameCard({
         )}
 
         {!selectable && <div className="library-game-card-actions touch-reveal absolute bottom-1.5 right-1.5 z-20 flex items-center gap-1 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-          {(onEdit || onCopyToProject) && (
+          {(onEdit || (!isEditingLocked && onCopyToProject)) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 (onEdit || onCopyToProject)?.();
               }}
               className="library-game-card-action-button library-overview-action-button flex h-6 w-6 items-center justify-center rounded-full text-white shadow-lg transition-transform hover:scale-110"
-              title={onEdit ? t("card.editProject") : t("card.editAsMyProject")}
+              title={isEditingLocked ? "View editor (read-only)" : onEdit ? t("card.editProject") : t("card.editAsMyProject")}
             >
               <Pencil size={10} />
             </button>
           )}
 
-          {onDelete && (
+          {onDelete && (!isEditingLocked || !!deleteTitle) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -205,6 +219,23 @@ export function LibraryGameCard({
               title={deleteTitle || t("detail.delete")}
             >
               <Trash2 size={10} />
+            </button>
+          )}
+
+          {onToggleEditingLock && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!lockPending) onToggleEditingLock();
+              }}
+              disabled={lockPending}
+              className="library-game-card-action-button library-overview-action-button flex h-6 w-6 items-center justify-center rounded-full text-white shadow-lg transition-transform hover:scale-110 disabled:opacity-60"
+              title={isEditingLocked ? "Unlock card" : "Lock card"}
+              aria-label={isEditingLocked ? "Unlock card" : "Lock card"}
+              aria-busy={lockPending || undefined}
+            >
+              {lockPending ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : <Lock size={11} aria-hidden="true" />}
             </button>
           )}
 

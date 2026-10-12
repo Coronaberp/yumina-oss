@@ -16,7 +16,8 @@
 // the inline pills untouched.
 
 import { useState, useEffect, useRef, useMemo, type RefObject, type ReactNode } from "react";
-import { ChevronUp, ChevronRight, Shuffle, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Brain, ChevronUp, ChevronRight, ShieldCheck, Shuffle, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { SessionMemoryModal } from '../extensions/session-memory/session-memory-modal';
 import { useYumina } from "../sandbox-context";
 import { makeChatT } from "./i18n";
 import { getComposerModelSummary, MIX_COLORS, BalanceTag, useMushieBalance } from "./model-picker-modal";
@@ -188,6 +189,7 @@ export function ComposerToolMenu({ onOpenModelPicker }: { onOpenModelPicker: () 
         <div className="fixed inset-0 z-[9998]" role="dialog" aria-modal="true" aria-label={t("toolsMenu")}>
           <button
             type="button"
+            data-vn-dialog-backdrop=""
             aria-label={t("cancel")}
             onClick={() => setSheetOpen(false)}
             className="absolute inset-0 h-full w-full cursor-default bg-black/50 backdrop-blur-sm"
@@ -195,7 +197,8 @@ export function ComposerToolMenu({ onOpenModelPicker }: { onOpenModelPicker: () 
           />
           <div
             ref={sheetRef}
-            className="absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-2xl border-t border-white/10 bg-[#1a1b1e]/95 shadow-2xl shadow-black/50 backdrop-blur-xl"
+            data-vn-dialog-surface="structured"
+            className="absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-2xl border-t border-white/10 bg-card/95 shadow-2xl shadow-black/50 backdrop-blur-xl"
             style={{
               paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))",
               animation: "sheetUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -203,7 +206,7 @@ export function ComposerToolMenu({ onOpenModelPicker }: { onOpenModelPicker: () 
           >
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
               <div>
-                <h2 className="text-sm font-bold text-white">{t("toolsMenu")}</h2>
+                <h2 data-vn-dialog-title="" className="text-sm font-bold text-white">{t("toolsMenu")}</h2>
                 <p className="text-[11px] text-white/40">{t("toolsMenuHint")}</p>
               </div>
               <button
@@ -232,6 +235,8 @@ export function ComposerToolMenu({ onOpenModelPicker }: { onOpenModelPicker: () 
               />
 
               {/* One row per installed, settings-bearing extension. */}
+              {api.sessionId && !api.readOnly && <ToolMenuRow icon={<ShieldCheck className="h-4 w-4 text-primary/80" />} label="Content flags" onSelect={() => { setSheetOpen(false); api.showContentFlags(); }} />}
+              {api.sessionId&&<ToolMenuRow icon={<Brain className="h-4 w-4 text-primary/80"/>} label={api.language?.startsWith('zh')?'故事记忆':'Story memory'} onSelect={()=>pickTool('__storyhaven-memory__')}/>}
               {tools.map((tool) => (
                 <ContributionErrorBoundary key={tool.id} id={tool.id}>
                   <tool.Row onSelect={() => pickTool(tool.id)} />
@@ -257,6 +262,7 @@ export function ComposerToolMenu({ onOpenModelPicker }: { onOpenModelPicker: () 
           <activeTool.Modal open onClose={() => setOpenToolId(null)} />
         </ContributionErrorBoundary>
       )}
+      {openToolId==='__storyhaven-memory__'&&<SessionMemoryModal key={api.sessionId} open onClose={()=>setOpenToolId(null)} initialTab="storyhaven"/>}
     </>
   );
 }

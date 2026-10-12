@@ -1,8 +1,17 @@
 // Types
+export { personaControlModeSchema, normalizePersonaControlMode, personaControlInstructions } from './persona-control.js';
+export type { PersonaControlMode } from './persona-control.js';
+export { NAME_STYLE_KEYS, nameConstraintsSchema, namePhoneticsSchema, nameGeneratorOptionsSchema, nameGeneratorProfileSchema, nameGeneratorProfilesSchema } from "./name-generator.js";
+export type { NameConstraints, NamePhonetics, NameGeneratorProfile } from "./name-generator.js";
+export * from "./content-flags.js";
+export * from "./studio-language.js";
 export { chatImageCopy, type ChatImageAttachment } from "./types/chat-image.js";
+export { personaSpritesSchema, personaSpriteExpressions } from "./types/persona-sprites.js";
+export type { PersonaSprites, PersonaSpriteExpression } from "./types/persona-sprites.js";
 
 export { AI_GENERATION_DEFAULTS, aiGenerationConfigSchema, resolveAiGenerationConfig } from './ai-generation.js';
 export type { AiGenerationConfig } from './ai-generation.js';
+export { DEFAULT_MEMORY_RECALL_TOKENS, MAX_MEMORY_RECALL_TOKENS, memoryRecallBudgetSchema, resolveMemoryRecallBudget } from './memory-context.js';
 export { resolveStoryMemory, SUGGESTED_STORY_MEMORY, MIN_STORY_MEMORY, MAX_STORY_MEMORY } from './story-memory.js';
 export type { StoryMemoryInput, StoryMemoryResolution } from './story-memory.js';
 export { resolveLorebookBudget } from './lorebook-budget.js';
@@ -55,7 +64,8 @@ export type {
   PaginatedResponse,
   HealthCheckResponse,
 } from "./types/api.js";
-export type { ApiKeyMetadata, PromptPostProcessing } from "./types/api-key.js";
+export type { ApiKeyMetadata, PromptPostProcessing, OpenRouterProviderSelections, OpenRouterProviderEndpoint } from "./types/api-key.js";
+export { PROFILE_SAMPLING_DEFAULTS } from "./types/api-key.js";
 export type {
   SessionMemory,
   SessionMemoryPayload,
@@ -401,9 +411,15 @@ export type { ImageBatchTarget, ImageBatchProposalItem, ImageBatchProposal,
 export { IMAGE_MODEL_CAPABILITIES } from "./constants/image-models.js";
 export { personaEntriesSchema, formatPersonaEntries, MAX_PERSONA_ENTRIES, MAX_PERSONA_ENTRY_TITLE, MAX_PERSONA_ENTRY_CONTENT, MAX_PERSONA_ENTRIES_TOTAL } from "./types/persona-entries.js";
 export type { PersonaEntry } from "./types/persona-entries.js";
+export { personaSelectionSchema } from "./types/persona-selection.js";
+export type { PersonaSelection } from "./types/persona-selection.js";
 export * from "./invite-race.js";
 export type { DeliveredPurchase, PurchaseReceipt } from "./types/purchase-receipt.js";
 export { KREW_ABOUT_HTML, KREW_PAGE_CSS, KREW_PREVIEW_IMAGE } from "./krew-public-page.js";
 
 export { KREW_CONFIG_ELEMENT_ID, getKrewPublicConfig, normalizeKrewClientOrigin } from "./krew-config.js";
 export type { KrewPublicConfig } from "./krew-config.js";
+
+export type { StoryhavenEmbeddingProfile, StoryhavenProfileInput, StoryhavenFact, StoryhavenMemoryStatus } from "./storyhaven-memory.js";
+export { describeStudioTrace, recoverStudioTrace } from "./studio-trace.js";
+export type { StudioTraceItem } from "./studio-trace.js";

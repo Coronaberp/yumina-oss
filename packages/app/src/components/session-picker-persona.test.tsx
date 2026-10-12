@@ -31,7 +31,7 @@ for (const mode of ["single", "language", "versions"] as const) {
       "@/lib/feedback": { feedback: {} }, "@/lib/playtime": {}, "@/lib/format-time": {},
       "@/lib/languages": { LANGUAGE_SHORT: {}, variantRowLabels: () => new Map() },
       "@/components/session-modal-styles": {},
-      "@/features/chat/world-persona-menu": { WorldPersonaIconMenu: () => null },
+      "@/features/personas/story-persona-picker": { StoryPersonaPicker: () => null },
       "@/components/version-picker-modal": { soleCurrentLanguageVariant: () => mode === "language" ? variants[0] : null },
     };
     const require = createRequire(import.meta.url);

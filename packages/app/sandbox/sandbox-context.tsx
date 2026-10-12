@@ -7,11 +7,14 @@ import type {
   SessionSummaryLanguage,
   SessionSummaryMode,
   SessionSummaryPayload,
+  PersonaSpriteExpression,
 } from "@yumina/shared";
 import type { SandboxCapabilities, SandboxEntry, SandboxLoreUiBinding, SandboxWorldbook, SandboxMode, SandboxState, LocalBridgeChannelData } from "./protocol";
+import type { StoryProgress } from "@yumina/engine";
 import { wrapMessage, postToParentWindow, type ApiCallMessage } from "./protocol";
 import { renderMarkdown } from "./chat/markdown";
 import type { SessionImage } from "../src/lib/session-media";
+import { resolveSandboxAssetUrl, setSandboxAssetLoader } from "./asset-bridge";
 
 export type { SandboxEntry } from "./protocol";
 
@@ -59,9 +62,13 @@ export interface BranchContext {
  * Writes: fire-and-forget or async via postMessage to parent.
  */
 export interface SandboxedYuminaAPI {
+  dialogTheme?: "vn";
   // ── State reads (synchronous) ──
   variables: Record<string, unknown>;
   globalVariables: Record<string, unknown>;
+  /** Current active, noninternal values fetched on demand from session state.
+   * Use configured display fields; these values are not character story evidence. */
+  getVisibleVariables: () => Promise<Record<string, unknown>>;
   worldName: string;
   /** The world's cover image ("Cover" in Studio) as an absolute URL, or null
    *  when unset. Tracks cover edits automatically — prefer this over
@@ -75,6 +82,7 @@ export interface SandboxedYuminaAPI {
   worldCover: string | null;
   worldId: string;
   sessionId: string;
+  personaSelectable: boolean;
   /** The raw Yumina account (id, name, image). Use for account-level UI like
    *  "view profile" buttons. For ROLE-PLAY rendering — avatars in chat bubbles,
    *  character cards, profile panels inside the world — use `user` instead,
@@ -89,10 +97,12 @@ export interface SandboxedYuminaAPI {
    *    return <img src={currentUser?.image} />;           // account-only */
   currentUser: { id: string; name?: string; image?: string | null } | null;
   /** Role-played user. Persona-aware: follows the same rule as {{user}}. */
-  user: { name: string; avatar: string | null };
+  user: { name: string; avatar: string | null; sprites?: import("@yumina/shared").PersonaSprites };
   messages: Array<Record<string, unknown>>;
   isStreaming: boolean;
   streamingContent: string;
+  /** Estimated generated tokens, including thinking, while story text is buffered. */
+  streamingTokenCount?: number | null;
   mode: SandboxMode;
   capabilities: SandboxCapabilities;
   /** Read-only lorebook entries for the current world (enabled only).
@@ -119,6 +129,10 @@ export interface SandboxedYuminaAPI {
   // ── Game actions (fire-and-forget) ──
   pickChatImage: () => Promise<import("@yumina/shared").ChatImageInput | null>;
   sendMessage: (text: string, attachments?: import("@yumina/shared").ChatImageInput[]) => void;
+  /** Server-side KEV classification for the selected player's VN expression. */
+  classifyPlayerExpression: (choice: string) => Promise<PersonaSpriteExpression>;
+  getPersonaControlMode: () => Promise<import('@yumina/shared').PersonaControlMode>;
+  setPersonaControlMode: (mode: import('@yumina/shared').PersonaControlMode) => Promise<import('@yumina/shared').PersonaControlMode>;
   /** Session-scoped, transactional social simulation; requests resolve after persistence. */
   social: {
     get: () => Promise<any>;
@@ -168,6 +182,11 @@ export interface SandboxedYuminaAPI {
   navigate: (path: string) => void;
 
   // ── UI controls (fire-and-forget) ──
+  isImmersive: boolean;
+  systemFullscreen: boolean;
+  canSystemFullscreen: boolean;
+  /** Toggle browser fullscreen. Rejects when the browser denies the request. */
+  toggleSystemFullscreen: () => Promise<void>;
   toggleImmersive: () => void;
   /** Open the player's persona manager (switch / edit / create personas) as a
    *  parent-app overlay. In play, selection changes this session's saved
@@ -249,6 +268,7 @@ export interface SandboxedYuminaAPI {
   getAudioVolume: (type: "bgm" | "sfx") => number;
 
   // ── Assets (synchronous) ──
+  /** Resolve an image reference to an absolute URL on the app/API host. */
   resolveAssetUrl: (ref: string) => string;
 
   // ── Markdown ──
@@ -276,6 +296,12 @@ export interface SandboxedYuminaAPI {
   deleteMessage: (messageId: string) => Promise<boolean>;
   /** Regenerate the last assistant message */
   regenerateMessage: (messageId: string) => void;
+  /** Generate options for a completed reply without continuing the story. */
+  generateChoices: (messageId: string) => Promise<string[]>;
+  /** Retry an unanswered player choice without adding another player message. */
+  retryPendingReply: (messageId: string) => Promise<void>;
+  completeEnding: () => Promise<void>;
+  retryEnding: () => Promise<void>;
   /** Continue generating from the last message */
   continueLastMessage: () => void;
   /** Stop the current generation */
@@ -286,10 +312,10 @@ export interface SandboxedYuminaAPI {
   clearPendingChoices: () => void;
   /** Navigate to a different swipe (left/right) */
   swipeMessage: (messageId: string, direction: "left" | "right") => Promise<Record<string, unknown>>;
-  /** Save a checkpoint */
-  saveCheckpoint: () => Promise<void>;
-  /** Load checkpoints (result pushed via state update) */
-  loadCheckpoints: () => Promise<void>;
+  /** Save a checkpoint with an optional custom name */
+  saveCheckpoint: (name?: string) => Promise<void>;
+  /** Load checkpoints, returning the list and pushing it via state update */
+  loadCheckpoints: () => Promise<Array<{ id: string; name: string; messageCount: number; createdAt: string }>>;
   /** Restore a saved checkpoint */
   restoreCheckpoint: (checkpointId: string) => Promise<void>;
   /** Delete a checkpoint */
@@ -299,6 +325,9 @@ export interface SandboxedYuminaAPI {
 
   // ── Universal canvas: state reads ──
   pendingChoices: string[];
+  storyProgress: StoryProgress;
+  isCompletingEnding: boolean;
+  endingError: string | null;
   error: string | null;
   /** The user's "Press Enter to send" preference (Settings → Display).
    *  "enter" = Enter sends / Shift+Enter newline; "mod-enter" = Ctrl/⌘+Enter
@@ -322,7 +351,7 @@ export interface SandboxedYuminaAPI {
   // ── Model picker ──
   selectedModel: string;
   modelFallback: import("@yumina/shared").ModelFallbackNotice | null;
-  resolveModelFallback: (id: string, model: string, remember: boolean) => Promise<void>;
+  resolveModelFallback: (id: string, model: string, remember: boolean, useBackup?: boolean) => Promise<void>;
   cancelModelFallback: (id: string) => Promise<void>;
   userPlan: string;
   /** Whether the session-memory-summary extension is installed for the user. */
@@ -365,8 +394,13 @@ export interface SandboxedYuminaAPI {
   togglePoolLock: (modelId: string) => void;
 
   // ─── Session memory ────────────────────────────────────────────────────
+  /** Server-owned classification; creator code can read or request a check, never set flags. */
+  getContentFlags: () => Promise<import("@yumina/shared").ContentFlagInspection>;
+  retryContentFlag: (messageId: string) => Promise<{ status: "pending" }>;
+  showContentFlags: () => void;
   getStateGuardSettings: () => Promise<import("@yumina/shared").StateGuardSettings>;
   setStateGuardSettings: (patch: Partial<import("@yumina/shared").StateGuardSettings>) => Promise<import("@yumina/shared").StateGuardSettings>;
+  storyhavenMemory: (action: string, payload?: Record<string, unknown>) => Promise<unknown>;
   getSessionMemory: () => Promise<SessionMemoryPayload>;
   saveSessionMemory: (memory: SessionMemory, model?: string) => Promise<SessionMemoryPayload>;
   /** Player-pinned notes: never rewritten by the updater, always injected. `null` clears. */
@@ -577,15 +611,18 @@ const guestPreviewCapabilities: SandboxCapabilities = {
 const defaultAPI: SandboxedYuminaAPI = {
   variables: {},
   globalVariables: {},
+  getVisibleVariables: () => noopPromise({}),
   worldName: "",
   worldCover: null,
   worldId: "",
   sessionId: "",
+  personaSelectable: false,
   currentUser: null,
   user: { name: "Player", avatar: null },
   messages: [],
   isStreaming: false,
   streamingContent: "",
+  streamingTokenCount: null,
   mode: "session",
   capabilities: sessionCapabilities,
   entries: [],
@@ -594,6 +631,9 @@ const defaultAPI: SandboxedYuminaAPI = {
   getEntry: () => null,
   pickChatImage: async () => null,
   sendMessage: () => {},
+  classifyPlayerExpression: () => Promise.resolve("normal"),
+  getPersonaControlMode: () => Promise.resolve('player'),
+  setPersonaControlMode: () => Promise.reject(new Error('No active session')),
   social: { get: () => noopPromise(null), action: () => noopPromise(null), generate: () => noopPromise(null) },
   setVariable: () => {},
   patchVariables: () => noopPromise(undefined),
@@ -619,6 +659,10 @@ const defaultAPI: SandboxedYuminaAPI = {
   deleteSession: () => noopPromise(undefined),
   listSessions: () => noopPromise([]),
   navigate: () => {},
+  isImmersive: false,
+  systemFullscreen: false,
+  canSystemFullscreen: false,
+  toggleSystemFullscreen: () => noopPromise(undefined),
   toggleImmersive: () => {},
   openPersonaManager: () => {},
   openModelPicker: () => {},
@@ -652,17 +696,24 @@ const defaultAPI: SandboxedYuminaAPI = {
   editMessage: () => noopPromise(false),
   deleteMessage: () => noopPromise(false),
   regenerateMessage: () => {},
+  generateChoices: () => Promise.reject(new Error("No active session")),
+  retryPendingReply: () => Promise.reject(new Error("No active session")),
+  completeEnding: () => Promise.reject(new Error("No active session")),
+  retryEnding: () => Promise.reject(new Error("No active session")),
   continueLastMessage: () => {},
   stopGeneration: () => {},
   restartChat: () => {},
   clearPendingChoices: () => {},
   swipeMessage: () => noopPromise({}),
   saveCheckpoint: () => noopPromise(undefined),
-  loadCheckpoints: () => noopPromise(undefined),
+  loadCheckpoints: () => noopPromise([]),
   restoreCheckpoint: () => noopPromise(undefined),
   deleteCheckpoint: () => noopPromise(undefined),
   showToast: () => {},
   pendingChoices: [],
+  storyProgress: { status: "playing" },
+  isCompletingEnding: false,
+  endingError: null,
   error: null,
   composerSendKey: "enter",
   sendFailureNonce: 0,
@@ -700,6 +751,10 @@ const defaultAPI: SandboxedYuminaAPI = {
   setPoolWeight: () => {},
   getStateGuardSettings: () => Promise.reject(new Error("No active session")),
   setStateGuardSettings: () => Promise.reject(new Error("No active session")),
+  getContentFlags: () => Promise.reject(new Error("No active session")),
+  retryContentFlag: () => Promise.reject(new Error("No active session")),
+  showContentFlags: () => {},
+  storyhavenMemory: () => Promise.reject(new Error("No active session")),
   getSessionMemory: () =>
     noopPromise(emptySessionMemoryPayload()),
   saveSessionMemory: (_memory, _model) =>
@@ -781,6 +836,7 @@ export const ROOM_FRAME_EVENT = "yumina:room-frame";
  *  `window` by component-host when the parent play-controls bar asks for it;
  *  the host-level panel mount listens (see MemoryPanelHostMount). */
 export const OPEN_MEMORY_PANEL_EVENT = "yumina:open-memory-panel";
+export const OPEN_CONTENT_FLAGS_EVENT = "yumina:open-content-flags";
 
 export const YuminaContext = createContext<SandboxedYuminaAPI>(defaultAPI);
 
@@ -879,13 +935,8 @@ export function receiveStreamChunk(callId: string, delta: string, done: boolean,
   }
 }
 
-/** Resolve @asset:{id} → CDN URL (pure string transform, no network) */
-function resolveAssetUrl(ref: string): string {
-  if (!ref) return ref;
-  if (ref.startsWith("http://") || ref.startsWith("https://")) return ref;
-  if (ref.startsWith("@asset:")) return `/cdn/${ref.slice(7)}`;
-  return ref;
-}
+setSandboxAssetLoader(url => callParent<Blob>("loadSandboxAsset", [url], 60_000));
+const resolveAssetUrl = resolveSandboxAssetUrl;
 
 // ── API factory ─────────────────────────────────────────────────────
 
@@ -906,15 +957,21 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     // State reads
     variables: state.variables,
     globalVariables: state.globalVariables,
+    getVisibleVariables: () => sessionApisAvailable && !state.readOnly
+      ? callParent<Record<string, unknown>>("getVisibleVariables", [])
+      : guardedCall({}),
+    dialogTheme: state.dialogTheme,
     worldName: state.worldName,
     worldCover: state.worldCover ?? null,
     worldId: state.worldId,
     sessionId: state.sessionId,
+    personaSelectable: state.personaSelectable === true,
     currentUser: state.currentUser,
     user: state.user,
     messages: state.messages,
     isStreaming: state.isStreaming,
     streamingContent: state.streamingContent,
+    streamingTokenCount: state.streamingTokenCount ?? null,
     mode: state.mode ?? "session",
     capabilities,
     entries: state.entries ?? [],
@@ -941,6 +998,11 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
 
     // Game actions (fire-and-forget)
     pickChatImage: () => sessionApisAvailable ? callParent("pickChatImage", [], 600_000) : Promise.resolve(null),
+    classifyPlayerExpression: (choice) => sessionApisAvailable && !state.readOnly
+      ? callParent<PersonaSpriteExpression>("classifyPlayerExpression", [choice], 120_000)
+      : Promise.resolve("normal"),
+    getPersonaControlMode: () => sessionApisAvailable ? callParent('getPersonaControlMode', []) : Promise.resolve('player'),
+    setPersonaControlMode: (mode) => sessionApisAvailable && !state.readOnly ? callParent('setPersonaControlMode', [mode]) : Promise.reject(new Error('No editable session')),
     sendMessage: (text, attachments) => postToParent("sendMessage", [text, attachments]),
     social: {
       get: () => socialCall("social.get", []),
@@ -984,6 +1046,10 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     navigate: (path) => postToParent("navigate", [path]),
 
     // UI controls
+    isImmersive: state.isImmersive ?? false,
+    systemFullscreen: state.systemFullscreen ?? false,
+    canSystemFullscreen: state.canSystemFullscreen ?? false,
+    toggleSystemFullscreen: () => callParent<void>("toggleSystemFullscreen", []),
     toggleImmersive: () => postToParent("toggleImmersive", []),
     openPersonaManager: () => postToParent("openPersonaManager", []),
     openModelPicker: () => postToParent("openModelPicker", []),
@@ -1051,19 +1117,26 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     editMessage: (messageId, content) => sessionApisAvailable ? callParent("editMessage", [messageId, content]) : guardedCall(false, true),
     deleteMessage: (messageId) => sessionApisAvailable ? callParent("deleteMessage", [messageId]) : guardedCall(false, true),
     regenerateMessage: (messageId) => { if (sessionApisAvailable) postToParent("regenerateMessage", [messageId]); else promptAuth(); },
+    generateChoices: (messageId) => sessionApisAvailable ? callParent<string[]>("generateChoices", [messageId], 120_000) : Promise.reject(new Error("No active session")),
+    retryPendingReply: (messageId) => sessionApisAvailable ? callParent<void>("retryPendingReply", [messageId]) : Promise.reject(new Error("No active session")),
+    completeEnding: () => sessionApisAvailable ? callParent<void>("completeEnding", [], 120_000) : Promise.reject(new Error("No active session")),
+    retryEnding: () => sessionApisAvailable ? callParent<void>("retryEnding", [], 120_000) : Promise.reject(new Error("No active session")),
     continueLastMessage: () => { if (sessionApisAvailable) postToParent("continueLastMessage", []); else promptAuth(); },
     stopGeneration: () => { if (sessionApisAvailable) postToParent("stopGeneration", []); },
     restartChat: () => { if (sessionApisAvailable) postToParent("restartChat", []); else promptAuth(); },
     clearPendingChoices: () => { if (sessionApisAvailable) postToParent("clearPendingChoices", []); },
     swipeMessage: (messageId, direction) => sessionApisAvailable ? callParent("swipeMessage", [messageId, direction]) : guardedCall({}),
-    saveCheckpoint: () => sessionApisAvailable ? callParent("saveCheckpoint", []) : guardedCall(undefined, true),
-    loadCheckpoints: () => sessionApisAvailable ? callParent("loadCheckpoints", []) : guardedCall(undefined),
+    saveCheckpoint: (name) => sessionApisAvailable ? callParent("saveCheckpoint", [name]) : guardedCall(undefined, true),
+    loadCheckpoints: () => sessionApisAvailable ? callParent("loadCheckpoints", []) : guardedCall([]),
     restoreCheckpoint: (checkpointId) => sessionApisAvailable ? callParent("restoreCheckpoint", [checkpointId]) : guardedCall(undefined, true),
     deleteCheckpoint: (checkpointId) => sessionApisAvailable ? callParent("deleteCheckpoint", [checkpointId]) : guardedCall(undefined),
     showToast: (message, type) => postToParent("showToast", [message, type]),
 
     // Canvas state reads
     pendingChoices: state.pendingChoices ?? [],
+    storyProgress: state.storyProgress ?? ({ status: "playing" } as StoryProgress),
+    isCompletingEnding: state.isCompletingEnding ?? false,
+    endingError: state.endingError ?? null,
     error: state.error ?? null,
     composerSendKey: state.composerSendKey ?? "enter",
     sendFailureNonce: state.sendFailureNonce ?? 0,
@@ -1079,7 +1152,7 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     // Model picker
     selectedModel: state.selectedModel ?? "",
     modelFallback: state.modelFallback ?? null,
-    resolveModelFallback: (id, model, remember) => callParent("resolveModelFallback", [id, model, remember]),
+    resolveModelFallback: (id, model, remember, useBackup) => callParent("resolveModelFallback", [id, model, remember, useBackup]),
     cancelModelFallback: (id) => callParent("cancelModelFallback", [id]),
     userPlan: state.userPlan ?? "free",
     memorySummaryEnabled: state.memorySummaryEnabled ?? false,
@@ -1099,8 +1172,14 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     addToPool: (modelId) => postToParent("addToPool", [modelId]),
     removeFromPool: (modelId) => postToParent("removeFromPool", [modelId]),
     setPoolWeight: (modelId, weight) => postToParent("setPoolWeight", [modelId, weight]),
+    getContentFlags: () => sessionApisAvailable ? callParent("getContentFlags", []) : Promise.reject(new Error("No active session")),
+    retryContentFlag: (id) => sessionApisAvailable ? callParent("retryContentFlag", [id]) : Promise.reject(new Error("No active session")),
+    showContentFlags: () => { if (sessionApisAvailable) window.dispatchEvent(new CustomEvent(OPEN_CONTENT_FLAGS_EVENT)); },
     getStateGuardSettings: () => sessionApisAvailable ? callParent("getStateGuardSettings", []) : Promise.reject(new Error("No active session")),
     setStateGuardSettings: (patch) => sessionApisAvailable ? callParent("setStateGuardSettings", [patch]) : Promise.reject(new Error("No active session")),
+    storyhavenMemory: (action, payload) => sessionApisAvailable
+      ? callParent("storyhavenMemory", [action, payload], 120_000)
+      : Promise.reject(new Error("No active session")),
     getSessionMemory: () =>
       sessionApisAvailable
         ? callParent<SessionMemoryPayload>("getSessionMemory", [])

@@ -16,8 +16,7 @@ test("dialog shows byte progress, closes without aborting, reopens and cancels s
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const { createRoot } = await import("react-dom/client");
   let aborted = false;
-  const storage = { used: 0, limit: 1 };
-  const store = tasks.createAssetImportStore({ storage: () => storage, createFolder: async () => ({ id: "folder" }),
+  const store = tasks.createAssetImportStore({ createFolder: async () => ({ id: "folder" }),
     upload: async (_file, _type, _folder, signal, progress, stage) => {
       stage("storage"); progress({ fraction: 0.5, loaded: 5, total: 10, bytesPerSecond: 1 });
       return new Promise(resolve => signal.addEventListener("abort", () => { aborted = true; resolve(null); }, { once: true }));
@@ -26,7 +25,6 @@ test("dialog shows byte progress, closes without aborting, reopens and cancels s
   const wrapper = ({ children }: { children?: ReactNode }) => createElement("div", null, children);
   const mocks: Record<string, unknown> = {
     "react-i18next": { useTranslation: () => ({ t: (key: string) => key }) },
-    "@/stores/user-assets": { useUserAssetStore: (selector: (value: { storage: typeof storage }) => unknown) => selector({ storage }) },
     "@/stores/asset-import": { assetImportStore: store, useAssetImportStore: (selector: (s: tasks.AssetImportStore) => unknown) => useStore(store, selector) },
     "@/lib/asset-import-task": tasks,
     "@/lib/auth-client": { useSession: () => ({ data: { user: { id: "A" } }, isPending: false }) },
@@ -40,9 +38,7 @@ test("dialog shows byte progress, closes without aborting, reopens and cancels s
   const button = (label: string) => [...dom.window.document.querySelectorAll("button")].find(b => b.textContent === label)!;
   try {
     await act(async () => render());
-    assert.equal(button("assets.startFolderImport").disabled, true);
-    storage.limit = 100;
-    await act(async () => render());
+    assert.equal(button("assets.startFolderImport").disabled, false);
     await act(async () => button("assets.startFolderImport").click());
     assert.equal(dom.window.document.querySelector('[aria-label="assets.currentFile"]')?.getAttribute("aria-valuenow"), "50");
     await act(async () => button("assets.backgroundUpload").click());

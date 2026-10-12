@@ -5,6 +5,7 @@ import { useEditorStore } from "@/stores/editor";
 import { Loader2 } from "lucide-react";
 import { getSessionSafe } from "@/lib/auth-client";
 import { lazyRouteComponent } from "@/lib/lazy-route-component";
+import { WorldEditLockScreen } from "@/features/editor/world-edit-lock-screen";
 
 const StudioShell = lazyRouteComponent(
   () => import("@/features/studio/studio-shell"),
@@ -28,6 +29,7 @@ function StudioPage() {
   const loadWorld = useEditorStore((s) => s.loadWorld);
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
   const loadingWorld = useEditorStore((s) => s.loadingWorld);
+  const editingLocked = useEditorStore((s) => s.editingLocked);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -44,6 +46,8 @@ function StudioPage() {
   if (loadingWorld || serverWorldId !== worldId) {
     return <StudioLoading />;
   }
+
+  if (editingLocked) return <WorldEditLockScreen />;
 
   return (
     <Suspense fallback={<StudioLoading />}>

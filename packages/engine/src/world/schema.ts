@@ -1,20 +1,15 @@
 import { z } from "zod";
+import { cardShowcaseSchema } from "./card-showcase.js";
+import { nameGeneratorProfilesSchema } from "@yumina/shared";
+import { personaPresetsSchema } from "./persona-presets.js";
 import { gameComponentSchema as _gameComponentSchema } from "./component-schemas.js";
 import { uiBlueprintSchema as _uiBlueprintSchema } from "./ui-blueprint-schema.js";
 import { sceneSchema as _sceneSchema } from "../spatial/schemas.js";
 
-export const conditionSchema = z.object({
-  variableId: z.string(),
-  operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "contains"]),
-  value: z.union([
-    z.number(),
-    z.string(),
-    z.boolean(),
-    z.record(z.unknown()),
-    z.array(z.unknown()),
-  ]),
-  valueRef: z.string().optional(),
-});
+import { conditionSchema } from "./condition-schema.js";
+export { conditionSchema } from "./condition-schema.js";
+import { storyRouteSchema, storyEndingSchema, storyProgressSchema } from "../story/schema.js";
+export { storyRouteSchema, storyEndingSchema, storyProgressSchema } from "../story/schema.js";
 
 // Shared activation rule — worldbooks and variables gate with the same shape
 // (see VariableActivation / WorldbookActivation in types/index.ts).
@@ -132,6 +127,7 @@ export const triggerConfigSchema = z.object({
   variableId: z.string().optional(),
   direction: z.enum(["rises-above", "drops-below"]).optional(),
   threshold: z.number().optional(),
+  repeatEvery: z.number().positive().optional(),
   atTurn: z.number().int().optional(),
   everyNTurns: z.number().int().optional(),
   keywords: z.array(z.string()).optional(),
@@ -268,8 +264,16 @@ export { gameComponentSchema } from "./component-schemas.js";
 export { uiBlueprintSchema } from "./ui-blueprint-schema.js";
 export { uiPackageSchema } from "./ui-package-schema.js";
 
+export const memoryLoreMetadataSchema = z.object({
+  hidden: z.boolean().optional(),
+  metadata: z.record(z.union([z.string(), z.array(z.string())])).optional(),
+  links: z.array(z.object({ targetId: z.string(), label: z.string() })).optional(),
+  secrets: z.array(z.string()).optional(),
+});
+
 /** @deprecated Use worldEntrySchema instead */
 export const lorebookEntrySchema = z.object({
+  memory: memoryLoreMetadataSchema.optional(),
   id: z.string(),
   name: z.string().min(1),
   type: z.enum(["character", "lore", "plot", "style", "custom"]),
@@ -284,6 +288,7 @@ export const lorebookEntrySchema = z.object({
 });
 
 export const worldEntrySchema = z.object({
+  memory: memoryLoreMetadataSchema.optional(),
   id: z.string(),
   name: z.string().min(1),
   content: z.string(),
@@ -356,6 +361,8 @@ export const customUIComponentSchema = z.object({
 });
 
 export const worldSettingsSchema = z.object({
+  nameGeneratorProfiles: nameGeneratorProfilesSchema.optional(),
+  storyStructureEnabled: z.boolean().optional().default(true),
   maxTokens: z.number().int().positive().optional().default(12000),
   maxContext: z.number().int().positive().optional().default(200000),
   temperature: z.number().min(0).max(2).optional().default(1.0),
@@ -392,6 +399,7 @@ export const stateChannelSchema = z.enum(["variables", "messages", "streaming", 
 export const rootComponentSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
+  interfaceId: z.string().optional(),
   entryFile: z.string().default("index.tsx"),
   files: z.record(z.string(), z.string()),
   updatedAt: z.string(),
@@ -420,6 +428,7 @@ export const worldDefinitionSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   author: z.string(),
+  cardShowcase: cardShowcaseSchema.optional(),
   /** @deprecated Use worlds.thumbnailUrl DB column instead. This field is unused for display. */
   avatar: z.string().optional(),
   coverCrop: coverCropSettingsSchema.optional(),
@@ -439,6 +448,7 @@ export const worldDefinitionSchema = z.object({
   lorebookEntries: z.array(lorebookEntrySchema).optional(),
   customUI: z.array(customUIComponentSchema).default([]),
   rootComponent: rootComponentSchema.optional(),
+  interfaceDrafts: z.record(rootComponentSchema).optional(),
   customTags: z.array(z.string()).optional(),
   /** Map of custom tag name → Tailwind color class (e.g. "bg-rose-400/40").
    *  Default tags use TAG_COLORS in the app; missing custom tags fall back
@@ -449,6 +459,9 @@ export const worldDefinitionSchema = z.object({
   worldbooks: z.array(worldbookSchema).optional(),
   editorMode: z.enum(["simple", "advanced"]).optional(),
   settings: worldSettingsSchema,
+  routes: z.array(storyRouteSchema).optional().default([]),
+  endings: z.array(storyEndingSchema).optional().default([]),
+  personaPresets: personaPresetsSchema.optional(),
 });
 
 export const gameStateSchema = z.object({
@@ -459,4 +472,5 @@ export const gameStateSchema = z.object({
   turnCount: z.number().int().nonnegative(),
   metadata: z.record(z.unknown()),
   ruleState: ruleRuntimeStateSchema.optional(),
+  story: storyProgressSchema.optional(),
 });

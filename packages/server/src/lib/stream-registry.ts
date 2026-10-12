@@ -41,6 +41,20 @@ const activeStreams = new Set<AbortController>();
 // USER_STOP_ABORT_REASON (which handlers treat as a client abort: discard,
 // don't charge).
 const sessionStreams = new Map<string, AbortController>();
+const pendingSessionRetries = new Set<string>();
+
+/** Pending-turn retries must not dispatch a second call while its reply is active. */
+export function isSessionStreaming(sessionId: string): boolean {
+  const controller = sessionStreams.get(sessionId);
+  return pendingSessionRetries.has(sessionId) || (!!controller && !controller.signal.aborted);
+}
+
+/** Hold a retry's session while async setup runs, until its stream is registered. */
+export function reserveSessionRetry(sessionId: string): (() => void) | null {
+  if (isSessionStreaming(sessionId)) return null;
+  pendingSessionRetries.add(sessionId);
+  return () => { pendingSessionRetries.delete(sessionId); };
+}
 
 /** Register a generation's AbortController. Returns the deregister fn — call it in the handler's finally. */
 export function registerStream(ac: AbortController, sessionId?: string): () => void {

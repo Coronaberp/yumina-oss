@@ -9,9 +9,14 @@
 
 import { eq, and, lte, desc, sql } from "drizzle-orm";
 import { estimateTokens } from "@yumina/engine";
+import type { WorldDefinition, GameState } from "@yumina/engine";
+import { SESSION_MEMORY_EXTENSION_KEY } from "@yumina/shared";
+import type { TurnMemoryContext } from "../memory/types.js";
+import { formatSessionMemoryForPrompt } from "./session-memory-core.js";
 import { db } from "../db/index.js";
 import { messages } from "../db/schema.js";
 import { countPromptTokensCooperatively } from "./cooperative-tokens.js";
+import { storyCharacterRoster } from "./story-character-context.js";
 import {
   collectHistoryConditions,
   collectPromptBlocks,
@@ -46,24 +51,126 @@ export interface TurnMemory {
   historyConditions: ReturnType<typeof collectHistoryConditions>;
   /** True when this turn resets the story (send path: character-creation). */
   freshStart: boolean;
+  /** The accepted historical prefix, retained for dispatch and commit fencing. */
+  storyhaven?: { context: TurnMemoryContext; adapter: StoryhavenTurnAdapter; input?: Parameters<StoryhavenTurnAdapter["retrieveStoryhavenMemory"]>[0] };
+  /** Latest request text is kept separately from the bounded raw transcript. */
+  query?: string;
+}
+
+type StoryhavenModule = typeof import("../memory/yumina-adapter.js");
+export type StoryhavenTurnAdapter = Pick<
+  StoryhavenModule,
+  | "retrieveStoryhavenMemory"
+  | "ensureStoryhavenSnapshotCurrent"
+  | "scheduleStoryhavenMemory"
+>;
+export class TurnMemoryChangedError extends Error {
+  readonly code = "TURN_CHANGED";
+  constructor() {
+    super("This turn has changed. Refresh the conversation before retrying.");
+    this.name = "TurnMemoryChangedError";
+  }
 }
 
 /**
  * Resolve the turn's hook dispatch (entitlement-gated, once per turn) and
  * collect the extensions' prompt blocks + history filters.
  */
-export async function loadTurnMemoryBlocks(args: {
-  ownerUserId: string;
-  sessionId: string;
-  session: HookSessionRow;
-  suppressSummaryBlocks?: boolean;
-}): Promise<TurnMemory> {
+export async function loadTurnMemoryBlocks(
+  args: {
+    ownerUserId: string;
+    sessionId: string;
+    session: HookSessionRow;
+    suppressSummaryBlocks?: boolean;
+    actingUserId?: string;
+    model?: string;
+    query?: string;
+    world?: WorldDefinition;
+    /** Exclusive answer cutoff for historical regeneration. */
+    cutoffMessageId?: string | null;
+    /** Final request composition determines the available recall space. */
+    deferRecall?: boolean;
+  },
+  adapter?: StoryhavenTurnAdapter,
+): Promise<TurnMemory> {
   const freshStart = args.suppressSummaryBlocks === true;
-  const baseCtx = { ownerUserId: args.ownerUserId, sessionId: args.sessionId, session: args.session };
-  const dispatch = await resolveTurnHooks(baseCtx);
+  // Legacy turns retain their bounded history path; they never load the full
+  // StoryHaven transcript or initialize its providers/database.
+  let configured = !!adapter;
+  if (
+    !adapter &&
+    (
+      await db.execute(
+        sql`SELECT to_regclass('public.storyhaven_memory_sessions') AS present`,
+      )
+    ).rows[0]?.present
+  ) {
+    configured =
+      (
+        await db.execute(
+          sql`SELECT m.backend FROM storyhaven_memory_sessions m JOIN play_sessions s ON s.id=m.session_id WHERE s.id=${args.sessionId} AND s.user_id=${args.ownerUserId}`,
+        )
+      ).rows[0]?.backend === "storyhaven";
+  }
+  const source = configured
+    ? (adapter ?? (await import("../memory/yumina-adapter.js")))
+    : undefined;
+  const input = {
+    ownerUserId: args.ownerUserId,
+    actingUserId: args.actingUserId ?? args.ownerUserId,
+    sessionId: args.sessionId,
+    model: args.model,
+    query: args.query,
+    world: args.world,
+    cutoffMessageId: args.cutoffMessageId ?? null,
+    ...(args.deferRecall ? { memoryBudgetTokens: 0 } : {}),
+  };
+  let recall = source
+    ? await source.retrieveStoryhavenMemory(input)
+    : undefined;
+  if (
+    recall?.enabled &&
+    source &&
+    !(await source.ensureStoryhavenSnapshotCurrent(recall.context))
+  ) {
+    recall = await source.retrieveStoryhavenMemory(input);
+    if (!(await source.ensureStoryhavenSnapshotCurrent(recall.context)))
+      throw new TurnMemoryChangedError();
+  }
+  const baseCtx = {
+    ownerUserId: args.ownerUserId,
+    sessionId: args.sessionId,
+    session: args.session,
+  };
+  let dispatch = await resolveTurnHooks(baseCtx);
+  if (recall?.enabled) {
+    const activeExtensions = new Map(dispatch.activeExtensions),
+      outputModels = new Map(dispatch.outputModels);
+    activeExtensions.delete(SESSION_MEMORY_EXTENSION_KEY);
+    outputModels.delete(SESSION_MEMORY_EXTENSION_KEY);
+    dispatch = { ...dispatch, activeExtensions, outputModels };
+  }
   const blockCtx = { ...baseCtx, freshStart };
   const blocks = await collectPromptBlocks(dispatch, blockCtx);
   const historyConditions = collectHistoryConditions(dispatch, blockCtx);
+  if (recall?.enabled) {
+    blocks.push({
+      id: "storyhaven-memory",
+      priority: 20,
+      content: freshStart ? null : recall.result.block || null,
+    });
+    blocks.push({
+      id: "session-memory-pinned",
+      priority: 30,
+      content: formatSessionMemoryForPrompt(null, {
+        pinned:
+          typeof args.session.sessionMemoryPinned === "string"
+            ? args.session.sessionMemoryPinned
+            : null,
+      }),
+    });
+    blocks.sort((a, b) => a.priority - b.priority);
+  }
   return {
     ownerUserId: args.ownerUserId,
     sessionId: args.sessionId,
@@ -71,11 +178,70 @@ export async function loadTurnMemoryBlocks(args: {
     blocks,
     historyConditions,
     freshStart,
+    query: args.query,
+    ...(recall?.enabled && source
+      ? { storyhaven: { context: recall.context, adapter: source, input } }
+      : {}),
   };
 }
 
+/** Reject stale memory and raw history together immediately before generation. */
+export async function assertTurnMemoryCurrent(turn: TurnMemory): Promise<void> {
+  if (
+    turn.storyhaven &&
+    !(await turn.storyhaven.adapter.ensureStoryhavenSnapshotCurrent(
+      turn.storyhaven.context,
+    ))
+  )
+    throw new TurnMemoryChangedError();
+}
+
+/** Names always remain; full biographies are composed through bounded recall. */
+export function worldForTurnMemoryPrompt(
+  world: WorldDefinition,
+  turn: Pick<TurnMemory, "storyhaven">,
+  state?: GameState,
+): WorldDefinition {
+  const roster = storyCharacterRoster(world, state);
+  if (!turn.storyhaven && !roster) return world;
+  return {
+    ...world,
+    entries: [
+      ...world.entries.filter(entry => !turn.storyhaven || (
+        entry.role !== "lore" && !(entry.role === "custom" && entry.memory !== undefined)
+      )).map(entry => entry.role === "character"
+        ? { ...entry, content: "", alwaysSend: false, keywords: [] } : entry),
+      ...(roster ? [roster] : []),
+    ],
+  };
+}
+
+/** Destructive history triggers acquire this row in the same transaction as their writes. */
+export async function assertTurnMemoryCommitCurrent(
+  turn: TurnMemory,
+  tx: Pick<typeof db, "execute">,
+): Promise<void> {
+  if (!turn.storyhaven) return;
+  const ctx = turn.storyhaven.context;
+  const current = (
+    await tx.execute(
+      sql`SELECT m.epoch,m.backend,s.user_id FROM storyhaven_memory_sessions m JOIN play_sessions s ON s.id=m.session_id WHERE s.id=${ctx.sessionId} AND s.user_id=${ctx.ownerUserId} FOR UPDATE OF m,s`,
+    )
+  ).rows[0];
+  if (
+    !current ||
+    Number(current.epoch) !== ctx.epoch ||
+    current.backend !== "storyhaven" ||
+    current.user_id !== ctx.ownerUserId
+  )
+    throw new TurnMemoryChangedError();
+}
+
 /** Raw-history WHERE: session scope + every extension-contributed condition. */
-export function buildRawHistoryWhere(sessionId: string, turn: Pick<TurnMemory, "historyConditions">) {
+export function buildRawHistoryWhere(
+  sessionId: string,
+  turn: Pick<TurnMemory, "historyConditions">,
+) {
   return and(eq(messages.sessionId, sessionId), ...turn.historyConditions);
 }
 
@@ -96,12 +262,28 @@ export const RAW_HISTORY_MAX_ROWS = 2000;
  */
 export async function loadBoundedRawHistory(
   sessionId: string,
-  turn: Pick<TurnMemory, "historyConditions">,
-  opts?: { upTo?: Date },
-): Promise<Array<{ id: string; role: string; content: string; imageTokens: number; createdAt: Date | null }>> {
-  const where = opts?.upTo
-    ? and(buildRawHistoryWhere(sessionId, turn), lte(messages.createdAt, opts.upTo))
-    : buildRawHistoryWhere(sessionId, turn);
+  turn: Pick<TurnMemory, "historyConditions" | "storyhaven">,
+  opts?: { upTo?: Date; before?: { id: string; createdAt: Date | null } },
+): Promise<
+  Array<{
+    id: string;
+    role: string;
+    content: string;
+    imageTokens: number;
+    createdAt: Date | null;
+  }>
+> {
+  const where = opts?.before
+    ? and(
+        buildRawHistoryWhere(sessionId, turn),
+        sql`(COALESCE(${messages.createdAt},'1970-01-01'::timestamp),${messages.id})<(${opts.before.createdAt?.toISOString() ?? "1970-01-01"}::timestamp,${opts.before.id})`,
+      )
+    : opts?.upTo
+      ? and(
+          buildRawHistoryWhere(sessionId, turn),
+          lte(messages.createdAt, opts.upTo),
+        )
+      : buildRawHistoryWhere(sessionId, turn);
   const rows = await db
     .select({
       id: messages.id,
@@ -112,7 +294,12 @@ export async function loadBoundedRawHistory(
     })
     .from(messages)
     .where(where)
-    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .orderBy(
+      turn.storyhaven
+        ? desc(sql`COALESCE(${messages.createdAt},'1970-01-01'::timestamp)`)
+        : desc(messages.createdAt),
+      desc(messages.id),
+    )
     .limit(RAW_HISTORY_MAX_ROWS);
   return rows.reverse();
 }
@@ -145,7 +332,10 @@ export function injectMemoryPromptBlocks(
   return { positions };
 }
 
-function estimatePromptMessageTokens(message: Pick<TurnPromptMessage, "content" | "imageTokens">, modelId: string): number {
+function estimatePromptMessageTokens(
+  message: Pick<TurnPromptMessage, "content" | "imageTokens">,
+  modelId: string,
+): number {
   return estimateTokens(message.content, modelId) + (message.imageTokens ?? 0);
 }
 
@@ -153,7 +343,10 @@ export function estimatePromptMessagesTokens(
   messageList: Array<Pick<TurnPromptMessage, "content" | "imageTokens">>,
   modelId: string,
 ): number {
-  return messageList.reduce((total, message) => total + estimatePromptMessageTokens(message, modelId), 0);
+  return messageList.reduce(
+    (total, message) => total + estimatePromptMessageTokens(message, modelId),
+    0,
+  );
 }
 
 async function estimateFinalRawHistoryBudget(args: {
@@ -166,20 +359,39 @@ async function estimateFinalRawHistoryBudget(args: {
   modelId: string;
   nonRawHistoryMessages?: TurnPromptMessage[];
 }): Promise<{ budget: number; nonRawHistoryTokens: number }> {
-  const suffixStart = args.suffixCount > 0 ? Math.max(args.historyStart, args.messages.length - args.suffixCount) : args.messages.length;
-  const prefixTokens = await countPromptTokensCooperatively(args.messages.slice(0, args.historyStart), args.modelId);
-  const suffixTokens = args.suffixCount > 0
-    ? await countPromptTokensCooperatively(args.messages.slice(suffixStart), args.modelId)
-    : 0;
-  const nonRawHistoryTokens = await countPromptTokensCooperatively(args.nonRawHistoryMessages ?? [], args.modelId);
+  const suffixStart =
+    args.suffixCount > 0
+      ? Math.max(args.historyStart, args.messages.length - args.suffixCount)
+      : args.messages.length;
+  const prefixTokens = await countPromptTokensCooperatively(
+    args.messages.slice(0, args.historyStart),
+    args.modelId,
+  );
+  const suffixTokens =
+    args.suffixCount > 0
+      ? await countPromptTokensCooperatively(
+          args.messages.slice(suffixStart),
+          args.modelId,
+        )
+      : 0;
+  const nonRawHistoryTokens = await countPromptTokensCooperatively(
+    args.nonRawHistoryMessages ?? [],
+    args.modelId,
+  );
   // Compaction has to fire on the SAME number the prompt is trimmed to.
   // Budgeting off maxContext alone while the prompt is cut to story memory
   // means the older scenes are dropped rather than folded into the recap,
   // which is exactly the loss the recap exists to prevent.
-  const fromContext = args.maxContext - prefixTokens - suffixTokens - nonRawHistoryTokens - STORY_SUMMARY_PROMPT_RESERVE_TOKENS;
-  const ceiling = typeof args.storyMemory === "number" && Number.isFinite(args.storyMemory)
-    ? Math.min(fromContext, args.storyMemory)
-    : fromContext;
+  const fromContext =
+    args.maxContext -
+    prefixTokens -
+    suffixTokens -
+    nonRawHistoryTokens -
+    STORY_SUMMARY_PROMPT_RESERVE_TOKENS;
+  const ceiling =
+    typeof args.storyMemory === "number" && Number.isFinite(args.storyMemory)
+      ? Math.min(fromContext, args.storyMemory)
+      : fromContext;
   return { budget: Math.max(1, ceiling), nonRawHistoryTokens };
 }
 
@@ -208,27 +420,42 @@ export async function compactTurnOverflowIfNeeded(args: {
   nonRawHistoryMessages: TurnPromptMessage[];
   indices: MemoryBlockIndices;
 }): Promise<number> {
-  const { turn, contextMessages, nonRawHistoryMessages, model, maxContext, suffixCount } = args;
+  const {
+    turn,
+    contextMessages,
+    nonRawHistoryMessages,
+    model,
+    maxContext,
+    suffixCount,
+  } = args;
   if (turn.freshStart) return args.historyStart;
   if (!hasPromptOverflowHandlers(turn.dispatch)) return args.historyStart;
 
-  const { budget: finalRawHistoryBudget, nonRawHistoryTokens } = await estimateFinalRawHistoryBudget({
-    messages: contextMessages,
-    maxContext,
-    storyMemory: args.storyMemory,
-    historyStart: args.historyStart,
-    suffixCount,
-    modelId: model,
-    nonRawHistoryMessages,
-  });
+  const { budget: finalRawHistoryBudget, nonRawHistoryTokens } =
+    await estimateFinalRawHistoryBudget({
+      messages: contextMessages,
+      maxContext,
+      storyMemory: args.storyMemory,
+      historyStart: args.historyStart,
+      suffixCount,
+      modelId: model,
+      nonRawHistoryMessages,
+    });
   // Only dispatch the overflow handlers when this prompt's raw history
   // actually exceeds its budget. Under budget, trimming needs no help and
   // the background path keeps the summary fresh.
-  const suffixStart = suffixCount > 0 ? Math.max(args.historyStart, contextMessages.length - suffixCount) : contextMessages.length;
+  const suffixStart =
+    suffixCount > 0
+      ? Math.max(args.historyStart, contextMessages.length - suffixCount)
+      : contextMessages.length;
   const promptRawHistoryOverflows =
-    await countPromptTokensCooperatively(contextMessages.slice(args.historyStart, suffixStart), model, finalRawHistoryBudget + nonRawHistoryTokens)
-      - nonRawHistoryTokens
-    > finalRawHistoryBudget;
+    (await countPromptTokensCooperatively(
+      contextMessages.slice(args.historyStart, suffixStart),
+      model,
+      finalRawHistoryBudget + nonRawHistoryTokens,
+    )) -
+      nonRawHistoryTokens >
+    finalRawHistoryBudget;
   if (!promptRawHistoryOverflows) return args.historyStart;
 
   const controller = new PromptBlockController({
@@ -261,6 +488,15 @@ export function scheduleTurnMemoryUpdates(args: {
   assistantMessageId: string;
   contextTokenLimit: number;
 }): void {
+  if (args.turn.storyhaven)
+    void args.turn.storyhaven.adapter
+      .scheduleStoryhavenMemory(args.sessionId, args.userId, args.fallbackModel)
+      .catch((error) =>
+        console.warn(
+          "[StoryHavenMemory] Turn update failed:",
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
   runTurnComplete(args.turn.dispatch, {
     ownerUserId: args.turn.ownerUserId,
     sessionId: args.sessionId,

@@ -7,22 +7,29 @@ import {
 } from "./persona-prompt.js";
 
 describe("buildPersonaSystemMessage", () => {
+  it('applies explicit session control even when no descriptive persona is selected', () => {
+    const messages: PersonaPromptMessage[] = [];
+    appendPersonaSystemMessage(messages, null, 'ai');
+    assert.match(messages[0]?.content ?? '', /AI controlled/);
+  });
+  it("uses personality as descriptive context under explicit AI control without contradictory manual rules", () => {
+    const prompt = buildPersonaSystemMessage({ name: 'Robin', personality: 'Reserved and stubborn' }, undefined, 'ai');
+    assert.match(prompt ?? '', /AI controlled/);
+    assert.match(prompt ?? '', /Reserved and stubborn/);
+    assert.match(prompt ?? '', /World rules and the current game-state stats are authoritative/);
+    assert.doesNotMatch(prompt ?? '', /NEVER write the persona|Never emit \[SPEAKER/);
+  });
   it("explicitly binds a name-only persona as the user's spoken name", () => {
     const prompt = buildPersonaSystemMessage({ name: "Alex" });
 
-    assert.equal(
-      prompt,
-      [
-        "[User Persona]",
-        "User's roleplay name: Alex",
-      ].join("\n"),
-    );
+    assert.ok(prompt?.includes("User's roleplay name: {{user}}"));
+    assert.ok(!prompt?.includes("Alex"));
   });
 
   it("does not require descriptive persona fields before injecting the name", () => {
     const prompt = buildPersonaSystemMessage({ name: "Alex" });
 
-    assert.ok(prompt?.includes("User's roleplay name: Alex"));
+    assert.ok(prompt?.includes("User's roleplay name: {{user}}"));
     assert.doesNotMatch(prompt ?? "", /use this exact name/i);
     assert.doesNotMatch(prompt ?? "", /Appearance:/);
   });
@@ -35,8 +42,8 @@ describe("buildPersonaSystemMessage", () => {
       backstory: "from the old city",
     });
 
-    assert.match(prompt ?? "", /^\[User Persona\]/);
-    assert.ok(prompt?.includes("User's roleplay name: Alex"));
+    assert.match(prompt ?? "", /\[User Persona\]/);
+    assert.ok(prompt?.includes("User's roleplay name: {{user}}"));
     assert.ok(prompt?.includes("Appearance: silver hair"));
     assert.ok(prompt?.includes("Personality: reserved"));
     assert.ok(prompt?.includes("Backstory: from the old city"));

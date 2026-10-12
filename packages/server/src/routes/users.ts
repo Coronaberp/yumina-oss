@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { env } from "../lib/env.js";
 import { profileStoryMemoryDefault } from "../lib/profile-story-memory.js";
+import { resolveAdminContentProvider } from '../lib/admin-content-defaults.js';
+import { resolveSavedProfileProvider } from "../lib/saved-profile-provider.js";
 import { eq, and, ne, sql, desc, ilike, or, inArray, notInArray, type SQL } from "drizzle-orm";
 import { db, readDb, readOwn, flagWrite } from "../db/index.js";
 import { posthog } from "../lib/posthog.js";
@@ -9,7 +11,7 @@ import { authMiddleware, optionalAuthMiddleware } from "../middleware/auth.js";
 import { optionalAccountBinding } from "../middleware/account-binding.js";
 import { invalidateSessionUser } from "../lib/session-user-cache.js";
 import { rateLimitMiddleware } from "../middleware/rate-limit.js";
-import { updateProfileSchema, getAgeFromBirthYear, aiConfigSchema, MAX_PROFILE_POST_LENGTH, PROFILE_POSTS_PAGE_SIZE, normalizeProfileWorldSort } from "@yumina/shared";
+import { updateProfileSchema, getAgeFromBirthYear, aiConfigSchema, DEFAULT_MODEL_FALLBACK_POLICY, MAX_PROFILE_POST_LENGTH, PROFILE_POSTS_PAGE_SIZE, normalizeProfileWorldSort } from "@yumina/shared";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { sanitizeDisplayName } from "../lib/sanitize.js";
 import { aggregatedCounters } from "../lib/world-aggregates.js";
@@ -935,7 +937,19 @@ users.get("/me/ai-config", authMiddleware, async (c) => {
     .where(eq(user.id, currentUser.id))
     .limit(1);
   const prefs = (row?.preferences ?? {}) as Record<string, unknown>;
-  const aiConfig = (prefs.aiConfig ?? {}) as Record<string, unknown>;
+  const aiConfig = { ...(prefs.aiConfig ?? {}) } as Record<string, unknown>;
+  const policy = aiConfig.modelFallback as import("@yumina/shared").ModelFallbackPolicy | undefined;
+  if (policy?.privateKeyId) {
+    const backup = await resolveSavedProfileProvider(currentUser.id, policy.privateKeyId);
+    aiConfig.modelFallback = { ...policy, privateKeyId: backup ? policy.privateKeyId : null, privateModel: backup?.model ?? "" };
+  }
+  if (!prefs.activeApiKeyId) {
+    const inherited = await resolveAdminContentProvider('sfw');
+    if (inherited) return c.json({ data: { ...aiConfig, selectedModel: inherited.model,
+      adminDefaultModel: inherited.model, mixMode: false, modelPool: [],
+      modelFallback: aiConfig.modelFallback ?? { ...DEFAULT_MODEL_FALLBACK_POLICY, mode: "stop" },
+    } });
+  }
   return c.json({ data: aiConfig });
 });
 
@@ -946,6 +960,20 @@ users.put("/me/ai-config", authMiddleware, optionalAccountBinding, rateLimitMidd
   const parsed = aiConfigSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
+  }
+
+  if (parsed.data.modelFallback?.privateKeyId) {
+    const backup = await resolveSavedProfileProvider(currentUser.id, parsed.data.modelFallback.privateKeyId);
+    if (!backup) return c.json({ error: "Choose a valid backup provider profile with a configured model.", code: "INVALID_BACKUP_PROVIDER" }, 400);
+    parsed.data.modelFallback.privateModel = backup.model;
+  }
+  const [account] = await db.select({preferences:user.preferences}).from(user).where(eq(user.id,currentUser.id));
+  const inherited = account && !account.preferences?.activeApiKeyId ? await resolveAdminContentProvider('sfw') : undefined;
+  if (account && !account.preferences?.activeApiKeyId) {
+    if (inherited && ((parsed.data.selectedModel !== undefined && parsed.data.selectedModel !== inherited.model)
+      || parsed.data.mixMode === true || (parsed.data.modelPool?.length ?? 0) > 0)) {
+      return c.json({error:"The admin default model is fixed. Select your own provider profile to choose another model.",code:"ADMIN_DEFAULT_MODEL_LOCKED"},403);
+    }
   }
 
   const [saved] = await db
@@ -959,7 +987,11 @@ users.put("/me/ai-config", authMiddleware, optionalAccountBinding, rateLimitMidd
   if (!saved) return c.json({ error: 'User not found' }, 404);
 
   flagWrite(currentUser.id);
-  return c.json({ data: saved.preferences?.aiConfig ?? {} });
+  const savedConfig = (saved.preferences?.aiConfig ?? {}) as Record<string, unknown>;
+  return c.json({ data: { ...savedConfig,
+    ...(inherited ? {selectedModel:inherited.model,adminDefaultModel:inherited.model,mixMode:false,modelPool:[],
+      modelFallback:savedConfig.modelFallback ?? {...DEFAULT_MODEL_FALLBACK_POLICY,mode:'stop'}} : {}),
+  } });
 });
 
 export { users };

@@ -10,16 +10,40 @@
  * needs localhost and has its own variant of this function — do not use this
  * helper for Ollama.
  */
-export function validateCustomEndpointUrl(raw: string): string {
+export const STRATA_LOCAL_ENDPOINT = "http://127.0.0.1:8080/v1";
+
+/** Match only Strata's loopback API endpoint. Used to grant a narrow exception
+ * for a local Yumina server; callers must still require the local edition. */
+export function isStrataLocalEndpoint(raw: string): boolean {
+  try {
+    const parsed = new URL(raw.trim());
+    return parsed.protocol === "http:"
+      && parsed.hostname === "127.0.0.1"
+      && parsed.port === "8080"
+      && parsed.pathname.replace(/\/+$/, "") === "/v1"
+      && !parsed.username
+      && !parsed.password
+      && !parsed.search
+      && !parsed.hash;
+  } catch {
+    return false;
+  }
+}
+
+export function validateCustomEndpointUrl(raw: string, options?: { allowStrataLocal?: boolean }): string {
   let parsed: URL;
   try {
-    parsed = new URL(raw);
+    parsed = new URL(raw.trim());
   } catch {
     throw new Error("Invalid base URL");
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Base URL must use http or https");
+  }
+
+  if (options?.allowStrataLocal && isStrataLocalEndpoint(raw)) {
+    return STRATA_LOCAL_ENDPOINT;
   }
 
   // Node preserves brackets around IPv6 literals in .hostname — strip them so

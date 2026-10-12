@@ -1,10 +1,17 @@
+import { z } from 'zod';
+import { normalizePersonaControlMode, personaControlModeSchema } from '@yumina/shared';
+import { isSessionStreaming } from '../lib/stream-registry.js';
+import { personaSelectionSchema, type PersonaSelection } from "@yumina/shared";
+import { resolvePersonaSelection, setSessionPersonaSelection, canSelectSessionPersona, ensureSessionPersona } from "../lib/persona-selection.js";
 import { playtimeDecision } from "../lib/playtime-policy.js";
+import { nextCheckpointName } from "../lib/checkpoint-name.js";
 import { discoveryIdentity, prepareDiscoveryOutcome, recordDiscoveryOutcome } from "../lib/discovery-outcomes.js";
 import { deleteSessionsKeepingUsage } from "../lib/delete-sessions.js";
 import { PLAY_ENGAGEMENT_LUA } from "../lib/play-engagement.js";
 import { redis } from "../lib/redis.js";
 import { captureServerError } from "../lib/posthog.js";
 import { Hono } from "hono";
+import { isInstallationSharedWorld } from "../lib/installation-shared-worlds.js";
 import { eq, and, ne, desc, asc, sql, count, inArray } from "drizzle-orm";
 import { db, readOwn } from "../db/index.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -26,11 +33,14 @@ import { loadSessionWorldDef } from "../lib/world-def-cache.js";
 import { SESSION_NOT_FOUND, SessionBusyError, withSessionRowLock } from "../lib/session-lock.js";
 import { enqueueLifetimePlaytime } from "../lib/lifetime-playtime-sql.js";
 import type { GameState, WorldDefinition, WorldEntry } from "@yumina/engine";
-import { GameStateManager, PromptBuilder, migrateWorldDefinition, ReactionEvaluator, runReactionChain, buildActionFiredEvent, preserveSetupScopedVariables, renewSocialEpoch } from "@yumina/engine";
+import { GameStateManager, PromptBuilder, migrateWorldDefinition, ReactionEvaluator, runReactionChain, buildActionFiredEvent, preserveSetupScopedVariables, renewSocialEpoch, resolveStoryProgress } from "@yumina/engine";
 import { mergeGameStatePatch, normalizeGameState } from "../lib/game-state.js";
 import { hasStorySummary } from "../lib/session-compaction.js";
 import { collectExtensionInvalidation } from "../lib/extension-hooks.js";
 import { regenerateDroppedMemoryTiers } from "../extensions/session-memory/hooks.js";
+import { captureStoryhavenMemoryFork, materializePendingMemoryFork } from '../memory/fork.js';
+import { memoryTranscriptRow } from '../memory/yumina-adapter.js';
+import { logicalTranscript, memoryWorldHash } from '../memory/provenance.js';
 import { scheduleQuestCollect } from "../lib/quest-auto-collect.js";
 
 const sessionRoutes = new Hono<AppEnv>();
@@ -44,6 +54,43 @@ export const SESSION_MESSAGES_WINDOW = 200;
 
 const reactionEvaluator = new ReactionEvaluator();
 
+const HISTORY_SNAPSHOT_UNAVAILABLE = "The historical story state is unavailable. Your current route or ending was kept; nothing was changed.";
+
+function hasSelectedStory(state: unknown): boolean {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  const story = (state as Record<string, unknown>).story;
+  if (!story || typeof story !== "object" || Array.isArray(story)) return false;
+  const progress = story as Record<string, unknown>;
+  return Boolean(progress.route || progress.ending);
+}
+
+function storyTransitionTurn(state: unknown): number | undefined {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return undefined;
+  const story = (state as Record<string, unknown>).story;
+  if (!story || typeof story !== "object" || Array.isArray(story)) return undefined;
+  const progress = story as Record<string, unknown>;
+  const route = progress.route as Record<string, unknown> | undefined;
+  const ending = progress.ending as Record<string, unknown> | undefined;
+  const turns = [route?.enteredTurn, ending?.selectedTurn].filter((turn): turn is number => typeof turn === "number" && Number.isFinite(turn));
+  return turns.length ? Math.min(...turns) : undefined;
+}
+
+function hasCompleteHistoricalState(state: unknown, selectedStoryState?: unknown): boolean {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  const snapshot = state as Record<string, unknown>;
+  if (!(snapshot.variables && typeof snapshot.variables === "object" && !Array.isArray(snapshot.variables)
+    && typeof snapshot.turnCount === "number" && Number.isFinite(snapshot.turnCount))) return false;
+  // A pre-selection snapshot may legitimately predate the story field. Once the
+  // snapshot reaches a captured route/ending transition, dropping story would
+  // silently reopen the session as ordinary play.
+  const transition = storyTransitionTurn(selectedStoryState);
+  if (transition !== undefined && snapshot.turnCount >= transition) {
+    const story = snapshot.story;
+    if (!story || typeof story !== "object" || Array.isArray(story)) return false;
+  }
+  return true;
+}
+
 async function touchLibraryLastPlayed(userId: string, worldId: string, playedAt: Date) {
   // Update lastPlayedAt on the exact variant's library entry
   await db
@@ -55,7 +102,10 @@ async function touchLibraryLastPlayed(userId: string, worldId: string, playedAt:
 // POST /api/sessions — create session
 sessionRoutes.post("/", async (c) => {
   const currentUser = c.get("user");
-  const body = await c.req.json<{ worldId: string; name?: string; ephemeral?: boolean; adminPreview?: boolean; discoveryAttribution?: unknown }>();
+  const body = await c.req.json<{ worldId: string; name?: string; ephemeral?: boolean; adminPreview?: boolean; discoveryAttribution?: unknown; personaSelection?: PersonaSelection }>();
+
+  const choice = personaSelectionSchema.safeParse(body.personaSelection ?? { kind: "account" });
+  if (!choice.success) return c.json({ error: "Invalid persona selection" }, 400);
 
   if (!body.worldId) {
     return c.json({ error: "worldId is required" }, 400);
@@ -81,7 +131,7 @@ sessionRoutes.post("/", async (c) => {
   // they can audit a pending submission. Forced ephemeral so it doesn't
   // pollute the admin's library or the world's play counters.
   let isAdminPreview = false;
-  if (world.status !== "published" && world.creatorId !== currentUser.id) {
+  if (world.status !== "published" && world.creatorId !== currentUser.id && !isInstallationSharedWorld(world.id, world.status)) {
     if (body.adminPreview) {
       const [roleRow] = await db
         .select({ role: user.role })
@@ -145,17 +195,19 @@ sessionRoutes.post("/", async (c) => {
 
     // Load persona in parallel with state initialization (no dependency).
     // New chats start unlocked and follow the current profile persona.
-    const personaPromise = resolvePersonaForWorld(currentUser.id, body.worldId);
+    const personaPromise = resolvePersonaSelection(currentUser.id, choice.data, worldDef);
 
     const stateManager = new GameStateManager(worldDef);
-    const activePersona = await personaPromise;
+    const resolvedPersona = await personaPromise;
+    if (resolvedPersona.error) return c.json({ error: resolvedPersona.error }, 404);
+    const activePersona = resolvedPersona.data;
     applyPersonaMetadata(stateManager, activePersona ?? null, {
       username: currentUser.username,
       displayUsername: currentUser.displayUsername,
       name: currentUser.name,
       image: currentUser.image,
     });
-    const baseInitialState = stateManager.getSnapshot();
+    const baseInitialState = resolveStoryProgress(worldDef, stateManager.getSnapshot(), { selectEnding: false });
 
     // Greeting "scenario presets": a greeting may carry initialVariables that
     // seed session state when that opening is chosen. Greetings render as swipes
@@ -179,14 +231,14 @@ sessionRoutes.post("/", async (c) => {
       // activate as a pure function of game state (revert/branch safe). Stored as
       // a first-class field (NOT in variables) so it survives normalization.
       snap.activeGreetingId = g.id;
-      return snap;
+      return resolveStoryProgress(worldDef, snap, { selectEnding: false });
     };
     initialState = snapshotForGreeting(greetingEntries[0]);
 
     // Insert greeting message if the world has greeting entries. Each greeting
     // swipe carries its OWN stateSnapshot (base + that greeting's
     // initialVariables) so switching openings applies that route's variables.
-    const greetings = greetingBuilder.buildGreetings(worldDef, baseInitialState);
+    const greetings = greetingBuilder.buildGreetings(worldDef, { ...baseInitialState, metadata: { ...baseInitialState.metadata, personaName: "{{user}}" } });
     const swipes = greetings.map((content, i) => ({
       content,
       stateSnapshot: snapshotForGreeting(greetingEntries[i]) as unknown as Record<string, unknown>,
@@ -204,7 +256,8 @@ sessionRoutes.post("/", async (c) => {
         .values({
           userId: currentUser.id,
           worldId: body.worldId,
-          sessionPersona: captureSessionPersona(activePersona),
+          sessionPersona: { ...captureSessionPersona(activePersona), selection: choice.data },
+          personaLocked: true,
           state: initialState as unknown as Record<string, unknown>,
           ...(body.name !== undefined ? { name: body.name } : {}),
           // Studio playtest passes ephemeral=true so the session is hidden from
@@ -433,7 +486,8 @@ sessionRoutes.get("/:id", async (c) => {
   const parentSessionName = parentRows[0]?.name ?? null;
   const childBranches = childBranchRows;
 
-  const sessionPersona = captureSessionPersona(await resolvePersonaForSession(sessionRows[0]!));
+  const boundSession = await ensureSessionPersona(sessionRows[0]!);
+  const sessionPersona = { ...boundSession.sessionPersona, ...captureSessionPersona(await resolvePersonaForSession(boundSession)) };
 
   // Determine if this session should be read-only (unpublished world, non-creator)
   const isCreator = world ? world.creatorId === currentUser.id : false;
@@ -486,7 +540,9 @@ sessionRoutes.get("/:id", async (c) => {
   return c.json({
     data: {
       ...sessionRows[0]!,
-      sessionPersona: { ...sessionPersona, selectionVersion: sessionRows[0]!.sessionPersona?.selectionVersion ?? "" },
+      personaLocked: true,
+      sessionPersona: { ...sessionPersona, selectionVersion: boundSession.sessionPersona?.selectionVersion ?? "" },
+      personaSelectable: await canSelectSessionPersona(boundSession),
       currentUser: {
         id: currentUser.id,
         name: currentUser.name,
@@ -525,23 +581,33 @@ sessionRoutes.delete("/:id", async (c) => {
   return c.json({ data: { deleted: true } });
 });
 
+// PUT /api/sessions/:id/persona-selection — player or creator identity, greeting only.
+sessionRoutes.put("/:id/persona-selection", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const selection = personaSelectionSchema.safeParse(body?.selection);
+  if (!selection.success || body.expectedVersion !== undefined && (typeof body.expectedVersion !== "string" || body.expectedVersion.length > 64)) return c.json({ error: "Invalid persona selection" }, 400);
+  const result = await setSessionPersonaSelection(c.get("user").id, c.req.param("id"), selection.data, body.expectedVersion);
+  if (result.error) return c.json({ error: result.error }, result.error === "Session not found" || result.error === "Persona not found" ? 404 : 409);
+  return c.json({ data: personaIdentityReceipt(c.req.param("id"), result.data, c.get("user")) });
+});
+
 // PUT /api/sessions/:id/persona — in-chat selection overrides only this save.
 sessionRoutes.put("/:id/persona", async (c) => {
   const currentUser = c.get("user");
   const sessionId = c.req.param("id");
   const body = await c.req.json().catch(() => null);
-  if (!body || !(body.personaId === null || typeof body.personaId === "string")) {
-    return c.json({ error: "personaId must be a string or null" }, 400);
+  if (!body || typeof body.personaId !== "string" || !body.personaId) {
+    return c.json({ error: "Each session must have one persona; personaId is required" }, 400);
   }
   if (body.expectedVersion !== undefined && (typeof body.expectedVersion !== "string" || body.expectedVersion.length > 64)) return c.json({ error: "Invalid persona version" }, 400);
   const result = await setSessionPersona(currentUser.id, sessionId, body.personaId, body.expectedVersion);
-  if ("error" in result) return c.json({ error: result.error }, result.error === "Persona selection changed" ? 409 : 404);
+  if ("error" in result) return c.json({ error: result.error }, (result.error === "Persona selection changed" || result.error === "Persona can only be selected during the greeting") ? 409 : 404);
   // Preserve the legacy data.persona field for older clients.
   return c.json({ data: { ...result.data, ...personaIdentityReceipt(sessionId, { personaLocked: true, sessionPersona: result.data }, currentUser) } });
 
 });
 
-// PUT /api/sessions/:id/persona-lock — opt one session into or out of a fixed persona.
+// PUT /api/sessions/:id/persona-lock — legacy selection; disabling is rejected.
 sessionRoutes.put("/:id/persona-lock", async (c) => {
   const currentUser = c.get("user");
   const sessionId = c.req.param("id");
@@ -549,12 +615,12 @@ sessionRoutes.put("/:id/persona-lock", async (c) => {
   if (!body || typeof body.locked !== "boolean") {
     return c.json({ error: "locked must be a boolean" }, 400);
   }
-  if (body.locked && !(body.personaId === null || typeof body.personaId === "string")) {
-    return c.json({ error: "personaId must be a string or null when locking" }, 400);
+  if (!body.locked || typeof body.personaId !== "string" || !body.personaId) {
+    return c.json({ error: "Each session must have one persona; it cannot be disabled" }, 400);
   }
   if (body.expectedVersion !== undefined && (typeof body.expectedVersion !== "string" || body.expectedVersion.length > 64)) return c.json({ error: "Invalid persona version" }, 400);
   const result = await setSessionPersonaLock(currentUser.id, sessionId, body.locked, body.personaId, body.expectedVersion);
-  if ("error" in result) return c.json({ error: result.error }, result.error === "Persona selection changed" ? 409 : 404);
+  if ("error" in result) return c.json({ error: result.error }, (result.error === "Persona selection changed" || result.error === "Persona can only be selected during the greeting") ? 409 : 404);
   return c.json({ data: personaIdentityReceipt(sessionId, result.data, currentUser) });
 });
 
@@ -813,6 +879,29 @@ sessionRoutes.get("/:id/memories", async (c) => {
 });
 
 // PATCH /api/sessions/:id — rename session
+sessionRoutes.get('/:id/persona-control', async c => {
+  const [session] = await db.select({ mode: playSessions.personaControlMode }).from(playSessions)
+    .where(and(eq(playSessions.id, c.req.param('id')), eq(playSessions.userId, c.get('user').id)));
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: { mode: normalizePersonaControlMode(session.mode) } });
+});
+
+sessionRoutes.patch('/:id/persona-control', async c => {
+  const parsed = z.object({ mode: personaControlModeSchema }).strict().safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'Choose Player controlled, Assisted or AI controlled' }, 400);
+  const [owned] = await db.select({ id: playSessions.id }).from(playSessions)
+    .where(and(eq(playSessions.id, c.req.param('id')), eq(playSessions.userId, c.get('user').id)));
+  if (!owned) return c.json({ error: 'Session not found' }, 404);
+  if (isSessionStreaming(owned.id)) return c.json({ error: 'Wait for the current response before changing persona control' }, 409);
+  const [session] = await db.update(playSessions).set({ personaControlMode: parsed.data.mode, updatedAt: new Date() })
+    .where(and(eq(playSessions.id, c.req.param('id')), eq(playSessions.userId, c.get('user').id)))
+    .returning();
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: { mode: session.personaControlMode } });
+});
+
 sessionRoutes.patch("/:id", async (c) => {
   const currentUser = c.get("user");
   const sessionId = c.req.param("id");
@@ -923,16 +1012,6 @@ export async function revertSession(args: {
     }
   }
 
-  // Delete all messages after the target
-  const toDelete = targetIdx >= 0 ? allMessages.slice(targetIdx + 1) : allMessages;
-
-  if (toDelete.length === 0) {
-    return { status: 400, body: { error: "Nothing to revert" } };
-  }
-
-  const idsToDelete = toDelete.map((m) => m.id);
-  await db.delete(messages).where(inArray(messages.id, idsToDelete));
-
   // Find the state to restore. Walk backwards from the target message to the
   // most recent stateSnapshot. Only assistant messages carry a snapshot — user
   // messages never do — so reverting onto a user message must fall back to the
@@ -949,6 +1028,16 @@ export async function revertSession(args: {
       }
     }
   }
+
+  if (targetIdx >= 0 && hasSelectedStory(session.state)
+      && !hasCompleteHistoricalState(restoredState, session.state)) {
+    return { status: 409, body: { error: HISTORY_SNAPSHOT_UNAVAILABLE } };
+  }
+
+  const toDelete = targetIdx >= 0 ? allMessages.slice(targetIdx + 1) : allMessages;
+  if (toDelete.length === 0) return { status: 400, body: { error: "Nothing to revert" } };
+  const idsToDelete = toDelete.map((m) => m.id);
+  await db.delete(messages).where(inArray(messages.id, idsToDelete));
 
   if (!restoredState) {
     if (targetIdx >= 0 && session.state) {
@@ -1039,7 +1128,7 @@ sessionRoutes.post("/:id/revert", async (c) => {
     sessionId,
     messageId: body.messageId,
   });
-  return c.json(result.body, result.status as 200 | 400 | 404);
+  return c.json(result.body, result.status as 200 | 400 | 404 | 409);
 });
 
 // POST /api/sessions/:id/restart — full reset: clear messages, state, memories, re-insert greeting
@@ -1101,7 +1190,7 @@ sessionRoutes.post("/:id/restart", async (c) => {
     name: currentUser.name,
     image: currentUser.image,
   });
-  const baseInitialState = stateManager.getSnapshot();
+  const baseInitialState = resolveStoryProgress(worldDef, stateManager.getSnapshot(), { selectEnding: false });
 
   // Greeting "scenario presets" — mirror the session-create path so a RESTART
   // also seeds each opening's initialVariables (and stamps activeGreetingId).
@@ -1121,7 +1210,7 @@ sessionRoutes.post("/:id/restart", async (c) => {
     for (const [k, v] of Object.entries(g.initialVariables ?? {})) sm.set(k, v);
     const snap = sm.getSnapshot();
     snap.activeGreetingId = g.id;
-    return snap;
+    return resolveStoryProgress(worldDef, snap, { selectEnding: false });
   };
   // The active (first) opening's snapshot becomes the live session state.
   const initialState = snapshotForGreeting(restartGreetingEntries[0]);
@@ -1137,13 +1226,15 @@ sessionRoutes.post("/:id/restart", async (c) => {
     .set({
       state: initialState as unknown as Record<string, unknown>,
       ...restartInvalidation.sessionFields,
+      sessionPersona: { ...captureSessionPersona(resetPersona), selection: session.sessionPersona?.selection, selectionVersion: crypto.randomUUID() },
+      personaLocked: true,
       updatedAt: new Date(),
     })
     .where(eq(playSessions.id, sessionId));
   await restartInvalidation.runAfter();
 
   // 6. Update existing greeting in-place or insert new one (with multi-greeting swipes)
-  const greetings = promptBuilder.buildGreetings(worldDef, baseInitialState);
+  const greetings = promptBuilder.buildGreetings(worldDef, { ...baseInitialState, metadata: { ...baseInitialState.metadata, personaName: "{{user}}" } });
   let greetingMessage = null;
   if (greetings.length > 0) {
     // Each swipe carries its OWN opening's snapshot (base + that opening's
@@ -1209,7 +1300,7 @@ export async function branchSession(args: {
   sessionId: string;
   messageId: string;
 }): Promise<{
-  status: 201 | 400 | 404 | 500;
+  status: 201 | 400 | 404 | 409 | 500;
   body: {
     data?: { sessionId: string; name: string | null; parentSessionId: string | null; branchedFromMessageId: string | null };
     error?: string;
@@ -1225,14 +1316,23 @@ export async function branchSession(args: {
     return { status: 404, body: { error: "Session not found" } };
   }
 
-  const parent = sessionRows[0]!;
+  // Normalize legacy identity before capturing the row used by branch CAS.
+  // Persona normalization must not look like a concurrent gameplay change.
+  await resolvePersonaForSession(sessionRows[0]!);
+  const [parent] = await db.select().from(playSessions).where(and(eq(playSessions.id, args.sessionId), eq(playSessions.userId, args.userId)));
+  if (!parent) return { status: 404, body: { error: "Session not found" } };
+  const hasMemoryMetadata = Boolean((await db.execute(sql`SELECT to_regclass('public.storyhaven_memory_sessions') AS name`)).rows[0]?.name);
+  const parentMemoryBackend = hasMemoryMetadata
+    ? (await db.execute(sql`SELECT backend FROM storyhaven_memory_sessions WHERE session_id=${parent.id}`)).rows[0]?.backend
+    : null;
+  const sourceFork = parentMemoryBackend === 'storyhaven';
 
   // Load all parent messages in order
   const allMessages = await db
     .select()
     .from(messages)
     .where(eq(messages.sessionId, args.sessionId))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(...(sourceFork ? [sql`COALESCE(${messages.createdAt},'1970-01-01'::timestamp)`, asc(messages.id)] : [asc(messages.createdAt)]));
 
   const branchIdx = allMessages.findIndex((m) => m.id === args.messageId);
   if (branchIdx === -1) {
@@ -1241,22 +1341,26 @@ export async function branchSession(args: {
 
   const messagesToCopy = allMessages.slice(0, branchIdx + 1);
 
-  // Pre-generate the branch's message ids so cross-references that point at
-  // PARENT message ids — the session-memory processed pointer and the cloned
-  // snippets' source-message ids — can be remapped onto the branch's own rows.
-  const idMap = new Map(messagesToCopy.map((m) => [m.id, randomUUID()]));
-
-  // Determine the state snapshot at the branch point.
-  // Walk backwards from the branch message to find the latest stateSnapshot.
+  let hasBranchSnapshot = false;
   let branchState: Record<string, unknown> = parent.state as Record<string, unknown>;
   for (let i = branchIdx; i >= 0; i--) {
     const snap = messagesToCopy[i]!.stateSnapshot as Record<string, unknown> | null;
-    if (snap) {
-      branchState = snap;
-      break;
-    }
+    if (snap) { branchState = snap; hasBranchSnapshot = true; break; }
+  }
+  if (hasSelectedStory(parent.state) && (!hasBranchSnapshot || !hasCompleteHistoricalState(branchState, parent.state))) {
+    return { status: 409, body: { error: HISTORY_SNAPSHOT_UNAVAILABLE } };
   }
 
+  // Pre-generate the branch's message ids so cross-references that point at
+  // PARENT message ids — the session-memory processed pointer and the cloned
+  // snippets' source-message ids — can be remapped onto the branch's own rows.
+  // Sorted fresh UUIDs preserve selected transcript order for tied timestamps.
+  const copiedIds = messagesToCopy.map(() => randomUUID());
+  if (sourceFork) copiedIds.sort();
+  const idMap = new Map(messagesToCopy.map((m, i) => [m.id, copiedIds[i]!]));
+
+  // Determine the state snapshot at the branch point.
+  // Walk backwards from the branch message to find the latest stateSnapshot.
   // Load world def to normalize the branch state against the current schema
   // (variables the world no longer declares get dropped; missing defaults are
   // filled in). This keeps branches valid even when the world has evolved
@@ -1317,7 +1421,8 @@ export async function branchSession(args: {
     memProcId != null &&
     idMap.has(memProcId);
 
-  const parentPersona = captureSessionPersona(await resolvePersonaForSession(parent));
+  const boundParent = await ensureSessionPersona(parent);
+  const parentPersona = { ...boundParent.sessionPersona, ...captureSessionPersona(await resolvePersonaForSession(boundParent)) };
   const [account] = await db.select().from(user).where(eq(user.id, args.userId));
   applyPersonaMetadataToState(normalizedState, parentPersona.persona, account ?? {});
   const parentDisplayName = parent.name ?? "session";
@@ -1326,6 +1431,7 @@ export async function branchSession(args: {
   // so a mid-operation failure can't leave an orphan branch row with no
   // messages behind. touchLibraryLastPlayed stays outside — it's bookkeeping
   // and must not roll back the branch on a library-update hiccup.
+  let inheritedBackend: 'legacy' | 'storyhaven' | null = null;
   const newSession = await db.transaction(async (tx) => {
     // Serialize concurrent branch attempts for the same parent session so
     // branch numbering is computed after the previous insert commits.
@@ -1335,6 +1441,21 @@ export async function branchSession(args: {
         hashtext(${args.sessionId})
       )
     `);
+
+    // Saved/held world edits take this lock before invalidating memory rows.
+    await tx.execute(sql`SELECT id FROM worlds WHERE id=${parent.worldId} FOR SHARE`);
+    // Lock metadata before the session, matching turn persistence and invalidation.
+    if (hasMemoryMetadata) {
+      const lockedMetadata = (await tx.execute(sql`SELECT backend FROM storyhaven_memory_sessions WHERE session_id=${parent.id} FOR UPDATE`)).rows[0];
+      if (lockedMetadata?.backend !== parentMemoryBackend) throw new Error('memory_fork_source_changed');
+    }
+    const [lockedParent] = await tx.select().from(playSessions).where(and(eq(playSessions.id,parent.id),eq(playSessions.userId,args.userId))).for('update');
+    const currentMessages = await tx.select().from(messages).where(eq(messages.sessionId,parent.id)).orderBy(...(sourceFork ? [sql`COALESCE(${messages.createdAt},'1970-01-01'::timestamp)`,asc(messages.id)] : [asc(messages.createdAt)]));
+    const currentWorld = (await tx.execute(sql`SELECT w.schema,w.status,w.creator_id,p.schema AS pending_schema FROM worlds w LEFT JOIN world_pending_edits p ON p.world_id=w.id WHERE w.id=${parent.worldId}`)).rows[0];
+    const currentBranchSchema = currentWorld && viewerSeesWorkingCopy(String(currentWorld.status),String(currentWorld.creator_id),args.userId) && currentWorld.pending_schema ? currentWorld.pending_schema : currentWorld?.schema;
+    if (!lockedParent || JSON.stringify(lockedParent)!==JSON.stringify(parent) || JSON.stringify(currentMessages)!==JSON.stringify(allMessages) || JSON.stringify(currentBranchSchema)!==JSON.stringify(branchSchema)) {
+      throw new Error('memory_fork_source_changed');
+    }
 
     // Generate branch name — "<parent name> · 分支 N"
     const existingBranches = await tx
@@ -1350,10 +1471,11 @@ export async function branchSession(args: {
         userId: args.userId,
         worldId: parent.worldId,
         sessionPersona: parentPersona,
-        personaLocked: parent.personaLocked,
+        personaLocked: true,
         state: normalizedState as unknown as Record<string, unknown>,
         summary: keepSummary ? parent.summary : null,
         summaryModel: parent.summaryModel,
+        personaControlMode: parent.personaControlMode,
         stateGuardEnabled: parent.stateGuardEnabled,
         stateGuardModel: parent.stateGuardModel,
         summaryceptionModel: parent.summaryceptionModel,
@@ -1414,7 +1536,7 @@ export async function branchSession(args: {
           summaryceptionCompacted: keepSummaryception ? m.summaryceptionCompacted : false,
           stateSnapshot: m.stateSnapshot as Record<string, unknown> | null,
           attachments: m.attachments as Array<{ type: string; mimeType: string; name: string; url: string }> | null,
-          createdAt: m.createdAt ?? new Date(),
+          createdAt: sourceFork ? m.createdAt : m.createdAt ?? new Date(),
         }));
       for (const chunk of chunkRows(messageRows)) {
         await tx.insert(messages).values(chunk);
@@ -1458,8 +1580,24 @@ export async function branchSession(args: {
       );
     }
 
+    const memoryFork = await captureStoryhavenMemoryFork(tx, {
+      ownerUserId: args.userId,
+      parentSessionId: parent.id,
+      childSessionId: inserted.id,
+      parentMessages: logicalTranscript(messagesToCopy.map(memoryTranscriptRow)),
+      childMessages: logicalTranscript(messagesToCopy.map(m=>memoryTranscriptRow({...m,id:idMap.get(m.id)!}))),
+      worldHash: memoryWorldHash(branchSchema),
+      group: (worldDef.entries??[]).filter(e=>e.enabled!==false&&e.role==='character').length>1,
+    });
+    inheritedBackend = memoryFork.backend;
     return inserted;
+  }).catch(error => {
+    if (error instanceof Error && ['memory_fork_source_changed','memory_fork_profile_changed'].includes(error.message)) return null;
+    throw error;
   });
+  if (!newSession) return {status:409,body:{error:'The session changed while branching. Refresh and try again.'}};
+  // Delivery may retry from the frozen app outbox after a crash or profile change.
+  if (inheritedBackend === 'storyhaven') await materializePendingMemoryFork(args.userId,newSession.id).catch(()=>{});
 
   // Bookkeeping: touch userLibrary lastPlayedAt (outside the transaction)
   await touchLibraryLastPlayed(args.userId, parent.worldId, new Date());
@@ -1470,7 +1608,7 @@ export async function branchSession(args: {
   // needs no regen. The story summary is NOT regenerated on fork: the branch's
   // copied prefix is identical to the parent up to the fork point, so a kept
   // summary still fits and a dropped one re-forms via threshold compaction.
-  regenerateDroppedMemoryTiers({
+  if (inheritedBackend !== 'storyhaven') regenerateDroppedMemoryTiers({
     sessionId: newSession.id,
     userId: args.userId,
     session: newSession,
@@ -1660,6 +1798,11 @@ sessionRoutes.get("/:id/branch-context", async (c) => {
 sessionRoutes.post("/:id/checkpoints", async (c) => {
   const currentUser = c.get("user");
   const sessionId = c.req.param("id");
+  const body: unknown = await c.req.json().catch(() => ({}));
+  const suppliedName = body && typeof body === "object" && "name" in body ? body.name : undefined;
+  if (suppliedName !== undefined && (typeof suppliedName !== "string" || !suppliedName.trim())) {
+    return c.json({ error: "Checkpoint name must be a non-empty string" }, 400);
+  }
 
   // Verify ownership
   const sessionRows = await db
@@ -1681,13 +1824,13 @@ sessionRoutes.post("/:id/checkpoints", async (c) => {
     .where(eq(messages.sessionId, sessionId))
     .orderBy(asc(messages.createdAt));
 
-  // Auto-name: "Checkpoint #N"
+  // Choose the lowest unused number when older clients omit the name.
   const existingCheckpoints = await db
     .select()
     .from(checkpoints)
     .where(eq(checkpoints.sessionId, sessionId));
 
-  const name = `Checkpoint #${existingCheckpoints.length + 1}`;
+  const name = typeof suppliedName === "string" ? suppliedName.trim() : nextCheckpointName(existingCheckpoints);
 
   const result = await db
     .insert(checkpoints)
@@ -1769,6 +1912,9 @@ sessionRoutes.post("/:id/checkpoints/:checkpointId/restore", async (c) => {
   await resolvePersonaForSession(sessionRows[0]!);
   const checkpoint = cpRows[0]!;
   const snapshotMessages = checkpoint.messages as unknown as Array<Record<string, unknown>>;
+  if (hasSelectedStory(sessionRows[0]!.state) && !hasCompleteHistoricalState(checkpoint.state, sessionRows[0]!.state)) {
+    return c.json({ error: HISTORY_SNAPSHOT_UNAVAILABLE }, 409);
+  }
   const worldRows = await db.select().from(worlds).where(eq(worlds.id, sessionRows[0]!.worldId));
   if (worldRows.length === 0) return c.json({ error: "World not found" }, 404);
 

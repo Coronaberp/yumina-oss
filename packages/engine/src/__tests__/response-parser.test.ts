@@ -15,6 +15,18 @@ describe("ResponseParser", () => {
     parser = new ResponseParser();
   });
 
+  it("removes variable-update wrapper tags while applying the enclosed directive", () => {
+    const result = parser.parse('The clerk waits.\n<variable-updates>\n[time-period: set "9:10 AM"]\n</variable-updates>');
+    expect(result.cleanText).toBe("The clerk waits.");
+    expect(result.effects).toEqual([{ variableId: "time-period", operation: "set", value: "9:10 AM" }]);
+  });
+
+  it("preserves literal variable-update examples and prose inside an unmatched wrapper", () => {
+    const example = '```text\n<variable-updates>\n[hp: -1]\n</variable-updates>\n```';
+    expect(parser.parse(example).cleanText).toBe(example);
+    expect(parser.parse('Before\n<Variable-updates>\nAfter').cleanText).toBe("Before\n\nAfter");
+  });
+
   // =========================================================================
   // Shorthand operators (+/-/*)
   // =========================================================================

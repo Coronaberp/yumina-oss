@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { renderStudioCapabilityContent, type StudioImageCapabilities } from '../studio-image-capabilities.js';
 
 // ── Skill Loading ──
 
@@ -134,11 +135,11 @@ export function getSkillNames(): string[] {
 // ── Skill Content (all skills pre-loaded into system prompt) ──
 
 /** Get all skill content concatenated as XML sections. Cached with 1h TTL on system prompt breakpoint. */
-export function getAllSkillContent(): string {
+export function getAllSkillContent(capabilities: StudioImageCapabilities = {}): string {
   if (skillCache.size === 0) return "";
   const sections: string[] = [];
   for (const [name, skill] of skillCache) {
-    sections.push(`<skill name="${name}">\n${skill.content}\n</skill>`);
+    sections.push(`<skill name="${name}">\n${renderStudioCapabilityContent(skill.content, capabilities)}\n</skill>`);
   }
   return sections.join("\n\n");
 }
@@ -160,13 +161,13 @@ const ALWAYS_LOAD_SKILLS = new Set(["entries", "variables", "tsx", "front-ui", "
  *
  * Returns: { coreSkills: string, onDemandCatalog: string }
  */
-export function getHybridSkillContent(): { coreSkills: string; onDemandCatalog: string } {
+export function getHybridSkillContent(capabilities: StudioImageCapabilities = {}, deferCoreSkills = false): { coreSkills: string; onDemandCatalog: string } {
   const coreSections: string[] = [];
   const onDemandLines: string[] = [];
 
   for (const [name, skill] of skillCache) {
-    if (ALWAYS_LOAD_SKILLS.has(name)) {
-      coreSections.push(`<skill name="${name}">\n${skill.content}\n</skill>`);
+    if (!deferCoreSkills && ALWAYS_LOAD_SKILLS.has(name)) {
+      coreSections.push(`<skill name="${name}">\n${renderStudioCapabilityContent(skill.content, capabilities)}\n</skill>`);
     } else {
       onDemandLines.push(`- ${name}: ${skill.description}`);
     }
@@ -197,7 +198,7 @@ const PANEL_MAP: Record<string, string[]> = {
 const KEYWORD_MAP: [string, RegExp][] = [
   ["slim", /精简|冗余|冗杂|臃肿|瘦身|去重|太[大长]了|\b(slim|bloat\w*|redundan\w*|dedup\w*|token\s*(cost|usage)|too\s+(big|long|heavy))\b/i],
   ["lore", /\b(lore|worldbuilding|faction|timeline|history|canon|codif\w*|discoverable)\b/i],
-  ["front-ui", /\b(hud|dashboard|layout|theme|widget|full.?screen|header|sidebar)\b|\bui\b/i],
+  ["front-ui", /\b(hud|dashboard|layout|theme|widget|full.?screen|header|sidebar|status|visualizations?|showcase|css)\b|\bui\b/i],
   ["tsx", /\b(tsx|jsx|react|renderer|component|code|interactive|visual|custom\s*ui)\b/i],
   ["entries", /\b(character|entry|entries|npc|persona|lorebook|greeting|scenario|example\s*dialogue|system\s*prompt)\b/i],
   ["variables", /\b(variable|stat|hp|health|gold|inventory|score|flag|counter|track|behavior.?rule)\b/i],
@@ -240,7 +241,32 @@ export function getTemplateCatalogSummary(): string {
   const lines = templateCatalog.map(
     (t) => `  - ${t.id} (${t.type}): ${t.name} — ${t.description} [${t.tags.join(", ")}]`
   );
-  return `\n## Available Templates (${templateCatalog.length})\n${lines.join("\n")}\nUse these as starting points. Use list_templates to explore before installing.`;
+  return `\n## Available Templates (${templateCatalog.length})\n${lines.join("\n")}\nThese official starting templates are separate from the creator's asset library and world components. Call list_templates with an id to read metadata and source before adapting a template.`;
+}
+
+export interface TemplateToolResult {
+  summary?: string;
+  id?: string;
+  meta?: Record<string, unknown>;
+  content?: string;
+  error?: string;
+}
+
+/** Studio's read-only access to the same official templates as the HTTP API. */
+export function executeListTemplates(args: { id?: unknown } = {}): TemplateToolResult {
+  if (args.id === undefined) {
+    const summary = getTemplateCatalogSummary();
+    return summary ? { summary } : { error: "No official templates are available in this server's installed catalog." };
+  }
+  if (typeof args.id !== "string" || !args.id.trim()) {
+    return { error: "Template id must be a non-empty catalog ID. Omit id to browse official templates." };
+  }
+
+  const meta = readTemplateMeta(args.id);
+  if (!meta) return { error: `Official template not found: ${args.id}. Call list_templates without id to browse the installed catalog.` };
+  const content = readTemplateContent(args.id);
+  if (content === null) return { error: `Official template source is unavailable: ${args.id}.` };
+  return { id: args.id, meta, content };
 }
 
 /** Read a template file by catalog ID. Returns the file content or null. */
@@ -279,6 +305,7 @@ export function readTemplateMeta(templateId: string): Record<string, unknown> | 
 // ── Skill Content Access ──
 
 /** Get the full content of a skill by name (for load_skill tool). Returns null if not found. */
-export function getSkillContent(skillName: string): string | undefined {
-  return skillCache.get(skillName)?.content;
+export function getSkillContent(skillName: string, capabilities: StudioImageCapabilities = {}): string | undefined {
+  const content = skillCache.get(skillName)?.content;
+  return content === undefined ? undefined : renderStudioCapabilityContent(content, capabilities);
 }

@@ -28,6 +28,8 @@ Object.assign(childEnv, {
   DATABASE_URL: "",
   DATABASE_READ_URL: "",
   PGLITE_DATA_DIR: "memory://",
+  MEMORY_DATABASE_URL: "",
+  MEMORY_PGLITE_DATA_DIR: "memory://",
   BETTER_AUTH_SECRET: "yumina-isolated-local-tests-only-secret",
   REDIS_URL: "",
   POSTHOG_API_KEY: "",

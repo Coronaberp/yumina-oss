@@ -191,6 +191,9 @@ export function isHostedPath(rel) {
   const bare = stripExt(rel);
   // A test sits next to the module it covers and goes wherever that goes.
   const source = bare.replace(/\.test$/, "");
+  // The local installation has its own owner-only authentication controls.
+  // Other hosted admin routes and feature modules remain behind the seam.
+  if (source === "routes/app/admin") return false;
   for (const dir of HOSTED_DIRS) {
     if (rel.startsWith(dir) || source + "/" === dir || source === dir.slice(0, -1)) return true;
   }

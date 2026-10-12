@@ -6,7 +6,7 @@ export interface ModelFallbackPolicy {
   mode: ModelFallbackMode;
   officialModel: string;
   privateModel: string;
-  /** Authorization for a private model belongs to the selected API key. */
+  /** The owned saved profile used for a backup attempt; independent of the primary. */
   privateKeyId: string | null;
 }
 
@@ -22,6 +22,8 @@ export interface ModelFallbackRecord {
   requestedModel: string;
   reason: ModelFallbackReason;
   automatic: boolean;
+  /** Another connection may serve the same model ID. */
+  providerChanged?: boolean;
 }
 
 /** Serializable UI state. The retry callback stays in the parent application. */
@@ -32,6 +34,8 @@ export interface ModelFallbackNotice {
   requestedModel: string;
   failedModel: string;
   suggestedModel: string;
+  suggestedKeyId?: string | null;
+  backupMatchesProfile?: boolean;
   reason: ModelFallbackReason;
   status: "ask" | "stopped" | "failed" | "switching";
   provider: "official" | "private";

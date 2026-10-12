@@ -46,18 +46,7 @@ function containsOnlyReview(suffix: string): boolean {
   return false;
 }
 
-/** Only negotiate away a specifically rejected JSON-output parameter. Generic
- * 400s, model errors, authentication/rate limits and failures after output must
- * not become hidden retries. The caller enforces the latter and the deadline. */
-export function isJsonModeUnsupported(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.slice(0, 4000) : "";
-  if (/\b(?:401|403|429|5\d\d)\b|unauthori[sz]ed|rate.limit|context.{0,20}(?:limit|length|exceed)/i.test(message)) return false;
-  // Routers can reject a requested parameter before choosing an endpoint.
-  // A bare "no endpoints" / unavailable-model error is deliberately excluded.
-  if (/no endpoints found that support (?:the |your )?requested parameters/i.test(message)) return true;
-  return /response[_ -]?format|json[_ -]?(?:object|schema)|responseMimeType|application\/json/i.test(message)
-    && /not.support|unsupported|unrecognized|unknown.parameter|invalid.parameter|not.allowed|not.permitted/i.test(message);
-}
+export { isJsonModeUnsupported } from "../../lib/llm/provider-errors.js";
 
 /** Recover only observed boundary typos: a COMPLETE stateChanges array
  * followed by one/two extra closing delimiters before a top-level review,

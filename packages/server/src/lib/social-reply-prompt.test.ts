@@ -44,7 +44,7 @@ test("the session scenario follows the character sheets and is declared to win o
     assert.ok(prompt.includes("the scenario wins, while personality, habits and voice still come from the sheet"));
     assert.ok(prompt.slice(scenario).includes("Mafia AU: Joshua leads the organisation."));
     const macro = buildSocialReplyPrompt(job, [], { name: "小月", backstory: "## 璃娅｜{{user}}\n{{USER}} owes them money." });
-    assert.ok(macro.includes("## 璃娅｜小月\n小月 owes them money."), "persona text resolves {{user}} to the persona name");
+    assert.ok(macro.includes("## 璃娅｜{{user}}\\n{{USER}} owes them money."), "persona text preserves the player token for the model");
 });
 
 test("creator notes come from the card's always-on non-character entries, deduplicated, with {{user}} resolved", () => {
@@ -76,7 +76,7 @@ test("creator notes come from the card's always-on non-character entries, dedupl
 test("custom persona entries reach social replies without overflowing the request budget", () => {
     const job: SocialJob = { id: "p", targetId: "p", kind: "post", members: ["a"], status: "running" };
     const entry = { title: "Weapons", content: "{{user}} uses a steel sword." };
-    assert.ok(buildSocialReplyPrompt(job, [], { name: "Alex", entries: [entry] }).includes("Weapons: Alex uses a steel sword."));
+    assert.ok(buildSocialReplyPrompt(job, [], { name: "Alex", entries: [entry] }).includes("Weapons: {{user}} uses a steel sword."));
     const full = buildSocialReplyPrompt(job, [{ id: "a", name: "A", lore: "L".repeat(6000) }], {
         name: "Alex", backstory: "B".repeat(5000), entries: Array(4).fill({ title: "Ability", content: "X".repeat(4990) }),
     }, "G".repeat(5000));
@@ -111,7 +111,7 @@ test("the full allowed persona and creator notes survive six long character prof
     };
     const guidance = "G".repeat(9000);
     const prompt = buildSocialReplyPrompt(job, members.map(id => ({ id, name: id, lore: '\\"😀'.repeat(6000) })), persona, guidance);
-    for (const field of [persona.name, persona.appearance, persona.personality, persona.backstory]) assert.ok(prompt.includes(field));
+    for (const field of [persona.appearance, persona.personality, persona.backstory]) assert.ok(prompt.includes(field));
     assert.ok(!prompt.includes(persona.description));
     assert.ok(prompt.includes("G".repeat(5000)) && !prompt.includes("G".repeat(5001)), "creator notes are clipped, never dropped");
     const lore = sheets(prompt);
@@ -125,9 +125,10 @@ test("null and alternate synthetic personas cannot inherit another player's iden
     const lore = [{ id: "mira", name: "Mira", lore: "An astronomer." }];
     const first = buildSocialReplyPrompt(job, lore, { name: "Synthetic Alex", backstory: "Mira is my spouse." });
     const second = buildSocialReplyPrompt(job, lore, { name: "Synthetic Robin", appearance: "Blue jacket", personality: "Reserved", backstory: "Mira is my research supervisor." });
-    assert.ok(first.includes("Synthetic Alex"));
+    assert.ok(first.includes("{{user}}"));
+    assert.ok(!first.includes("Synthetic Alex"));
     assert.ok(first.includes("Mira is my spouse."));
-    for (const text of ["Synthetic Robin", "Blue jacket", "Reserved", "Mira is my research supervisor."]) assert.ok(second.includes(text));
+    for (const text of ["{{user}}", "Blue jacket", "Reserved", "Mira is my research supervisor."]) assert.ok(second.includes(text));
     assert.ok(!second.includes("Synthetic Alex"));
     assert.ok(!second.includes("Mira is my spouse."));
     const empty = buildSocialReplyPrompt(job, lore, null);

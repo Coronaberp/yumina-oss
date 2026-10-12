@@ -1,7 +1,7 @@
 import type { SessionData } from "@/stores/chat";
 
 const identityKeys = ["personaActive", "personaName", "personaImage", "personaAppearance", "personaPersonality", "personaBackstory", "personaEntries"] as const;
-type Identity = Pick<SessionData, "id" | "sessionPersona" | "personaLocked"> & { state: { metadata?: Record<string, unknown> } };
+type Identity = Pick<SessionData, "id" | "sessionPersona" | "personaLocked" | "personaSelectable"> & { state: { metadata?: Record<string, unknown> } };
 type Options = {
   sessionId: string; apiBase: string;
   getState: () => { session: SessionData | null; isStreaming: boolean };
@@ -13,7 +13,7 @@ function applyIdentity(options: Options, data: Identity, signal?: AbortSignal) {
   if (signal?.aborted || current.isStreaming || current.session?.id !== options.sessionId || data.id !== options.sessionId) return false;
   const metadata = { ...(current.session.state.metadata as Record<string, unknown> | undefined) };
   for (const key of identityKeys) metadata[key] = data.state.metadata?.[key];
-  options.apply({ ...current.session, sessionPersona: data.sessionPersona, personaLocked: data.personaLocked,
+  options.apply({ ...current.session, sessionPersona: data.sessionPersona, personaLocked: data.personaLocked, personaSelectable: data.personaSelectable,
     state: { ...current.session.state, metadata } });
   return true;
 }
@@ -78,6 +78,8 @@ export function createChatPersonaController(options: Options & {
   }
   async function save(path: string, body: object, locked: boolean, personaId: string | null) {
     if (disposed || saving || blocked || options.getState().isStreaming || options.getState().session?.id !== options.sessionId) return false;
+    const currentSession = options.getState().session;
+    if (currentSession?.personaSelectable === false || currentSession?.sessionPersona?.started || Number(currentSession?.state.turnCount ?? 0) > 0) return false;
     saving = true;
     pending = null;
     pauseRefresh();
@@ -136,9 +138,14 @@ export function createChatPersonaController(options: Options & {
   return {
     refresh() { dirty = true; pauseRefresh(); flush(); },
     setBlocked(value: boolean) { blocked = value; if (value) pauseRefresh(); else flush(); },
-    select(personaId: string | null) { return save("persona", { personaId }, true, personaId); },
+    selectPreset(id: string) { return save("persona-selection", { selection: { kind: "preset", id } }, true, id); },
+    select(personaId: string | null) {
+      if (!personaId) { options.onError(new Error("Each session must have one persona")); return Promise.resolve(false); }
+      return save("persona-selection", { selection: { kind: "player", id: personaId } }, true, personaId);
+    },
     setLock(locked: boolean, personaId?: string | null) {
-      return save("persona-lock", locked ? { locked: true, personaId: personaId ?? null } : { locked: false }, locked, personaId ?? null);
+      if (!locked || !personaId) { options.onError(new Error("Each session must have one persona")); return Promise.resolve(false); }
+      return save("persona-selection", { selection: { kind: "player", id: personaId } }, true, personaId);
     },
     dispose() { disposed = true; pending = null; refreshing?.abort(); selection?.abort(); },
   };

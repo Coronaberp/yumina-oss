@@ -23,6 +23,8 @@ export interface EventMatchCondition {
  * Pattern that matches events. Used as the WHEN clause in reactions.
  * - `eventType` matches the event's `type` field. Supports trailing wildcard: "spatial:*"
  * - `match` optionally checks event data fields against conditions
+ * - For state:crossed, match.repeatEvery.value optionally repeats the threshold
+ *   in variable units, independent of chat turns (e.g. every 30 academy days).
  */
 export interface EventPattern {
   /** Preserves rich legacy trigger semantics when an old behavior is edited and saved. */

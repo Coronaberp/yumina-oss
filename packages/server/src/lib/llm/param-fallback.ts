@@ -58,6 +58,8 @@ export function stripParamFromBody(
   body: Record<string, unknown>,
   paramName: string,
 ): Record<string, unknown> | null {
+  // Removing the required model lets upstream choose a different default.
+  if (paramName === "model") return null;
   if (!(paramName in body)) return null;
   const next = { ...body };
   delete next[paramName];

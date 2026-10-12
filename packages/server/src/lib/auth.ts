@@ -5,6 +5,7 @@ import { username } from "better-auth/plugins/username";
 import { jwt } from "better-auth/plugins/jwt";
 import { and, eq, like } from "drizzle-orm";
 import { env, IS_LOCAL_EDITION, PUBLIC_ORIGIN } from "./env.js";
+import { adminIdentityForGitHub } from "./local-admin.js";
 import * as schema from "../db/schema.js";
 import { db } from "../db/index.js";
 import {
@@ -27,6 +28,7 @@ import {
 import { isDeletedIdentityRegistrationBlocked } from "./deleted-identity-policy.js";
 import { sendRedditConversion } from "./reddit-capi.js";
 import { invalidateSessionUser } from "./session-user-cache.js";
+import { installDefaultExtensions } from "./default-extensions.js";
 
 /**
  * Server-side ad-conversion for a fresh signup (Reddit CAPI). The browser
@@ -220,7 +222,8 @@ export const auth = betterAuth({
     cookiePrefix: COOKIE_PREFIX,
     defaultCookieAttributes: {
       sameSite: "lax",
-      secure: true,
+      // Local installs support HTTP LAN previews; HTTPS and hosted cookies stay secure.
+      secure: !IS_LOCAL_EDITION || new URL(PUBLIC_ORIGIN).protocol === "https:",
     },
     // Better Auth defaults to `x-forwarded-for[0]`, which behind Cloudflare →
     // Railway is the Cloudflare EDGE ip, not the visitor. Every one of the
@@ -279,7 +282,7 @@ export const auth = betterAuth({
   account: {
     accountLinking: {
       enabled: true,
-      trustedProviders: ["google"],
+      trustedProviders: env.YUMINA_SIGN_IN_METHOD === "github" ? ["github"] : ["google"],
       // Settings → "Connect Google/Discord" while signed in: the user proves
       // control of both accounts (live session + completed OAuth), so the
       // provider's email need not match the account email. Without this,
@@ -287,7 +290,7 @@ export const auth = betterAuth({
       // Google/Discord they used on krew.io can never link it — and that link
       // is how they recover their krew account. Does not affect sign-in-by-
       // email auto-linking, which stays governed by trustedProviders above.
-      allowDifferentEmails: true,
+      allowDifferentEmails: env.YUMINA_SIGN_IN_METHOD !== "github",
     },
   },
   secondaryStorage: redisSecondaryStorage,
@@ -312,7 +315,7 @@ export const auth = betterAuth({
     // band-aids were papering over). 5 min keeps revocation / role changes
     // propagating quickly — a full DB/Redis lookup resumes once the cache lapses.
     cookieCache: {
-      enabled: true,
+      enabled: env.YUMINA_SIGN_IN_METHOD !== "github",
       maxAge: 60 * 5, // 5 minutes
     },
   },
@@ -375,7 +378,7 @@ export const auth = betterAuth({
     }),
   ],
   emailAndPassword: {
-    enabled: true,
+    enabled: env.YUMINA_SIGN_IN_METHOD !== "github",
     // Hosted production only. The local edition has no mail provider by default
     // and its single account is created verified (routes/local-auth.ts).
     requireEmailVerification: process.env.NODE_ENV === "production" && !IS_LOCAL_EDITION,
@@ -417,6 +420,15 @@ export const auth = betterAuth({
     },
   },
   databaseHooks: {
+    session: {
+      create: {
+        // Retry defaults before sign-in, including an account whose signup
+        // committed before a transient default-install failure.
+        before: async (session: { userId: string }) => {
+          await installDefaultExtensions(session.userId);
+        },
+      },
+    },
     verification: {
       create: {
         // Single-active-reset-token invariant.
@@ -496,6 +508,8 @@ export const auth = betterAuth({
             : null;
           assertDeletedIdentityCanRegister(deletedIdentity);
 
+          await installDefaultExtensions(user.id);
+
           // Create credit wallet immediately so new users have credits on first load.
           try {
             await ensureWallet(user.id, "free");
@@ -516,7 +530,7 @@ export const auth = betterAuth({
     },
   },
   socialProviders: {
-    ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+    ...(env.YUMINA_SIGN_IN_METHOD !== "github" && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
       ? {
         google: {
           clientId: env.GOOGLE_CLIENT_ID,
@@ -529,10 +543,11 @@ export const auth = betterAuth({
         github: {
           clientId: env.GITHUB_CLIENT_ID,
           clientSecret: env.GITHUB_CLIENT_SECRET,
+          mapProfileToUser: profile => adminIdentityForGitHub(profile.id, {accountId:env.YUMINA_ADMIN_ACCOUNT_ID,githubId:env.YUMINA_ADMIN_GITHUB_ID}),
         },
       }
       : {}),
-    ...(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET
+    ...(env.YUMINA_SIGN_IN_METHOD !== "github" && env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET
       ? {
         discord: {
           clientId: env.DISCORD_CLIENT_ID,
@@ -540,7 +555,7 @@ export const auth = betterAuth({
         },
       }
       : {}),
-    ...(env.TWITTER_CLIENT_ID && env.TWITTER_CLIENT_SECRET
+    ...(env.YUMINA_SIGN_IN_METHOD !== "github" && env.TWITTER_CLIENT_ID && env.TWITTER_CLIENT_SECRET
       ? {
         twitter: {
           clientId: env.TWITTER_CLIENT_ID,

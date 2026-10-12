@@ -6,6 +6,7 @@ import { auth } from "../lib/auth.js";
 import { AUTH_MODE } from "../lib/env.js";
 import { db } from "../db/index.js";
 import { user } from "../db/schema.js";
+import { installDefaultExtensions } from "../lib/default-extensions.js";
 
 /**
  * Single-user mode (the open-source local edition's default).
@@ -34,7 +35,10 @@ async function ensureLocalUser(): Promise<string> {
     .from(user)
     .where(eq(user.email, LOCAL_ACCOUNT_EMAIL))
     .limit(1);
-  if (existing[0]?.id) return existing[0].id;
+  if (existing[0]?.id) {
+    await installDefaultExtensions(existing[0].id);
+    return existing[0].id;
+  }
 
   const id = crypto.randomUUID();
   await db.insert(user).values({
@@ -44,6 +48,7 @@ async function ensureLocalUser(): Promise<string> {
     emailVerified: true,
     username: LOCAL_ACCOUNT_USERNAME,
   });
+  await installDefaultExtensions(id);
   return id;
 }
 

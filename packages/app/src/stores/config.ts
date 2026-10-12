@@ -33,6 +33,7 @@ const SYNCED_KEYS = [
   "maxTokens",
   "maxContext",
   "storyMemory",
+  "memoryBudgetTokens",
   "temperature",
   "topP",
   "frequencyPenalty",
@@ -51,6 +52,7 @@ const SYNCED_KEYS = [
 ] as const;
 type SyncedKey = (typeof SYNCED_KEYS)[number];
 const SYNCED_KEY_SET = new Set<string>(SYNCED_KEYS);
+const DEFAULT_MODEL_KEYS = new Set<string>(["selectedModel", "mixMode", "modelPool"]);
 
 interface ConfigState {
   maxTokens: number;
@@ -66,6 +68,8 @@ interface ConfigState {
    * without them asking. The server decides what absence means.
    */
   storyMemory: number | null;
+  /** Account default for recalled facts/lore. null retains the shipped default. */
+  memoryBudgetTokens: number | null;
   temperature: number;
   topP: number;
   frequencyPenalty: number;
@@ -76,6 +80,8 @@ interface ConfigState {
   reasoningEffort: string;
   streaming: boolean;
   selectedModel: string;
+  /** Runtime server policy, never persisted or sent back as an editable value. */
+  adminDefaultModel: string | null;
   modelFallback: ModelFallbackPolicy;
   pinnedModels: string[];
   pinnedPrivateModels: string[];
@@ -103,11 +109,12 @@ interface ConfigState {
   flushPendingPush: () => Promise<void>;
 }
 
-type ConfigValues = Pick<ConfigState, "maxTokens" | "maxContext" | "storyMemory" | "temperature" | "topP" | "frequencyPenalty" | "presencePenalty" | "repetitionPenalty" | "topK" | "minP" | "reasoningEffort" | "streaming" | "selectedModel" | "modelFallback" | "mixMode" | "modelPool">;
+type ConfigValues = Pick<ConfigState, "maxTokens" | "maxContext" | "storyMemory" | "memoryBudgetTokens" | "temperature" | "topP" | "frequencyPenalty" | "presencePenalty" | "repetitionPenalty" | "topK" | "minP" | "reasoningEffort" | "streaming" | "selectedModel" | "modelFallback" | "mixMode" | "modelPool">;
 
 const DEFAULTS: ConfigValues & { pinnedModels: string[]; pinnedPrivateModels: string[] } = {
   ...AI_GENERATION_DEFAULTS,
   storyMemory: null,
+  memoryBudgetTokens: null,
   selectedModel: DEFAULT_MODEL,
   modelFallback: { ...DEFAULT_MODEL_FALLBACK_POLICY },
   pinnedModels: [...DEFAULT_PINNED_MODELS],
@@ -252,8 +259,10 @@ export const useConfigStore = create<ConfigState>()(
   persist(
     (set, get) => ({
       ...DEFAULTS,
+      adminDefaultModel: null,
 
       setConfig: (key, value) => {
+        if (get().adminDefaultModel && DEFAULT_MODEL_KEYS.has(key)) return;
         const nextValue =
           key === "modelPool"
             ? sanitizeModelPool(value as ModelPoolEntry[])
@@ -292,6 +301,7 @@ export const useConfigStore = create<ConfigState>()(
 
       addToPool: (modelId) =>
         set((s) => {
+          if (s.adminDefaultModel) return s;
           if (s.modelPool.length >= MAX_POOL_SIZE) return s;
           if (s.modelPool.some((e) => e.modelId === modelId)) return s;
           const next = sanitizeModelPool([...s.modelPool, { modelId, weight: DEFAULT_WEIGHT }]);
@@ -301,6 +311,7 @@ export const useConfigStore = create<ConfigState>()(
 
       removeFromPool: (modelId) =>
         set((s) => {
+          if (s.adminDefaultModel) return s;
           const next = sanitizeModelPool(s.modelPool.filter((e) => e.modelId !== modelId));
           schedulePush("modelPool", next);
           if (next.length <= 1) {
@@ -312,6 +323,7 @@ export const useConfigStore = create<ConfigState>()(
 
       setPoolWeight: (modelId, weight) =>
         set((s) => {
+          if (s.adminDefaultModel) return s;
           const next = setModelPoolWeight(s.modelPool, modelId, weight);
           schedulePush("modelPool", next);
           return { modelPool: next };
@@ -319,12 +331,14 @@ export const useConfigStore = create<ConfigState>()(
 
       togglePoolLock: (modelId) =>
         set((s) => {
+          if (s.adminDefaultModel) return s;
           const next = toggleModelPoolLock(s.modelPool, modelId);
           schedulePush("modelPool", next);
           return { modelPool: next };
         }),
 
       resetPool: () => {
+        if (get().adminDefaultModel) return;
         const pool = sanitizeModelPool([...DEFAULT_POOL] as ModelPoolEntry[]);
         const fallbackModel = pool[0]?.modelId ?? DEFAULT_MODEL;
         set({ modelPool: pool, mixMode: true, selectedModel: fallbackModel });
@@ -334,8 +348,10 @@ export const useConfigStore = create<ConfigState>()(
       },
 
       resetDefaults: () => {
-        set(DEFAULTS);
+        const locked = get().adminDefaultModel;
+        set(locked ? { ...DEFAULTS, selectedModel: locked, mixMode: false, modelPool: [] } : DEFAULTS);
         for (const k of SYNCED_KEYS) {
+          if (locked && DEFAULT_MODEL_KEYS.has(k)) continue;
           schedulePush(k, DEFAULTS[k as keyof typeof DEFAULTS]);
         }
       },
@@ -352,6 +368,7 @@ export const useConfigStore = create<ConfigState>()(
         // A pending list with unknown/different ownership must never be merged
         // into the current account. Preserve this account's unsent edits on refresh.
         if (privatePinsAccountId !== accountId) {
+          set({adminDefaultModel:null});
           delete pendingPush.pinnedPrivateModels;
           if (Object.keys(pendingPush).length === 0 && pushTimer) {
             clearTimeout(pushTimer);
@@ -374,7 +391,16 @@ export const useConfigStore = create<ConfigState>()(
           if (!remote || typeof remote !== "object") return;
 
           // Apply server values to local store for keys present remotely.
-          const patch: Partial<ConfigState> = {};
+          const locked = typeof remote.adminDefaultModel === "string" && remote.adminDefaultModel.trim()
+            ? remote.adminDefaultModel : null;
+          const patch: Partial<ConfigState> = {adminDefaultModel:locked};
+          if (locked) {
+            for (const key of DEFAULT_MODEL_KEYS) delete pendingPush[key as SyncedKey];
+            if (!Object.keys(pendingPush).length && pushTimer) {
+              clearTimeout(pushTimer);
+              pushTimer = null;
+            }
+          }
           const seed: Partial<Record<SyncedKey, unknown>> = {};
           const current = get();
 
@@ -445,6 +471,7 @@ export const useConfigStore = create<ConfigState>()(
       name: "yumina-global-config",
       version: 11,
       migrate: migrateConfig,
+      partialize: ({adminDefaultModel: _policy, ...state}) => state,
     }
   )
 );

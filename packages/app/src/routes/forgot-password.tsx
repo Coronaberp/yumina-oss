@@ -6,6 +6,7 @@ export const Route = createFileRoute("/forgot-password")({
     beforeLoad: async () => {
       const edition = await ensureEditionLoaded();
       if (edition.auth.mode === "single-user") throw redirect({ to: "/app/library" });
+      if (!edition.auth.emailPassword) throw redirect({to:"/login"});
     },
     component: ForgotPasswordPage,
 });

@@ -18,21 +18,38 @@
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     },
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     }
-  }
+  },
+  "globalDependencies": [
+    "interfaces/vn/status-data.ts",
+    "interfaces/vn/status-view.tsx",
+    "interfaces/vn/status-gauge.tsx",
+    "interfaces/vn/status-widgets.tsx",
+    "interfaces/vn/status-sheet.tsx"
+  ]
 }

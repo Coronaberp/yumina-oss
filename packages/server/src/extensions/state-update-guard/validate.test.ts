@@ -34,6 +34,48 @@ function fixture(raw = "The stranger waits.", chunks: StreamChunk[] = [{ type: "
 }
 const errorCode = (code: string) => (error: unknown) => error instanceof StateGuardError && error.code === code;
 
+test("a valid slower correction survives the old 20-second cutoff", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture();
+  f.ctx.provider.generateStream = async function* (params) {
+    f.requests.push(params);
+    await new Promise(resolve => setTimeout(resolve, 30_000));
+    yield { type: "text", content: reviewedNone };
+    yield { type: "done", content: "", stopReason: "stop" };
+  };
+  const pending = guardTurnOutput(f.ctx);
+  const checked = assert.doesNotReject(async () => {
+    assert.equal((await pending).audit?.outcome, "explicit-none");
+  });
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  assert.equal(f.requests.length, 1);
+  t.mock.timers.tick(30_000);
+  await checked;
+  assert.equal(f.usages.length, 1);
+  assert.equal(f.ctx.state.variables["energy-id"], 100);
+});
+
+test("ordinary large card state is formatted before the pathological-token input check", async () => {
+  const batch = JSON.stringify({ narrative: "", status: "updated", stateChanges: [{ variableId: "track-0", operation: "add", value: 1 }] });
+  const f = fixture("A meaningful achievement occurs.", [{ type: "text", content: batch }, { type: "done", content: "", stopReason: "stop" }]);
+  f.ctx.world.variables = Array.from({ length: 70 }, (_, i) => ({
+    id: `track-${i}`, name: `Track ${i}`, type: "number" as const, min: -1500, max: 1500, defaultValue: 0,
+    behaviorRules: "Award this character progress only for a distinct meaningful action. Routine politeness earns nothing. ".repeat(6),
+  }));
+  f.ctx.state = new GameStateManager(f.ctx.world).getSnapshot();
+  f.ctx.maxContext = 28_608;
+  const before = structuredClone(f.ctx.state);
+  const result = await guardTurnOutput(f.ctx);
+  assert.equal(f.requests.length, 1, "A normal large state must reach the correction model");
+  const packet = f.requests[0]!.messages[1]!.content as string;
+  assert.ok(Buffer.byteLength(packet, "utf8") > 24_000, "fixture exercises the conservative byte fallback");
+  assert.equal(/\S{512}/u.test(packet), false, "JSON keys and values should have safe tokenization boundaries");
+  assert.equal(JSON.parse(packet).variables.length, 70, "Never truncate definitions to fit");
+  assert.equal(result.audit?.correctionCount, 1);
+  assert.deepEqual(result.parsed.effects, [{ variableId: "track-0", operation: "add", value: 1 }]);
+  assert.deepEqual(f.ctx.state, before, "Validation does not mutate pre-turn state");
+});
+
 function readonlyFixture(stateChanges: unknown[], review?: unknown) {
   const output = JSON.stringify({ narrative: "", status: "updated", stateChanges, ...(review === undefined ? {} : { review }) });
   const f = fixture("You catch your breath.", [{ type: "text", content: output }, { type: "done", content: "", stopReason: "stop" }]);
@@ -563,13 +605,13 @@ test("narrative-only cards require neither acknowledgement nor correction", asyn
   assert.equal(f.requests.length, 0);
 });
 
-test("bounded history and frozen original draft are supplied as data", async () => {
+test("bounded whole-message history and frozen original draft are supplied as data", async () => {
   const f = fixture();
   f.ctx.history = Array.from({ length: 9 }, () => ({ role: "user", content: "The stranger waits. ".repeat(400) }));
   await guardTurnOutput(f.ctx);
   const data = JSON.parse(f.requests[0]!.messages[1]!.content as string);
   assert.equal(data.history.length, 4);
-  assert.equal(data.history[0].content.length, 6000);
+  assert.equal(data.history[0].content, f.ctx.history[5]!.content);
   assert.equal(data.draft, f.ctx.raw);
   assert.deepEqual(data.state, f.ctx.state.variables);
 });
@@ -798,3 +840,15 @@ for (const path of ["send", "regenerate", "continue"] as const) {
     assert.deepEqual(f.ctx.state, before);
   });
 }
+
+test("correction requests keep the player identity private even in restored history and draft", async () => {
+  const f = fixture("PRIVATE_ACCOUNT waits quietly.");
+  f.ctx.playerNames = ["PRIVATE_ACCOUNT", "Private Persona"];
+  f.ctx.history = [{ role: "user", content: "Private Persona watches the door." }];
+  await guardTurnOutput(f.ctx);
+  assert.equal(f.requests.length, 1);
+  const content = JSON.stringify(f.requests[0]!.messages);
+  assert.ok(!content.includes("PRIVATE_ACCOUNT"));
+  assert.ok(!content.includes("Private Persona"));
+  assert.ok(content.includes("{{user}}"));
+});

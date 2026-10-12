@@ -397,8 +397,6 @@ export const GENERATION_ERROR_CODES = [
   "REFERENCE_TOO_LARGE",
   "REFERENCE_DIMENSIONS",
   "REFERENCE_UNAVAILABLE",
-  /** The output would exceed the user's asset storage allowance. */
-  "STORAGE_LIMIT",
   /** Job succeeded but its outputs could no longer be retrieved. */
   "OUTPUT_LOST",
   /** Worker/ComfyUI raised an execution error. */

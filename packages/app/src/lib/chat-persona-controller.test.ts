@@ -63,9 +63,9 @@ test("selection only writes the requested session, waits for commit, and preserv
   const { state, calls, controller, respond, saving } = fixture();
   const selected = controller.select("B");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.url, "/api/sessions/chat-A/persona");
+  assert.equal(calls[0]!.url, "/api/sessions/chat-A/persona-selection");
   assert.equal(calls[0]!.init?.method, "PUT");
-  assert.deepEqual(JSON.parse(calls[0]!.init?.body as string), { personaId: "B", expectedVersion: "" });
+  assert.deepEqual(JSON.parse(calls[0]!.init?.body as string), { selection: { kind: "player", id: "B" }, expectedVersion: "" });
   assert.equal(state.session.sessionPersona?.persona?.name, "A");
   // Closing a picker has no controller lifecycle action; the save must still finish.
   calls[0]!.resolve(Response.json({ data: { persona: { id: "B", name: "B" } } }));
@@ -80,12 +80,12 @@ test("selection only writes the requested session, waits for commit, and preserv
   controller.dispose();
 });
 
-test("session lock writes only lock state and refreshes the effective persona", async () => {
+test("legacy lock selection keeps one identity and rejects disabling", async () => {
   const { state, calls, controller, respond, saving } = fixture();
   const locked = controller.setLock(true, "B");
-  assert.equal(calls[0]!.url, "/api/sessions/chat-A/persona-lock");
+  assert.equal(calls[0]!.url, "/api/sessions/chat-A/persona-selection");
   assert.equal(calls[0]!.init?.method, "PUT");
-  assert.deepEqual(JSON.parse(calls[0]!.init?.body as string), { locked: true, personaId: "B", expectedVersion: "" });
+  assert.deepEqual(JSON.parse(calls[0]!.init?.body as string), { selection: { kind: "player", id: "B" }, expectedVersion: "" });
   calls[0]!.resolve(Response.json({ data: { personaLocked: true, sessionPersona: { persona: { id: "B", name: "B" } } } }));
   assert.equal(await locked, true);
   assert.equal(calls[1]!.url, "/api/sessions/chat-A");
@@ -93,28 +93,28 @@ test("session lock writes only lock state and refreshes the effective persona", 
   await setImmediate();
   assert.deepEqual(saving, [true, false]);
 
-  const unlocked = controller.setLock(false);
-  assert.deepEqual(JSON.parse(calls[2]!.init?.body as string), { locked: false, expectedVersion: "" });
-  calls[2]!.resolve(Response.json({ data: { personaLocked: false, sessionPersona: { persona: { id: "A", name: "A" } } } }));
-  assert.equal(await unlocked, true);
+  const beforeDisable = calls.length;
+  assert.equal(await controller.setLock(false), false);
+  assert.equal(calls.length, beforeDisable, "disabling never sends a request");
+  assert.equal(state.session.sessionPersona?.persona?.id, "B");
   controller.dispose();
   assert.equal(state.session.id, "chat-A");
 });
 
-test("saving invalidates an older refresh and explicit no-persona is sent unchanged", async () => {
+test("saving invalidates an older refresh while preserving the required persona", async () => {
   const { state, calls, controller, respond } = fixture();
   controller.refresh();
-  const selected = controller.select(null);
+  const selected = controller.select("B");
   assert.equal(calls[0]!.init?.signal?.aborted, true);
-  assert.deepEqual(JSON.parse(calls[1]!.init?.body as string), { personaId: null, expectedVersion: "" });
+  assert.deepEqual(JSON.parse(calls[1]!.init?.body as string), { selection: { kind: "player", id: "B" }, expectedVersion: "" });
   respond(0, "STALE");
   await setImmediate();
   assert.equal(state.session.sessionPersona?.persona?.name, "A");
-  calls[1]!.resolve(Response.json({ data: { persona: null } }));
+  calls[1]!.resolve(Response.json({ data: { persona: { id: "B", name: "B" } } }));
   await selected;
-  calls[2]!.resolve(Response.json({ data: { ...state.session, sessionPersona: { persona: null }, state: { metadata: { personaActive: false } } } }));
+  respond(2, "B");
   await setImmediate();
-  assert.equal(state.session.sessionPersona?.persona, null);
+  assert.equal(state.session.sessionPersona?.persona?.name, "B");
   controller.dispose();
 });
 
@@ -164,21 +164,16 @@ test("navigation cancels pending selection and never refreshes the next session"
   assert.equal(state.session.id, "chat-C");
 });
 
-for (const locked of [true, false]) {
-  test(`receipt ${locked ? "explicit none" : "unlock"} clears old identity while preserving state`, async () => {
-    const { state, calls, controller } = fixture();
-    const saving = controller.setLock(locked, null);
-    calls[0]!.resolve(Response.json({ data: { id: "chat-A", personaLocked: locked, sessionPersona: { persona: null }, state: { metadata: {
-      personaActive: false, personaName: "account", personaImage: "account.png", personaAppearance: "", personaPersonality: "", personaBackstory: "", personaEntries: [],
-    } } } }));
-    assert.equal(await saving, true);
-    assert.equal(calls.length, 1);
-    assert.equal(state.session.personaLocked, locked);
-    assert.equal(state.session.sessionPersona?.persona, null);
-    assert.deepEqual(state.session.state.metadata, { activeAudio: "song", personaActive: false, personaName: "account", personaImage: "account.png", personaAppearance: "", personaPersonality: "", personaBackstory: "", personaEntries: [] });
-    controller.dispose();
-  });
-}
+test("disable and empty selection attempts preserve identity without a request", async () => {
+  const { state, calls, controller, errors } = fixture();
+  for (const action of [() => controller.setLock(false), () => controller.setLock(true, null), () => controller.select(null)]) {
+    assert.equal(await action(), false);
+    assert.equal(calls.length, 0);
+    assert.equal(state.session.sessionPersona?.persona?.id, "A");
+    assert.ok(errors.at(-1) instanceof Error);
+  }
+  controller.dispose();
+});
 
 test("an in-flight commit waits for streaming to finish and cannot overwrite gameplay", async () => {
   const { state, calls, controller } = fixture();

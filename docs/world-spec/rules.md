@@ -54,6 +54,14 @@ For new cards, prefer `reactions` with `when`, `conditions`, and `then` (see the
 | `action` | `actionId` (string) | A specific action is executed (e.g., from a custom UI button) |
 | `manual` | — | Only fires when triggered by another rule |
 
+### Recurring time events
+
+Use a monotonically increasing numeric variable as a simple in-world clock, such as `academy-day`. A variable threshold trigger can repeat every N variable units, independently of chat turn count. In the Behaviors editor, set **Repeat every (variable units)**; leave it blank to keep a single threshold.
+
+For a native reaction, add `"repeatEvery": { "operator": "eq", "value": 30 }` to `when.match` alongside `variableId`, `threshold`, and `direction`, with `eventType: "state:crossed"`. For a legacy rule, set `trigger.repeatEvery: 30`.
+
+The thresholds are `threshold + k * repeatEvery` for `k >= 0`. A rising threshold of 29 with an interval of 30 fires as the day counter moves 29→30, 59→60, and 89→90. A rising threshold of 32 with the same interval ends that event on days 33, 63, and 93. Reaching a threshold exactly does not cross it; repeated turns without a day change do not fire it. A jump over several boundaries fires the behavior once. Conditions, cooldowns, and fire limits still apply.
+
 ## Conditions
 
 Optional state checks that must pass for the rule to fire:
@@ -229,6 +237,37 @@ Reactions can target system features via `@` paths:
 | `@ui.notification` | Show toast notification |
 | `@ai.request` | Trigger AI generation |
 | `@ai.context` | Add context for next AI message |
+
+### Shared Stage Progression
+
+One `turn:complete` reaction can resolve multiple relationship or reputation tracks by emitting `progression:resolve`. The engine uses actual variable-change events to distinguish earned actions from idle turns. The configuration carries the card's rules; the handler has no story-specific thresholds.
+
+```json
+{
+  "type": "emit",
+  "event": {
+    "type": "progression:resolve",
+    "checkpointVariableId": "social-checkpoints",
+    "maxProgress": 1000,
+    "ladders": {
+      "relationship": [
+        { "label": "Neutral", "capacity": 100 },
+        { "label": "Friendly", "capacity": 200 },
+        { "label": "Trusted", "capacity": 400, "milestone": "trust" }
+      ]
+    },
+    "tracks": [{
+      "scoreVariableId": "rel-alice", "stateVariableId": "rel-alice-state",
+      "ladder": "relationship", "defaultState": "Neutral", "aliases": {},
+      "milestoneVariables": { "trust": "alice-trust-earned" }
+    }]
+  }
+}
+```
+
+Use priority `-1000`. Declare the score as numeric progress, the state as a read-only string, milestone flags as booleans, and checkpoints as internal JSON with default `{}`. Reuse one ordered ladder for many tracks. Capacities are positive and cannot exceed `maxProgress`; state labels are unique and `defaultState` must belong to the ladder. At the positive or negative current-stage requirement, an actual action advances or retreats one stage and resets progress to zero. Advanced promotion requires all milestones through the next stage; demotion revokes lost and deeper milestones. Held and terminal bars clamp to their current stage. Full bars and pre-existing milestone flags do not advance on idle turns. A newly earned milestone may release a held bar. Aliases repair legacy labels. Invalid scores restore the last valid checkpoint, or zero. Optional `readyVariableId` and `phaseVariableId` preserve older checkpoint variables (boolean readiness; string phase default `"collect"`). The narrative model remains responsible for awarding action progress and earned milestones according to authored rules.
+
+Legacy checkpoints with `pending: true` retain evidence of an unresolved prior action. A valid stored score can resolve that action on the next turn; a malformed score is repaired without granting a transition.
 
 ## Events Generated Each Turn
 

@@ -24,8 +24,17 @@ import {
   sendEmail,
 } from "../lib/email.js";
 import { env } from "../lib/env.js";
+import { authenticationMethodBlocked } from "../lib/authentication-policy.js";
 
 const authRoutes = new Hono();
+
+authRoutes.use("/*", async (c, next) => {
+  const path = c.req.path.replace(/^\/api\/auth/, "");
+  if (authenticationMethodBlocked(path, env.YUMINA_SIGN_IN_METHOD)) {
+    return c.json({error:"Sign in with GitHub.",code:"SIGN_IN_METHOD_DISABLED"},403);
+  }
+  await next();
+});
 
 const ACCOUNT_DELETION_ORIGINS = new Set(
   [
