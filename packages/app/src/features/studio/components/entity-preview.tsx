@@ -132,7 +132,7 @@ function isPreviewArgs(value: unknown): value is Record<string, unknown> {
   const textFields = [
     "id", "name", "content", "tsxCode", "tsx_code", "new_code",
     "behaviorRules", "behavior_rules", "description", "type", "role",
-    "section", "category", "language",
+    "section", "category", "language", "css", "html", "layoutCode",
   ];
   if (textFields.some((key) => value[key] != null && typeof value[key] !== "string")) return false;
   for (const key of ["min", "max"]) {

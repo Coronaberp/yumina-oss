@@ -84,6 +84,10 @@ const malformed: Array<[string, unknown]> = [
   ["delete_entities", { ids: [{ id: "lore" }] }],
   ["apply_changes", { changes: "invalid" }],
   ["apply_changes", { changes: [null] }],
+  ["write_character_showcase_css", { css: { tool_call: {} } }],
+  ["write_card_showcase", { html: ["<section>"], css: "body {}" }],
+  ["write_card_showcase", { html: "<section />", css: { style: "body {}" } }],
+  ["write_status_visualization", { layoutCode: { code: "<div />" } }],
 ];
 for (const [index, [name, args]] of malformed.entries()) {
   test(`malformed proposal ${index + 1} (${name}) renders safely`, () => {
@@ -128,6 +132,13 @@ test("a valid proposal still expands after an invalid proposal is replaced", asy
     assert.equal(container.querySelector("script"), null);
     await act(async () => { button.click(); });
     assert.equal(container.querySelector("p"), null);
+    await act(async () => { root.render(renderCall(call("write_character_showcase_css", { css: { tool_call: {} } }))); });
+    assert.match(container.textContent ?? "", /Invalid arguments/);
+    assert.equal(container.querySelector("button"), null);
+    const css = ".portrait { color: red; }";
+    await act(async () => { root.render(renderCall(call("write_character_showcase_css", { css }))); });
+    await act(async () => { container.querySelector("button")!.click(); });
+    assert.equal(container.querySelector("pre")?.textContent, css);
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();
