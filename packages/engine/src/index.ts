@@ -201,6 +201,7 @@ export {
   isAiWritable,
   resolveActiveVariableIds,
   filterAiEffects,
+  resolveEffectVariable,
 } from "./state/variable-activation.js";
 export { keywordMatches } from "./lorebook/keyword-matcher.js";
 export {

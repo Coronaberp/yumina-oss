@@ -64,6 +64,24 @@ export function resolveActiveVariableIds(
   return active;
 }
 
+/** Match state-manager lookup: IDs first, then the last matching display name.
+ * Nested paths are rooted in an ID, including bracket-indexed arrays. */
+export function resolveEffectVariable(
+  world: Pick<WorldDefinition, "variables">,
+  variableId: string,
+): Variable | undefined {
+  if (variableId.includes(".") || /\[\d+\]/.test(variableId)) {
+    const root = variableId.replace(/\[(\d+)\]/g, ".$1").split(".")[0];
+    return world.variables.find((variable) => variable.id === root);
+  }
+  const byId = world.variables.find((variable) => variable.id === variableId);
+  if (byId) return byId;
+  for (let index = world.variables.length - 1; index >= 0; index--) {
+    if (world.variables[index]!.name === variableId) return world.variables[index];
+  }
+  return undefined;
+}
+
 /**
  * Split AI-issued effects into those targeting AI-writable variables (kept)
  * and those the AI is not allowed to change (dropped). Dot-paths resolve by
@@ -78,8 +96,7 @@ export function filterAiEffects(
   const kept: Effect[] = [];
   const dropped: Effect[] = [];
   for (const effect of effects) {
-    const rootId = effect.variableId.split(".")[0]!;
-    const variable = world.variables.find((v) => v.id === rootId);
+    const variable = resolveEffectVariable(world, effect.variableId);
     if (!variable || isAiWritable(variable, state)) {
       kept.push(effect);
     } else {
