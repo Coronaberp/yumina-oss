@@ -70,7 +70,11 @@ export function EntityPreview({ toolCall, applied = false }: { toolCall: ToolCal
   }
 
   const info = getToolInfo(name);
-  const diff = useDiffInfo(name, args, t, applied);
+  // A write to another language version of the card: this draft is not its
+  // "before", so it gets a language tag instead of a diff against this draft.
+  const variant = typeof args.variant === "string" && args.variant ? args.variant : undefined;
+  const draftDiff = useDiffInfo(name, args, t, applied);
+  const diff = variant ? null : draftDiff;
   const fullContent = getFullContent(name, args, entityLookup);
   const isCode = name.includes("component") || name.includes("renderer") || name.includes("tsx") || name === "write_custom_ui";
 
@@ -82,6 +86,11 @@ export function EntityPreview({ toolCall, applied = false }: { toolCall: ToolCal
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
+            {variant && (
+              <span className="shrink-0 rounded border border-border px-1 py-px text-[9px] font-semibold uppercase text-muted-foreground">
+                {variant}
+              </span>
+            )}
             <span className={`shrink-0 whitespace-nowrap text-[10px] font-semibold ${info.verbColor}`}>
               {t(info.verb as any)}
             </span>

@@ -3,7 +3,7 @@ export { aiDecisionRequestSchema, parseAiDecisionResponse, MAX_DECISION_REQUEST_
 export type { AiDecisionRequest, AiDecisionResponse, AiChoiceQuestion, AiChoiceAnswer } from "./ai-decisions.js";
 export { chatImageCopy, type ChatImageAttachment } from "./types/chat-image.js";
 
-export { AI_GENERATION_DEFAULTS, aiGenerationConfigSchema, resolveAiGenerationConfig } from './ai-generation.js';
+export { AI_GENERATION_DEFAULTS, aiGenerationConfigSchema, clampPlayerSampling, PLAYER_SAMPLING_BOUNDS, resolveAiGenerationConfig } from './ai-generation.js';
 export type { AiGenerationConfig } from './ai-generation.js';
 export { resolveStoryMemory, SUGGESTED_STORY_MEMORY, MIN_STORY_MEMORY, MAX_STORY_MEMORY } from './story-memory.js';
 export type { StoryMemoryInput, StoryMemoryResolution } from './story-memory.js';
@@ -18,6 +18,8 @@ export type {
 export {
   PROFILE_WORLD_SORT_OPTIONS,
   normalizeProfileWorldSort,
+  normalizeProfileWorldOrder,
+  PROFILE_WORLD_ORDER_MAX,
 } from "./types/user.js";
 export type {
   World,
@@ -308,6 +310,7 @@ export {
   ENABLED_GENERATION_TEMPLATES,
   SMART_IMAGE_MODEL,
   SMART_IMAGE_MODELS,
+  SMART_IMAGE_FAMILIES,
   SMART_IMAGE_MODEL_IDS,
   getSmartImageModel,
   getSmartImageCapabilities,
@@ -350,6 +353,7 @@ export type {
   GenerationKind,
   SmartImageParams,
   SmartImageModelId,
+  SmartImageFamily,
   SmartImageAspect,
   SmartImageResolution,
   GenerationTemplateInfo,
@@ -367,6 +371,11 @@ export {
   VIDEO_ASPECTS,
   VIDEO_MODELS,
   VIDEO_MODEL_IDS,
+  VIDEO_FAMILY_INFO,
+  VIDEO_PARTNER_MARKUP,
+  VIDEO_FAMILIES,
+  VIDEO_FEATURED_FAMILIES,
+  videoAspects,
   VIDEO_TUNING_LIMITS,
   VIDEO_LORA_PRICE_MUSHIES,
   VIDEO_STYLE_FRAME_MUSHIES,
@@ -379,7 +388,9 @@ export {
   estimateVideoSeconds,
   videoUsesFast,
 } from "./constants/video-models.js";
-export type { VideoAspect, VideoProvider, VideoModelSpec, VideoRequest } from "./constants/video-models.js";
+export type { VideoAspect, VideoFamily, VideoProvider, VideoModelSpec, VideoRequest } from "./constants/video-models.js";
+export { MODEL_TRAITS, getModelTraits } from "./constants/model-traits.js";
+export type { ModelStyle, ModelStrength, ModelTraits } from "./constants/model-traits.js";
 export {
   TAG_VOCABULARY,
   findTagEntry,
@@ -400,6 +411,8 @@ export {
   DEFAULT_POOL,
   DEFAULT_MIX_MODE,
   STUDIO_RECOMMENDED_MODEL,
+  STUDIO_FREE_DEFAULT_MODEL,
+  studioDefaultModel,
   PLAN_HIERARCHY,
   formatModelId,
   formatAvgCost,
@@ -432,6 +445,7 @@ export { blendModelPopularity, type ModelPopularitySnapshot } from "./types/mode
 export { DISCOVERY_INTEREST_IDS, DISCOVERY_INTEREST_GROUPS, DISCOVERY_INTEREST_TAGS,
   discoveryInterestsForTags, discoveryStarterStrength, type DiscoveryInterestId } from "./constants/discovery-interests.js";
 export { MODEL_POPULARITY_SEED } from "./constants/model-popularity-seed.js";
+export { PICKER_MODEL_FAMILIES, groupPlayModels, activeVariant, type PickerModelFamily, type PlayModelGroup, type PlayModelVariant } from "./constants/model-families.js";
 export type { StateValidationAudit, StateGuardSettings } from "./types/state-validation.js";
 export { parseStateGuardModel, stateGuardModelSelection, DEFAULT_STATE_GUARD_MODEL, FREE_STATE_GUARD_MODEL } from "./types/state-guard-model.js";
 export {
@@ -512,3 +526,5 @@ export { UNPERSON_ROOM_TIMING } from "./unperson-room-timing.js";
 
 export { parseCompletionResponseFormat, type CompletionResponseFormat } from "./completion-response-format.js";
 export { isStudioBuildProposal, type StudioBuildProposal } from "./types/studio-build.js";
+export * from "./changelog.js";
+export { isProviderBalanceError } from "./provider-balance-error.js";

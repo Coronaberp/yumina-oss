@@ -260,6 +260,7 @@
     "popular": "人気",
     "allModels": "すべてのモデル",
     "modelsFound": "{{count}} 件のモデル",
+    "versions": "{{name}} のバージョン",
     "modelsFound_other": "{{count}} 件のモデル",
     "pinToQuickSelect": "クイック選択にピン留め",
     "unpinFromQuickSelect": "クイック選択から外す",
@@ -322,7 +323,8 @@
     "popularityInfoTitle": "人気順の基準",
     "popularityInfoBody": "OpenRouter 娯楽分野のトークン使用割合 50% と、夢塢の使用割合 50% を合算。利用可能なチャットモデル同士で比較します。夢塢は公式チャットの応答のみを集計し、独自 API・バックグラウンド処理・空の応答は除外します。記録のない側は加点しません。",
     "popularityWindow": "夢塢の過去 30 日：{{start}}〜{{end}}。OpenRouter 月間集計日：{{externalDate}}（{{count}} アプリの公開データ）。更新：{{date}}。締め時刻は一致しない場合があります。",
-    "compactCostUnit": "目安マッシー / 応答"
+    "compactCostUnit": "目安マッシー / 応答",
+    "authorRecommended": "作者のおすすめ"
   },
   "readOnly": {
     "worldUnavailable": "このワールドは現在利用できません",
@@ -367,6 +369,8 @@
   "errors": {
     "PROTECTED_WORLD": "このワールドはクリエイターによってプロンプト抽出から保護されています。Yumina 公式 API のモデルのみ利用可能です — プライベート API キーは使用できません。",
     "NO_CREDITS": "mushies を使い切ってしまいました! デイリークエストをクリアして無料クレジットを獲得するか、プランをアップグレードしてください。",
+    "PRIVATE_API_BALANCE": "個人 API の残高が不足しています。API 提供元のアカウントを確認してください。",
+    "UPSTREAM_BALANCE": "モデル提供元の残高が不足しています。別のモデルに切り替えるか、サポートにお問い合わせください。",
     "NO_CREDITS_MSG_TOO_EXPENSIVE": "この会話が長すぎて、残り {{balance}} mushies では送信できません。より安いモデルに切り替えるか、会話を短くしてから再試行してください。",
     "MODEL_NOT_ALLOWED": "このモデルは上位プランが必要です。無料モデルに切り替えるか、アップグレードしてください。",
     "MODEL_SWITCHED_FALLBACK": "このモデルは現在のプランに含まれていないため、{{model}} に切り替えて再送信しました。",
@@ -513,5 +517,6 @@
     "shortPaused": "一時停止中。撮影中のフィルムはそのまま完成し、各返信に残ります。撮影開始で続きを見られます。",
     "shortPause": "一時停止（撮影中のフィルムは完成まで続きます）",
     "shortClose": "ショートフィルムをオフ（撮影中のものは完成します）"
-  }
+  },
+  "memoryModelNeedsPlan": "{{model}} は{{plan}}プラン以上で使えます。記憶用に別のモデルを選ぶか、プランをアップグレードしてください。"
 }

@@ -404,7 +404,8 @@ interface ChatState {
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   removeMessage: (id: string) => void;
-  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry) => void;
+  /** `resendUserMessageId` re-runs that persisted (failed) user row instead of inserting a new one. */
+  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry, resendUserMessageId?: string) => void;
   regenerateMessage: (messageId: string, model?: string, retry?: ModelFallbackRetry) => void;
   stopGeneration: () => void;
   setPendingChoices: (choices: string[]) => void;
@@ -1165,7 +1166,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry) => {
+  sendMessage: (content: string, model?: string, attachments?: Attachment[], retry?: ModelFallbackRetry, resendUserMessageId?: string) => {
     const { session, isStreaming } = get();
     if (!session || isStreaming || _isSending || get().readOnly || (get().modelFallback && !retry)) {
       console.warn("[sendMessage] blocked:", { session: !!session, isStreaming, _isSending });
@@ -1186,13 +1187,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Snapshot the tail BEFORE the optimistic insert — connection-loss
     // recovery uses it to tell "our user row landed server-side" apart from
-    // an identical user message from an earlier turn.
-    const lastMessageIdAtSend = get().messages[get().messages.length - 1]?.id ?? null;
+    // an identical user message from an earlier turn. A reused row is itself
+    // the tail, so the anchor is the message before it.
+    const reuseUserMessageId = retry?.userMessageId ?? resendUserMessageId;
+    const tail = get().messages;
+    const reuseIdx = reuseUserMessageId ? tail.findIndex((m) => m.id === reuseUserMessageId) : -1;
+    const lastMessageIdAtSend = (reuseIdx >= 0 ? tail[reuseIdx - 1] : tail[tail.length - 1])?.id ?? null;
     // One-shot guard for the safe auto-reattempt when a connection error's
     // probe proves the request never reached the server.
     let neverLandedReattempted = false;
     // Add user message immediately so it appears in chat before AI responds
-    const tempUserMsgId = retry?.userMessageId ?? `__pending_${Date.now()}`;
+    const tempUserMsgId = reuseUserMessageId ?? `__pending_${Date.now()}`;
     set((s) => ({
       isStreaming: true,
       streamingContent: "",
@@ -1205,7 +1210,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       error: null,
       lastSendFailure: null,
       errorCode: null,
-      messages: retry?.userMessageId ? s.messages : [
+      messages: reuseUserMessageId
+        ? s.messages.map((m) => m.id === resendUserMessageId ? { ...m, status: "complete" as const, errorMessage: null } : m)
+        : [
         ...s.messages,
         {
           id: tempUserMsgId,
@@ -1241,7 +1248,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           content,
           model: modelId,
           modelFallback: fallbackRecord(retry, modelId),
-          ...(retry?.userMessageId && { retryMessageId: retry.userMessageId }),
+          ...(reuseUserMessageId && { retryMessageId: reuseUserMessageId }),
           overrides: {
             ...overrides,
             ...kimiRepetitionOverride(modelId, config.repetitionPenalty),
@@ -1880,6 +1887,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Works for: AI never replied (case 1) + user wants AI to keep going (case 3).
     const { session, isStreaming } = get();
     if (!session || isStreaming || _isSending || get().readOnly || (get().modelFallback && !retry)) return;
+    // Retry on a failed player turn. The server leaves failed rows out of the
+    // prompt, so a bare continue answered without the player's last message
+    // (Lukkas 2026-10-15: "you keep ignoring my last turn"). Re-run that row.
+    const last = get().messages.at(-1);
+    if (!retry && last?.role === "user" && last.status === "failed" && !last.id.startsWith("__pending_") && last.content.trim()) {
+      get().sendMessage(last.content, model, undefined, undefined, last.id);
+      return;
+    }
     _isSending = true;
 
     const config = useConfigStore.getState();

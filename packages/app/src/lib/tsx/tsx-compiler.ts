@@ -1,5 +1,6 @@
 import { transform } from "sucrase";
 import { buildComponent, type CompileResult, type CompileRuntimeScope } from "./tsx-component-builder";
+import { createCodeDiagnostic, type CodeDiagnostic } from "./diagnostics";
 
 export type { CompileResult, CompileRuntimeScope };
 
@@ -58,47 +59,12 @@ function stripTypeScript(code: string): string {
 export function compileTSX(
   code: string,
   useYuminaHook?: () => unknown,
-  runtimeScope: CompileRuntimeScope = {}
+  runtimeScope: CompileRuntimeScope = {},
+  file?: string,
 ): CompileResult {
-  try {
-    // Try the original source first. Pre-stripping can corrupt large string literals
-    // such as Tavern-generated renderer payloads that legitimately contain `: null`.
-    const result = transform(code, {
-      transforms: ["typescript", "jsx"],
-      jsxRuntime: "classic",
-      production: true,
-    });
-
-    return buildComponent(result.code, useYuminaHook, runtimeScope);
-  } catch (firstError) {
-    // Some AI-authored TSX still confuses Sucrase. Fall back to the lossy stripper
-    // only after the raw source path fails, so plain JS/string-heavy renderers survive.
-    const cleanedCode = stripTypeScript(code);
-
-    try {
-      const result = transform(cleanedCode, {
-        transforms: ["typescript", "jsx"],
-        jsxRuntime: "classic",
-        production: true,
-      });
-      return buildComponent(result.code, useYuminaHook, runtimeScope);
-    } catch {
-      // Final fallback: JSX-only transform for code that was already effectively JS.
-      try {
-        const result = transform(cleanedCode, {
-          transforms: ["jsx"],
-          jsxRuntime: "classic",
-          production: true,
-        });
-        return buildComponent(result.code, useYuminaHook, runtimeScope);
-      } catch (err) {
-        return {
-          Component: null,
-          error: err instanceof Error ? err.message : "Compilation failed",
-        };
-      }
-    }
-  }
+  const result = transformTSX(code, file);
+  if (result.code === null) return { Component: null, error: result.error, diagnostic: result.diagnostic };
+  return buildComponent(result.code, useYuminaHook, runtimeScope, { files: { [file ?? "<component>"]: code } });
 }
 
 /** Parent-side TSX → JS transform. The compiled JS can be fed straight into
@@ -108,9 +74,10 @@ export function compileTSX(
 export interface TransformResult {
   code: string | null;
   error: string | null;
+  diagnostic?: CodeDiagnostic;
 }
 
-export function transformTSX(code: string): TransformResult {
+export function transformTSX(code: string, file?: string): TransformResult {
   try {
     const result = transform(code, {
       transforms: ["typescript", "jsx"],
@@ -118,7 +85,7 @@ export function transformTSX(code: string): TransformResult {
       production: true,
     });
     return { code: result.code, error: null };
-  } catch {
+  } catch (firstError) {
     // Some AI-authored TSX confuses Sucrase. Fall back to the lossy stripper.
     const cleanedCode = stripTypeScript(code);
     try {
@@ -136,10 +103,14 @@ export function transformTSX(code: string): TransformResult {
           production: true,
         });
         return { code: result.code, error: null };
-      } catch (err) {
+      } catch {
+        // Fallback transforms remove lines/types. The original parser error is
+        // the only one whose position can be used against the creator's source.
+        const diagnostic = createCodeDiagnostic(firstError, { phase: "compile", file, source: code, sourcePosition: true });
         return {
           code: null,
-          error: err instanceof Error ? err.message : "Compilation failed",
+          error: diagnostic.message,
+          diagnostic,
         };
       }
     }

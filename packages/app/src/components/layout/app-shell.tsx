@@ -284,6 +284,7 @@ export function AppShell({ children }: AppShellProps) {
   // than raw session so it survives session-refresh races.
   const userIdForAnalytics = useUserProfileStore((s) => s.profile?.id ?? null);
   const userNameForAnalytics = useUserProfileStore((s) => s.profile?.username ?? null);
+  const userEmailForAnalytics = useUserProfileStore((s) => s.profile?.email ?? null);
   const userLanguageForAnalytics = useUserProfileStore((s) => (s.profile?.preferences?.language as string) ?? null);
   const userRoleForAnalytics = useUserProfileStore((s) => s.profile?.role ?? null);
   const userCreatedAtForAnalytics = useUserProfileStore((s) => s.profile?.createdAt ?? null);
@@ -295,7 +296,7 @@ export function AppShell({ children }: AppShellProps) {
         username: userNameForAnalytics,
         language: userLanguageForAnalytics,
         role: userRoleForAnalytics,
-      });
+      }, { email: userEmailForAnalytics });
       // Ad-conversion attribution: a profile whose account was created within
       // the last 30 minutes is this session's signup (covers OAuth flows,
       // which have no client-side success callback). Fires after identify()

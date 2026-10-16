@@ -419,6 +419,8 @@
     "deleteBundleFailed": "Couldn't delete bundle",
     "downloadBundleFailed": "Couldn't download bundle",
     "deleteAssetFailed": "Couldn't delete asset",
+
+    "deleteAssetInUse": "This image is still the cover of “{{name}}”. Change that cover first.",
     "renameAssetFailed": "Couldn't rename asset",
     "moveAssetFailed": "Couldn't move asset",
     "createFolderFailed": "Couldn't create folder",
@@ -706,7 +708,8 @@
         "variant": "Classic"
       },
       "nsfw-anime": {
-        "name": "NSFW Anime"
+        "name": "Limitless Anime",
+        "variant": "Classic"
       },
       "realistic": {
         "name": "Realistic"
@@ -715,7 +718,7 @@
         "name": "2.5D"
       },
       "guofeng": {
-        "name": "Guofeng"
+        "name": "Ink Wash"
       },
       "western": {
         "name": "Western"
@@ -729,6 +732,14 @@
       "anime-story": {
         "name": "Anime · Story",
         "variant": "Story"
+      },
+      "anime-anima": {
+        "name": "Anime · Anima",
+        "variant": "Anima"
+      },
+      "nsfw-anima": {
+        "name": "Limitless Anime · Anima",
+        "variant": "Anima"
       }
     },
     "videoStyleFromReference": "The video keeps the reference image’s art style.",
@@ -784,6 +795,8 @@
       "VIDEO_NO_LAST_FRAME": "This model can't take a last frame.",
       "VIDEO_ONE_FRAME_ONLY": "This model takes a first or a last frame, not both.",
       "VIDEO_TOO_MANY_REFERENCES": "Too many character references for this model.",
+      "VIDEO_FRAMES_OR_REFERENCES": "This model takes either frames or character references, not both.",
+      "VIDEO_LAST_NEEDS_FIRST": "This model needs a first frame before a last frame.",
       "VIDEO_NEEDS_FRAME": "This model needs a reference picture.",
       "VIDEO_NO_SOUND": "This model can't make sound.",
       "VIDEO_NO_TUNING": "This model doesn't expose these settings.",
@@ -794,7 +807,9 @@
       "VIDEO_BAD_STYLE": "That style isn't available for this video. Pick another.",
       "VIDEO_NO_STYLE": "That style isn't available for this video. Pick another.",
       "VIDEO_STYLE_WITH_FRAME": "That style isn't available for this video. Pick another.",
-      "QUALITY_BATCH": "4K makes one picture at a time. Set the count to 1 and try again."
+      "QUALITY_BATCH": "4K makes one picture at a time. Set the count to 1 and try again.",
+      "MODEL_UNAVAILABLE": "This model isn't available right now. Pick another model.",
+      "REFERENCE_UNSUPPORTED": "This model can't take a reference image. Remove the image or pick another model."
     },
     "queue": {
       "waiting": "Waiting in queue…",
@@ -827,12 +842,40 @@
       "fewer": "One fewer",
       "more": "One more",
       "tier": {
+        "seedreamFlash": "Cheapest",
         "seedreamLite": "Fast",
         "seedreamPro": "Balanced",
-        "nanoBanana2": "Strong edits",
+        "nanoBanana21": "Newest · strong edits",
+        "nanoBanana2": "Has 512",
         "nanoBananaPro": "High quality",
-        "gptImage2": "Best · slow"
-      }
+        "gptImage25Flare": "Polished · fast",
+        "gptImage25Sunburst": "Best · slow",
+        "gptImage2": "Previous · slow",
+        "flux2Pro": "Value",
+        "flux2Max": "More detail",
+        "flux3": "Newest · rich scenes",
+        "qwenImage3": "Cheap · slow",
+        "qwenImage3Pro": "More detail · slow",
+        "grokImagine": "Cheapest · fast",
+        "grokImagineQuality": "Fast",
+        "grokImagine2": "More detail · very slow",
+        "klingO1": "Clean anime",
+        "lumaUni1": "4 MP · slow",
+        "lumaUni1Max": "4 MP, more detail · slow",
+        "ideogram45": "Lettering",
+        "wan25": "Painterly · preview",
+        "recraft41": "Design · flat",
+        "krea2Turbo": "Cheapest",
+        "krea2Medium": "Stylized",
+        "krea2Large": "Stylized · slow",
+        "maiImage26": "Clean · fast",
+        "hunyuan35": "Cheap · 2K"
+      },
+      "version": "Version",
+      "noReference": "{{model}} can't take a reference image. Remove the image or pick another model.",
+      "fromPerImage": "from {{count}} / image",
+      "moreModels": "{{count}} more models",
+      "fewerModels": "Show fewer"
     },
     "loading": "Loading…",
     "loadTemplatesError": "Could not load image options. Your draft is safe.",
@@ -950,6 +993,17 @@
       "saving": "Saving"
     },
     "video": {
+      "modeLabel": "Video mode",
+      "mode": {
+        "partner": {
+          "name": "Describe & create",
+          "desc": "Seedance, Kling, Veo and more"
+        },
+        "custom": {
+          "name": "Custom generation",
+          "desc": "Our own GPUs · LoRAs and every setting"
+        }
+      },
       "describe": "Describe the shot",
       "enhance": "AI polish",
       "enhanceHint": "Let AI rewrite the description for the video model before generating",
@@ -966,25 +1020,32 @@
         "last": "The video ends on this picture"
       },
       "slotRefHint": "Keeps the look, the scene can be new · up to {{count}}, +{{price}} each",
+      "slotRefHintFree": "Keeps the look, the scene can be new · up to {{count}}",
       "notSupported": "{{model}} can't use this",
       "oneFrameOnly": "{{model}} takes a first frame or a last frame, not both. Pick another model to set both.",
+      "aspectFromFrame": "With a frame, the clip takes the frame's shape.",
+      "framesOrReferences": "{{model}} can't take these pictures together: with character references, use at most a first frame. Remove some to continue.",
+      "lastNeedsFirst": "{{model}} needs a first frame to go with the last one.",
+      "needsFrame": "{{model}} animates a picture: add a first frame above.",
       "remove": "Remove",
       "closePicker": "Close",
       "modelSpec": "Model and size",
       "model": "Model",
-      "models": {
-        "h3-max": "Fastest, looks great",
-        "h3": "Sharpest, can add sound",
-        "wan-2.2": "Our own servers, every setting"
-      },
       "tag": {
         "text": "Text",
         "image": "Image",
         "sound": "Sound",
-        "selfHosted": "Limitless"
+        "selfHosted": "Limitless",
+        "firstLast": "First & last frame",
+        "refs": "Up to {{count}} references",
+        "firstLastShort": "First+last",
+        "refsShort": "References",
+        "fast": "Fast",
+        "needsImage": "Needs a picture"
       },
       "priceFrom_one": "From {{count}} / {{seconds}}s",
       "priceFrom": "From {{count}} / {{seconds}}s",
+      "priceFor": "{{count}} / {{seconds}}s",
       "aspect": "Aspect ratio",
       "resolution": "Resolution",
       "duration": "Length",
@@ -995,6 +1056,7 @@
       "etaMinutes_one": "~{{count}} min",
       "etaMinutes": "~{{count}} min",
       "sound": "Generate ambience and dialogue with it",
+      "soundAlways": "This model always makes sound with the picture.",
       "more": "More settings",
       "fast": "4-step fast mode",
       "fastHint": "Several times faster and much cheaper; turn off to set steps and CFG",
@@ -1066,6 +1128,30 @@
       },
       "redo": "4K version · {{count}} mushies",
       "redoNote": "Any finished picture on the right has a 4K version button that redoes it at 4K."
+    },
+    "badge": {
+      "limitless": "Limitless",
+      "textOnly": "Text only"
+    },
+    "trait": {
+      "style": {
+        "realistic": "Mostly realistic",
+        "anime": "Anime",
+        "2.5d": "2.5D",
+        "3d": "Anime turns 3D",
+        "versatile": "Strong anime"
+      },
+      "strength": {
+        "anime": "Great anime",
+        "photoreal": "Lifelike people",
+        "text": "Accurate text",
+        "design": "Posters & design",
+        "detail": "Fine detail",
+        "fast": "Fast",
+        "motion": "Big action",
+        "camera": "Camera moves",
+        "dialogue": "Lip-synced speech"
+      }
     }
   },
   "media": {

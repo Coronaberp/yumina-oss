@@ -3211,7 +3211,15 @@
         "paper": "素纸",
         "night": "夜航",
         "terminal": "终端",
-        "blossom": "绯樱"
+        "blossom": "绯樱",
+        "velvet": "绯页",
+        "harbor": "港湾",
+        "linen": "亚麻",
+        "coolant": "冷屏",
+        "moss": "苔夜",
+        "tape": "磁带",
+        "gilded": "鎏金",
+        "tavern": "酒馆"
       },
       "fontName": {
         "sans": "黑体",
@@ -3238,13 +3246,29 @@
         "portrait-scene": "立绘对话",
         "adventure-hud": "冒险状态",
         "stat-panel": "养成面板",
-        "character-sheet": "角色卡"
+        "character-sheet": "角色卡",
+        "chapter-portrait": "章节立绘",
+        "masthead": "报头",
+        "margin-notes": "页边札记",
+        "status-strip": "底栏终端",
+        "night-card": "夜读卡片",
+        "cassette": "磁带",
+        "art-split": "半屏立绘",
+        "guild-card": "冒险者登记"
       },
       "presetHint": {
         "portrait-scene": "立绘 + 两条状态 + 详情页。讲一个角色的卡用这套。",
         "adventure-hud": "当前位置 + 天数时段 + 两条状态。文字冒险、探索类用这套。",
         "stat-panel": "四条状态 + 金币 + 天数。养成、经营、生存类用这套。",
-        "character-sheet": "玩家自己的名字、身份、位置和剧情阶段。角色扮演用这套。"
+        "character-sheet": "玩家自己的名字、身份、位置和剧情阶段。角色扮演用这套。",
+        "chapter-portrait": "顶部一条章节横幅，右边一栏是立绘、心情和三条状态。",
+        "masthead": "卡名、四条数值和登场人物排在顶部，对话在下面。",
+        "margin-notes": "浅色背景，右边三张便签，分别放标题和地点、四条状态、认识的人。",
+        "status-strip": "输入框下面一条数据栏，显示时间、金币、地点、体力精力和在场的人。",
+        "night-card": "右上角显示第几天，右下角是一张人物卡，放心情、地点、四条状态和认识的人。",
+        "cassette": "输入框下面放一盘磁带，标签上写卡名，旁边是当前章节、地点和心情。",
+        "art-split": "右半边是立绘，卡名和两条状态显示在立绘底部。",
+        "guild-card": "左边一张羊皮纸登记卡，写着玩家的名字、职业、等级、金币和体力精力。"
       },
       "vars": {
         "portrait": "立绘",
@@ -3262,13 +3286,17 @@
         "playerRole": "玩家身份",
         "gender": "性别",
         "age": "玩家年龄",
-        "phase": "剧情阶段"
+        "phase": "剧情阶段",
+        "mood": "心情",
+        "rank": "冒险者等级"
       },
       "varDefaults": {
         "timeOfDay": "清晨",
         "location": "未知之地",
         "playerRole": "旅人",
-        "phase": "序章"
+        "phase": "序章",
+        "mood": "平静",
+        "rank": "铜牌"
       },
       "s": {
         "common": {
@@ -3287,10 +3315,11 @@
           "actionWaitSays": "我没有接话，等对方先开口。",
           "toolRewind": "撤回一轮",
           "toolRegenerate": "重新生成",
-          "toolCopy": "复制"
+          "toolCopy": "复制",
+          "castLabel": "登场"
         },
         "portrait-scene": {
-          "portraitEmpty": "这里放立绘 — 在「卡片信息」里传一张，或用「立绘」变量换人",
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
         },
@@ -3315,6 +3344,65 @@
           "phaseLabel": "剧情阶段",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力"
+        },
+        "masthead": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "goldFormat": "金币 {gold}",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力",
+          "meterThird": "好感度",
+          "meterFourth": "进度"
+        },
+        "margin-notes": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力",
+          "meterFourth": "进度"
+        },
+        "status-strip": {
+          "whenLabel": "时间",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "金币",
+          "placeLabel": "位置",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力"
+        },
+        "night-card": {
+          "clockFormat": "第 {day} 天",
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力",
+          "meterFourth": "进度"
+        },
+        "cassette": {
+          "sideFormat": "A 面 · 第 {day} 天",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "心情",
+          "meterPrimary": "好感度"
+        },
+        "art-split": {
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力"
+        },
+        "guild-card": {
+          "guildTitle": "冒险者",
+          "guildSubFormat": "登记于 {location}",
+          "nameLabel": "姓名",
+          "roleLabel": "职业",
+          "rankLabel": "等级",
+          "goldLabel": "金币",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力"
         }
       }
     },
@@ -3446,7 +3534,9 @@
       "randomMax": "最大",
       "randomFromPlaceholder": "一行一个，按下时随机抽一个",
       "randomFromHint": "按下时从上面随机抽一行，写进这个变量。结果由卡决定，不是 AI。",
-      "randomNumberHint": "按下时在这个范围里随机取一个整数，写进这个变量。"
+      "randomNumberHint": "按下时在这个范围里随机取一个整数，写进这个变量。",
+      "pickStartImage": "选一张图放进来",
+      "changeStartImage": "换一张图"
     },
     "style": {
       "none": "无",
@@ -3765,7 +3855,7 @@
       "newPage": "新建",
       "title": "新建 · 选一个模板",
       "tutorTip": "这里是 18 个做好的模板 ✧ 上面是开局页（玩家进故事之前），下面是玩的时候从菜单打开的页面。点一个就加进卡里，每个都能直接玩。现在不想选也没关系，右上角关掉就好，以后随时点「新建」再来。",
-      "sub": "22 个做好的模板（4 个整个界面、18 个单页），都已经接好变量、按钮和给 AI 的说明，加上就能玩。颜色、大小、位置照样可以拖、可以改。",
+      "sub": "30 个做好的模板（12 个整个界面、18 个单页），都已经接好变量、按钮和给 AI 的说明，加上就能玩。颜色、大小、位置照样可以拖、可以改。",
       "groupOpening": "开局 · 玩家进故事之前",
       "blank": "空白页",
       "blankDesc": "什么都没有，自己摆。",
@@ -5037,10 +5127,14 @@
     "blurb": "玩家从聊天旁边的停靠栏打开的小 App：消息、角色关系、广场、时间……每个 App 的数据放在一个变量里，由 AI 跟着剧情填写。每张卡片上方就是这个 App 的真实样子，你什么都不用写。",
     "add": "加进这张卡",
     "added": "已加入停靠栏",
-    "footnote": "App 里的文字跟着卡的语言走（中文、英文或西班牙语）。在 Bundles 页移除后，按钮、数据和规则会一起删掉。",
+    "footnote": "App 里的文字跟着卡的语言走（中文、英文或西班牙语）。移除 App 时，停靠栏按钮、数据和规则会一起删掉。",
     "sets": "推荐组合——这类卡大多在追踪这些",
     "addSet": "四个一起加",
-    "setAdded": "已全部加入"
+    "setAdded": "已全部加入",
+    "remove": "移除",
+    "removeSet": "四个一起移除",
+    "removed": "已移除「{{name}}」",
+    "varDeleteHint": "这个变量是「{{name}}」App 的数据。删除它会把整个 App 一起移除，停靠栏按钮也会消失。"
   },
   "worldChanges": {
     "title": "更新《{{name}}》？",

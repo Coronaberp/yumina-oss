@@ -1,3 +1,4 @@
+import { stationSampling } from "./station-sampling.js";
 import { and, desc, eq, gte, lte, ne, or, sql } from "drizzle-orm";
 import {
   checkConditions,
@@ -367,7 +368,7 @@ async function runWorkerNow(args: {
         languageInstruction: buildSummaryLanguageInstruction(language, { keepEnglishHeadings: false }),
       }),
       endpoint: "module-worker",
-      maxTokens: MAX_WORKER_TOKENS,
+      ...stationSampling(station, MAX_WORKER_TOKENS),
     });
     await finishSlot(args.sessionId, slot, text);
   } catch (err) {

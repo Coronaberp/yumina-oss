@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   AlignCenter, AlignLeft, AlignRight, ChevronDown, Italic, Plus, Upload, X,
 } from "lucide-react";
-import { UI_THEME_FONTS, UI_WEB_FONTS, fitFontWeight, fitTextOnPage, textStyleAffectsHeight, fontWeightsOf, getUiThemePreset, primaryFamily, webFontOf } from "@yumina/engine";
+import { UI_THEME_FONTS, UI_WEB_FONTS, fitFontWeight, fitTextsOnPage, textStyleAffectsHeight, fontWeightsOf, getUiThemePreset, primaryFamily, webFontOf } from "@yumina/engine";
 import type {
   UiBoxStyle, UiButtonStyle, UiDoc, UiElement, UiFill, UiGradientStop, UiShadow, UiTextStyle,
 } from "@yumina/engine";
@@ -480,16 +480,15 @@ export function applyTextPatch({ doc, targets, lead, patch, onPatch, onDoc }: {
     onPatch(apply);
     return;
   }
-  let next = page;
-  for (const target of targets) {
-    const before = next.elements.find((el) => el.id === target.id);
-    if (!before) continue;
-    const changed = apply(before);
-    if (changed === before) continue;
-    next = { ...next, elements: next.elements.map((el) => (el.id === before.id ? changed : el)) };
-    next = fitTextOnPage(next, before.id, before, { hug: true });
-  }
-  if (next !== page) onDoc({ ...doc, pages: doc.pages.map((p) => (p.id === page.id ? next : p)) });
+  // Every picked part takes the style first, then they are fitted together
+  // against the page as it was: a meter row's label and value refit as one
+  // row, so the track under them moves once — and back up when they shrink.
+  const ids = new Set(targets.map((el) => el.id));
+  const styled = page.elements.map((el) => (ids.has(el.id) ? apply(el) : el));
+  const changed = styled.filter((el, i) => el !== page.elements[i]).map((el) => el.id);
+  if (changed.length === 0) return;
+  const next = fitTextsOnPage({ ...page, elements: styled }, changed, page, { hug: true });
+  onDoc({ ...doc, pages: doc.pages.map((p) => (p.id === page.id ? next : p)) });
 }
 
 /** The weights the weight menu offers: every labelled weight for a system or

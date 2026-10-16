@@ -222,6 +222,7 @@
     "popular": "熱門",
     "allModels": "所有模型",
     "modelsFound": "找到 {{count}} 個模型",
+    "versions": "{{name}} 版本",
     "modelsFound_other": "找到 {{count}} 個模型",
     "pinToQuickSelect": "固定到快速選擇",
     "unpinFromQuickSelect": "從快速選擇中移除",
@@ -293,7 +294,8 @@
     "popularityInfoTitle": "熱門排序",
     "popularityInfoBody": "OpenRouter 娛樂榜 Token 用量占比 × 50% + 夢塢 Token 用量占比 × 50%。兩邊只比較目前可用聊天模型。夢塢統計官方聊天，排除私有 API、背景任務和空回覆；暫無記錄的來源不加分。",
     "popularityWindow": "夢塢近 30 天：{{start}} 至 {{end}}。OpenRouter 月榜統計日：{{externalDate}}（{{count}} 個平台，僅公開資料）。更新於 {{date}}；兩邊截止時間可能不同。",
-    "compactCostUnit": "約蘑菇幣 / 回覆"
+    "compactCostUnit": "約蘑菇幣 / 回覆",
+    "authorRecommended": "作者推薦"
   },
   "readOnly": {
     "worldUnavailable": "此世界不再可用",
@@ -338,6 +340,8 @@
   "errors": {
     "PROTECTED_WORLD": "創作者已保護此世界的提示詞，防止被竊取。只能使用夢塢官方 API 模型，不支援私有 API 金鑰。",
     "NO_CREDITS": "蘑菇幣用完了！完成每日任務可領取免費額度，或升級方案獲取更多。",
+    "PRIVATE_API_BALANCE": "你的私人 API 餘額不足，請檢查服務商帳戶。",
+    "UPSTREAM_BALANCE": "模型服務商餘額不足，請切換模型或聯絡支援。",
     "NO_CREDITS_MSG_TOO_EXPENSIVE": "這局對話太長，剩餘 {{balance}} 蘑菇幣不夠傳送這條。換更省的模型或精簡對話後重試。",
     "MODEL_NOT_ALLOWED": "此模型需要更高的方案。請切換到免費模型或升級方案。",
     "MODEL_SWITCHED_FALLBACK": "該模型不在目前方案內，已自動切換到 {{model}} 並重新傳送。",
@@ -527,5 +531,6 @@
     "shortPaused": "已暫停。正在拍的片子會照常拍完，留在對應的回覆裡；點開拍就能接著看。",
     "shortPause": "暫停（正在拍的片子會照常拍完）",
     "shortClose": "關閉短片（不再拍新的回覆，正在拍的會拍完）"
-  }
+  },
+  "memoryModelNeedsPlan": "{{model}} 需要{{plan}}以上會員。請為記憶換一個模型，或升級會員。"
 }

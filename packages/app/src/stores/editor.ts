@@ -19,7 +19,7 @@ import type {
   Worldbook,
 } from "@yumina/engine";
 import { nextBundleColorKey } from "@/lib/entry-constants";
-import { syncMessageRulesEntry, nextBackgroundId, COVER_BACKGROUND_URL, migrateWorldDefinition, deriveSectionDefaults, deriveSectionDefaultsForEntry, officialPresetsFor, customUIToRootFiles, normalizeFolders, mergeWorldDefinition, remapReactionReferences, applyGraphEdit, compileUiDoc, buildUiTheme, getUiTemplate, getUiPageTemplate, insertPageTemplate, fitTextBox, refreshConfirmSummary, carryOpeningChain, detectUiTemplate, withPreciseTrackingDefault, suggestedContinuityDelta, USER_ROOT_PATH, COMPOSED_MARKER, BUNDLE_NS_RE, generateComposedIndex, syncGreetingActions, PromptBuilder } from "@yumina/engine";
+import { syncMessageRulesEntry, nextBackgroundId, COVER_BACKGROUND_URL, migrateWorldDefinition, deriveSectionDefaults, deriveSectionDefaultsForEntry, officialPresetsFor, customUIToRootFiles, normalizeFolders, mergeWorldDefinition, remapReactionReferences, applyGraphEdit, compileUiDoc, buildUiTheme, getUiTemplate, getUiPageTemplate, insertPageTemplate, fitTextBox, refreshConfirmSummary, carryOpeningChain, detectUiTemplate, withPreciseTrackingDefault, suggestedContinuityDelta, USER_ROOT_PATH, COMPOSED_MARKER, BUNDLE_NS_RE, generateComposedIndex, syncGreetingActions, PromptBuilder, UNPLACED_WORLDBOOK_ID, revertTurn } from "@yumina/engine";
 import { materializeBehaviors } from "@/features/editor/lib/editable-behaviors";
 import type { OfficialPreset } from "@yumina/engine";
 import { classifyInterface, startingUiDoc } from "@/features/studio/lib/ui-doc-takeover";
@@ -97,6 +97,22 @@ function normalizePositions(entries: WorldEntry[]): WorldEntry[] {
   // Same order, same objects → hand back the input so selectors see no change.
   return result.length === entries.length && result.every((entry, i) => entry === entries[i]) ? entries : result;
 }
+
+/** Positions as the array order has them, per section; an entry already in
+ *  its place keeps its identity (see normalizePositions). */
+function withPositionsFromOrder(entries: WorldEntry[]): WorldEntry[] {
+  const next = new Map<string, number>();
+  let moved = false;
+  const out = entries.map((entry) => {
+    const position = next.get(entry.section) ?? 0;
+    next.set(entry.section, position + 1);
+    if (entry.position === position) return entry;
+    moved = true;
+    return { ...entry, position };
+  });
+  return moved ? out : entries;
+}
+
 /** Strips a trailing " (copy)" / " (copy 3)" so duplicating a duplicate gives
  *  "Name (copy 2)" instead of "Name (copy) (copy)". */
 function stripCopySuffix(name: string, suffix: string): string {
@@ -524,6 +540,14 @@ interface EditorState {
    *  first undo would otherwise take the whole template away. */
   clearHistory: () => void;
   redo: () => void;
+  /**
+   * Take back what one assistant turn did and nothing else: `before` is the
+   * card before the turn, `end` the card as the turn left it, and the draft
+   * is whatever the author has made of it since. One undo step, so Ctrl+Z
+   * brings the turn back. `kept` counts what the turn changed that the author
+   * has changed since — left as the author has it (see engine revertTurn).
+   */
+  revertAssistantTurn: (before: WorldDefinition, end: WorldDefinition) => { reverted: boolean; kept: number };
 
   // Actions
   /** A fresh card. `opening`, when given, is its first opening, written in
@@ -571,7 +595,8 @@ interface EditorState {
   setEntryWorldbook: (entryId: string, worldbookId: string | undefined) => void;
 
   // Folder actions
-  addFolder: (section: NonNullable<WorldEntry["section"]>, name?: string, worldbookId?: string) => void;
+  /** Returns the new folder's id, so a caller can file entries into it in the same step. */
+  addFolder: (section: NonNullable<WorldEntry["section"]>, name?: string, worldbookId?: string) => string;
   removeFolder: (folderId: string) => void;
   renameFolder: (folderId: string, name: string) => void;
   moveFolder: (folderId: string, newSection: NonNullable<WorldEntry["section"]>) => void;
@@ -1153,6 +1178,18 @@ function withOpeningStepsRecounted(prev: WorldDefinition, next: WorldDefinition)
   return { ...next, uiDoc: synced };
 }
 
+
+/** A history snapshot with the board layout it is stepping onto taken from
+ *  the draft it leaves: the layout is not part of history (setGraphLayout),
+ *  so undo and redo leave frames and sticky notes as they are. */
+function withLayoutOf(snapshot: WorldDefinition, current: WorldDefinition): WorldDefinition {
+  if (current.graphLayout !== undefined) return { ...snapshot, graphLayout: current.graphLayout };
+  if (!("graphLayout" in snapshot)) return snapshot;
+  const { graphLayout: _dropped, ...rest } = snapshot;
+  void _dropped;
+  return rest as WorldDefinition;
+}
+
 function commitDraft(
   s: EditorState,
   newDraft: WorldDefinition
@@ -1358,6 +1395,16 @@ function buildServerDraftFromData(data: any): WorldDefinition {
   return draft;
 }
 
+/**
+ * A stored schema (a restore point's) read the way a load reads the live one:
+ * migrated, defaults filled, positions and folders healed. Compared against
+ * the editor's draft, the raw copy differs in all of that, and every such
+ * difference would pass for an edit.
+ */
+export function draftFromStoredSchema(schema: Record<string, unknown>, worldId: string): WorldDefinition {
+  return buildServerDraftFromData({ id: worldId, name: schema.name, schema });
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   worldDraft: createEmptyWorld(),
   serverWorldId: null,
@@ -1446,7 +1493,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => {
       if (s.guestMode) return {};
       if (s._past.length === 0) return s;
-      const previous = s._past[s._past.length - 1]!;
+      // The board's layout (where frames stand, the sticky notes) is kept
+      // out of history on purpose — see setGraphLayout — so stepping back
+      // through the card's edits must not carry an old layout with it: an
+      // undo used to move frames back and drop a note written since.
+      const previous = withLayoutOf(s._past[s._past.length - 1]!, s.worldDraft);
       const newPast = s._past.slice(0, -1);
       const newFuture = [s.worldDraft, ...s._future];
       scheduleDraftSave(previous, s.serverWorldId);
@@ -1470,7 +1521,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => {
       if (s.guestMode) return {};
       if (s._future.length === 0) return s;
-      const next = s._future[0]!;
+      const next = withLayoutOf(s._future[0]!, s.worldDraft);
       const newFuture = s._future.slice(1);
       const newPast = [...s._past, s.worldDraft];
       scheduleDraftSave(next, s.serverWorldId);
@@ -1488,6 +1539,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // together than the recompile debounce), so stepping onto it redraws the
     // card from the doc rather than showing a stale compile.
     if (get().worldDraft.uiDoc) scheduleUiDocRecompile();
+  },
+
+  revertAssistantTurn: (before, end) => {
+    // A field still holding typed text is the author's latest word: commit it
+    // first, so it is judged as theirs instead of being left behind.
+    try { flushPendingEditorFields(); } catch { /* fields are on their own */ }
+    const s = get();
+    if (s.guestMode) return { reverted: false, kept: 0 };
+    const now = s.worldDraft;
+    const { world, kept } = revertTurn(before, end, now);
+    if (world === now) return { reverted: false, kept: kept.length };
+    let draft = world;
+    if (draft.entries !== now.entries) {
+      // The merge judged entries without their positions (a sibling's arrival
+      // shifts them all) and handed them back in order; number them from it.
+      draft = { ...draft, entries: withPositionsFromOrder(normalizeFolders(draft).world.entries) };
+    }
+    // Not one edit among many but a rollback the author asked for: like
+    // undo, it must reach a field they are focused in.
+    set({ ...commitDraft(s, draft), _undoEpoch: s._undoEpoch + 1 });
+    if (get().worldDraft.uiDoc && get().worldDraft.uiDoc !== now.uiDoc) scheduleUiDocRecompile();
+    return { reverted: true, kept: kept.length };
   },
 
   createNew: (opening) => {
@@ -2103,7 +2176,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => {
       const draft = {
         ...s.worldDraft,
-        worldbooks: (s.worldDraft.worldbooks ?? []).filter((w) => w.id !== id),
+        // An AI that lived in this place is in no place now. Said so — it is
+        // what the runtime does with a host that is gone — rather than left
+        // pointing at nothing, which its 「在哪」 menu showed as 「卡片」.
+        worldbooks: (s.worldDraft.worldbooks ?? [])
+          .filter((w) => w.id !== id)
+          .map((w) => (w.host === id ? { ...w, host: UNPLACED_WORLDBOOK_ID } : w)),
         // Orphaned members fall back to the always-on Core (a module holds
         // entries + variables + behaviors — never leave dangling worldbookIds
         // that would fail-open silently).
@@ -2167,13 +2245,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   addFolder: (section, name = "New Folder", worldbookId) => {
+    const id = crypto.randomUUID();
     set((s) => {
       const existingFolders = (s.worldDraft.entryFolders ?? []).filter(
         (f) => f.section === section && (f.worldbookId ?? undefined) === (worldbookId ?? undefined),
       );
       const maxOrder = existingFolders.reduce((max, f) => Math.max(max, f.order), -1);
       const newFolder: EntryFolder = {
-        id: crypto.randomUUID(),
+        id,
         name,
         section,
         order: maxOrder + 1,
@@ -2185,6 +2264,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       };
       return commitDraft(s, draft);
     });
+    return id;
   },
 
   removeFolder: (folderId) => {

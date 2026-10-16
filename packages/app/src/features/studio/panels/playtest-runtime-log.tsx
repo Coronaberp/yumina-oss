@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Bot, ChevronLeft, ChevronRight } from "lucide-react";
-import { computeActiveWorldbookIds, CONTINUITY_KEEP, CONTINUITY_NONE, CONTINUITY_PLAYLIST, UNPLACED_WORLDBOOK_ID, type Variable } from "@yumina/engine";
+import { computeActiveWorldbookIds, CONTINUITY_KEEP, CONTINUITY_NONE, CONTINUITY_PLAYLIST, isAlwaysSendEntry, UNPLACED_WORLDBOOK_ID, type Variable } from "@yumina/engine";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat";
 import { useEditorStore } from "@/stores/editor";
@@ -278,8 +278,8 @@ export function PlaytestRuntimeLog({ sessionId, overlay = false }: { sessionId: 
   const seen = current?.prompt ?? null;
   const injected = new Set(current?.injectedEntryIds ?? []);
   const sentEntries = world.entries.filter((e) => injected.has(e.id));
-  const entryNames = (always: boolean) => sentEntries.filter((e) => !!e.alwaysSend === always);
-  const unsent = current?.injectedEntryIds ? world.entries.filter((e) => e.enabled !== false && !e.alwaysSend && !injected.has(e.id)).length : 0;
+  const entryNames = (always: boolean) => sentEntries.filter((e) => isAlwaysSendEntry(e) === always);
+  const unsent = current?.injectedEntryIds ? world.entries.filter((e) => e.enabled !== false && !isAlwaysSendEntry(e) && !injected.has(e.id)).length : 0;
   const entryChips = (list: typeof sentEntries) => list.length > 0 && <div className="flex flex-wrap gap-1 pl-3.5">
     {list.slice(0, 4).map((e) => <span key={e.id}
       className="max-w-[9rem] truncate rounded bg-muted/70 px-1.5 text-[10.5px] leading-[18px] text-foreground/75">{e.name}</span>)}

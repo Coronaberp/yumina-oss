@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { appendPendingContext } from "../lib/pending-context.js";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { playSessions, worlds, worldPendingEdits } from "../db/schema.js";
@@ -142,7 +143,7 @@ combatRoutes.post("/sessions/:sessionId/action", async (c) => {
       oldValue: ch.oldValue,
       newValue: ch.newValue,
     }));
-    runReactionChain(
+    const reactions = runReactionChain(
       reactionEvaluator,
       stateManager,
       turnEvents,
@@ -150,6 +151,9 @@ combatRoutes.post("/sessions/:sessionId/action", async (c) => {
       worldDef.rules ?? [],
       { worldbooks: worldDef.worldbooks },
     );
+
+    // What a fired behaviour told the AI reaches the next message, as on every other route.
+    appendPendingContext(stateManager, reactions.contextMessages);
 
     // Save state to DB
     const finalState = stateManager.getSnapshot();

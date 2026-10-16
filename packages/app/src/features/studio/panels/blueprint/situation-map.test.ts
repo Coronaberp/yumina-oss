@@ -32,3 +32,17 @@ test("a situation the author dragged keeps its place", () => {
   arrangeSituations(boxes, (id) => books.get(id), { startX: 1000, startY: 0, pinned: { "module:a": { x: 42, y: 99 } } });
   assert.deepEqual([boxes.get("module:a")!.x, boxes.get("module:a")!.y], [42, 99]);
 });
+
+test("a situation laid out by its group goes round one the author dragged into the column", () => {
+  const books = new Map<string, Worldbook>([
+    ["module:a", book("a", {})],
+    ["module:b", book("b", {})],
+  ]);
+  // "a" was dragged to exactly where the group's first slot is.
+  const boxes = new Map<string, FrameBox>([["module:a", frame("module:a", 1016, 40)], ["module:b", frame("module:b")]]);
+  arrangeSituations(boxes, (id) => books.get(id), { startX: 1000, startY: 0, pinned: { "module:a": { x: 1016, y: 40 } } });
+  const a = boxes.get("module:a")!;
+  const b = boxes.get("module:b")!;
+  const overlap = b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y;
+  assert.equal(overlap, false);
+});

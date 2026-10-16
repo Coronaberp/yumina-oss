@@ -20,7 +20,11 @@ import {
   ChevronDown,
   Check,
   MousePointerSquareDashed,
+  ThumbsUp,
+  Play,
+  ThumbsDown,
 } from "lucide-react";
+import { captureHubEvent, type HubEventMap } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { useComposerSubmit } from "@/lib/composer-submit";
 import { useStudioStore } from "@/stores/studio";
@@ -29,7 +33,7 @@ import { useEditorStore } from "@/stores/editor";
 import { useCreditStore } from "@/edition/slots.state";
 import { useFeature } from "@/edition/edition";
 import { getPlansHref } from "@/edition/routes";
-import { STUDIO_RECOMMENDED_MODEL } from "@yumina/shared";
+import { IMAGE_MODEL_CAPABILITIES, STUDIO_MODELS, STUDIO_RECOMMENDED_MODEL, studioDefaultModel } from "@yumina/shared";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { ModelBrowser } from "@/features/chat/model-browser";
 import { formatModelId } from "@yumina/shared";
@@ -210,6 +214,13 @@ function ContextUsageBar({
   );
 }
 
+/** What a credit pause offers instead, cheapest last: both build cards at the
+ *  write rate of the default model for a sixth to a twentieth of the cost. */
+const CHEAPER_STUDIO_MODELS = ["deepseek/deepseek-v4-pro", "openai/gpt-5.6-luna"];
+/** The cheapest Studio model that can see an attached picture. The free-plan
+ *  default (DeepSeek V4 Pro) cannot, and 10% of free creators attach one. */
+const STUDIO_VISION_FALLBACK = "openai/gpt-5.6-luna";
+
 // ── Main Panel ──
 
 export function AiChatPanel(_props: IDockviewPanelProps) {
@@ -218,9 +229,14 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
   const [input, setInput] = useState("");
   /** A block of the card's frontend the creator pointed at in the inspector. */
   const [attachedBlock, setAttachedBlock] = useState<AttachedBlock | null>(null);
-  const [model, setModel] = useState(() => {
-    try { return localStorage.getItem(STUDIO_STORAGE_KEY) || STUDIO_RECOMMENDED_MODEL; } catch { return STUDIO_RECOMMENDED_MODEL; }
+  // The creator's own pick wins; until they make one, the default follows the
+  // plan (free plans start on a model the sign-up credits can actually carry).
+  const [pickedModel, setPickedModel] = useState<string | null>(() => {
+    try { return localStorage.getItem(STUDIO_STORAGE_KEY); } catch { return null; }
   });
+  const creditPlan = useCreditStore(s => s.plan);
+  const billingEnabled = useFeature("billing");
+  const model = pickedModel ?? (billingEnabled ? studioDefaultModel(creditPlan) : STUDIO_RECOMMENDED_MODEL);
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [modelBrowserOpen, setModelBrowserOpen] = useState(false);
@@ -249,6 +265,7 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastAskIdRef = useRef<string | undefined>(undefined);
 
   // A block's "write this one for me" lands here as a filled composer, not as
   // a sent message: the creator reads the request, edits it if they want, and
@@ -257,7 +274,11 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
     const fill = (event: Event) => {
       const detail = (event as CustomEvent<StudioAskDetail>).detail;
       if (!detail?.prompt) return;
-      setInput(detail.prompt);
+      const editor = useEditorStore.getState();
+      if (detail.worldId && detail.worldId !== (editor.serverWorldId ?? editor.worldDraft.id)) return;
+      if (detail.requestId && detail.requestId === lastAskIdRef.current) return;
+      lastAskIdRef.current = detail.requestId;
+      setInput(current => detail.append && current.trim() ? `${current}\n\n${detail.prompt}` : detail.prompt);
       // Focus lands at the end so the creator can keep typing their own
       // specifics onto the sentence we started.
       requestAnimationFrame(() => {
@@ -325,7 +346,6 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
   const firstSuggestion = useMemo(() => firstSuggestionKey(draftEntries, i18nInstance.language), [draftEntries, i18nInstance.language]);
   const fetchCredits = useCreditStore(s => s.fetchCredits);
   const creditBalance = useCreditStore(s => s.balance);
-  const billingEnabled = useFeature("billing");
   const fetchProfile = useUserProfileStore(s => s.fetchProfile);
 
   useEffect(() => {
@@ -363,7 +383,7 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
   // The least the next turn can cost — one model call over the current prompt.
   // Refetched when the card, model or conversation changes and after each run,
   // since a finished run warms the cache and grows the history.
-  const [turnEstimate, setTurnEstimate] = useState<{ floorCredits: number; coldCache: boolean } | null>(null);
+  const [turnEstimate, setTurnEstimate] = useState<{ floorCredits: number; coldCache: boolean; typicalRun: [number, number] | null } | null>(null);
   useEffect(() => {
     setTurnEstimate(null);
     if (!billingEnabled || !serverWorldId || isAgentWorking) return;
@@ -373,13 +393,23 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
     params.set("mode", assistantMode);
     fetch(`${apiBase}/api/studio/${serverWorldId}/agent/estimate?${params}`, { credentials: "include", signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
-      .then((body: { data?: { billed?: boolean; floorCredits?: number | null; coldCache?: boolean } } | null) => {
+      .then((body: { data?: { billed?: boolean; floorCredits?: number | null; coldCache?: boolean; typicalRun?: [number, number] | null } } | null) => {
         const data = body?.data;
-        if (data?.billed && typeof data.floorCredits === "number") setTurnEstimate({ floorCredits: data.floorCredits, coldCache: !!data.coldCache });
+        if (data?.billed && typeof data.floorCredits === "number") {
+          const typical = Array.isArray(data.typicalRun) && data.typicalRun.length === 2 && data.typicalRun.every(n => typeof n === "number") ? data.typicalRun : null;
+          setTurnEstimate({ floorCredits: data.floorCredits, coldCache: !!data.coldCache, typicalRun: typical });
+        }
       })
       .catch(() => {});
     return () => controller.abort();
   }, [apiBase, billingEnabled, serverWorldId, model, activeConversationId, isAgentWorking, assistantMode]);
+  // What this conversation has spent so far, from the runs shown in it.
+  const conversationSpend = useMemo(() => {
+    const runs = new Set(chatMessages.map(message => message.agentRunId).filter((id): id is string => !!id));
+    let total = 0;
+    for (const id of runs) total += runCosts[id] ?? 0;
+    return Math.ceil(total);
+  }, [chatMessages, runCosts]);
   // Only the last bubble of a run carries its cost, so a multi-step turn shows one total.
   const lastMessageIdByRun = useMemo(() => {
     const byRun = new Map<string, string>();
@@ -395,6 +425,31 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
 
   const visibleCreditPause = creditPause?.worldId === serverWorldId
     && creditPause.conversationId === activeConversationId ? creditPause : null;
+
+  // Out of credits on an expensive model: price the next step on the cheapest
+  // model that costs under half as much, so the pause card can offer it.
+  const cheaperModelId = useMemo(() => {
+    const priceOf = (id: string) => { const m = STUDIO_MODELS.find(x => x.id === id); return m ? m.inputPrice + m.outputPrice : null; };
+    const current = priceOf(model);
+    if (current == null) return null;
+    return CHEAPER_STUDIO_MODELS.find(id => id !== model && (priceOf(id) ?? Infinity) < current / 2) ?? null;
+  }, [model]);
+  const pauseNeedsCheaper = !!visibleCreditPause && visibleCreditPause.phase !== "generated" && !!cheaperModelId;
+  const [cheaperStep, setCheaperStep] = useState<{ model: string; credits: number } | null>(null);
+  useEffect(() => {
+    if (!pauseNeedsCheaper || !serverWorldId || !cheaperModelId) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ model: cheaperModelId, mode: assistantMode });
+    if (activeConversationId) params.set("conversationId", activeConversationId);
+    fetch(`${apiBase}/api/studio/${serverWorldId}/agent/estimate?${params}`, { credentials: "include", signal: controller.signal })
+      .then(res => res.ok ? res.json() : null)
+      .then((body: { data?: { billed?: boolean; floorCredits?: number | null } } | null) => {
+        const credits = body?.data?.floorCredits;
+        if (body?.data?.billed && typeof credits === "number") setCheaperStep({ model: cheaperModelId, credits });
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [apiBase, pauseNeedsCheaper, serverWorldId, cheaperModelId, activeConversationId, assistantMode]);
 
   // A top-up may finish in another tab. Refresh only the saved status and
   // balance; restoring a paid task always requires an explicit Continue click.
@@ -540,6 +595,8 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
       // its request was pending (for example from a second mounted AI panel).
       const currentStore = useStudioStore.getState();
       if (currentStore.isAgentWorking || currentStore.isResumingCredits || currentStore._pendingApproval || currentStore._pendingImage) currentStore.stopAgent();
+      const loadedCosts = data.runCosts && typeof data.runCosts === "object" ? data.runCosts as Record<string, number> : {};
+      useStudioStore.setState(state => ({ runCosts: { ...state.runCosts, ...loadedCosts } }));
       useStudioStore.setState({
         chatMessages: data.messages,
         assistantMode: "advise",
@@ -647,8 +704,28 @@ export function AiChatPanel(_props: IDockviewPanelProps) {
     container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [chatMessages, isChatStreaming, chatStreamContent, visibleCreditPause?.runId]);
 
-  const handleSelectModel = (modelId: string) => {
-    setModel(modelId);
+  // Creator reactions, for the satisfaction record (see studio_assistant_action).
+  const latestRunId = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) if (chatMessages[i]!.agentRunId) return chatMessages[i]!.agentRunId!;
+    return null;
+  }, [chatMessages]);
+  const trackAssistant = (action: HubEventMap["studio_assistant_action"]["action"], extra: Partial<HubEventMap["studio_assistant_action"]> = {}) => {
+    captureHubEvent("studio_assistant_action", { world_id: serverWorldId ?? "", run_id: latestRunId, action, model, ...extra });
+  };
+  const handleStop = () => {
+    trackAssistant("stop", { run_id: useStudioStore.getState()._currentRunId ?? latestRunId });
+    stopAgent();
+  };
+  const [runRatings, setRunRatings] = useState<Record<string, "up" | "down">>({});
+  const rateRun = (runId: string, rating: "up" | "down") => {
+    if (runRatings[runId] === rating) return;
+    setRunRatings(current => ({ ...current, [runId]: rating }));
+    captureHubEvent("studio_assistant_feedback", { world_id: serverWorldId ?? "", run_id: runId, rating, model });
+  };
+
+  const handleSelectModel = (modelId: string, source: "picker" | "pause_card" | "image_notice" = "picker") => {
+    if (modelId !== model) trackAssistant("model_switch", { source, to_model: modelId });
+    setPickedModel(modelId);
     try { localStorage.setItem(STUDIO_STORAGE_KEY, modelId); } catch {}
   };
 
@@ -984,7 +1061,7 @@ ${trimmed}` : trimmed);
             onReconnect={() => {
               if (serverWorldId) void reconnectAgent(serverWorldId, activeConversationId, msg.disconnected?.runId);
             }}
-            onResend={() => { if (serverWorldId) void regenerateLastTurn(serverWorldId, model, activeConversationId); }}
+            onResend={() => { if (serverWorldId) { trackAssistant("regenerate"); void regenerateLastTurn(serverWorldId, model, activeConversationId); } }}
           />
         ) : (
           <div key={msg.id}>
@@ -1046,8 +1123,9 @@ ${trimmed}` : trimmed);
                       plan={msg.jobProposal.plan}
                       minutes={msg.jobProposal.minutes}
                       mushies={msg.jobProposal.mushies}
+                      mushiesRange={msg.jobProposal.mushiesRange}
                       interactive={!msg.jobProposal.started && msgIdx === chatMessages.length - 1 && !isAgentWorking}
-                      onStart={() => startJob(msg.id)}
+                      onStart={() => { trackAssistant("job_start", { credits: msg.jobProposal!.mushies }); startJob(msg.id); }}
                     />
                   )}
 
@@ -1071,15 +1149,47 @@ ${trimmed}` : trimmed);
                       onUpdate={proposal => updateImageBatchProposal(serverWorldId, chatConversationId, proposal)}
                     />
                   )}
-                  {billingEnabled && msg.agentRunId && lastMessageIdByRun.get(msg.agentRunId) === msg.id && (runCosts[msg.agentRunId] ?? 0) > 0 && (
-                    <p className="mt-1 text-[10px] text-muted-foreground/70 tabular-nums">
-                      {t("studio.aiChat.turnCost", { count: Math.ceil(runCosts[msg.agentRunId]!) })}
-                    </p>
+                  {msg.agentRunId && lastMessageIdByRun.get(msg.agentRunId) === msg.id && !(isAgentWorking && msg.agentRunId === latestRunId) && (
+                    <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/70 tabular-nums">
+                      {billingEnabled && (runCosts[msg.agentRunId] ?? 0) > 0 && (
+                        <span>{t("studio.aiChat.turnCost", { count: Math.ceil(runCosts[msg.agentRunId]!) })}</span>
+                      )}
+                      <span className="flex items-center gap-0.5" role="group" aria-label={t("studio.aiChat.rateRun")}>
+                        {(["up", "down"] as const).map(rating => {
+                          const Icon = rating === "up" ? ThumbsUp : ThumbsDown;
+                          const chosen = runRatings[msg.agentRunId!] === rating;
+                          return (
+                            <button
+                              key={rating}
+                              type="button"
+                              aria-pressed={chosen}
+                              title={t(rating === "up" ? "studio.aiChat.rateUp" : "studio.aiChat.rateDown")}
+                              onClick={() => rateRun(msg.agentRunId!, rating)}
+                              className={cn("rounded p-0.5 transition-colors hover:text-foreground [@media(pointer:coarse)]:p-1.5", chosen && "text-primary")}
+                            >
+                              <Icon className="h-3 w-3" aria-hidden="true" />
+                            </button>
+                          );
+                        })}
+                      </span>
+                    </div>
                   )}
                 </>
               )}
             </div>
           </div>
+          {msg.continuable && msgIdx === chatMessages.length - 1 && !isAgentWorking && serverWorldId && (
+            <div className="-ml-1.5 mt-1">
+              <button
+                type="button"
+                onClick={() => { trackAssistant("continue"); void sendText(t("studio.aiChat.creditPause.restartMessage")); }}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors [@media(pointer:coarse)]:min-h-9"
+              >
+                <Play className="h-3 w-3" aria-hidden="true" />
+                {t("studio.aiChat.agentError.continue")}
+              </button>
+            </div>
+          )}
           {/* Undo / Regenerate buttons on the last assistant message */}
           {msg.role === "assistant" && msgIdx === chatMessages.length - 1 && !isAgentWorking && !_pendingApproval && !_pendingImage && !visibleCreditPause && (
             <div className="-ml-1.5 mt-1 flex gap-1">
@@ -1088,7 +1198,7 @@ ${trimmed}` : trimmed);
                   <button
                     onClick={() => {
                       setConfirmingUndo(false);
-                      if (serverWorldId) void undoLastTurn(serverWorldId, activeConversationId);
+                      if (serverWorldId) { trackAssistant("undo"); void undoLastTurn(serverWorldId, activeConversationId); }
                     }}
                     className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/25 transition-colors"
                     autoFocus
@@ -1115,7 +1225,7 @@ ${trimmed}` : trimmed);
                 </button>
               )}
               <button
-                onClick={() => serverWorldId && regenerateLastTurn(serverWorldId, model, activeConversationId)}
+                onClick={() => { if (serverWorldId) { trackAssistant("regenerate"); void regenerateLastTurn(serverWorldId, model, activeConversationId); } }}
                 className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 title={t("studio.aiChat.regenerate")}
               >
@@ -1178,9 +1288,16 @@ ${trimmed}` : trimmed);
             refreshing={isRefreshingCreditPause || isConversationLoading}
             error={creditPauseError}
             onTopUp={() => { const href = getPlansHref("packs"); if (href) window.open(href, "_blank", "noopener,noreferrer"); }}
-            onResume={() => { if (!conversationLoadingRef.current) void resumeCreditPause(); }}
+            onResume={() => { if (!conversationLoadingRef.current) { trackAssistant("resume_credits"); void resumeCreditPause(); } }}
             onRefresh={() => { void refreshCreditPause(visibleCreditPause.worldId, visibleCreditPause.conversationId, visibleCreditPause.runId); }}
             onRestart={() => { if (serverWorldId && !conversationLoadingRef.current) void restartFromPause(serverWorldId, model, activeConversationId); }}
+            cheaper={pauseNeedsCheaper && cheaperStep && cheaperStep.model === cheaperModelId
+              ? { name: formatModelId(cheaperStep.model), stepCredits: cheaperStep.credits } : null}
+            onSwitchModel={() => {
+              if (!serverWorldId || !cheaperModelId || conversationLoadingRef.current) return;
+              handleSelectModel(cheaperModelId, "pause_card");
+              void restartFromPause(serverWorldId, cheaperModelId, activeConversationId);
+            }}
           />
         )}
 
@@ -1237,7 +1354,7 @@ ${trimmed}` : trimmed);
                   {t("studio.aiChat.reconnect")}
                 </button>
                 <button
-                  onClick={stopAgent}
+                  onClick={handleStop}
                   className="flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Square className="h-2.5 w-2.5" />
@@ -1278,7 +1395,7 @@ ${trimmed}` : trimmed);
             {t("studio.aiChat.waitingApproval")}
           </span>
           <button
-            onClick={stopAgent}
+            onClick={handleStop}
             className="ml-auto flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
           >
             <Square className="h-2.5 w-2.5" />
@@ -1315,6 +1432,18 @@ ${trimmed}` : trimmed);
                 </button>
               </div>
             ))}
+          </div>
+        )}
+        {chatAttachments.some(file => file.type.startsWith("image/")) && IMAGE_MODEL_CAPABILITIES[model] === false && (
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-100">
+            <span className="min-w-0 flex-1">{t("studio.aiChat.imageBlind", { model: formatModelId(model) })}</span>
+            <button
+              type="button"
+              onClick={() => handleSelectModel(STUDIO_VISION_FALLBACK, "image_notice")}
+              className="shrink-0 rounded border border-amber-400/40 px-2 py-0.5 font-semibold hover:bg-amber-400/15 [@media(pointer:coarse)]:min-h-9"
+            >
+              {t("studio.aiChat.imageBlindSwitch", { model: formatModelId(STUDIO_VISION_FALLBACK) })}
+            </button>
           </div>
         )}
         {attachedBlock && (
@@ -1380,9 +1509,15 @@ ${trimmed}` : trimmed);
           {turnEstimate && !isAgentWorking && !hasPendingApproval ? (
             <span
               className="ml-auto truncate px-1 text-[10px] text-muted-foreground/70 tabular-nums"
-              title={turnEstimate.coldCache ? t("studio.aiChat.turnEstimateCold") : undefined}
+              title={[
+                turnEstimate.typicalRun ? t("studio.aiChat.turnTypicalHint", { low: turnEstimate.typicalRun[0], high: turnEstimate.typicalRun[1], floor: turnEstimate.floorCredits }) : "",
+                turnEstimate.coldCache ? t("studio.aiChat.turnEstimateCold") : "",
+              ].filter(Boolean).join(" ") || undefined}
             >
-              {t("studio.aiChat.turnEstimate", { count: turnEstimate.floorCredits })}
+              {turnEstimate.typicalRun
+                ? t("studio.aiChat.turnTypical", { low: turnEstimate.typicalRun[0], high: turnEstimate.typicalRun[1] })
+                : t("studio.aiChat.turnEstimate", { count: turnEstimate.floorCredits })}
+              {conversationSpend > 0 && ` · ${t("studio.aiChat.conversationSpend", { count: conversationSpend })}`}
             </span>
           ) : <span className="ml-auto" />}
           {/* Hidden file input */}
@@ -1408,7 +1543,7 @@ ${trimmed}` : trimmed);
           )}
           {isAgentWorking ? (
             <button
-              onClick={stopAgent}
+              onClick={handleStop}
               className="rounded-md bg-foreground/85 p-1.5 text-background transition-colors hover:bg-foreground"
               aria-label={t("studio.aiChat.stop")}
               title={t("studio.aiChat.stop")}
@@ -1433,7 +1568,7 @@ ${trimmed}` : trimmed);
       <ModelBrowser
         open={modelBrowserOpen}
         onClose={() => setModelBrowserOpen(false)}
-        onSelect={handleSelectModel}
+        onSelect={(modelId: string) => handleSelectModel(modelId)}
         selectedModel={model}
         studioMode
       />

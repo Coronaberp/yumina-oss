@@ -572,7 +572,7 @@ export async function getModelCostRates(
  * credit purchases means even a 2x over-estimate on aborts still
  * leaves positive margin.
  */
-const CONSERVATIVE_CHARS_PER_TOKEN = 2.0;
+export const CONSERVATIVE_CHARS_PER_TOKEN = 2.0;
 
 /** Estimate token count from character count (conservative — never under-counts). */
 export function estimateTokensFromChars(chars: number): number {
@@ -644,6 +644,43 @@ export async function calculateCost(
 }
 
 // ─── Credit Deduction ───────────────────────────────────────────────
+
+function insufficientCreditsBalance(err: unknown): number | null {
+  if (!(err instanceof Error) || err.message !== "INSUFFICIENT_CREDITS") return null;
+  const balance = (err as { balance?: unknown }).balance;
+  return typeof balance === "number" ? balance : null;
+}
+
+/**
+ * Charge for a generation that already happened. When the unreserved balance
+ * can't cover the full cost, charge what is left instead, so the wallet reaches
+ * 0 and the next preflight stops the player. Swallowing the failure would hand
+ * out the reply for free and leave the wallet positive for the next one.
+ * Retries with the balance from each failure, since a concurrent charge can
+ * shrink it between attempts. Returns null when nothing was left to charge.
+ */
+export async function deductCreditsUpToBalance(
+  userId: string,
+  credits: number,
+  referenceId: string,
+  description: string,
+): Promise<DeductionResult | null> {
+  try {
+    return await deductCredits(userId, credits, referenceId, description);
+  } catch (err) {
+    let remaining = insufficientCreditsBalance(err);
+    if (remaining === null) throw err;
+    for (let attempt = 0; attempt < 3 && remaining > 0; attempt++) {
+      try {
+        return await deductCredits(userId, remaining, referenceId, `${description} (clamped to balance)`);
+      } catch (clampErr) {
+        remaining = insufficientCreditsBalance(clampErr);
+        if (remaining === null) throw clampErr;
+      }
+    }
+    return null;
+  }
+}
 
 /**
  * Atomically deduct credits from the user's wallet.
@@ -1154,6 +1191,36 @@ export async function syncPlan(
 
 const WECHAT_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Is the wallet still inside a paid plan's cycle (a WeChat month, a gift, a card sub)? */
+export function paidCycleActive(
+  wallet: Pick<CreditWallet, "plan" | "periodEnd" | "planExpiresAt">,
+  now: Date = new Date(),
+): boolean {
+  if (normalizePlan(wallet.plan) === "free") return false;
+  if (wallet.periodEnd.getTime() <= now.getTime()) return false;
+  return !wallet.planExpiresAt || wallet.planExpiresAt.getTime() > now.getTime();
+}
+
+/**
+ * The tier a membership purchase of `target` would cut short, or null.
+ *
+ * A WeChat month or a gift plan has no Stripe subscription to schedule a
+ * downgrade on: a purchase replaces the wallet's plan on the spot. Buying a
+ * LOWER tier mid-cycle therefore threw the rest of the higher one away — its
+ * remaining days and its undelivered drops (2026-10-14: WeChat Platinum →
+ * Gold, 6,800 mushies gone). Lower tiers stay closed until the current one
+ * ends; more mushies come from packs.
+ */
+export function higherPlanStillActive(
+  wallet: Pick<CreditWallet, "plan" | "periodEnd" | "planExpiresAt">,
+  target: PlanId,
+  now: Date = new Date(),
+): PlanId | null {
+  const current = normalizePlan(wallet.plan);
+  if (!paidCycleActive(wallet, now) || planMeetsMinimum(target, current)) return null;
+  return current;
+}
+
 /**
  * Book one paid WeChat month (a one-time payment, no subscription).
  *
@@ -1186,7 +1253,13 @@ export async function fulfillWechatPlanPurchase(
     await refreshMonthlyCredits(userId, { periodStart: now, periodEnd, referenceId }, { now });
     return "renewal";
   }
-  await syncPlan(userId, plan, { additive: true, periodStart: now, periodEnd, referenceId, source: "wechat" });
+  // A switch inside a paid cycle restarts it like a card upgrade does: the
+  // plan being left pays out its undelivered drops first. Without the reset the
+  // new cycle silently dropped them (and the checkout guard keeps lower tiers
+  // closed; this also covers a session opened before that guard).
+  await syncPlan(userId, plan, {
+    additive: true, cycleReset: paidCycleActive(wallet, now), periodStart: now, periodEnd, referenceId, source: "wechat",
+  });
   return "plan_change";
 }
 

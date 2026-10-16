@@ -31,7 +31,14 @@ export class ResponseParser {
   private audioPattern: RegExp;
   // JSON directives use a bracket-balancing scanner, not a regex — non-greedy
   // regexes mis-terminate on nested `[]`/`{}` inside the value (e.g. `"comments":[]`).
-  private jsonVarIdPattern = /[\w\p{L}\p{N}.$-]+/u;
+  // Names transliterated into Chinese/Japanese join their parts with a middle
+  // dot (艾丝·华伦斯坦, アイズ・ヴァレンシュタイン); a key like that inside a
+  // dot-path (`[relations.艾丝·华伦斯坦: +20]`) must still parse, or the tag is
+  // left raw in the story. After a dot a key may also hold single spaces
+  // (`[relations.Riveria Ljos Alf: +1]`, how English and Spanish cards key
+  // people); the first segment never does, so bracketed prose like
+  // `[Chapter One: Begin]` is not read as a directive.
+  private jsonVarIdPattern = /[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*/u;
   private jsonOps = ["set", "merge", "push", "delete"] as const;
 
   constructor(pattern?: RegExp) {
@@ -39,7 +46,7 @@ export class ResponseParser {
     // before `]` — LLMs sometimes emit `[ varId: set "x" ]` with padding.
     // Match [variableId: operation] patterns
     this.pattern =
-      pattern ?? /\[\s*([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/gu;
+      pattern ?? /\[\s*([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/gu;
     // Match [audio: trackId action] patterns — optional chain:targetId suffix
     this.audioPattern = /\[\s*audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\s*\]/gu;
   }

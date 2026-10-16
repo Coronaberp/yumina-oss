@@ -114,6 +114,8 @@ export interface StudioJobProposal {
   minutes: number;
   /** null when the creator's own key pays. */
   mushies: number | null;
+  /** Likely spread around the estimate (older proposals have none). */
+  mushiesRange?: [number, number];
   byKey: boolean;
   /** Set once the creator pressed Start. */
   started?: boolean;
@@ -123,6 +125,8 @@ export interface StudioJobProposal {
 export interface StudioChatMessage {
   /** Unique message identifier for stable React keys and state matching */
   id: string;
+  /** An interrupted run's error: offer to carry on without undoing its writes. */
+  continuable?: boolean;
   role: "user" | "assistant";
   content: string;
   /** File attachments (images) on this message */

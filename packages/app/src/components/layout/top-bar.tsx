@@ -95,6 +95,7 @@ export function TopBarAccountControls() {
         </>
       )}
 
+
       <a
         href={DOCS_URLS.home}
         target="_blank"

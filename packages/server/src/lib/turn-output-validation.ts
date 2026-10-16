@@ -12,6 +12,7 @@ import { resolveDefaultGuardModel, resolveGuardModel, resolveGuardModelSelection
 import { isStateGuardActive } from "../extensions/state-update-guard/activation.js";
 import { backgroundUsageCost, backgroundBillingLabel, notEnoughMushiesMessage } from "./background-billing.js";
 import { calculateCost, deductCredits } from "./credit-service.js";
+import { textPrefix } from "./text-prefix.js";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Target = Pick<typeof messages.$inferSelect, "id" | "content" | "activeSwipeIndex" | "swipes">;
@@ -126,7 +127,7 @@ export class TurnOutputAttempt {
       const preview = (value: unknown) => {
         const json = JSON.stringify(value) ?? "null";
         const limit = Math.min(4000, Math.floor(budget / 2));
-        if (json.length > limit) { truncated = true; budget -= limit; return json.slice(0, limit) + "…"; }
+        if (json.length > limit) { truncated = true; budget -= limit; return textPrefix(json, limit) + "…"; }
         budget -= json.length;
         return JSON.parse(json) as unknown;
       };
@@ -172,7 +173,7 @@ export class TurnOutputAttempt {
   async validate(ctx: Omit<TurnOutputContext, "audit" | "mayCorrect" | "progress" | "recordUsage">, onProgress: (audit: StateValidationAudit) => Promise<void>) {
     if (!this.enabled) return { parsed: ctx.parsed };
     if (this.failedOpen) return this.failOpen(ctx);
-    this.failedDraft = ctx.raw.slice(0, 65_536);
+    this.failedDraft = textPrefix(ctx.raw, 65_536);
     if (ctx.raw.trim()) this.trackNarrativeUsage();
     this.audit.model = ctx.model;
     let result: ValidatedTurnOutput;

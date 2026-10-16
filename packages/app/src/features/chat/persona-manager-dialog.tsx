@@ -44,6 +44,10 @@ export function PersonaManagerDialog({ open, onClose, sessionId }: PersonaManage
       sessionId, apiBase: import.meta.env.VITE_API_URL || "",
       getState: useChatStore.getState,
       apply: (session) => useChatStore.setState({ session }),
+      applyGreeting: (greeting) => useChatStore.setState(state =>
+        state.session?.id === sessionId && !state.isStreaming && state.messages.length === 1
+          && state.messages[0]?.id === greeting.id
+          ? { messages: [greeting] } : {}),
       onSaving: setSaving,
       onError: (error) => setSaveError(error ? t(error instanceof PersonaSaveUnconfirmedError ? "persona.session.unconfirmed" : "persona.session.saveError") : null),
       onEvent: (event) => { void import("@/lib/analytics").then(({ captureHubEvent }) => captureHubEvent("persona_selection", event)).catch(() => {}); },

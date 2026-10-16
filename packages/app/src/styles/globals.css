@@ -1674,6 +1674,17 @@ html:lang(zh) .hub-hero--world .hub-hero-subtitle {
   gap: 0.375rem;
 }
 
+.play-default-chat {
+  container-type: size;
+}
+
+/* Start the default transcript 15% down from the top of its chat area.
+   Keep the space in the scroller so it moves away with the conversation.
+   Container units follow embedded/mobile layouts without scaling with text. */
+.play-default-chat > .play-message-scroll {
+  padding-block-start: 15cqh;
+}
+
 .play-message-scroll {
   padding-inline: var(--play-page-gutter);
   padding-block: 0.25rem;
@@ -2753,7 +2764,9 @@ html.dm-mobile-selection-locked body * {
   .mobile-nav-drawer__utilities {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* One equal column per utility (3 or 4, depending on install state). */
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: 0.25rem;
     margin-top: auto;
     padding-top: 0.7rem;

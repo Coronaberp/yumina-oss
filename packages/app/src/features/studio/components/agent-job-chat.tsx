@@ -26,11 +26,13 @@ function ActionLine({ children, actions, kind }: { children: ReactNode; actions?
 /** Only for a big job: what it will do, the time and the cost, then it
  *  starts. The plan used to hide behind 「看看计划」; when the reply above it
  *  had no words, a newcomer saw only 「9 分钟 · 开始」 and sat waiting. */
-export function JobAsk({ plan, minutes, mushies, interactive, onStart }: {
+export function JobAsk({ plan, minutes, mushies, mushiesRange, interactive, onStart }: {
   plan: string[];
   minutes: number;
   /** null when the creator's own key pays. */
   mushies: number | null;
+  /** Where half of past jobs landed around the estimate; shown when present. */
+  mushiesRange?: [number, number];
   /** Only the newest proposal, not yet started, has buttons. */
   interactive: boolean;
   onStart: () => void;
@@ -51,7 +53,9 @@ export function JobAsk({ plan, minutes, mushies, interactive, onStart }: {
           </button>
         )}
       >
-        {mushies === null ? t("studio.job.askByKey", { minutes }) : t("studio.job.ask", { minutes, mushies })}
+        {mushies === null ? t("studio.job.askByKey", { minutes })
+          : mushiesRange ? t("studio.job.askRange", { minutes, low: mushiesRange[0], high: mushiesRange[1] })
+            : t("studio.job.ask", { minutes, mushies })}
       </ActionLine>
     </>
   );

@@ -24,13 +24,20 @@ export const ENTRY_TRIGGER_ORDER: readonly EntryTrigger[] = ["always", "keywords
 
 /** Classify an entry by how it reaches the prompt. Reads the persisted shape
  *  rather than a type union — stored cards carry entries written by older
- *  builds and by imports. */
+ *  builds and by imports.
+ *
+ *  Variable conditions come before always-send, the way the runtime matcher
+ *  takes them: wiring a variable into an always-on entry leaves the flag set,
+ *  and the entry is gated from then on. Reading the flag first left it in the
+ *  always block and counted against every turn's budget. */
 export function entryTrigger(entry: {
   alwaysSend?: boolean;
+  variableBound?: boolean;
   conditions?: unknown[] | null;
   keywords?: unknown[] | null;
 }): EntryTrigger {
-  if (entry.alwaysSend) return "always";
+  const gated = entry.variableBound === true || (entry.conditions?.length ?? 0) > 0;
+  if (entry.alwaysSend && !gated) return "always";
   if ((entry.conditions?.length ?? 0) > 0) return "conditions";
   if ((entry.keywords?.length ?? 0) > 0) return "keywords";
   return "manual";
@@ -221,6 +228,10 @@ export interface BuildBoardOptions {
   /** Rows that must stay on screen: the creator just created, selected,
    *  searched for or otherwise touched them. */
   forced?: ReadonlySet<string>;
+  /** Objects the board does not draw as rows at all (the platform's own
+   *  narration presets). Left in, they took places in a block's row limit
+   *  and then were not drawn: a block of fourteen showed eleven and "N more". */
+  omit?: ReadonlySet<string>;
   /** Second-band rows — shown before plain ones once the must-haves fit. */
   preferred?: ReadonlySet<string>;
   /** Block ids the creator has expanded: those show every row. */
@@ -295,6 +306,7 @@ const ownerOf = (g: GraphNode): string | undefined =>
 export function buildBoard(graph: CardGraph, opts: BuildBoardOptions = {}): Block[] {
   const wired = wiredNodeIds(graph);
   const forced = opts.forced ?? new Set<string>();
+  const omit = opts.omit ?? new Set<string>();
   const preferred = opts.preferred ?? new Set<string>();
   const expanded = opts.expanded ?? new Set<string>();
 
@@ -371,6 +383,11 @@ export function buildBoard(graph: CardGraph, opts: BuildBoardOptions = {}): Bloc
       // modules, it is in every module: the player reads it whichever
       // module is on.
       case "greeting":
+        // One that carries a module anyway (an import, an old drag onto a
+        // situation) is still drawn on the card: in a situation's bucket the
+        // card frame never draws it, and it vanished from the board while the
+        // opening switcher still listed it.
+        if (cardFrame) { bucket("").openings.push({ g: n, shared: false }); break; }
         for (const h of homes(n)) bucket(h.owner).openings.push({ g: n, shared: h.shared });
         break;
       case "entry": {
@@ -443,22 +460,25 @@ export function buildBoard(graph: CardGraph, opts: BuildBoardOptions = {}): Bloc
     const shelf = cardFrame && ownerId !== undefined && (kind === "state" || kind === "behavior" || (kind === "lore" && trigger === "always"));
     if (all.length === 0 && !shelf) return null;
     const limit = opts.rowLimits?.[kind] ?? BLOCK_ROW_LIMIT[kind];
-    const mustShow = (m: Member) => wired.has(m.g.id) || forced.has(m.g.id);
     // With a root module on the board the card's objects have rows THERE;
     // in a module they are the count in the block's header, not rows.
-    const listed = cardFrame ? all.filter((m) => !m.shared) : all;
+    const listed = (cardFrame ? all.filter((m) => !m.shared) : all).filter((m) => !omit.has(m.g.id));
 
     let shown: Member[];
     if (expanded.has(id) || listed.length <= limit) {
       shown = listed;
     } else {
-      const must = listed.filter(mustShow);
+      // What the creator just made, picked or searched for always shows.
+      // Wired rows come next, then preferred, then the rest — but wired rows
+      // are held to the limit like any other: a folded row's wires land on
+      // the block's head (blockHostsMap), so nothing is lost by folding one.
+      // Shown whole, a card whose entries are all gated by variables drew a
+      // block of 452 rows, 9,000px tall, that no zoom could take in.
+      const must = listed.filter((m) => forced.has(m.g.id));
       const room = limit - must.length;
-      const rest = listed.filter((m) => !mustShow(m));
-      const fill =
-        room <= 0
-          ? []
-          : [...rest.filter((m) => preferred.has(m.g.id)), ...rest.filter((m) => !preferred.has(m.g.id))].slice(0, room);
+      const rest = listed.filter((m) => !forced.has(m.g.id));
+      const rank = (m: Member) => (wired.has(m.g.id) ? 0 : preferred.has(m.g.id) ? 1 : 2);
+      const fill = room <= 0 ? [] : [...rest].sort((a, b) => rank(a) - rank(b)).slice(0, room);
       const keep = new Set([...must, ...fill].map((m) => m.g.id));
       shown = listed.filter((m) => keep.has(m.g.id));
     }

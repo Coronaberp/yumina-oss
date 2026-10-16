@@ -66,6 +66,7 @@ import { LibraryEmptyState } from "./library-empty-state";
 // Through the edition seam: the local edition stubs this to null rather
 // than shipping the platform generator.
 import { GenerationPanel } from "@/edition/slots";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import { BulkActionsBar } from "./bulk-actions-bar";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useFeature } from "@/edition/edition";
@@ -857,6 +858,8 @@ export function LibraryAssetsTab({
           </DropdownMenu>}
         </>}
       </div>
+
+      <MediaGuidelinesNote usage="assets" />
 
       {/* ─── File Grid ─── */}
       <div

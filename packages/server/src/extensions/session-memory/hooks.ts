@@ -15,8 +15,10 @@ import {
 import {
   discardQueuedSessionMemoryUpdates,
   formatSessionMemoryForPrompt,
+  hasIneligibleSessionMemorySource,
   regenerateSessionMemoryForSession,
   scheduleSessionMemoryIncrementalUpdate,
+  scheduleSessionMemoryRepair,
 } from "../../lib/session-memory.js";
 import {
   discardQueuedStoryCompactions,
@@ -130,10 +132,10 @@ export function regenerateDroppedMemoryTiers(args: {
  * forcing a full re-summarization of the entire backlog. Structured session
  * memory is deliberately never wiped here — incremental updates only ever fold
  * one prior exchange, so a blanket wipe permanently lost every accumulated
- * fact; the memory panel offers a manual regenerate. Under the lag-one
+ * fact. Stale memory is excluded from prompts until a full rebuild succeeds. Under the lag-one
  * invariant memory never covers the newest visible reply anyway, so
  * swiping/regenerating/editing that reply needs no memory invalidation —
- * only edits to OLDER turns can leave memory stale (accepted tradeoff).
+ * edits to OLDER turns hide derived memory and queue a full rebuild.
  */
 function invalidateForChangedMessage(ctx: InvalidateContext): ExtensionInvalidation {
   const flags = ctx.messageFlags ?? {};
@@ -158,7 +160,9 @@ function invalidateForChangedMessage(ctx: InvalidateContext): ExtensionInvalidat
           .set(STORY_SUMMARY_RESET_FIELDS)
           .where(and(
             eq(playSessions.id, ctx.sessionId),
-            eq(playSessions.summaryCoversUntilMessageId, rawCoverage.coversUntilMessageId),
+            rawCoverage.coversUntilMessageId === null
+              ? isNull(playSessions.summaryCoversUntilMessageId)
+              : eq(playSessions.summaryCoversUntilMessageId, rawCoverage.coversUntilMessageId),
             rawCoverage.sourceHash === null
               ? isNull(playSessions.summarySourceHash)
               : eq(playSessions.summarySourceHash, rawCoverage.sourceHash),
@@ -200,6 +204,7 @@ function invalidateForChangedMessage(ctx: InvalidateContext): ExtensionInvalidat
               isNotNull(playSessions.sessionMemory),
               eq(playSessions.sessionMemoryProcessedMessageId, flags.id),
             ));
+          await scheduleSessionMemoryRepair(ctx.sessionId);
         }
         return;
       }
@@ -214,8 +219,8 @@ function invalidateForChangedMessage(ctx: InvalidateContext): ExtensionInvalidat
       // The changed message is OLDER than the newest reply, so session memory
       // may still describe its pre-edit content — and memory is deliberately
       // never wiped here (see the header comment). Stamp it stale so the
-      // prompt block carries an explicit obsolete-content warning until a
-      // full rebuild / manual save / clear replaces the text. Guarded on a
+      // prompt omits derived facts until a full rebuild / manual save / clear
+      // replaces the text. Queue the rebuild below. Guarded on a
       // memory existing: one built entirely after this change isn't stale.
       // (Real case: a player edited an early "we're at the beach" message and
       // two regenerations kept returning to the beach — the stale memory kept
@@ -224,12 +229,16 @@ function invalidateForChangedMessage(ctx: InvalidateContext): ExtensionInvalidat
         .update(playSessions)
         .set({ sessionMemoryStaleAt: new Date() })
         .where(and(eq(playSessions.id, ctx.sessionId), isNotNull(playSessions.sessionMemory)));
+      await db.update(playSessions)
+        .set({ summaryceptionStatus: "idle", summaryceptionSourceHash: null })
+        .where(and(eq(playSessions.id, ctx.sessionId), eq(playSessions.summaryceptionStatus, "updating")));
+      await scheduleSessionMemoryRepair(ctx.sessionId);
     },
   };
 }
 
 async function getChangedMessageStoryCoverage(ctx: InvalidateContext): Promise<{
-  coversUntilMessageId: string;
+  coversUntilMessageId: string | null;
   sourceHash: string | null;
 } | null> {
   const flags = ctx.messageFlags;
@@ -238,13 +247,18 @@ async function getChangedMessageStoryCoverage(ctx: InvalidateContext): Promise<{
     .select({
       coversUntilMessageId: playSessions.summaryCoversUntilMessageId,
       sourceHash: playSessions.summarySourceHash,
+      summary: playSessions.summary,
       coversUntilCreatedAt: messages.createdAt,
     })
     .from(playSessions)
     .leftJoin(messages, eq(messages.id, playSessions.summaryCoversUntilMessageId))
     .where(eq(playSessions.id, ctx.sessionId))
     .limit(1);
-  if (!coverage?.coversUntilMessageId) return null;
+  if (!coverage) return null;
+  // Older saved summaries have no coverage pointer. An edit cannot certify
+  // them; keeping one would feed the edited-away fact into the memory rebuild.
+  if (!coverage.coversUntilMessageId) return coverage.summary?.trim()
+    ? { coversUntilMessageId: null, sourceHash: coverage.sourceHash } : null;
   const isCovered = coverage.coversUntilMessageId === flags.id
     || !!coverage.coversUntilCreatedAt
       && new Date(flags.createdAt).getTime() <= coverage.coversUntilCreatedAt.getTime();
@@ -487,12 +501,13 @@ export function registerSessionMemoryExtension(): void {
         // they are the player's own standing instructions, not derived state.
         id: "session-memory",
         priority: 30,
-        content: (() => {
+        content: await (async () => {
           const autoMemoryOn = ctx.capabilities.has("session-memory");
           const pinned = typeof ctx.session.sessionMemoryPinned === "string" ? ctx.session.sessionMemoryPinned : null;
           if (!autoMemoryOn && !pinned) return null;
           return formatSessionMemoryForPrompt(autoMemoryOn ? ctx.session.sessionMemory : null, {
-            staleSinceEdit: autoMemoryOn && ctx.session.sessionMemoryStaleAt != null,
+            staleSinceEdit: autoMemoryOn && (ctx.session.sessionMemoryStaleAt != null
+              || await hasIneligibleSessionMemorySource(ctx.sessionId, ctx.session)),
             pinned,
           });
         })(),

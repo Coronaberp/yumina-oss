@@ -56,8 +56,29 @@ export interface PlayerChannels {
   outside: number;
   outsideCrazyGames: number;
 }
+/** Completed account deletions, from the main database's identity-free ledger
+ *  (served alongside the warehouse snapshot, not computed by the worker). */
+export interface DeletedAccounts {
+  /** Deletions within the report period (everything recorded for "all"). */
+  value: number;
+  total: number;
+  last1d: number;
+  last7d: number;
+  last30d: number;
+  /** Lifetime game time carried over from deleted accounts. */
+  retainedPlaytimeSeconds: number;
+  /** Earliest recorded deletion. */
+  since: string | null;
+  /** Deletions before the ledger existed, reconstructed from anti-abuse
+   *  markers: a lower bound (repeat deletions of one email may collapse). */
+  backfilled: number;
+}
 export interface OverviewReport {
   accounts: Metric;
+  deletedAccounts?: DeletedAccounts;
+  /** What `gameSeconds` sums: per-account lifetime counters (all-time) or
+   *  recorded foreground intervals. */
+  gameSecondsBasis?: "lifetime-counters" | "intervals";
   active: Metric;
   players: Metric;
   gameSeconds: Metric;

@@ -29,6 +29,7 @@ import {
 } from "./deleted-identity.js";
 import { isDeletedIdentityRegistrationBlocked } from "./deleted-identity-policy.js";
 import { sendRedditConversion } from "./reddit-capi.js";
+import { sendTikTokEvent, tikTokCookieKeys } from "./tiktok-events-api.js";
 import { invalidateSessionUser } from "./session-user-cache.js";
 
 /**
@@ -47,6 +48,11 @@ function reportSignupConversion(user: { id: string; email?: string | null }, ctx
     const cookies = headers?.get?.("cookie") ?? "";
     const cid = /(?:^|;\s*)_rdt_cid=([^;]+)/.exec(cookies)?.[1];
     const ruuid = /(?:^|;\s*)_rdt_uuid=([^;]+)/.exec(cookies)?.[1];
+    const ipAddress =
+      headers?.get?.("cf-connecting-ip") ??
+      headers?.get?.("x-forwarded-for")?.split(",")[0]?.trim() ??
+      null;
+    const userAgent = headers?.get?.("user-agent") ?? null;
     sendRedditConversion({
       eventType: "SignUp",
       conversionId: user.id,
@@ -54,11 +60,20 @@ function reportSignupConversion(user: { id: string; email?: string | null }, ctx
       externalId: user.id,
       clickId: cid ? decodeURIComponent(cid) : null,
       rdtUuid: ruuid ? decodeURIComponent(ruuid) : null,
-      ipAddress:
-        headers?.get?.("cf-connecting-ip") ??
-        headers?.get?.("x-forwarded-for")?.split(",")[0]?.trim() ??
-        null,
-      userAgent: headers?.get?.("user-agent") ?? null,
+      ipAddress,
+      userAgent,
+    });
+    // TikTok: same dedupe id as the pixel's CompleteRegistration (user id).
+    const tt = tikTokCookieKeys(cookies);
+    sendTikTokEvent({
+      event: "CompleteRegistration",
+      eventId: user.id,
+      email: user.email ?? null,
+      externalId: user.id,
+      ttclid: tt.ttclid,
+      ttp: tt.ttp,
+      ipAddress,
+      userAgent,
     });
   } catch {
     // ad telemetry must never interfere with signup

@@ -47,3 +47,34 @@ describe("stock chat top band", () => {
     expect(out).toContain(`<div style={{ position: "absolute", inset: 0 }}>`);
   });
 });
+
+describe("stock chat under a doc that draws its own (2026-10-15, two chats stacked)", () => {
+  const chatCount = (doc: UiDoc) => compileUiDoc(doc).files["index.tsx"]!.match(/<Chat\b/g)?.length ?? 0;
+  const ownChat = { id: "story-chat", type: "chat", x: 0, y: 60, w: 375, h: 752 } as UiElement;
+
+  it("a surface-chat doc with a chat part on any page compiles one chat, not two", () => {
+    const doc: UiDoc = {
+      ...stockDoc([]),
+      pages: [pageOf([]), { id: "story", name: "Story", height: 812, elements: [ownChat] }],
+    };
+    expect(chatCount(doc)).toBe(1);
+    // Same output as the doc with surface cleared — the shape the editor leaves.
+    expect(compileUiDoc(doc).files["index.tsx"]).toBe(compileUiDoc({ ...doc, surface: undefined }).files["index.tsx"]);
+  });
+
+  it("half a chat counts too: a composer alone would sit over the stock input", () => {
+    const composer = { id: "c", type: "composer", x: 0, y: 740, w: 375, h: 60 } as UiElement;
+    expect(compileUiDoc(stockDoc([composer])).files["index.tsx"]).not.toContain("typeof Chat !== \"undefined\" ? <Chat />");
+  });
+
+  it("a doc with no chat of its own keeps the platform chat underneath", () => {
+    expect(chatCount(stockDoc([label]))).toBe(1);
+  });
+
+  it("a custom part that mounts its own <Chat> keeps the stock chat underneath, as it always has", () => {
+    const custom = { id: "mine", type: "custom", x: 0, y: 0, w: 375, h: 812, code: `return <Chat className="mine" />;` } as UiElement;
+    const out = compileUiDoc(stockDoc([custom])).files["index.tsx"]!;
+    expect(out).toContain(`<div style={{ position: "absolute", inset: 0 }}>\n        {typeof Chat !== "undefined" ? <Chat /> : null}`);
+    expect(out).toContain(`<Chat className="mine" />`);
+  });
+});

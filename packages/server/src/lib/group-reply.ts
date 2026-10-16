@@ -1,4 +1,7 @@
+import { storySamplingParams } from "./station-sampling.js";
+import { loadPlayerAiConfig } from "./player-ai-config.js";
 import { and, desc, eq } from "drizzle-orm";
+import { appendPendingContext } from "./pending-context.js";
 import {
   buildMessageAIEvent,
   computeActiveWorldbookIds,
@@ -155,7 +158,7 @@ export function buildGroupReplyPrompt(args: {
   // The card's own world, and the place the room is in: a voice in a group
   // has to know whose story it is and where it is standing.
   const worldLore = (args.world.entries ?? [])
-    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, args.state.ruleState?.toggledEntries, args.world.loreUiBindings))
+    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, args.state.ruleState?.toggledEntries, args.world.loreUiBindings, args.state))
     .map((e) => e.content)
     .filter(Boolean)
     .join("\n\n")
@@ -278,6 +281,8 @@ export async function runGroupReply(args: {
     }),
     endpoint: "module-worker",
     maxTokens: MAX_GROUP_TOKENS,
+    // Group voices are narrators: they sample like the story AI does.
+    temperature: storySamplingParams(world.settings, await loadPlayerAiConfig(userId), (v, min, max) => Math.min(max, Math.max(min, v))).temperature,
   }).catch((err) => {
     console.error(`[Group] ${sessionId} ${voice.id} failed:`, err instanceof Error ? err.message : err);
     return "";
@@ -308,7 +313,7 @@ export async function runGroupReply(args: {
       ...changes.map((c) => ({ type: "state:changed" as const, variableId: c.variableId, oldValue: c.oldValue, newValue: c.newValue })),
     ];
     const rules = runReactionChain(reactionEvaluator, manager, events, world.reactions ?? [], world.rules ?? [], { worldbooks: world.worldbooks });
-    if (rules.contextMessages.length > 0) manager.setMetadata("pendingContext", rules.contextMessages);
+    appendPendingContext(manager, rules.contextMessages);
     const finalState = manager.getSnapshot();
     const allChanges = [...changes, ...rules.changes];
     const snapshot = thinSnapshotForStorage(finalState as unknown as Record<string, unknown>);

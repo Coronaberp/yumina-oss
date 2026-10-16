@@ -34,6 +34,7 @@ import { getAssetCdnUrl, cardImageUrl, fallbackToOriginalOnError } from "@/lib/a
 import { getUploadMetadata } from "@/lib/asset-upload";
 import { isAssetArchiveFilename } from "@yumina/shared";
 import { useAssetImportStore } from "@/stores/asset-imports";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import {
   Dialog,
   DialogContent,
@@ -357,6 +358,7 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
             if (expandedId) void loadFolderAssets(expandedId, true);
           }} />
       )}
+      <MediaGuidelinesNote usage="assets" />
 
       {loading ? (
         <div className="flex justify-center py-16">

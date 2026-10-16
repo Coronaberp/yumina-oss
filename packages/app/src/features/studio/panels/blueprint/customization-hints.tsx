@@ -8,11 +8,12 @@ import { Sparkles } from "lucide-react";
  * or an outside AI) reads the sticky note; this just says what can be asked
  * for.
  */
-export type HintArea = "ai" | "behavior";
+export type HintArea = "ai" | "behavior" | "context";
 
 const HINTS: Record<HintArea, string[]> = {
   ai: ["codeCall", "replyRules", "ownAi"],
   behavior: ["codeBehavior", "fromCode"],
+  context: ["messages", "lore", "session"],
 };
 
 /** The board listens: a panel that found an implementation asks to open it at its line. */

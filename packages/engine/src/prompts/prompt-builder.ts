@@ -51,11 +51,6 @@ export interface UserPrompt {
   /** Message role the prompt is sent as. Omitted = "system". */
   apiRole?: "system" | "user" | "assistant";
 }
-/** Escape special regex characters in a string */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Sort entries by position (ascending numeric) */
 function entrySort(a: WorldEntry, b: WorldEntry): number {
   const aPos = a.position ?? Infinity;
@@ -143,6 +138,11 @@ function renderChangeValueForPrompt(value: unknown): string {
     ? `${rendered.slice(0, CHANGE_VALUE_MAX_CHARS)}…`
     : rendered;
 }
+
+/** Directive positions with their own slot in the prompt. Everything else —
+ *  "auto", "depth" (allowed by the schema, never given a slot) or an unknown
+ *  value — goes with the auto directives instead of being silently dropped. */
+const PLACED_DIRECTIVE_POSITIONS = new Set<string>(["top", "before_char", "after_char", "bottom"]);
 
 /**
  * Composes LLM prompts from world definition + current state.
@@ -519,7 +519,7 @@ export class PromptBuilder {
         .map((d) => this.interpolate(d.content, world, state));
 
     const autoDirectives = activeDirectives
-      .filter((d) => d.position === "auto")
+      .filter((d) => !PLACED_DIRECTIVE_POSITIONS.has(d.position))
       .map((d) => this.interpolate(d.content, world, state));
 
     // Collect system-presets entries (not chat-history, post-history, or examples with keyword triggers)
@@ -646,16 +646,21 @@ export class PromptBuilder {
     if (exampleEntries.length === 0) return [];
 
     const result: ChatMessage[] = [];
-    const charName = this.resolveCharName(world);
-    const userName = world.settings?.playerName || "User";
+    // Who speaks is read off the text as written, BEFORE the macros run.
+    // Expanded, {{user}} is the player's persona or username and {{char}} the
+    // character's name or "Assistant" — names this parser could not know, so
+    // a player with a persona turned every {{user}}: line into the AI's.
+    // A card that writes the names out is matched by its own names.
+    const charName = primaryCharacterEntry(world)?.name ?? world.name;
+    const userName = world.settings?.playerName;
 
     for (const entry of exampleEntries) {
-      const text = this.interpolate(entry.content, world, state);
-      const parsed = this.parseExampleDialogue(text, charName, userName);
-
-      if (parsed.length > 0) {
+      // ｛｛char｝｝ typed with a Chinese keyboard is the same macro.
+      const text = entry.content.replace(/｛｛/g, "{{").replace(/｝｝/g, "}}");
+      // Each <START> block is an example of its own, introduced as one.
+      for (const turns of this.parseExampleDialogue(text, charName, userName)) {
         result.push({ role: "system", content: "[Example Chat]" });
-        result.push(...parsed);
+        for (const m of turns) result.push({ ...m, content: this.interpolate(m.content, world, state) });
       }
     }
 
@@ -663,56 +668,64 @@ export class PromptBuilder {
   }
 
   /**
-   * Parse a mes_example-format string into user/assistant message pairs.
-   * Handles: <START>\n{{user}}: text\n{{char}}: text
-   * Also handles: {{user}}: text\n{{char}}: text (no <START>)
+   * Parse an example into the turns it demonstrates.
+   *
+   * The format is SillyTavern's mes_example — where most of these come from —
+   * and is read the way SillyTavern reads it: `<START>` separates examples,
+   * a line opened by the player (`{{user}}:` or their name) is the player's
+   * turn, and everything else is the AI's: `{{char}}:` or the character's
+   * name, any other cast member's `Name:` (kept with the name, so a
+   * multi-character card shows who speaks), and narration with no speaker.
+   * Full-width colons and bold names (`**Jennifer:**`) count.
+   *
+   * Nothing is dropped. This used to keep only lines after a `{{user}}:` /
+   * `{{char}}:` / exact-name prefix, so an example written as prose, with
+   * other characters' names, or with 「：」 vanished from the prompt without
+   * a word — 489 of them on the live site.
    */
-  private parseExampleDialogue(text: string, charName: string, userName: string): ChatMessage[] {
-    const result: ChatMessage[] = [];
-    // Split on <START> to get individual example blocks
+  private parseExampleDialogue(text: string, charName?: string, userName?: string): ChatMessage[][] {
+    const examples: ChatMessage[][] = [];
     const blocks = text.split(/<START>/i).filter((b) => b.trim());
+    const same = (a: string, b?: string) => !!b?.trim() && a.trim().toLowerCase() === b.trim().toLowerCase();
 
     for (const block of blocks) {
-      const lines = block.split("\n");
+      const result: ChatMessage[] = [];
       let currentRole: "user" | "assistant" | null = null;
       let currentContent: string[] = [];
-
       const flush = () => {
-        if (currentRole && currentContent.length > 0) {
-          result.push({ role: currentRole, content: currentContent.join("\n").trim() });
-        }
+        const content = currentContent.join("\n").trim();
+        if (currentRole && content) result.push({ role: currentRole, content });
         currentContent = [];
       };
+      const start = (role: "user" | "assistant") => {
+        flush();
+        currentRole = role;
+      };
 
-      for (const line of lines) {
+      for (const line of block.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-
-        // Check for {{user}}: or {{char}}: or actual name: prefixes
-        const userMatch = trimmed.match(new RegExp(`^(?:\\{\\{user\\}\\}|${escapeRegex(userName)}):\\s*(.*)`, "i"));
-        const charMatch = trimmed.match(new RegExp(`^(?:\\{\\{char\\}\\}|${escapeRegex(charName)}):\\s*(.*)`, "i"));
-
-        if (userMatch) {
-          flush();
-          currentRole = "user";
-          if (userMatch[1]) currentContent.push(userMatch[1]);
-        } else if (charMatch) {
-          flush();
-          currentRole = "assistant";
-          if (charMatch[1]) currentContent.push(charMatch[1]);
-        } else if (currentRole) {
+        // `Name: text`, `Name：text`, `**Name:** text`, `**Name**: text`.
+        const m = /^(\*{0,2})([^\n:：*]{1,40}?)\1?\s*[:：]\s*(?:\*{2}\s*)?(.*)$/.exec(trimmed);
+        const speaker = m?.[2]?.trim();
+        if (speaker && (same(speaker, "{{user}}") || same(speaker, userName))) {
+          start("user");
+          if (m![3]) currentContent.push(m![3]);
+        } else if (speaker && (same(speaker, "{{char}}") || same(speaker, charName))) {
+          start("assistant");
+          if (m![3]) currentContent.push(m![3]);
+        } else {
+          // Another speaker, or narration: the AI's side of the example. A
+          // run of it stays one turn; a named line keeps its name.
+          if (currentRole !== "assistant") start("assistant");
           currentContent.push(trimmed);
         }
       }
       flush();
+      if (result.length) examples.push(result);
     }
 
-    return result;
-  }
-
-  /** Resolve the character name from world entries */
-  private resolveCharName(world: WorldDefinition): string {
-    return primaryCharacterEntry(world)?.name || world.name || "Character";
+    return examples;
   }
 
   /**
@@ -931,7 +944,7 @@ export class PromptBuilder {
 
     // "auto" position directives go after entries
     const autoDirectives = activeDirectives
-      .filter((d) => d.position === "auto")
+      .filter((d) => !PLACED_DIRECTIVE_POSITIONS.has(d.position))
       .map((d) => this.interpolate(d.content, world, state));
 
     // Top directives before all entries

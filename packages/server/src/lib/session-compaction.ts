@@ -1,16 +1,22 @@
+import { NARRATIVE_EVIDENCE_RULES } from "./narrative-evidence.js";
+import { assertPriorCoverage, continuitySnapshotGuard, historicalStateGuard, loadHistoricalState, STORY_INPUT_FIELDS, type HistoricalState } from "./continuity-guards.js";
+import { memorySourceGuard } from "./session-memory-guards.js";
 import { usageObservation } from "./usage-observation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, exists, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { messages, playSessions, usageLogs, worlds } from "../db/schema.js";
+import { messages, playSessions, usageLogs, worlds, creditTransactions, creditWallets } from "../db/schema.js";
 import { recordUsageLog } from "./usage-log.js";
 import {
   billBackgroundUsage,
+  prepareBackgroundUsageBill,
   hasBackgroundRunBudget,
   notEnoughMushiesMessage,
 } from "./background-billing.js";
 import { resolveProviderForModel } from "./resolve-provider.js";
+import { calculateCost } from "./credit-service.js";
 import { beginModuleGeneration } from "./module-generation-access.js";
+import { planAllowedModel } from "./plan-model-gate.js";
 import { applyModelRedirect } from "./llm/model-redirects.js";
 import { captureServerEvent } from "./analytics.js";
 import { isExtensionInstalled } from "./extensions.js";
@@ -18,7 +24,7 @@ import { SESSION_MEMORY_EXTENSION_KEY } from "@yumina/shared";
 import type { SummaryCompactionNoOpCode } from "@yumina/shared";
 import type { ChatMessage } from "./llm/types.js";
 import { enqueueKeyedJob } from "./job-chain.js";
-import { normalizeSessionMemory } from "./session-memory-core.js";
+import { omitSummaryMetadata } from "./persona-metadata.js";
 import { storyPreflightFailureGuard, type StoryPreflightSnapshot } from "./session-compaction-guards.js";
 import { buildEpisodeSummaryPrompt, recoverStoryMerge, withStoryMergeBudget } from "./story-summary-prompts.js";
 import { recoverSummaryEpisode } from "./summary-episode-recovery.js";
@@ -73,7 +79,8 @@ export {
 // x-ai/grok-4.20; see DEPRECATED_MODEL_REDIRECTS in routes/messages.ts.)
 export const DEFAULT_STORY_SUMMARY_MODEL = "google/gemini-2.5-flash-lite";
 
-const STORY_SUMMARY_SOURCE_HASH_VERSION = 1;
+const STORY_SUMMARY_SOURCE_HASH_VERSION = 3;
+type StoryUsage = Parameters<typeof billBackgroundUsage>[0];
 const MAX_STATE_CHARS = 8_000;
 // Provider safety caps leave room to finish above the prompts' soft targets.
 const MAX_EPISODE_SUMMARY_TOKENS = 2_048;
@@ -101,6 +108,10 @@ function storySummaryFocus(settings: unknown): string | null {
 }
 
 type PreparedStorySummaryJob = {
+  snapshot: typeof playSessions.$inferSelect;
+  boundaryState: HistoricalState;
+  charges: StoryUsage[];
+  claimedModel?: string;
   model: string;
   sourceHash: string;
   mode: "compact" | "regenerate";
@@ -292,26 +303,34 @@ export async function generateStorySummaryText(args: {
   prompt: ChatMessage[];
   endpoint: string;
   maxTokens: number;
+  /** Background AIs may set their own; summaries stay at 0.2. */
+  temperature?: number;
   fallbackTracker?: RefusalFallbackTracker;
   attemptBudget?: StoryCompactionAttemptBudget;
+  deferUsage?: (usage: StoryUsage) => void;
 }): Promise<string> {
+  const candidates: Array<{ model: string; text: string; usage?: StoryUsage }> = [];
   const result = await generateWithSummaryFallback({
     model: args.model,
     fallbackModel: STORY_SUMMARY_REFUSAL_FALLBACK_MODEL,
     onFallback: (reason) => console.warn(
       `[StoryCompaction] ${args.model} cannot summarize (${reason}) — retrying on ${STORY_SUMMARY_REFUSAL_FALLBACK_MODEL}`,
     ),
-    generate: (model, isFallback) => generateStorySummaryTextOnce({
-      ...args,
-      model,
-      // Keep retries within the job's shared allowance and never return to
-      // the incompatible model. Existing billing and key resolution apply.
-      disableModelFallback: isFallback,
-    }),
+    generate: async (model, isFallback) => {
+      let usage: StoryUsage | undefined;
+      const text = await generateStorySummaryTextOnce({ ...args, model,
+        disableModelFallback: isFallback,
+        deferUsage: args.deferUsage ? value => { usage = value; } : undefined,
+      });
+      candidates.push({ model, text, usage });
+      return text;
+    },
   });
   if (args.fallbackTracker && result.model === STORY_SUMMARY_REFUSAL_FALLBACK_MODEL && result.model !== args.model) {
     args.fallbackTracker.refusalFallbackUsed = true;
   }
+  const accepted = [...candidates].reverse().find(candidate => candidate.model === result.model && candidate.text === result.text);
+  if (accepted?.usage) args.deferUsage?.(accepted.usage);
   return result.text;
 }
 
@@ -323,13 +342,19 @@ async function generateStorySummaryTextOnce(args: {
   prompt: ChatMessage[];
   endpoint: string;
   maxTokens: number;
+  temperature?: number;
   disableModelFallback?: boolean;
   attemptBudget?: StoryCompactionAttemptBudget;
+  deferUsage?: (usage: StoryUsage) => void;
 }): Promise<string> {
   args.signal?.throwIfAborted();
   if (args.attemptBudget && !args.attemptBudget.tryConsume()) {
     throw new Error(STORY_COMPACTION_ATTEMPT_BUDGET_ERROR);
   }
+  // A summary model or creator station model above the player's plan runs on
+  // the default summary model instead of failing or skipping the plan check.
+  const allowedModel = await planAllowedModel(args.userId, args.model, DEFAULT_STORY_SUMMARY_MODEL);
+  if (allowedModel !== args.model) args = { ...args, model: allowedModel };
   const moduleAccess = args.endpoint === "module-worker" ? await beginModuleGeneration(args) : null;
   try {
     const resolved = moduleAccess?.resolved ?? await resolveProviderForModel(args.userId, args.model, {
@@ -353,9 +378,9 @@ async function generateStorySummaryTextOnce(args: {
       conversationId: `play:${args.sessionId}`,
       signal: args.signal,
       model: args.model,
-      messages: args.prompt,
+      messages: moduleAccess?.prompt ?? args.prompt,
       maxTokens: args.maxTokens,
-      temperature: 0.2,
+      temperature: args.temperature ?? 0.2,
       // Summaries need concise final text, not hidden deliberation. DeepSeek V4
       // enables thinking by default and can otherwise spend this entire small
       // output budget on reasoning, leaving the actual summary empty.
@@ -408,14 +433,18 @@ async function generateStorySummaryTextOnce(args: {
       // produced usable text. Empty calls remain observable in usage logs but do
       // not deduct mushies. BYOK users pay their provider directly.
       billUsage: usageLogId && !resolved.isByok
-        ? () => billBackgroundUsage({
+        ? async () => {
+          const usage: StoryUsage = {
             userId: args.userId,
             model: args.model,
             promptTokens,
             completionTokens,
             usageLogId,
             endpoint: args.endpoint,
-          })
+          };
+          if (args.deferUsage) args.deferUsage(usage);
+          else await billBackgroundUsage(usage);
+        }
         : undefined,
     });
   } finally {
@@ -427,7 +456,6 @@ function buildMergeSummaryPrompt(args: {
   worldName?: string | null;
   previousSummary: string | null;
   episodeSummaries: string[];
-  sessionMemory: unknown;
   state: unknown;
   mode: "compact" | "regenerate";
   language: SessionSummaryLanguage;
@@ -436,7 +464,8 @@ function buildMergeSummaryPrompt(args: {
     {
       role: "system",
       content: [
-        "You maintain the canonical compressed story summary for an ongoing AI roleplay session.",
+        "You maintain the canonical compressed story summary for an ongoing interactive-fiction session.",
+        NARRATIVE_EVIDENCE_RULES,
         "Return only the summary in the fixed Markdown format. Do not explain your work.",
         // The three "## " headings are a fixed skeleton and stay English;
         // the prose under them follows the session's summary language.
@@ -455,10 +484,8 @@ function buildMergeSummaryPrompt(args: {
           : "[Previous Story Summary]\nNone",
         "[New Episode Summaries]",
         args.episodeSummaries.map((summary, index) => `Episode ${index + 1}:\n${summary}`).join("\n\n"),
-        "[Current Session Memory]",
-        normalizeSessionMemory(args.sessionMemory).text || "(empty)",
         "[Current Game State]",
-        stringifyCompact(args.state, MAX_STATE_CHARS),
+        stringifyCompact(omitSummaryMetadata(args.state), MAX_STATE_CHARS),
         "Rules:",
         "- Preserve the chronological shape of the plot.",
         "- Keep important early events if they still affect the story.",
@@ -483,35 +510,110 @@ function buildMergeSummaryPrompt(args: {
   ];
 }
 
-async function summarizeRowsWithMetadata(args: {
-  run?: SummaryRunControl;
+type StorySummaryRunInput = {
   userId: string;
   sessionId: string;
   model: string;
   rows: StoryMessageRow[];
   previousSummary: string | null;
-  sessionMemory: unknown;
   state: unknown;
   worldName?: string | null;
   /** The author's note on what must survive compression (settings.storySummary.focus). */
   focus?: string | null;
   mode: "compact" | "regenerate";
   language: SessionSummaryLanguage;
-  fallbackTracker?: RefusalFallbackTracker;
-  attemptBudget?: StoryCompactionAttemptBudget;
-}): Promise<StorySummaryBuildResult> {
+};
+
+/** The episode calls a run will make, shared by the run and its cost estimate
+ *  so the estimate counts exactly the chunks and checkpoints the run uses. */
+function planStoryEpisodes(args: StorySummaryRunInput) {
   const chunks = splitMessagesIntoCompactionChunks(args.rows, undefined, args.model);
   const transcripts = chunks
     .map((chunk) => formatMessagesForStoryCompaction(chunk))
     .filter((transcript) => transcript.trim().length > 0);
-
-  const signal = args.run?.signal ?? AbortSignal.timeout(10 * 60_000);
-  let completed = 0;
-  await args.run?.progress(0, transcripts.length, "episodes");
   const promptFor = (transcript: string, recovery = false) => buildEpisodeSummaryPrompt({ worldName: args.worldName, focus: args.focus, transcript, language: args.language, recovery });
   const keyFor = (transcript: string, recovery: boolean) => episodeCheckpointKey(args.userId, args.sessionId, {
     model: args.model, prompt: promptFor(transcript, recovery), maxTokens: MAX_EPISODE_SUMMARY_TOKENS,
   });
+  return { transcripts, promptFor, keyFor };
+}
+
+// Deliberately above observed outputs (episodes ~600–1,300, merges under the
+// 4,096 cap) so the gate errs toward not starting a run it can't finish.
+const ESTIMATED_EPISODE_OUTPUT_TOKENS = 1_000;
+const ESTIMATED_MERGE_OUTPUT_TOKENS = 2_000;
+
+function promptTokens(prompt: ChatMessage[], model: string): number {
+  return estimateTextTokens(prompt.map((message) => typeof message.content === "string"
+    ? message.content
+    : JSON.stringify(message.content)).join("\n"), model);
+}
+
+/**
+ * Mushies a run still needs from its first uncached episode through the
+ * merge. Usage is charged atomically with the saved summary. This admission
+ * check still avoids starting work the wallet cannot cover.
+ */
+async function estimateStorySummaryRunCredits(args: StorySummaryRunInput): Promise<number> {
+  const { transcripts, promptFor, keyFor } = planStoryEpisodes(args);
+  if (transcripts.length === 0) return 0;
+  const estimateEpisode = async (transcript: string, recovery = false): Promise<{ credits: number; outputs: number }> => {
+    const cached = await loadEpisodeCheckpoint(keyFor(transcript, recovery));
+    if (cached?.split && !recovery) {
+      const chars = Array.from(transcript);
+      const midpoint = Math.floor(chars.length / 2);
+      const left = await estimateEpisode(chars.slice(0, midpoint).join(""), true);
+      const right = await estimateEpisode(chars.slice(midpoint).join(""), true);
+      return { credits: left.credits + right.credits, outputs: left.outputs + right.outputs };
+    }
+    if (cached) {
+      // Older checkpoints were billed immediately. New checkpoints carry their
+      // accepted usage because a failed merge or stale save has not billed it yet.
+      if (!cached.usage) return { credits: 0, outputs: 1 };
+      const [paid] = await db.select({ id: creditTransactions.id }).from(creditTransactions)
+        .innerJoin(creditWallets, eq(creditTransactions.walletId, creditWallets.id))
+        .where(and(eq(creditWallets.userId, args.userId), eq(creditTransactions.type, "usage"),
+          eq(creditTransactions.referenceId, cached.usage.usageLogId))).limit(1);
+      return { credits: paid ? 0 : await calculateCost(cached.usage.model, cached.usage.promptTokens,
+        cached.usage.completionTokens, { providerCostUsd: cached.usage.providerCostUsd }), outputs: 1 };
+    }
+    return { credits: await calculateCost(args.model, promptTokens(promptFor(transcript, recovery), args.model),
+      ESTIMATED_EPISODE_OUTPUT_TOKENS), outputs: 1 };
+  };
+  let credits = 0, outputs = 0;
+  for (const transcript of transcripts) {
+    const episode = await estimateEpisode(transcript);
+    credits += episode.credits;
+    outputs += episode.outputs;
+  }
+  const mergeFixedTokens = promptTokens(buildMergeSummaryPrompt({ ...args, episodeSummaries: [] }), args.model);
+  credits += await calculateCost(
+    args.model,
+    mergeFixedTokens + outputs * ESTIMATED_EPISODE_OUTPUT_TOKENS,
+    ESTIMATED_MERGE_OUTPUT_TOKENS,
+  );
+  return credits;
+}
+
+/** False when an official-key run can't be paid for from start to merge.
+ *  BYOK runs aren't billed and unlimited plans aren't charged, so both pass. */
+async function canAffordStorySummaryRun(args: StorySummaryRunInput): Promise<boolean> {
+  const resolved = await resolveProviderForModel(args.userId, args.model, { allowOfficialFallback: false });
+  if (!resolved || resolved.isByok) return true;
+  return hasBackgroundRunBudget(args.userId, () => estimateStorySummaryRunCredits(args));
+}
+
+async function summarizeRowsWithMetadata(args: StorySummaryRunInput & {
+  deferUsage?: (usage: StoryUsage) => void;
+  run?: SummaryRunControl;
+  fallbackTracker?: RefusalFallbackTracker;
+  attemptBudget?: StoryCompactionAttemptBudget;
+}): Promise<StorySummaryBuildResult> {
+  const { transcripts, promptFor, keyFor } = planStoryEpisodes(args);
+
+  const signal = args.run?.signal ?? AbortSignal.timeout(10 * 60_000);
+  let completed = 0;
+  await args.run?.progress(0, transcripts.length, "episodes");
   const summarizeEpisode = async (transcript: string) => {
     signal.throwIfAborted();
     const results = await recoverSummaryEpisode({
@@ -520,15 +622,18 @@ async function summarizeRowsWithMetadata(args: {
       save: (text, result, recovery) => saveEpisodeCheckpoint(keyFor(text, recovery), result),
       generate: async (text, recovery) => {
         const tracker: RefusalFallbackTracker = { refusalFallbackUsed: false };
+        let usage: StoryUsage | undefined;
         const summary = await generateStorySummaryText({
           userId: args.userId, sessionId: args.sessionId, model: args.model,
           prompt: promptFor(text, recovery), endpoint: "story-compaction",
           maxTokens: MAX_EPISODE_SUMMARY_TOKENS, fallbackTracker: tracker,
           attemptBudget: args.attemptBudget, signal,
+          deferUsage: args.deferUsage ? value => { usage = value; } : undefined,
         });
-        return { text: summary, refusalFallbackUsed: tracker.refusalFallbackUsed };
+        return { text: summary, refusalFallbackUsed: tracker.refusalFallbackUsed, usage };
       },
     });
+    for (const result of results) if (result.usage) args.deferUsage?.(result.usage);
     if (args.fallbackTracker && results.some(result => result.refusalFallbackUsed)) args.fallbackTracker.refusalFallbackUsed = true;
     await args.run?.progress(++completed, transcripts.length, "episodes");
     return results.map(result => result.text);
@@ -567,7 +672,6 @@ async function summarizeRowsWithMetadata(args: {
     worldName: args.worldName,
     previousSummary: args.previousSummary,
     episodeSummaries,
-    sessionMemory: args.sessionMemory,
     state: args.state,
     mode: args.mode,
     language: args.language,
@@ -582,6 +686,7 @@ async function summarizeRowsWithMetadata(args: {
     maxTokens: MAX_MERGE_SUMMARY_TOKENS,
     fallbackTracker: args.fallbackTracker,
     attemptBudget: args.attemptBudget,
+    deferUsage: args.deferUsage,
   }) });
 
   return {
@@ -616,6 +721,9 @@ async function markStoryJobUpdating(args: {
   force?: boolean;
   consumeBudgetResume?: boolean;
 }): Promise<boolean> {
+  if (args.job.mode === "compact" && args.job.snapshot.summary?.trim()
+    && (!args.job.snapshot.summarySourceHash || args.job.snapshot.summarySourceHash.includes(":authored"))) args.job.sourceHash += ":authored";
+  args.job.claimedModel = args.job.model;
   const now = new Date();
   const claimGuard = or(
         ne(playSessions.summaryStatus, "updating"),
@@ -635,7 +743,10 @@ async function markStoryJobUpdating(args: {
       summaryClaimedAt: now,
       ...(args.consumeBudgetResume ? { summaryBudgetResumePending: false } : {}),
     })
-    .where(and(eq(playSessions.id, args.sessionId), claimGuard, budgetResumeGuard))
+    .where(and(eq(playSessions.id, args.sessionId), claimGuard, budgetResumeGuard,
+      continuitySnapshotGuard(args.job.snapshot, STORY_INPUT_FIELDS),
+      memorySourceGuard(args.sessionId, args.job.sourceMessages),
+      historicalStateGuard(args.sessionId, [args.job.boundaryState])))
     .returning();
   return updated.length > 0;
 }
@@ -700,12 +811,17 @@ async function persistStorySummaryResult(args: {
     eq(playSessions.id, args.sessionId),
     eq(playSessions.summaryStatus, "updating"),
     eq(playSessions.summarySourceHash, args.job.sourceHash),
+    historicalStateGuard(args.sessionId, [args.job.boundaryState]),
+    continuitySnapshotGuard({ ...args.job.snapshot, summaryModel: args.job.claimedModel ?? args.job.model }, STORY_INPUT_FIELDS.filter(k => k !== "summarySourceHash")),
     args.job.coversUntilMessageId == null
       ? undefined
       : exists(db.select({ id: messages.id }).from(messages).where(eq(messages.id, args.job.coversUntilMessageId))),
   );
 
+  const charges = await Promise.all(args.job.charges.map(prepareBackgroundUsageBill));
   const persisted = await db.transaction(async (tx) => {
+    const [owner] = await tx.select({ id: playSessions.id }).from(playSessions).where(whereClause).for("update");
+    if (!owner) return false;
     if (args.job.sourceMessages.length > 0) {
       const currentMessages = await tx
         .select({ id: messages.id, role: messages.role, content: messages.content })
@@ -746,6 +862,7 @@ async function persistStorySummaryResult(args: {
         .set({ compacted: true })
         .where(inArray(messages.id, args.job.compactedMessageIds));
     }
+    for (const charge of charges) await charge?.(tx);
     return true;
   });
 
@@ -811,7 +928,7 @@ async function loadStoryRows(sessionId: string, includeCompacted: boolean): Prom
     })
     .from(messages)
     .where(includeCompacted ? eq(messages.sessionId, sessionId) : and(eq(messages.sessionId, sessionId), eq(messages.compacted, false)))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(asc(messages.createdAt), asc(messages.id));
   return rows;
 }
 
@@ -890,6 +1007,7 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
     const allRows = transcriptRows.filter((message) => message.role === "user" || message.role === "assistant");
     if (allRows.length === 0) return row.session.summary ?? null;
     const { slice: boundedRows } = selectStoryCompactionRunSlice(allRows, { modelId: model });
+    const boundaryState = await loadHistoricalState(args.sessionId, boundedRows.at(-1)!.id);
     const sourceHash = createStorySourceHash({
       version: STORY_SUMMARY_SOURCE_HASH_VERSION,
       kind: "regenerate-small",
@@ -901,9 +1019,10 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
       language,
       messageIds: boundedRows.map((message) => message.id),
       messageText: boundedRows.map((message) => [message.role, message.content]),
-      state: row.session.state,
+      state: boundaryState.snapshot,
     });
     const job: PreparedStorySummaryJob = {
+      snapshot: row.session, boundaryState, charges: [],
       model,
       sourceHash,
       mode: "regenerate",
@@ -915,24 +1034,30 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
       // regenerated summary survive a rewind that deleted turns it described.
       coversUntilMessageId: boundedRows.at(-1)?.id ?? null,
     };
+    const runInput: StorySummaryRunInput = {
+      userId: args.userId,
+      sessionId: args.sessionId,
+      model,
+      rows: boundedRows,
+      previousSummary: null,
+      state: boundaryState.snapshot,
+      worldName: row.worldName,
+      focus: storySummaryFocus(row.worldSettings),
+      mode: "regenerate",
+      language,
+    };
+    if (!(await canAffordStorySummaryRun(runInput))) {
+      throw new Error(notEnoughMushiesMessage("story-compaction"));
+    }
     if (!(await markStoryJobUpdating({ sessionId: args.sessionId, job, force: true }))) {
       throw new Error("A story summary is already updating. Wait for it to finish before retrying.");
     }
     try {
       const fallbackTracker: RefusalFallbackTracker = { refusalFallbackUsed: false };
       const summary = await summarizeRows({
+        ...runInput,
         run: args.run,
-        userId: args.userId,
-        sessionId: args.sessionId,
-        model,
-        rows: boundedRows,
-        previousSummary: null,
-        sessionMemory: row.session.sessionMemory,
-        state: row.session.state,
-        worldName: row.worldName,
-        focus: storySummaryFocus(row.worldSettings),
-        mode: "regenerate",
-        language,
+        deferUsage: usage => job.charges.push(usage),
         fallbackTracker,
         attemptBudget: createStoryCompactionAttemptBudget(STORY_COMPACTION_MAX_PROVIDER_ATTEMPTS_PER_RUN),
       });
@@ -966,6 +1091,8 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
   });
   const compactedMessageIds = compactableSlice.map((message) => message.id);
   const coversUntilMessageId = compactableSlice.at(-1)?.id ?? null;
+  if (!args.force && row.session.summary?.trim()) await assertPriorCoverage(args.sessionId, [row.session.summaryCoversUntilMessageId], compactableSlice[0]!.id);
+  const boundaryState = await loadHistoricalState(args.sessionId, coversUntilMessageId!);
   const mode = args.force ? "regenerate" : "compact";
   const sourceHash = createStorySourceHash({
     version: STORY_SUMMARY_SOURCE_HASH_VERSION,
@@ -982,9 +1109,10 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
     previousSummary: args.force ? null : row.session.summary,
     compactedMessageIds,
     compactedMessageText: compactableSlice.map((message) => [message.role, message.content]),
-    state: row.session.state,
+    state: boundaryState.snapshot,
   });
   const job: PreparedStorySummaryJob = {
+    snapshot: row.session, boundaryState, charges: [],
     model,
     sourceHash,
     mode,
@@ -995,6 +1123,22 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
 
   if (row.session.summarySourceHash === job.sourceHash && row.session.summaryStatus === "idle") {
     return row.session.summary ?? null;
+  }
+
+  const runInput: StorySummaryRunInput = {
+    userId: args.userId,
+    sessionId: args.sessionId,
+    model,
+    rows: compactableSlice,
+    previousSummary: args.force ? null : row.session.summary,
+    state: boundaryState.snapshot,
+    worldName: row.worldName,
+    focus: storySummaryFocus(row.worldSettings),
+    mode,
+    language,
+  };
+  if (args.force && !(await canAffordStorySummaryRun(runInput))) {
+    throw new Error(notEnoughMushiesMessage("story-compaction"));
   }
 
   let budgetRecoveryProbe = false;
@@ -1025,13 +1169,10 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
     budgetRecoveryProbe = budget.decision === "recovery-probe";
     attemptBudget = createStoryCompactionAttemptBudget(STORY_COMPACTION_MAX_PROVIDER_ATTEMPTS_PER_RUN);
 
-    // Affordability pre-gate (never blocks chat): official-key runs are billed
-    // per call, so skip the whole run when the wallet clearly can't cover it —
-    // the panel shows why. BYOK runs aren't billed and aren't gated.
-    const resolvedForBilling = await resolveProviderForModel(args.userId, model, {
-      allowOfficialFallback: false,
-    });
-    if (resolvedForBilling && !resolvedForBilling.isByok && !(await hasBackgroundRunBudget(args.userId))) {
+    // Affordability pre-gate (never blocks chat): skip official-key runs
+    // when the wallet cannot cover all generated episodes through
+    // the merge — the panel shows why. BYOK runs aren't billed and aren't gated.
+    if (!(await canAffordStorySummaryRun(runInput))) {
       const paused = await markStoryJobFailed({
         sessionId: args.sessionId,
         preflightSnapshot: row.session,
@@ -1070,18 +1211,9 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
   try {
     const fallbackTracker: RefusalFallbackTracker = { refusalFallbackUsed: false };
     const summary = await summarizeRows({
+      ...runInput,
       run: args.run,
-      userId: args.userId,
-      sessionId: args.sessionId,
-      model,
-      rows: compactableSlice,
-      previousSummary: args.force ? null : row.session.summary,
-      sessionMemory: row.session.sessionMemory,
-      state: row.session.state,
-      worldName: row.worldName,
-      focus: storySummaryFocus(row.worldSettings),
-      mode,
-      language,
+      deferUsage: usage => job.charges.push(usage),
       fallbackTracker,
       attemptBudget: attemptBudget ?? createStoryCompactionAttemptBudget(STORY_COMPACTION_MAX_PROVIDER_ATTEMPTS_PER_RUN),
     });
@@ -1268,6 +1400,8 @@ export function compactStorySummaryForSessionManually(args: {
     const compactedToOrdinal = lastCompacted
       ? relevantRows.findIndex((message) => message.id === lastCompacted.id) + 1
       : null;
+    if (row.session.summary?.trim()) await assertPriorCoverage(args.sessionId, [row.session.summaryCoversUntilMessageId], firstCompacted!.id);
+    const boundaryState = await loadHistoricalState(args.sessionId, coversUntilMessageId!);
     const sourceHash = createStorySourceHash({
       version: STORY_SUMMARY_SOURCE_HASH_VERSION,
       kind: usedForcedWindow ? "manual-compact-forced" : "manual-compact",
@@ -1282,9 +1416,10 @@ export function compactStorySummaryForSessionManually(args: {
       previousSummary: row.session.summary,
       compactedMessageIds,
       compactedMessageText: manualSlice.map((message) => [message.role, message.content]),
-      state: row.session.state,
+      state: boundaryState.snapshot,
     });
     const job: PreparedStorySummaryJob = {
+      snapshot: row.session, boundaryState, charges: [],
       model,
       sourceHash,
       mode: "compact",
@@ -1292,6 +1427,21 @@ export function compactStorySummaryForSessionManually(args: {
       compactedMessageIds,
       coversUntilMessageId,
     };
+    const runInput: StorySummaryRunInput = {
+      userId: args.userId,
+      sessionId: args.sessionId,
+      model,
+      rows: manualSlice,
+      previousSummary: row.session.summary,
+      state: boundaryState.snapshot,
+      worldName: row.worldName,
+      focus: storySummaryFocus(row.worldSettings),
+      mode: "compact",
+      language,
+    };
+    if (!(await canAffordStorySummaryRun(runInput))) {
+      throw new Error(notEnoughMushiesMessage("story-compaction"));
+    }
 
     if (!(await markStoryJobUpdating({ sessionId: args.sessionId, job, force: true }))) {
       throw new Error("A story summary is already updating. Wait for it to finish before retrying.");
@@ -1300,17 +1450,8 @@ export function compactStorySummaryForSessionManually(args: {
     try {
       const fallbackTracker: RefusalFallbackTracker = { refusalFallbackUsed: false };
       const result = await summarizeRowsWithMetadata({
-        userId: args.userId,
-        sessionId: args.sessionId,
-        model,
-        rows: manualSlice,
-        previousSummary: row.session.summary,
-        sessionMemory: row.session.sessionMemory,
-        state: row.session.state,
-        worldName: row.worldName,
-        focus: storySummaryFocus(row.worldSettings),
-        mode: "compact",
-        language,
+        ...runInput,
+        deferUsage: usage => job.charges.push(usage),
         fallbackTracker,
         attemptBudget: createStoryCompactionAttemptBudget(STORY_COMPACTION_MAX_PROVIDER_ATTEMPTS_PER_RUN),
       });

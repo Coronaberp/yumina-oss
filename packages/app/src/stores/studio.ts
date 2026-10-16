@@ -573,9 +573,12 @@ async function tryRecoverAgentRun(
         // Guard against stale runs: if we didn't have a runId to begin with
         // (SSE died before run_started), verify the server-returned run is
         // recent. An old completed run from hours ago should not trigger recovery.
+        // A run paused for credits waits as long as the creator does: coming back
+        // after topping up is exactly when its card must still be there.
         if (!runId && data.updatedAt) {
           const age = Date.now() - new Date(data.updatedAt).getTime();
-          if (age > 5 * 60_000 && data.status !== "running") {
+          const waitingOnCredits = data.status === "awaiting_credits" || data.creditPause?.resumable === true;
+          if (age > 5 * 60_000 && data.status !== "running" && !waitingOnCredits) {
             return false;
           }
         }
@@ -1264,17 +1267,27 @@ function creditPauseReasonError(pause: StudioCreditPause): string | null {
   return creditPauseFailure(pause.reason);
 }
 
+/** Failures after which the same request can simply carry on. */
+const CONTINUABLE_ERRORS = new Set(["SERVER_RESTART", "AGENT_STALLED", "PROVIDER_ERROR", "BYOK_RATE", "BYOK_UNREACHABLE"]);
+
 /** Localized chat copy for an agent failure. The server's `error` text is
  *  English and can be raw provider or database output, so it is shown only
  *  when the caller marks it as our own request-validation copy (`displayable`);
  *  otherwise the stable `code` picks the message, with a generic fallback. */
 export function studioAgentErrorText(error: string, code?: string, displayable = false): string {
   const names: Record<string, [string, string]> = {
-    AGENT_STALLED: ["stalled", "The assistant stopped responding for 3 minutes, so the task was ended. Please retry."],
+    AGENT_STALLED: ["stalled", "The assistant stopped responding for several minutes, so the task was ended. What it already changed is saved."],
+    BYOK_AUTH: ["byokAuth", "Your API key was refused. Check the key in AI settings."],
+    BYOK_BALANCE: ["byokBalance", "Your API provider says the account is out of balance or quota."],
+    BYOK_MODEL: ["byokModel", "Your provider can't find this model. Check the model name in AI settings."],
+    BYOK_NO_TOOLS: ["byokNoTools", "This model can't use tools, which the assistant needs. Pick a model with tool support."],
+    BYOK_RATE: ["byokRate", "Your provider is rate-limiting requests. Wait a moment, then continue."],
+    BYOK_UNREACHABLE: ["byokUnreachable", "Couldn't reach your API endpoint. Check its address and that it's running."],
+    BYOK_CONTEXT: ["byokContext", "The request is longer than this model's context window."],
     AGENT_TIMEOUT: ["timedOut", "The task ran for over 30 minutes and was ended. Try asking for a smaller step."],
     OUTPUT_BUDGET_EXHAUSTED: ["outputBudget", "The model kept running out of room before finishing an edit. Ask for a smaller step, or switch models."],
     PROVIDER_ERROR: ["provider", "The AI model's provider returned an error. Please retry, or switch models."],
-    SERVER_RESTART: ["serverRestart", "The server restarted during this task. Please retry."],
+    SERVER_RESTART: ["serverRestart", "The server restarted during this task. What the assistant already changed is saved."],
     SUPERSEDED: ["superseded", "This task was replaced by a newer request."],
     STOPPED: ["stopped", "Stopped."],
     NO_CREDITS: ["noCredits", "There are not enough mushrooms to continue. Top up, then retry."],
@@ -1510,7 +1523,10 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
                 // before polling, so the tag never blocks the rescue path.
                 ...(streamRunId ? { agentRunId: streamRunId } : {}),
                 disconnected: { ...(streamRunId ? { runId: streamRunId } : {}) } }
-            : { id: nextMsgId(), role: "assistant" as const, content: studioAgentErrorText(error, code, displayable) }] }),
+            : { id: nextMsgId(), role: "assistant" as const, content: studioAgentErrorText(error, code, displayable),
+                // Interrupted, not refused: picking up where it stopped keeps what
+                // the run already wrote, where Resend would undo it first.
+                ...(code && CONTINUABLE_ERRORS.has(code) ? { continuable: true } : {}) }] }),
       }));
       flushRefresh(scope.worldId);
       persistStudioResult(scope);

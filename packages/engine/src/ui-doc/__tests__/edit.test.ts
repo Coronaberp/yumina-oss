@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   METER_ROW_H, addMeterRow, boundVariableOf, canReflow, fillColorOf, findElementPage,
   groupOf, rebindVariable, removeGroup, updateElements, withFillColor, duplicateGroup,
+  fitTextsOnPage, followResized, textHeightNeeded, ungroupElements,
 } from "../edit.js";
 import { validateUiDoc } from "../schema.js";
 import { UI_TEMPLATES, getUiTemplate } from "../templates.js";
@@ -399,5 +400,82 @@ describe("every official layout", () => {
         }
       }
     }
+  });
+});
+
+// A creator picked a meter row (label + value + track) and dragged the line
+// height and letter spacing sliders: the row spread further apart with every
+// step and never came back (community report, 2026-10-10).
+describe("a meter row under the text-style sliders", () => {
+  const restyle = (pg: UiDoc["pages"][number], patch: Record<string, number>) => {
+    const ids = ["m-new", "m-new-label", "m-new-value"];
+    const styled = pg.elements.map((el) => (ids.includes(el.id) && el.type === "text" ? { ...el, style: { ...el.style, ...patch } } as UiElement : el));
+    const changed = styled.filter((el, i) => el !== pg.elements[i]).map((el) => el.id);
+    return fitTextsOnPage({ ...pg, elements: styled }, changed, pg, { hug: true });
+  };
+  const row = () => page(addMeterRow(doc(), "page-1", { id: "m-new", label: "New meter", variableId: "v-new" }));
+  const at = (pg: UiDoc["pages"][number], id: string, canvas: "phone" | "desktop" = "phone") =>
+    boxOn(pg.elements.find((el) => el.id === id)!, canvas)!;
+
+  it("keeps the label in place and puts the track under the taller text, once", () => {
+    const start = row();
+    let pg = start;
+    for (const lineHeight of [1.6, 1.9, 2.2, 2.5]) pg = restyle(pg, { lineHeight });
+    for (const canvas of ["phone", "desktop"] as const) {
+      expect(at(pg, "m-new-label", canvas).y).toBe(at(start, "m-new-label", canvas).y);
+      expect(at(pg, "m-new-value", canvas).y).toBe(at(start, "m-new-value", canvas).y);
+      const textBottom = Math.max(...["m-new-label", "m-new-value"].map((id) => at(pg, id, canvas).y + at(pg, id, canvas).h));
+      const gap = at(start, "m-new", canvas).y - (at(start, "m-new-label", canvas).y + at(start, "m-new-label", canvas).h);
+      expect(at(pg, "m-new", canvas).y).toBe(textBottom + gap);
+    }
+  });
+
+  it("comes back together when the slider goes back", () => {
+    let pg = restyle(row(), { lineHeight: 1.5 });
+    const settled = at(pg, "m-new").y;
+    for (const lineHeight of [1.8, 2.2, 2.6]) pg = restyle(pg, { lineHeight });
+    expect(at(pg, "m-new").y).toBeGreaterThan(settled);
+    for (const lineHeight of [2.2, 1.8, 1.5]) pg = restyle(pg, { lineHeight });
+    expect(at(pg, "m-new").y).toBe(settled);
+  });
+
+  it("does not grow the value box when letter spacing changes", () => {
+    let pg = restyle(row(), { letterSpacing: 1 });
+    const value = at(pg, "m-new-value");
+    const track = at(pg, "m-new");
+    for (const letterSpacing of [2, 4, 8, 12]) pg = restyle(pg, { letterSpacing });
+    expect(at(pg, "m-new-value")).toEqual(value);
+    expect(at(pg, "m-new")).toEqual(track);
+  });
+
+  it("measures a word wider than its box as one line, the way the browser draws it", () => {
+    const el = { id: "t", type: "text", x: 0, y: 0, w: 38, h: 16, text: { template: "{{hp}}" }, style: { size: 13, weight: 700, letterSpacing: 6 } } as UiElement;
+    expect(textHeightNeeded(el, "phone")).toBe(Math.ceil(13 * 1.5 + 2));
+    const cjk = { ...el, w: 60, text: { template: "生命值生命值生命值" }, style: { size: 14 } } as UiElement;
+    expect(textHeightNeeded(cjk, "phone")!).toBeGreaterThan(14 * 1.5 * 2);
+  });
+});
+
+describe("followResized", () => {
+  const track = { x: 100, y: 50, w: 300, h: 6 };
+  it("carries the value with the track's right end and stretches the label", () => {
+    const narrower = { ...track, w: 120 };
+    expect(followResized(track, narrower, { x: 362, y: 28, w: 38, h: 16 })).toEqual({ x: 182, y: 28, w: 38, h: 16 });
+    expect(followResized(track, narrower, { x: 100, y: 30, w: 262, h: 14 })).toEqual({ x: 100, y: 30, w: 82, h: 14 });
+  });
+  it("keeps parts above the track above it when its top edge moves", () => {
+    expect(followResized(track, { ...track, y: 70, h: 10 }, { x: 100, y: 30, w: 262, h: 14 }).y).toBe(50);
+  });
+});
+
+describe("ungroupElements", () => {
+  it("frees every part of the picked group and nothing else", () => {
+    const d = addMeterRow(doc(), "page-1", { id: "m-new", label: "Trust", variableId: "v-trust" });
+    const out = ungroupElements(d, "page-1", ["m-new-value"]);
+    for (const id of ["m-new", "m-new-label", "m-new-value"]) expect(byId(out, id)!.group).toBeUndefined();
+    expect(groupOf(out, "page-1", "m-new-value")).toEqual(["m-new-value"]);
+    const others = page(d).elements.filter((el) => el.group && !el.id.startsWith("m-new"));
+    for (const el of others) expect(byId(out, el.id)!.group).toBe(el.group);
+    expect(ungroupElements(out, "page-1", ["m-new"])).toBe(out);
   });
 });

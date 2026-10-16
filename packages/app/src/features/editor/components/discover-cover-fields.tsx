@@ -4,6 +4,7 @@ import { Crop, FolderOpen, Loader2, Upload } from "lucide-react";
 import { useEditorStore } from "@/stores/editor";
 import { useSession } from "@/lib/auth-client";
 import { uploadAssetWithPresignedUrl, getAssetUploadErrorMessage } from "@/lib/asset-upload";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import { WorldCoverPreview } from "@/components/world-cover-previews";
 import { CoverCropDialog } from "./cover-crop-dialog-preview";
 import { AssetPicker } from "../asset-picker";
@@ -73,6 +74,7 @@ export function DiscoverCoverFields() {
   return <section className="rounded-lg border border-border bg-background p-5">
     <h3 className="text-sm font-semibold">{t("overview.coverImage")}</h3>
     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("overview.coverImageDesc")}</p>
+    <MediaGuidelinesNote className="mt-3" />
     <div className="mt-5 grid grid-cols-1 items-start gap-6 @min-[480px]:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
       {(["portrait", "landscape"] as const).map(shape => {
         const src = shape === "portrait" ? draft.avatar : draft.landscapeCover || draft.avatar;
@@ -91,7 +93,7 @@ export function DiscoverCoverFields() {
     {busy && <Loader2 className="mt-3 h-4 w-4 animate-spin"/>}
     {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
     <input ref={file} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={event => { const image=event.currentTarget.files?.[0]; event.currentTarget.value=""; if (image) void upload(image); }}/>
-    {picker && worldId && <AssetPicker worldId={worldId} filterType="image" onSelect={ref => void fromAsset(ref,picker)} onClose={() => setPicker(null)}/>}
+    {picker && worldId && <AssetPicker mediaUsage="public" worldId={worldId} filterType="image" onSelect={ref => void fromAsset(ref,picker)} onClose={() => setPicker(null)}/>}
     {crop && <CoverCropDialog src={draft.avatar} landscapeSrc={draft.landscapeCover || draft.avatar} initialMode={crop === "portrait" ? "cover" : "gallery"}
       initialCoverCrop={draft.coverCrop} initialLandscapeCrop={draft.landscapeCover ? draft.landscapeCoverCrop : undefined}
       fallbackLandscapeCrop={!draft.landscapeCover ? draft.galleryCoverCrop : undefined} saving={busy} error={error ?? undefined}

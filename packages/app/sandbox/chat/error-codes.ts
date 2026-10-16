@@ -15,10 +15,14 @@
  * across the sandbox boundary, like slim-messages.ts does.
  */
 
+import { isProviderBalanceError } from "@yumina/shared";
+
 export type ChatErrorCode =
   | "NO_API_KEY"
   | "MODEL_UNAVAILABLE"
   | "NO_CREDITS"
+  | "PRIVATE_API_BALANCE"
+  | "UPSTREAM_BALANCE"
   | "RATE_LIMITED"
   | "CONTEXT_TOO_LONG"
   | "UPSTREAM_BUSY"
@@ -36,6 +40,9 @@ const SERVER_CODE_ALIASES: Record<string, ChatErrorCode> = {
   NO_API_KEY: "NO_API_KEY",
   MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
   NO_CREDITS: "NO_CREDITS",
+  INSUFFICIENT_CREDITS: "NO_CREDITS",
+  PRIVATE_API_BALANCE: "PRIVATE_API_BALANCE",
+  UPSTREAM_BALANCE: "UPSTREAM_BALANCE",
   RATE_LIMITED: "RATE_LIMITED",
   CONTEXT_TOO_LONG: "CONTEXT_TOO_LONG",
   UPSTREAM_UNAVAILABLE: "UPSTREAM_BUSY",
@@ -61,7 +68,6 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, ChatErrorCode]> = [
   [/server is restarting/i, "SERVER_RESTART"],
   [/model returned an empty reply/i, "EMPTY_REPLY"],
   [/model is unavailable|model .{0,60}(is )?not available|no endpoints found|model not found|is not a valid model/i, "MODEL_UNAVAILABLE"],
-  [/not enough mushies|used all your credits|insufficient (credits|balance)/i, "NO_CREDITS"],
   [/connection lost|connection closed unexpectedly|stream read failed|failed to fetch|load failed|networkerror|network request failed|connection to the server failed|no response body/i, "CONNECTION_LOST"],
   [/timed? ?out|timeout|\b524\b|\b504\b|stopped responding/i, "UPSTREAM_TIMEOUT"],
   [/rate.?limit|\b429\b|temporarily|failed upstream|overloaded|provider (is )?busy|provider returned error|\b50[023]\b|html error page|upstream error/i, "UPSTREAM_BUSY"],
@@ -74,6 +80,10 @@ export function classifyChatError(
   if (code && SERVER_CODE_ALIASES[code]) return SERVER_CODE_ALIASES[code]!;
   const text = message ?? "";
   if (!text) return null;
+  // Legacy Yumina responses without a structured code. Never treat a wrapped
+  // provider error (or a generic "insufficient balance") as the player's wallet.
+  if (/^not enough mushies\b|^you've used all your credits for this period\./i.test(text)) return "NO_CREDITS";
+  if (isProviderBalanceError(text)) return "UPSTREAM_BALANCE";
   for (const [pattern, mapped] of PATTERNS) {
     if (pattern.test(text)) return mapped;
   }

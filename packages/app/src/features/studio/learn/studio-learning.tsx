@@ -542,6 +542,11 @@ function BlueprintTour({ account }: { account: string }) {
 
   // ── The end of a lesson, and the list of them all ──
   const suggested = nextLesson(progress);
+  // 下一课 opens where 完成 just was. A run of clicks on 完成 (PostHog shows
+  // whole lessons "done" in 1–5 s) fell straight through into the next lesson;
+  // for a moment after the card appears a click on it is taken as one of those.
+  const endShownAt = useRef(0);
+  useEffect(() => { if (screen === "end") endShownAt.current = performance.now(); }, [screen]);
   const endedRequired = finished !== null && lessonById(finished)?.part === "required";
   const endCopy = !suggested ? { title: t("end.all.title"), body: t("end.all.body") }
     : endedRequired ? { title: t("end.required.title"), body: t("end.required.body") }
@@ -550,7 +555,7 @@ function BlueprintTour({ account }: { account: string }) {
   const endView = <>
     {endCopy.body && <p className="text-[15px] leading-relaxed text-foreground/90">{endCopy.body}</p>}
     <div className="mt-3 flex flex-col gap-1.5">
-      {suggested && <button type="button" data-learning="start" onClick={() => begin(suggested.id)} className="studio-button-lit inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold">
+      {suggested && <button type="button" data-learning="start" onClick={() => { if (performance.now() - endShownAt.current > 600) begin(suggested.id); }} className="studio-button-lit inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold">
         {t("nextLesson", { title: title(suggested) })}<ArrowRight className="h-4 w-4" />
       </button>}
       <div className="flex items-center justify-center gap-3">

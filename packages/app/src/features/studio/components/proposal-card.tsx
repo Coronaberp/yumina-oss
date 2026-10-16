@@ -95,7 +95,9 @@ export function ProposalCard({ toolCalls, toolResults, status, onApprove, onReje
           {writeToolCalls.map((tc, i) => (
             <div key={tc.id || i} className="space-y-1">
               <EntityPreview toolCall={tc} applied={status === "approved"} />
-              {onInspectChange && (
+              {/* The compare view replays this card's history; a write to another
+                  language version is not part of it. */}
+              {onInspectChange && !writesVariant(tc) && (
                 <button
                   type="button"
                   onClick={() => onInspectChange(tc)}
@@ -146,6 +148,10 @@ export function ProposalCard({ toolCalls, toolResults, status, onApprove, onReje
       )}
     </div>
   );
+}
+
+function writesVariant(call: ToolCall): boolean {
+  try { return typeof (JSON.parse(call.function.arguments) as Record<string, unknown>).variant === "string"; } catch { return false; }
 }
 
 /** How many changes of each kind, in first-seen order. */

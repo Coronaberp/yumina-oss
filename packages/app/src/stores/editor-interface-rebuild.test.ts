@@ -93,7 +93,11 @@ for (const kind of ["document", "adopt", "theme", "page", "layout", "clear-layou
     if (kind === "adopt") store.getState().adoptUiDoc(doc);
     if (kind === "theme") store.getState().applyUiTheme({ id: "night" });
     if (kind === "page") store.getState().addPageTemplate("enter-name", { strings: {}, varNames: {}, varRules: {}, openingTitle: (n: number) => `Opening ${n}` } as never);
-    if (kind === "layout" || kind === "clear-layout") store.getState().applyUiTemplate(kind === "layout" ? "portrait-scene" : null, {}, {});
+    if (kind === "layout" || kind === "clear-layout") {
+      const template = engine.getUiTemplate("portrait-scene")!;
+      const strings = { ...Object.fromEntries(template.stringKeys.map((key) => [key, `word:${key}`])), title: "Card" };
+      store.getState().applyUiTemplate(kind === "layout" ? template.id : null, strings, {});
+    }
     assert.ok(store.getState().worldDraft.uiDoc);
     assert.equal(store.getState().worldDraft.rootComponent?.assetLoading, "on-demand");
     store.getState().stopAutosave();

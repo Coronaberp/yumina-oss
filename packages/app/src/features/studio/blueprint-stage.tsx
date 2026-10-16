@@ -1,5 +1,6 @@
 import { useExternalWrites } from "./lib/use-external-writes";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { STUDIO_ASK_EVENT } from "./lib/block-ask";
 import { STUDIO_BACK_EVENT } from "./lib/studio-back";
@@ -24,6 +25,7 @@ import {
   Sparkles,
   History,
   Languages,
+  ArrowLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useStudioStore } from "@/stores/studio";
@@ -62,7 +64,6 @@ import { LoreTokenMeter } from "./lore-token-meter";
 import { DockWorkspace, type DockTool } from "./dock-tools";
 import { AiPresenceLayer } from "./ai-presence";
 import { useAgentPresence } from "./lib/agent-presence";
-import { getStageInspectorLayout, STAGE_INSPECTOR_DEFAULT_WIDTH, STAGE_INSPECTOR_OVERLAY_INSET } from "./lib/stage-inspector-layout";
 import { readLocalPref, writeLocalPref } from "./lib/local-pref";
 import { takeRequestedPanel } from "@/lib/studio-entry";
 import { isScreenFirst } from "@/lib/editor-surface";
@@ -125,7 +126,9 @@ const SECTION_PANEL: Record<EditorSection, string> = {
 const STUB_PANEL_PROPS = {} as IDockviewPanelProps;
 
 type StageDrawer =
-  | { kind: "panel"; panelId: string }
+  /** `focus`: opened by a double-click on the board. The object's editor gets
+   *  the whole window and one way back, nothing else around it. */
+  | { kind: "panel"; panelId: string; focus?: boolean }
   | { kind: "review"; title: string; node: React.ReactNode; key: string };
 
 /** Window width at which the interface editor keeps its full layout with the
@@ -151,48 +154,6 @@ export function BlueprintStage({
   const readOnly = useEditorStore(s => s.readOnlyInspect || s.guestMode);
   const secondaryVariant = useEditorStore(s => s.variants.find(v => v.id === s.serverWorldId)?.isPrimaryVariant === false);
   const [showVersions, setShowVersions] = useState(false);
-  const [inspectorWidth, setInspectorWidth] = useState(() => {
-    const saved = Number(readLocalPref("yumina-stage-inspector-width"));
-    return saved >= 280 && saved <= 520 ? saved : STAGE_INSPECTOR_DEFAULT_WIDTH;
-  });
-  const [resizing, setResizing] = useState(false);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  // The stage mounts inside the dock's main panel, after this component's
-  // own first commit — so it is measured when the element arrives, not once.
-  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
-  const attachStage = useCallback((el: HTMLDivElement | null) => { stageRef.current = el; setStageEl(el); }, []);
-  const [stageWidth, setStageWidth] = useState(0);
-  const inspectorLayout = getStageInspectorLayout(stageWidth, inspectorWidth);
-  useLayoutEffect(() => {
-    const stage = stageEl;
-    if (!stage) return;
-    const measure = () => {
-      const width = stage.getBoundingClientRect().width;
-      setStageWidth(current => Math.abs(current - width) < 1 ? current : width);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(stage);
-    return () => observer.disconnect();
-  }, [stageEl]);
-  useEffect(() => {
-    if (!resizing) return;
-    const move = (event: PointerEvent) => {
-      const bounds = stageRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const layout = getStageInspectorLayout(bounds.width, inspectorWidth);
-      const right = bounds.right - (layout.overlay ? STAGE_INSPECTOR_OVERLAY_INSET : 0);
-      const next = Math.round(Math.max(layout.minWidth, Math.min(layout.maxWidth, right - event.clientX)));
-      setInspectorWidth(next);
-      writeLocalPref("yumina-stage-inspector-width", String(next));
-    };
-    const end = () => setResizing(false);
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end, { once: true });
-    window.addEventListener("pointercancel", end, { once: true });
-    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end); };
-  }, [resizing, inspectorWidth]);
 
   // The assistant is open on arrival, docked on the right — it is how most
   // creators start. Its button, or ×, puts it away.
@@ -221,11 +182,6 @@ export function BlueprintStage({
       return !v;
     });
   }, []);
-  /** Something is selected on the canvas, so the right column is showing it
-   *  rather than the assistant. */
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  /** The slot the canvas portals that editor into. */
-  const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState<StageDrawer | null>(null);
   /** Which page the centre shows. The blueprint stays mounted underneath the
@@ -255,11 +211,11 @@ export function BlueprintStage({
   const toggleAi = useCallback(() => {
     setAiOpen(open => !open);
   }, []);
-  /** A block's ✦ fills the assistant's composer. If the assistant is closed,
-   *  that lands somewhere the creator cannot see and the click reads as a
-   *  no-op — so the same event that writes the sentence also reveals it.
-   *  Opening it here rather than in `askForBlock` keeps visibility owned by
-   *  the component that decides what the right rail shows. */
+  /** A request put in the assistant's composer from elsewhere. If the
+   *  assistant is closed, that lands somewhere the creator cannot see and the
+   *  click reads as a no-op — so the same event that writes the sentence also
+   *  reveals it. Opening it here keeps visibility owned by the component that
+   *  decides what the right rail shows. */
   useEffect(() => {
     const reveal = (event: Event) => {
       window.dispatchEvent(new Event("yumina:studio-canvas-clear-selection"));
@@ -270,7 +226,7 @@ export function BlueprintStage({
     return () => window.removeEventListener(STUDIO_ASK_EVENT, reveal);
   }, []);
 
-  const openDrill = useCallback((panelId: string) => {
+  const openDrill = useCallback((panelId: string, how?: { focus?: boolean }) => {
     const store = useEditorStore.getState();
     if (panelId === "overview" && store.variants.find(v => v.id === store.serverWorldId)?.isPrimaryVariant === false) panelId = "variants";
     // The blueprint's frontend block used to drill into a 620px builder strip.
@@ -300,7 +256,7 @@ export function BlueprintStage({
         store.setActiveSection(section);
         routingSection.current = false;
       }
-      setDrawer({ kind: "panel", panelId });
+      setDrawer({ kind: "panel", panelId, ...(how?.focus ? { focus: true } : {}) });
       setTreeOpen(false);
     }
   }, [features.imageGeneration]);
@@ -337,7 +293,6 @@ export function BlueprintStage({
         }
         if (panelId === "blueprint" || panelId === "ai-chat") {
           window.dispatchEvent(new Event("yumina:studio-canvas-clear-selection"));
-          setInspectorOpen(false);
         }
         if (panelId === "ai-chat") setAiOpen(true);
       } else openDrill(panelId);
@@ -480,7 +435,6 @@ export function BlueprintStage({
   const immersive = frontendShown && !drawer && !showVersions;
   const detailShown = drawer?.kind === "panel";
   const reviewShown = drawer?.kind === "review";
-  const canvasInspectorShown = inspectorOpen && !frontendShown && !generationShown && !detailShown && !isPlaytest;
   // While a lesson is on, the assistant only shows for the lessons that are
   // about it — the guide stands on the canvas beside the block it teaches,
   // and a column beside a staged board is 340px the block does not get.
@@ -507,35 +461,16 @@ export function BlueprintStage({
   // hiding whatever sat under its 400px (a preview cut to one line, an
   // Overview form with its right edge gone). It now takes a real column there,
   // exactly as it does beside the canvas: the page shrinks, nothing is covered.
-  const inspectorOverlay = canvasInspectorShown && inspectorLayout.overlay;
-  const companionOverlay = inspectorOverlay;
   // A playtest is the player's screen across the whole frame, as it is when
   // the card is played for real — not a column squeezed beside the board
   // (where it also remembered the last side it was docked on, and opened on
   // the left with the board pushed right).
   const fullPlay = isPlaytest;
-  const rightExpanded = canvasInspectorShown || fullPlay;
-  useLayoutEffect(() => {
-    learning.setInspecting(canvasInspectorShown);
-    return () => learning.setInspecting(false);
-  }, [canvasInspectorShown, learning.setInspecting]);
 
   // The shell's bar stays: it holds the switch between the pages, and a page
   // you cannot switch away from is a mode. Only the canvas's own row and rail
   // step aside for the player view.
 
-  // The narrow inspector is a temporary view over the same canvas. Its own
-  // close button clears selection; Escape uses that exact same action.
-  useEffect(() => {
-    if (!inspectorOverlay || drawer || showVersions) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
-      event.preventDefault();
-      window.dispatchEvent(new Event("yumina:studio-canvas-clear-selection"));
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [inspectorOverlay, drawer, showVersions]);
 
   const dockHeader = "flex shrink-0 items-center gap-2 border-b border-white/[0.07] px-3 py-2";
   const dockTitle = "min-w-0 flex-1 truncate text-xs font-bold text-foreground";
@@ -568,23 +503,6 @@ export function BlueprintStage({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaytest]);
-  // A situation's settings (or anything else that opens the column beside
-  // the board) and the assistant were two columns at once, and the board
-  // left between them was a strip. Settings are hand work: the assistant
-  // steps aside while they are open and comes back as it was. Its button
-  // still brings it back in the meantime.
-  const aiBeforeInspect = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (canvasInspectorShown) {
-      if (aiBeforeInspect.current !== null) return;
-      aiBeforeInspect.current = aiOpen;
-      setAiOpen(false);
-    } else if (aiBeforeInspect.current !== null) {
-      if (aiBeforeInspect.current) setAiOpen(true);
-      aiBeforeInspect.current = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasInspectorShown]);
   // The playtest covers the toolbar that holds the assistant's button, so it
   // borrows the toggle to offer its own.
   const setStageAssistant = useStudioStore((s) => s.setStageAssistant);
@@ -629,7 +547,6 @@ export function BlueprintStage({
     <AiPresenceLayer />
     <DockWorkspace scope="canvas" mainTitle={t("studio.panels.blueprint")} tools={stageTools} className="flex min-h-0 w-full flex-1">
     <div
-      ref={attachStage}
       className={cn(
         "relative flex min-h-0 w-full flex-1 overflow-hidden",
       )}
@@ -692,20 +609,17 @@ export function BlueprintStage({
         <div data-onboarding="blueprint" className={cn("h-full min-h-0", (frontendShown || generationShown || detailShown) && "invisible")} inert={frontendShown || generationShown || detailShown || reviewShown || showVersions} aria-hidden={frontendShown || generationShown || detailShown}>
         <BlueprintCanvasCore
           onDrillPanel={openDrill}
-          onInspectorChange={setInspectorOpen}
-          inspectorHost={inspectorHost}
-          active={!frontendShown && !generationShown && !drawer && !showVersions}
-          edgeInsets={{ left: 12, right: inspectorOverlay ? inspectorLayout.width + STAGE_INSPECTOR_OVERLAY_INSET : 12 }}
+          active={!frontendShown && !generationShown && !drawer && !showVersions && !isPlaytest}
+          edgeInsets={{ left: 12, right: 12 }}
           previewOwnedElsewhere={frontendShown || isPlaytest}
           focus={isPlaytest ? undefined : { active: !aiOpen, toggle: toggleAi, kind: "rail" }}
           toolbarHost={immersive ? null : toolbarHost}
         />
 
         </div>
-        {/* What the card's lore costs, in the board's top-right corner; it
-            steps left of an inspector that floats over the board. */}
+        {/* What the card's lore costs, in the board's top-right corner. */}
         {!frontendShown && !generationShown && !detailShown && !isPlaytest && (
-          <LoreTokenMeter right={inspectorOverlay ? inspectorLayout.width + STAGE_INSPECTOR_OVERLAY_INSET + 12 : 12} />
+          <LoreTokenMeter right={12} />
         )}
 
         {/* The card's own screen. Overlays rather than replaces, so the
@@ -747,7 +661,35 @@ export function BlueprintStage({
             stays mounted underneath (layout, selection and undo state survive)
             and the top bar's ← walks straight back to it.
             The AI keeps its column throughout. */}
-        {drawer && drawer.kind === "panel" && DrawerComponent && (
+        {/* A double-click on the board opens the object's editor as a page of
+            its own: the whole window, the editor and a way back — no bars,
+            tabs or menus around it. ← and Esc both return to the board,
+            which stayed mounted underneath exactly as it was.
+            Portalled to <body>: inside the stage, an ancestor contains fixed
+            positioning, and the page came out framed in the centre column
+            with the shell's bar and the assistant still around it. z-45 sits
+            over the shell, under the z-50 menus and dialogs the editor opens. */}
+        {drawer && drawer.kind === "panel" && drawer.focus && DrawerComponent && createPortal(
+          <div data-stage-focus-page={drawer.panelId} className="fixed inset-0 z-[45] flex flex-col bg-[#131118] text-foreground">
+            <div className="flex shrink-0 items-center gap-3 border-b border-white/[0.07] px-3 py-2" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
+              <button
+                type="button"
+                data-stage-focus-back
+                onClick={() => setDrawer(null)}
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {t("entries.back")}
+              </button>
+              {drawerMeta && <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground"><drawerMeta.icon className="h-3.5 w-3.5 shrink-0 text-amber-400" /><span className="truncate">{t(drawerMeta.titleKey as never)}</span></span>}
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <DrawerComponent {...STUB_PANEL_PROPS} />
+            </div>
+          </div>,
+          document.body,
+        )}
+        {drawer && drawer.kind === "panel" && !drawer.focus && DrawerComponent && (
           <div className="absolute inset-0 z-30 flex flex-col bg-[#131118]">
             {/* A title, not a way out: the top bar's ← is the one way back
                 (it closes this page first), and Esc does the same. */}
@@ -778,42 +720,21 @@ export function BlueprintStage({
         </div>
       </div>
 
-      {/* ── Right column: one place, three occupants ──
-          A creator is doing exactly one of three things at any instant: playing
-          the card, talking to the assistant, or editing the thing they just
-          clicked. Selecting something USED to open a third column that shoved
-          the canvas from 939px to 599px while the assistant sat idle beside it
-          — clicking an entry means "I am doing this by hand", which is the one
-          moment the assistant is not wanted.
-          The assistant stays mounted underneath so its conversation and scroll
-          survive a detour into an entry. */}
+      {/* ── The playtest ──
+          Across the whole frame, as the card is played for real. Nothing
+          clicked on the board comes here: its editor opens on the board
+          beside it, so the assistant's column is never taken or closed. */}
       <aside
-        data-studio-companion={canvasInspectorShown ? "inspector" : "playtest"}
-        data-studio-companion-layout={rightExpanded ? companionOverlay ? "overlay" : "column" : "closed"}
+        data-studio-companion="playtest"
+        data-studio-companion-layout={fullPlay ? "column" : "closed"}
         className={cn(
           "studio-column shrink-0 flex-col border-l border-white/[0.07]",
-          rightExpanded ? "flex" : "hidden",
           // Over the board, not instead of it: hidden, the board measured
           // nothing, laid itself out for a zero-wide frame and came back from
           // a playtest as a thumbnail in the corner.
-          fullPlay ? "absolute inset-0 z-40 border-l-0 bg-background" : companionOverlay ? "absolute bottom-3 right-3 top-14 z-50 rounded-xl border shadow-2xl" : "relative h-full min-h-0",
+          fullPlay ? "absolute inset-0 z-40 flex border-l-0 bg-background" : "hidden",
         )}
-        style={fullPlay ? undefined : { width: canvasInspectorShown ? inspectorLayout.width : 400, maxWidth: companionOverlay ? "calc(100% - 24px)" : canvasInspectorShown ? undefined : "42%" }}
       >
-        {canvasInspectorShown && <div
-          role="separator" aria-label={t("blueprint.insp.resize")} aria-orientation="vertical"
-          aria-valuemin={inspectorLayout.minWidth} aria-valuemax={inspectorLayout.maxWidth} aria-valuenow={inspectorLayout.width} tabIndex={0}
-          onPointerDown={event => { event.preventDefault(); setResizing(true); }}
-          onDoubleClick={() => { setInspectorWidth(STAGE_INSPECTOR_DEFAULT_WIDTH); writeLocalPref("yumina-stage-inspector-width", String(STAGE_INSPECTOR_DEFAULT_WIDTH)); }}
-          onKeyDown={event => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            const next = Math.max(inspectorLayout.minWidth, Math.min(inspectorLayout.maxWidth, inspectorLayout.width + (event.key === "ArrowLeft" ? 20 : -20)));
-            setInspectorWidth(next); writeLocalPref("yumina-stage-inspector-width", String(next));
-          }}
-          className={cn("absolute -left-1 top-0 z-20 h-full w-2 cursor-col-resize hover:bg-primary/30 focus-visible:bg-primary/30", resizing && "bg-primary/30")}
-        />}
-        <div ref={setInspectorHost} className={cn("min-h-0 flex-1", !canvasInspectorShown && "hidden")} />
         {fullPlay && <>
           {aiPlaying && (
             <div data-ai-playtest className="flex shrink-0 items-center gap-2 border-b border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">

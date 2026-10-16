@@ -374,3 +374,137 @@ test("a place shows its contents and folds the advanced part; an AI comes in by 
     assert.equal(container.textContent?.includes("blueprint.aiForm.makeOwn"), false, "no button makes an AI here: it is added outside and dragged in");
   });
 });
+
+const blur = async (element: HTMLElement) => { await act(async () => { element.focus(); element.blur(); }); };
+const radio = (container: HTMLElement, group: string, label: string) =>
+  [...container.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] [role="radio"]`)].find(el => el.textContent === label) as HTMLButtonElement;
+
+test("the history window is one choice: 全部 clears the summary too, and a summary without a window never reads as 0", async () => {
+  // What the card form used to leave behind: 全部 there cleared only the limit.
+  await withInspector(world({ settings: { storySummary: { enabled: true } } }), blockId.context(), {}, async ({ container, click }) => {
+    const group = "blueprint.insp.historyLimit";
+    assert.equal(radio(container, group, "blueprint.insp.historySummaryShort").getAttribute("aria-checked"), "true");
+    assert.match(container.textContent!, /blueprint\.turnCtx\.historyAll/, "the whole budget, not 最新 0 条");
+    assert.doesNotMatch(container.textContent!, /previewHistoryLatest/);
+    await click(radio(container, group, "blueprint.insp.historyAll"));
+    const settings = useEditorStore.getState().worldDraft.settings;
+    assert.equal(settings.historyLimit, undefined);
+    assert.equal(settings.storySummary, undefined);
+    assert.equal(useEditorStore.getState()._past.length, 1, "both halves are one edit");
+    assert.equal(radio(container, group, "blueprint.insp.historyAll").getAttribute("aria-checked"), "true");
+  });
+});
+
+test("numbers are typed freely and settled when let go of", async () => {
+  const reaction = { id: "rx", name: "Rx", when: { eventType: "turn:end" }, conditions: [], conditionLogic: "all" as const, then: [], priority: 0, enabled: true };
+  await withInspector(world({ reactions: [reaction] as never, settings: { historyLimit: 20 } }), "reaction:rx", {}, async ({ container, field, button, click, input, update }) => {
+    await click(button("Advanced"));
+    const priority = field("behaviors.priority") as HTMLInputElement;
+    // A negative priority used to be impossible: "-" alone read as 0 and
+    // was clamped before the digit arrived.
+    await input(priority, "-5");
+    assert.equal(useEditorStore.getState().worldDraft.reactions?.[0]?.priority, 0, "nothing is written mid-typing");
+    await blur(priority);
+    assert.equal(useEditorStore.getState().worldDraft.reactions?.[0]?.priority, -5);
+    // Typed and then the column moves on without a blur (Escape closes the
+    // floating card): what was typed is still kept.
+    await input(field("behaviors.chance") as HTMLInputElement, "40");
+    await update({}, blockId.context());
+    assert.equal(useEditorStore.getState().worldDraft.reactions?.[0]?.chance, 40);
+    // Cleared and typed again, the window is what was typed, not 1 then 15.
+    const count = field("blueprint.insp.historyLatestCount") as HTMLInputElement;
+    await input(count, "");
+    await input(count, "5");
+    await blur(count);
+    assert.equal(useEditorStore.getState().worldDraft.settings.historyLimit, 5);
+    await input(count, "9000");
+    await act(async () => count.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    assert.equal(useEditorStore.getState().worldDraft.settings.historyLimit, 500, "clamped once, when it is committed");
+    assert.ok(container);
+  });
+});
+
+test("an AI is renamed in its title, by the name it is shown and called by", async () => {
+  const yard = { id: "yard", name: "Backyard", order: 0, activation: { mode: "always" as const }, station: { kind: "narrator" as const, name: "Innkeeper", onClose: "keep" as const } };
+  await withInspector(world({ worldbooks: [yard] }), "ai:yard", {}, async ({ field, input }) => {
+    const name = field("Name") as HTMLInputElement;
+    assert.equal(name.value, "Innkeeper");
+    await input(name, "Landlady");
+    await act(async () => new Promise(resolve => setTimeout(resolve, 350)));
+    const book = useEditorStore.getState().worldDraft.worldbooks?.[0];
+    assert.equal(book?.station?.name, "Landlady");
+    assert.equal(book?.name, "Backyard", "the place it lives in keeps its own name");
+  });
+});
+
+test("changing a variable's type takes the hidden settings of the old type with it", async () => {
+  const mood = { id: "mood", name: "Mood", type: "string" as const, defaultValue: "calm", options: ["calm", "angry"], precise: true };
+  await withInspector(world({ variables: [mood] }), "var:mood", {}, async ({ container, click }) => {
+    await click(radio(container, "Type", "JSON"));
+    const after = useEditorStore.getState().worldDraft.variables[0]!;
+    assert.equal(after.precise, undefined, "a list has no precise tracking to keep on out of sight");
+    assert.deepEqual(after.options, ["calm", "angry"], "the value list stays for if it becomes text again");
+  });
+  const hp = { id: "hp", name: "HP", type: "number" as const, defaultValue: 10, precise: true, deltaDown: 5, deltaUp: 5 };
+  await withInspector(world({ variables: [hp] }), "var:hp", {}, async ({ container, click }) => {
+    await click(radio(container, "Type", "Text"));
+    const after = useEditorStore.getState().worldDraft.variables[0]!;
+    assert.equal(after.precise, undefined);
+    assert.equal(after.deltaDown, undefined);
+    assert.equal(after.deltaUp, undefined);
+  });
+});
+
+test("an opening's seed keyed by the variable's name shows its value; a list's seed is shown, not offered", async () => {
+  const opening = entry("town", { role: "greeting", initialVariables: { Health: 50, Bag: "[]" } });
+  const draft = world({ entries: [opening], variables: [
+    { id: "hp", name: "Health", type: "number", defaultValue: 100 },
+    { id: "bag", name: "Bag", type: "json", defaultValue: [] },
+  ] });
+  useEditorStore.setState({ worldDraft: draft, readOnlyInspect: false, _past: [], _future: [] });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const patches: unknown[] = [];
+  const show = (edgeId: string) => act(async () => root.render(createElement(I18nextProvider, { i18n }, createElement(BlueprintInspector, {
+    target: { type: "edge", edgeId, describe: "wire" }, world: draft, readOnly: false, onPatch: patch => patches.push(patch), onDrill: () => {}, onClose: () => {},
+  }))));
+  try {
+    await show("e:greeting:town->var:hp");
+    const value = container.querySelector("input") as HTMLInputElement;
+    assert.equal(value.value, "50");
+    await act(async () => { Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(value, "60"); value.dispatchEvent(new dom.window.Event("input", { bubbles: true })); });
+    await blur(value);
+    assert.deepEqual(patches, [{ op: "update-edge", edgeId: "e:greeting:town->var:hp", data: { value: 60 } }]);
+    await show("e:greeting:town->var:bag");
+    assert.equal(container.querySelector("input"), null, "no box whose edits would vanish");
+    assert.match(container.textContent!, /blueprint\.inspector\.seedJsonFixed/);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+test("a prompt piece's condition value is read as its variable keeps it, and a piece needs a variable to hang on", async () => {
+  const station = { kind: "worker" as const, trigger: { on: "ui" as const }, pieces: [{ conditions: [{ variableId: "room", operator: "eq" as const, value: "" }], text: "Inside" }] };
+  const ai = { id: "guide", name: "Guide", order: 0, activation: { mode: "always" as const }, station };
+  await withInspector(world({ worldbooks: [ai], variables: [
+    { id: "room", name: "Room", type: "string", defaultValue: "1" },
+    { id: "heat", name: "Heat", type: "number", defaultValue: 0 },
+  ] }), "ai:guide", {}, async ({ container, input, change }) => {
+    const value = () => container.querySelector('[data-ai-custom] input[aria-label="blueprint.inspector.value"]') as HTMLInputElement;
+    const condition = () => useEditorStore.getState().worldDraft.worldbooks?.[0]?.station?.pieces?.[0]?.conditions[0];
+    await input(value(), "1");
+    await blur(value());
+    assert.equal(condition()?.value, "1", "a text's 1 stays text, or it never equals the variable");
+    await change(value().parentElement!.querySelector("select")!, "heat");
+    assert.equal(condition()?.value, 1, "moved onto a number, the value is read as one");
+    await input(value(), "0.");
+    assert.equal(value().value, "0.", "a decimal can be typed through its point");
+    await input(value(), "0.5");
+    await blur(value());
+    assert.equal(condition()?.value, 0.5);
+  });
+  await withInspector(world({ worldbooks: [{ ...ai, station: { ...station, pieces: undefined, say: "none" } }] }), "ai:guide", {}, async ({ container }) => {
+    const add = container.querySelector<HTMLButtonElement>("[data-ai-piece-add]")!;
+    assert.equal(add.disabled, true, "no piece pointing at no variable");
+  });
+});

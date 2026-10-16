@@ -16,6 +16,7 @@
 import { transform } from "sucrase";
 import React from "react";
 import { LucideScope } from "@/lib/tsx/lucide-scope";
+import { codeRevision, createCodeDiagnostic, type CodeDiagnostic } from "./diagnostics";
 
 /** The attribute the inspect build stamps onto every host element it renders.
  *  Value is `<file>:<line>` — the JSX site that produced that DOM node. */
@@ -102,6 +103,7 @@ export interface BundleResult {
   Component: React.ComponentType<Record<string, unknown>> | null;
   error: string | null;
   fileErrors?: Record<string, string>;
+  diagnostic?: CodeDiagnostic;
 }
 
 /** Parent-side multi-file bundle to a single JS string the sandbox can feed
@@ -111,11 +113,13 @@ export interface BundleCodeResult {
   code: string | null;
   error: string | null;
   fileErrors: Record<string, string>;
+  diagnostic?: CodeDiagnostic;
 }
 
 // ── Import Parsing ───────────────────────────────────────────────────
 
 interface ParsedImport {
+  offset: number;
   /** Full import statement text (for replacement) */
   statement: string;
   /** Default import name: `import Foo from './foo'` → "Foo" */
@@ -157,6 +161,7 @@ function parseImports(code: string): ParsedImport[] {
     }
 
     imports.push({
+      offset: match.index,
       statement,
       defaultImport: defaultName || null,
       namedImports,
@@ -254,7 +259,7 @@ function compileFile(
   filename: string,
   source: string,
   inspect = false,
-): CompiledFile | { error: string } {
+): CompiledFile | { error: string; diagnostic: CodeDiagnostic } {
   let code = source;
   const jsxOpts = { production: !inspect, filePath: inspect ? filename : undefined };
 
@@ -266,7 +271,7 @@ function compileFile(
       ...jsxOpts,
     });
     code = result.code;
-  } catch {
+  } catch (firstError) {
     try {
       code = stripTypeScript(source);
       const result = transform(code, {
@@ -283,8 +288,9 @@ function compileFile(
           ...jsxOpts,
         });
         code = result.code;
-      } catch (e) {
-        return { error: `${filename}: ${e instanceof Error ? e.message : "Compilation failed"}` };
+      } catch {
+        const diagnostic = createCodeDiagnostic(firstError, { phase: "compile", file: filename, source, sourcePosition: true });
+        return { error: `${filename}: ${diagnostic.message}`, diagnostic };
       }
     }
   }
@@ -393,7 +399,8 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
   const fileErrors: Record<string, string> = {};
 
   if (!(entryFile in files)) {
-    return { code: null, error: `Entry file '${entryFile}' not found`, fileErrors };
+    const error = `Entry file '${entryFile}' not found`;
+    return { code: null, error, fileErrors, diagnostic: createCodeDiagnostic(error, { phase: "resolve", file: entryFile, files }) };
   }
 
   interface DepNode {
@@ -405,6 +412,7 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
   const graph = new Map<string, DepNode>();
   const compilationStack: string[] = [];
   let graphError: string | null = null;
+  let graphDiagnostic: CodeDiagnostic | undefined;
 
   function buildGraph(filename: string): void {
     if (graphError) return;
@@ -430,6 +438,11 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
       const resolved = resolveFile(imp.specifier, filename, files);
       if (!resolved) {
         graphError = `Cannot resolve '${imp.specifier}' from '${filename}' — file not found`;
+        const before = source.slice(0, imp.offset);
+        graphDiagnostic = createCodeDiagnostic(graphError, {
+          phase: "resolve", file: filename, source, files,
+          line: before.split("\n").length, column: imp.offset - before.lastIndexOf("\n"),
+        });
         return;
       }
       resolvedDeps.set(imp.specifier, resolved);
@@ -441,7 +454,7 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
   }
 
   buildGraph(entryFile);
-  if (graphError) return { code: null, error: graphError, fileErrors };
+  if (graphError) return { code: null, error: graphError, fileErrors, diagnostic: graphDiagnostic ?? createCodeDiagnostic(graphError, { phase: "resolve", files }) };
 
   const compileOrder: string[] = [];
   const visited = new Set<string>();
@@ -462,7 +475,7 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
     const result = compileFile(filename, files[filename], input.inspect);
     if ("error" in result) {
       fileErrors[filename] = result.error;
-      return { code: null, error: result.error, fileErrors };
+      return { code: null, error: result.error, fileErrors, diagnostic: { ...result.diagnostic, revision: codeRevision(files) } };
     }
     compiledFiles.set(filename, result);
   }
@@ -535,6 +548,37 @@ function assembleBundle(input: BundleInput): BundleCodeResult {
   return { code: parts.join("\n"), error: null, fileErrors };
 }
 
+/** Error-only syntax probe. new Function compiles but is NEVER invoked here.
+ * Test only reachable files, so a broken unused draft cannot be blamed for an
+ * unrelated failure. Runtime ReferenceErrors cannot be located this way. */
+export function diagnoseBundleFailure(error: unknown, input: BundleInput): CodeDiagnostic {
+  const original = createCodeDiagnostic(error, { phase: "load", files: input.files });
+  if (original.name !== "SyntaxError") return original;
+  const visited = new Set<string>();
+  const reachable: string[] = [];
+  const visit = (file: string) => {
+    if (visited.has(file) || input.files[file] === undefined) return;
+    visited.add(file);
+    for (const imp of parseImports(input.files[file])) {
+      const dependency = resolveFile(imp.specifier, file, input.files);
+      if (dependency) visit(dependency);
+    }
+    reachable.push(file);
+  };
+  visit(input.entryFile);
+  for (const file of reachable) {
+    const compiled = compileFile(file, input.files[file]);
+    if ("error" in compiled) return { ...compiled.diagnostic, revision: original.revision };
+    try { new Function(compiled.code); }
+    catch (failure) {
+      const probe = createCodeDiagnostic(failure, { phase: "load", file, files: input.files });
+      // Do not replace the original exception with a different failure.
+      if (probe.name === original.name && probe.message === original.message) return { ...original, file };
+    }
+  }
+  return original;
+}
+
 export function bundleAndCompile(
   input: BundleInput,
   useYuminaHook?: () => unknown,
@@ -542,7 +586,7 @@ export function bundleAndCompile(
 ): BundleResult {
   const assembled = assembleBundle(input);
   if (assembled.error || !assembled.code) {
-    return { Component: null, error: assembled.error, fileErrors: assembled.fileErrors };
+    return { Component: null, error: assembled.error, fileErrors: assembled.fileErrors, diagnostic: assembled.diagnostic };
   }
   const fileErrors = assembled.fileErrors;
   const wrappedCode = assembled.code;
@@ -636,12 +680,14 @@ export function bundleAndCompile(
       Component: null,
       error: `Entry file '${input.entryFile}' must export a default component`,
       fileErrors,
+      diagnostic: createCodeDiagnostic(`Entry file '${input.entryFile}' must export a default component`, { phase: "load", file: input.entryFile, files: input.files }),
     };
   } catch (e) {
     return {
       Component: null,
       error: `Bundle runtime error: ${e instanceof Error ? e.message : String(e)}`,
       fileErrors,
+      diagnostic: diagnoseBundleFailure(e, input),
     };
   }
 }

@@ -9,7 +9,7 @@ export type CostTier = "budget" | "standard" | "premium" | "ultra";
 export type ModelScope = "play" | "studio" | "both";
 
 /** Previously selectable official models with no working provider. BYOK is independent. */
-export const RETIRED_PLAY_MODEL_IDS = new Set(["nousresearch/hermes-4-70b", "mistralai/mistral-large-2512"]);
+export const RETIRED_PLAY_MODEL_IDS = new Set(["nousresearch/hermes-4-70b", "mistralai/mistral-large-2512", "anthropic/claude-3-haiku"]);
 
 export interface TimeBasedAvgCostMushies {
   peak: number;
@@ -54,7 +54,6 @@ export const YUMINA_MODELS: YuminaModel[] = [
   {"id":"deepseek/deepseek-v4-flash","name":"DeepSeek V4 Flash","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":1.4,"descKey":"aiProvider.models.deepseekV4Flash","inputPrice":0.04844,"outputPrice":0.09688,"contextWindow":1048576,"recommendationRank":52},
   {"id":"deepseek/deepseek-v3.2","name":"DeepSeek V3.2","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":7.3,"descKey":"aiProvider.models.deepseek","inputPrice":0.269,"outputPrice":0.4,"contextWindow":163840,"recommendationRank":53},
   {"id":"qwen/qwen3-vl-235b-a22b-instruct","name":"Qwen3 VL 235B","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":7,"descKey":"aiProvider.models.qwen3Vl","inputPrice":0.21,"outputPrice":1.9,"contextWindow":262144,"recommendationRank":54},
-  {"id":"anthropic/claude-3-haiku","name":"Claude 3 Haiku","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":7.5,"descKey":"aiProvider.models.claude3Haiku","inputPrice":0.25,"outputPrice":1.25,"contextWindow":200000,"recommendationRank":55},
   {"id":"mistralai/mistral-nemo","name":"Mistral Nemo","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":0.6,"descKey":"aiProvider.models.mistralNemo","inputPrice":0.019,"outputPrice":0.03,"contextWindow":131072,"recommendationRank":56},
   {"id":"mistralai/mistral-small-3.2-24b-instruct","name":"Mistral Small 3.2","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":2.7,"descKey":"aiProvider.models.mistralSmall32","inputPrice":0.09375,"outputPrice":0.25,"contextWindow":256000,"recommendationRank":57},
   {"id":"google/gemini-3.1-flash-lite","name":"Gemini 3.1 Flash Lite","scope":"play","tier":"standard","minPlan":"free","avgCostMushies":7.7,"descKey":"aiProvider.models.gemini31FlashLite","inputPrice":0.25,"outputPrice":1.5,"contextWindow":1048576,"recommendationRank":59},
@@ -114,6 +113,19 @@ export const YUMINA_MODELS: YuminaModel[] = [
   {"id":"thinkingmachines/inkling","name":"Inkling","scope":"play","tier":"premium","minPlan":"go","avgCostMushies":29,"descKey":"aiProvider.models.thinkingmachines_inkling","inputPrice":1,"outputPrice":4.05,"contextWindow":1048576,"addedAt":"2026-09-19","recommendationRank":-10},
   {"id":"openai/gpt-4.1","name":"GPT-4.1","scope":"play","tier":"premium","minPlan":"go","avgCostMushies":57.9,"descKey":"aiProvider.models.openai_gpt_4_1","inputPrice":2,"outputPrice":8,"contextWindow":1047576,"addedAt":"2026-09-19","recommendationRank":-11},
   {"id":"anthropic/claude-opus-4.5","name":"Claude Opus 4.5","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":148.8,"descKey":"aiProvider.models.anthropic_claude_opus_4_5","inputPrice":5,"outputPrice":25,"contextWindow":200000,"addedAt":"2026-09-19","recommendationRank":166},
+  {"id":"google/gemini-4-argon","name":"Gemini 4 Argon","scope":"play","tier":"premium","minPlan":"go","avgCostMushies":59.6,"descKey":"aiProvider.models.google_gemini_4_argon","inputPrice":2,"outputPrice":10,"contextWindow":1048576,"addedAt":"2026-10-13","recommendationRank":79},
+  {"id":"anthropic/claude-sonnet-5.5","name":"Claude Sonnet 5.5","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":59.6,"descKey":"aiProvider.models.anthropic_claude_sonnet_5_5","inputPrice":2,"outputPrice":10,"contextWindow":1000000,"addedAt":"2026-10-13","recommendationRank":81},
+  {"id":"openai/gpt-6.1-sol","name":"GPT-6.1 Sol","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":59.6,"descKey":"aiProvider.models.openai_gpt_6_1_sol","inputPrice":2,"outputPrice":10,"contextWindow":1050000,"addedAt":"2026-10-13","recommendationRank":87},
+  {"id":"anthropic/claude-opus-4.6","name":"Claude Opus 4.6","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":148.8,"descKey":"aiProvider.models.anthropic_claude_opus_4_6","inputPrice":5,"outputPrice":25,"contextWindow":1000000,"addedAt":"2026-10-13","recommendationRank":115},
+  {"id":"anthropic/claude-opus-5.5","name":"Claude Opus 5.5","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":119.1,"descKey":"aiProvider.models.anthropic_claude_opus_5_5","inputPrice":4,"outputPrice":20,"contextWindow":1000000,"addedAt":"2026-10-13","recommendationRank":82},
+  {"id":"anthropic/claude-sonnet-4.5","name":"Claude Sonnet 4.5","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":89.3,"descKey":"aiProvider.models.anthropic_claude_sonnet_4_5","inputPrice":3,"outputPrice":15,"contextWindow":1000000,"addedAt":"2026-10-13","recommendationRank":80},
+  {"id":"anthropic/claude-haiku-5.5","name":"Claude Haiku 5.5","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":3.0,"descKey":"aiProvider.models.anthropic_claude_haiku_5_5","inputPrice":0.1,"outputPrice":0.5,"contextWindow":1000000,"addedAt":"2026-10-13","recommendationRank":55},
+  {"id":"openai/gpt-6-sol","name":"GPT-6 Sol","scope":"play","tier":"ultra","minPlan":"plus","avgCostMushies":59.6,"descKey":"aiProvider.models.openai_gpt_6_sol","inputPrice":2,"outputPrice":10,"contextWindow":1050000,"addedAt":"2026-10-13","recommendationRank":87},
+  {"id":"openai/gpt-6-luna","name":"GPT-6 Luna","scope":"play","tier":"budget","minPlan":"free","avgCostMushies":3.0,"descKey":"aiProvider.models.openai_gpt_6_luna","inputPrice":0.1,"outputPrice":0.5,"contextWindow":1050000,"addedAt":"2026-10-13","recommendationRank":84},
+  {"id":"x-ai/grok-4.7","name":"Grok 4.7","scope":"play","tier":"premium","minPlan":"go","avgCostMushies":56.2,"descKey":"aiProvider.models.x_ai_grok_4_7","inputPrice":2,"outputPrice":6,"contextWindow":500000,"addedAt":"2026-10-13","recommendationRank":-7},
+  {"id":"x-ai/grok-4.5","name":"Grok 4.5","scope":"play","tier":"premium","minPlan":"go","avgCostMushies":56.2,"descKey":"aiProvider.models.x_ai_grok_4_5","inputPrice":2,"outputPrice":6,"contextWindow":500000,"addedAt":"2026-10-13","recommendationRank":-7},
+  {"id":"google/gemini-3.6-flash","name":"Gemini 3.6 Flash","scope":"play","tier":"standard","minPlan":"free","avgCostMushies":22.4,"descKey":"aiProvider.models.google_gemini_3_6_flash","inputPrice":0.75,"outputPrice":3.75,"contextWindow":1048576,"addedAt":"2026-10-13","recommendationRank":69},
+  {"id":"xiaomi/mimo-v2.6-pro","name":"MiMo V2.6 Pro","scope":"play","tier":"standard","minPlan":"free","avgCostMushies":11.9,"descKey":"aiProvider.models.xiaomi_mimo_v2_6_pro","inputPrice":0.435,"outputPrice":0.87,"contextWindow":1050000,"addedAt":"2026-10-13","recommendationRank":2},
   {"id":"openai/gpt-5.1-codex-mini","name":"GPT-5.1 Codex Mini","scope":"studio","inputPrice":0.25,"outputPrice":2},
   {"id":"openai/gpt-5.3-codex","name":"GPT-5.3 Codex","scope":"studio","inputPrice":1.75,"outputPrice":14},
   {"id":"qwen/qwen3.7-max","name":"Qwen 3.7 Max","scope":"studio","inputPrice":2.5,"outputPrice":7.5},
@@ -193,6 +205,18 @@ export const DEFAULT_POOL: Array<{ modelId: string; weight: number }> = [
 export const DEFAULT_MIX_MODE = false;
 
 export const STUDIO_RECOMMENDED_MODEL = "anthropic/claude-sonnet-5";
+
+/** Where a creator on the free plan starts in Studio until they pick a model.
+ *  On Sonnet 5 the 700 sign-up credits cover about two runs (median 345 a run),
+ *  and 48% of new free creators hit the wall by their third run, 71% of them for
+ *  good. DeepSeek V4 Pro runs at a median of ~60 credits with the same write rate
+ *  and complaint rate on text and logic work, so the first card gets built.
+ *  Paid plans keep the recommended model. */
+export const STUDIO_FREE_DEFAULT_MODEL = "deepseek/deepseek-v4-pro";
+
+export function studioDefaultModel(plan: string | null | undefined): string {
+  return !plan || plan === "free" ? STUDIO_FREE_DEFAULT_MODEL : STUDIO_RECOMMENDED_MODEL;
+}
 
 // ── Plan hierarchy ────────────────────────────────────────────────────
 

@@ -1,4 +1,6 @@
+import { refreshSessionGreeting } from "../lib/refresh-session-greeting.js";
 import { bodyLimit } from "hono/body-limit";
+import { appendPendingContext } from "../lib/pending-context.js";
 import { loadMessagePage, messagePageCursor } from "../lib/message-page.js";
 import { validateChatImages, storeChatImages, restoreChatImages, imagePromptChars } from "../lib/chat-images.js";
 import { assertImageModel } from "../lib/llm/image-capability.js";
@@ -124,8 +126,9 @@ import { stripTurnVideos } from "../lib/realtime-video/turn-clip.js";
 import { perTurnImagesEnabled, turnImagePrefs } from "../lib/per-turn-image/availability.js";
 import { refundTurnImage, reserveTurnImage, turnImageQuote } from "../lib/per-turn-image/billing.js";
 import { redis } from "../lib/redis.js";
-import { checkBalance, validateModelAccess, calculateCost, deductCredits, getModelCostRates, estimateCreditsFromChars, estimateTokensFromChars } from "../lib/credit-service.js";
+import { checkBalance, validateModelAccess, calculateCost, deductCreditsUpToBalance, getModelCostRates, estimateCreditsFromChars, estimateTokensFromChars } from "../lib/credit-service.js";
 import { insertHashedTransaction } from "../lib/transaction-hash.js";
+import { storySamplingParams } from "../lib/station-sampling.js";
 import { MidStreamTracker } from "../lib/credit-guard.js";
 import { PLANS } from "../lib/plan-config.js";
 import { getAllModelPrices } from "../lib/model-price-cache.js";
@@ -511,7 +514,13 @@ function setCachedWorldDef(worldId: string, updatedAt: Date | null, worldDef: Wo
   worldDefCache.set(worldId, { worldDef, updatedAt: updatedAt.getTime() });
 }
 
-async function loadSessionContext(sessionId: string, userId: string) {
+/**
+ * `closeWhenCreatorBlocked`: generation routes pass it so a block in either
+ * direction between the player and the card's creator reads as "not found",
+ * matching GET /api/worlds/:id. It answers before the multi-MB schema load.
+ * Edit/delete/swipe bookkeeping on the player's own rows leaves it off.
+ */
+async function loadSessionContext(sessionId: string, userId: string, opts: { closeWhenCreatorBlocked?: boolean } = {}) {
   // Lightweight query: pull session + world metadata + updatedAt, but NOT the
   // multi-MB schema JSONB. Schema is fetched separately on cache miss only.
   const rows = await db
@@ -528,6 +537,9 @@ async function loadSessionContext(sessionId: string, userId: string) {
       sourceWorldIsPublished: sourceWorld.isPublished,
       sourceWorldPublishedAt: sourceWorld.publishedAt,
       sourceWorldCreatorId: sourceWorld.creatorId,
+      // Folded into this query so generation pays no extra round trip; each
+      // direction is a user_blocks_pair_uniq index probe. Other callers skip it.
+      creatorBlocked: !opts.closeWhenCreatorBlocked ? sql<boolean>`FALSE` : sql<boolean>`EXISTS (SELECT 1 FROM user_blocks ub WHERE ${worlds.creatorId} <> ${userId} AND ((ub.blocker_id = ${userId} AND ub.blocked_id = ${worlds.creatorId}) OR (ub.blocker_id = ${worlds.creatorId} AND ub.blocked_id = ${userId})))`,
     })
     .from(playSessions)
     .innerJoin(worlds, eq(playSessions.worldId, worlds.id))
@@ -539,6 +551,7 @@ async function loadSessionContext(sessionId: string, userId: string) {
   if (rows.length === 0) return null;
 
   const row = rows[0]!;
+  if (opts.closeWhenCreatorBlocked && row.creatorBlocked) return null;
   const sourceWorldTakenDown = isForkOrphaned({
     sourceWorldId: row.worldSourceWorldId,
     sourceStatus: row.sourceWorldStatus,
@@ -601,6 +614,7 @@ async function loadSessionContext(sessionId: string, userId: string) {
     worldDef = { ...worldDef, continuity: { ...worldDef.continuity, enabled: false } };
   }
 
+  await refreshSessionGreeting(sessionId, userId, worldDef);
   const gameState = normalizeGameState(worldDef, row.session.state);
 
   return {
@@ -776,7 +790,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
     }, 400);
   }
 
-  const context = await loadSessionContext(sessionId, currentUser.id);
+  const context = await loadSessionContext(sessionId, currentUser.id, { closeWhenCreatorBlocked: true });
   if (!context) {
     return c.json({ error: "Session not found" }, 404);
   }
@@ -828,6 +842,15 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   // A keyword switch chooses both the narrator's prompt AND its model for
   // this turn. Resolve it before provider access/credit checks, not afterward.
   const stateManager = new GameStateManager(worldDef, effectiveGameState);
+  // A behaviour's "tell the AI for N turns" lasts N replies. Nothing expired
+  // directives, so every timed one stayed in the prompt for the rest of the
+  // session. Drop the ones that ran out, against the turn they were counted
+  // from, before this turn starts (the generation baseline that regenerate
+  // reuses is taken after this).
+  const expiredDirectives = stateManager.expireDirectives(stateManager.getSnapshot().turnCount);
+  if (expiredDirectives.length > 0) {
+    console.log(`[Messages] ${sessionId} expired ${expiredDirectives.length} timed directive(s): ${expiredDirectives.map((d) => `${d.id}@${d.injectedAtTurn}+${d.duration ?? "once"}`).join(", ")}`);
+  }
   stateManager.incrementTurn();
   const moduleSwitch = matchWorldbookSwitches(
     worldDef.worldbooks,
@@ -1429,15 +1452,11 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
         model,
         messages: providerMessages,
         maxTokens: clamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-        temperature: clamp(body.overrides?.temperature ?? worldDef.settings?.temperature ?? 1.0, 0, 2),
-        topP: body.overrides?.topP ?? worldDef.settings?.topP,
-        frequencyPenalty: body.overrides?.frequencyPenalty ?? worldDef.settings?.frequencyPenalty,
-        presencePenalty: body.overrides?.presencePenalty ?? worldDef.settings?.presencePenalty,
+        // The player's sampling unless the card locked its own (samplingPolicy "author").
+        ...storySamplingParams(worldDef.settings, body.overrides, clamp),
         repetitionPenalty: antiRepetitionInstruction
           ? body.overrides?.repetitionPenalty
           : undefined,
-        topK: body.overrides?.topK ?? worldDef.settings?.topK,
-        minP: body.overrides?.minP ?? worldDef.settings?.minP,
         reasoningEffort: body.overrides?.reasoningEffort,
         // When the user disables streaming in settings, body.overrides.streaming === false.
         // Undefined/true falls through to the provider's default streaming path.
@@ -1483,9 +1502,9 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
           });
         }
 
-        if (chunk.type === "text") {
-          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
-          fullContent += chunk.content;
+        // Reasoning is billed output too: count it toward the balance, or a long
+        // think runs past what the player can pay before any text arrives.
+        if (chunk.type === "reasoning" || chunk.type === "text") {
           streamedOutputChars += chunk.content.length;
 
           // Mid-stream credit check: stop if estimated cost exceeds balance.
@@ -1523,6 +1542,11 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
               return;
             }
           }
+        }
+
+        if (chunk.type === "text") {
+          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
+          fullContent += chunk.content;
 
           // Filter out leaked thinking blocks (e.g. Gemini Flash Lite <fiction-mode> reasoning)
           const filtered = receiptFilter.push(thinkingFilter.push(chunk.content));
@@ -1570,7 +1594,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
           // Record the failure on the user row. Before this, a failed turn left
           // zero trace in the DB: the player saw silence and we could only find
           // failures by hunting for orphaned user messages. See lib/turn-failure.ts.
-          const failure = classifyGenerationFailure(chunk.content);
+          const failure = classifyGenerationFailure(chunk.content, { isByok: resolved.isByok });
           await markTurnFailed(userMsg?.id, failure.message, failure.code);
           await sse({
             event: "error",
@@ -1668,6 +1692,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
             hasAudioDirective: parseResult.audioEffects.length > 0,
             userId: currentUser.id, sessionId, path: "send", signal: abortController.signal,
             playerOpenRouterKey: turnPlayerOpenRouterKey(resolved, currentUser.id),
+            storyEffects: effects,
           });
           cleanText = applyJudgeSceneImages(worldDef, cleanText, continuity);
           // The per-turn picture and clip come after the turn (POST /messages/:id/illustrate,
@@ -1763,9 +1788,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
           }
 
           // Store pending context messages for next turn (from @ai.context / @prompt.context)
-          if (systemResult.contextMessages.length > 0) {
-            stateManager.setMetadata("pendingContext", systemResult.contextMessages);
-          }
+          appendPendingContext(stateManager, systemResult.contextMessages);
 
           const finalState = stateManager.getSnapshot();
 
@@ -1865,9 +1888,9 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
             return;
           }
 
-          // A policy refusal ("我无法满足…" / "I can't continue…") is kept and
-          // billed like any reply; the flag only lets the client offer a
-          // switch-model / unrestrict bar under it.
+          // A policy refusal ("我无法满足…" / "I can't continue…") is kept but
+          // not billed (see wasFiltered below); the flag lets the client offer
+          // a switch-model / unrestrict bar under it.
           const isRefusal = detectRefusal(cleanText);
           if (isRefusal) {
             captureServerEvent(currentUser.id, "llm_refusal_detected", {
@@ -2103,7 +2126,8 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
           let creditsCost: number | undefined;
           let creditsBalance: number | undefined;
           let grokTrialUsed = false;
-          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY";
+          // A policy refusal is free, like a filtered reply: the player got no story.
+          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY" || isRefusal;
           if (outputAttempt.storyCharge) {
             await refundTrialIfClaimed();
             creditsCost = outputAttempt.storyCharge.cost;
@@ -2143,12 +2167,12 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
                   // for as free. Drop it so the 0/0 rate is what applies.
                   providerCostUsd: freeRouterFallbackServed ? undefined : chunk.usage?.providerCostUsd,
                 });
-                const result = await deductCredits(
+                const result = await deductCreditsUpToBalance(
                   currentUser.id, cost, usageLogId,
                   `${actualModel} — ${pTokens + cTokens} tokens`,
                 );
-                creditsCost = cost;
-                creditsBalance = result.newBalance;
+                creditsCost = result?.creditsDeducted ?? 0;
+                creditsBalance = result?.newBalance ?? 0;
               } catch (err) {
                 console.error("[Credit] Deduction failed:", err instanceof Error ? err.message : err);
               }
@@ -2274,7 +2298,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
       });
       const catchFailure = isShutdown
         ? { code: FAILURE_CODE.INTERRUPTED, message: catchErrorMsg }
-        : classifyGenerationFailure(catchErrorMsg);
+        : classifyGenerationFailure(catchErrorMsg, { isByok: resolved.isByok });
       if (!replyPersisted) {
         await markTurnFailed(userMsg?.id, catchFailure.message, catchFailure.code);
       }
@@ -2416,6 +2440,12 @@ messageRoutes.post("/messages/:id/illustrate", async (c) => {
   const [session] = await db.select({ id: playSessions.id }).from(playSessions)
     .where(and(eq(playSessions.id, msg.sessionId), eq(playSessions.userId, currentUser.id)));
   if (!session) return c.json({ error: "Not authorized" }, 403);
+  // A reply that is the model refusing ("I can't continue…") has no scene: an
+  // automatic draw pictured an empty room and charged for it. A player who
+  // asks for this one with the button still gets it.
+  if (body.auto === true && detectRefusal(stripTurnVideos(stripTurnImages(msg.content)))) {
+    return c.json({ data: { ok: false, reason: "nothing" } });
+  }
   const ctx = await loadSessionContext(msg.sessionId, currentUser.id);
   if (!ctx?.worldDef) return c.json({ error: "World not found" }, 404);
   const [prevUser] = await db.select({ content: messages.content }).from(messages)
@@ -2575,7 +2605,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
     }, 400);
   }
 
-  const context = await loadSessionContext(msg.sessionId, currentUser.id);
+  const context = await loadSessionContext(msg.sessionId, currentUser.id, { closeWhenCreatorBlocked: true });
   if (!context) {
     return c.json({ error: "Session context not found" }, 404);
   }
@@ -2692,6 +2722,10 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
     stateChanges: activeSwipe?.stateChanges ?? msg.stateChanges,
   }, previousRows[0]?.stateSnapshot);
   const stateManager = new GameStateManager(worldDef, regenBase);
+  // Same expiry as the send that started this turn. A reply stored without a
+  // generation baseline borrows the previous reply's rule state, taken before
+  // that expiry ran; for a baseline it is a no-op.
+  stateManager.expireDirectives(stateManager.getSnapshot().turnCount - 1);
   const regenTurnMemory = await loadTurnMemoryBlocks({
     ownerUserId: context.session.userId,
     sessionId: msg.sessionId,
@@ -3034,15 +3068,11 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
         model,
         messages: providerMessages,
         maxTokens: regenClamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-        temperature: regenClamp(body.overrides?.temperature ?? worldDef.settings?.temperature ?? 1.0, 0, 2),
-        topP: body.overrides?.topP ?? worldDef.settings?.topP,
-        frequencyPenalty: body.overrides?.frequencyPenalty ?? worldDef.settings?.frequencyPenalty,
-        presencePenalty: body.overrides?.presencePenalty ?? worldDef.settings?.presencePenalty,
+        // The player's sampling unless the card locked its own (samplingPolicy "author").
+        ...storySamplingParams(worldDef.settings, body.overrides, regenClamp),
         repetitionPenalty: regenAntiRepetitionInstruction
           ? body.overrides?.repetitionPenalty
           : undefined,
-        topK: body.overrides?.topK ?? worldDef.settings?.topK,
-        minP: body.overrides?.minP ?? worldDef.settings?.minP,
         reasoningEffort: body.overrides?.reasoningEffort,
         stream: body.overrides?.streaming,
         ...(worldDef.settings?.structuredOutput && { responseFormat: { type: "json_object" as const } }),
@@ -3082,10 +3112,9 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           });
         }
 
-        if (chunk.type === "text") {
-          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
-          fullContent += chunk.content;
-
+        // Reasoning is billed output too: count it toward the balance, or a long
+        // think runs past what the player can pay before any text arrives.
+        if (chunk.type === "reasoning" || chunk.type === "text") {
           // Mid-stream credit check: ran dry mid-reply. End cleanly with a
           // NO_CREDITS error (out-of-mushies toast + popup) instead of the old
           // `break`, which skipped the catch handler and surfaced as a silent
@@ -3114,6 +3143,11 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             });
             return;
           }
+        }
+
+        if (chunk.type === "text") {
+          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
+          fullContent += chunk.content;
 
           const filtered = receiptFilter.push(thinkingFilter.push(chunk.content));
           if (filtered) {
@@ -3153,7 +3187,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           await sse({
             event: "error",
             // Stable code for the client's localized copy (the text stays raw).
-            data: JSON.stringify({ error: chunk.content, code: classifyGenerationFailure(chunk.content).code ?? undefined }),
+            data: JSON.stringify({ error: chunk.content, code: classifyGenerationFailure(chunk.content, { isByok: resolved.isByok }).code ?? undefined }),
           });
           return;
         }
@@ -3203,6 +3237,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             hasAudioDirective: regenParseResult.audioEffects.length > 0,
             userId: currentUser.id, sessionId: msg.sessionId, path: "regenerate", signal: abortController.signal,
             playerOpenRouterKey: turnPlayerOpenRouterKey(resolved, currentUser.id),
+            storyEffects: regenParseResult.effects,
           });
           // Per-turn picture: drawn after the turn, as on the send path.
           const regenTextWithImage = stripTurnVideos(stripTurnImages(applyJudgeSceneImages(worldDef, regenParseResult.cleanText, regenContinuity)));
@@ -3273,9 +3308,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           if (resumableRegenAudio.length > 0) {
             stateManager.setMetadata("activeAudio", resumableRegenAudio);
           }
-          if (regenSystemResult.contextMessages.length > 0) {
-            stateManager.setMetadata("pendingContext", regenSystemResult.contextMessages);
-          }
+          appendPendingContext(stateManager, regenSystemResult.contextMessages);
 
           const finalState = stateManager.getSnapshot();
 
@@ -3324,7 +3357,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             return;
           }
 
-          // Policy refusal: kept and billed; flagged for the client bar.
+          // Policy refusal: kept, not billed; flagged for the client bar.
           const isRefusal = detectRefusal(cleanText);
           if (isRefusal) {
             captureServerEvent(currentUser.id, "llm_refusal_detected", {
@@ -3469,7 +3502,8 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           let creditsCost: number | undefined;
           let creditsBalance: number | undefined;
           let grokTrialUsed = false;
-          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY";
+          // A policy refusal is free, like a filtered reply: the player got no story.
+          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY" || isRefusal;
           if (outputAttempt.storyCharge) {
             await refundTrialIfClaimed();
             creditsCost = outputAttempt.storyCharge.cost;
@@ -3498,12 +3532,12 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
                   // for as free. Drop it so the 0/0 rate is what applies.
                   providerCostUsd: freeRouterFallbackServed ? undefined : chunk.usage?.providerCostUsd,
                 });
-                const result = await deductCredits(
+                const result = await deductCreditsUpToBalance(
                   currentUser.id, cost, usageLogId,
                   `${actualModel} — ${pTokens + cTokens} tokens (regenerate)`,
                 );
-                creditsCost = cost;
-                creditsBalance = result.newBalance;
+                creditsCost = result?.creditsDeducted ?? 0;
+                creditsBalance = result?.newBalance ?? 0;
               } catch (err) {
                 console.error("[Credit] Deduction failed:", err instanceof Error ? err.message : err);
               }
@@ -3605,7 +3639,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
               ? "Server is restarting — your reply was interrupted. Please resend."
               : err instanceof Error ? err.message : "Regeneration failed",
             code: isShutdown ? "SERVER_RESTART"
-              : classifyGenerationFailure(err instanceof Error ? err.message : "").code ?? undefined,
+              : classifyGenerationFailure(err instanceof Error ? err.message : "", { isByok: resolved.isByok }).code ?? undefined,
           }),
         });
       } catch { /* client disconnected */ }
@@ -3653,7 +3687,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
     };
   };
 
-  const context = await loadSessionContext(sessionId, currentUser.id);
+  const context = await loadSessionContext(sessionId, currentUser.id, { closeWhenCreatorBlocked: true });
   if (!context) {
     return c.json({ error: "Session not found" }, 404);
   }
@@ -4093,15 +4127,11 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
         model,
         messages: providerMessages,
         maxTokens: contClamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-        temperature: contClamp(body.overrides?.temperature ?? worldDef.settings?.temperature ?? 1.0, 0, 2),
-        topP: body.overrides?.topP ?? worldDef.settings?.topP,
-        frequencyPenalty: body.overrides?.frequencyPenalty ?? worldDef.settings?.frequencyPenalty,
-        presencePenalty: body.overrides?.presencePenalty ?? worldDef.settings?.presencePenalty,
+        // The player's sampling unless the card locked its own (samplingPolicy "author").
+        ...storySamplingParams(worldDef.settings, body.overrides, contClamp),
         repetitionPenalty: contAntiRepetitionInstruction
           ? body.overrides?.repetitionPenalty
           : undefined,
-        topK: body.overrides?.topK ?? worldDef.settings?.topK,
-        minP: body.overrides?.minP ?? worldDef.settings?.minP,
         reasoningEffort: body.overrides?.reasoningEffort,
         stream: body.overrides?.streaming,
         ...(worldDef.settings?.structuredOutput && { responseFormat: { type: "json_object" as const } }),
@@ -4141,10 +4171,9 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           });
         }
 
-        if (chunk.type === "text") {
-          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
-          continuationContent += chunk.content;
-
+        // Reasoning is billed output too: count it toward the balance, or a long
+        // think runs past what the player can pay before any text arrives.
+        if (chunk.type === "reasoning" || chunk.type === "text") {
           // Mid-stream credit check: ran dry mid-reply. End cleanly with a
           // NO_CREDITS error (out-of-mushies toast + popup) instead of the old
           // `break`, which skipped the catch handler and surfaced as a silent
@@ -4173,6 +4202,11 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
             });
             return;
           }
+        }
+
+        if (chunk.type === "text") {
+          if (chunk.providerRequestId) observedProviderRequestId = chunk.providerRequestId;
+          continuationContent += chunk.content;
 
           const filtered = receiptFilter.push(thinkingFilter.push(chunk.content));
           if (filtered) {
@@ -4212,7 +4246,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           await sse({
             event: "error",
             // Stable code for the client's localized copy (the text stays raw).
-            data: JSON.stringify({ error: chunk.content, code: classifyGenerationFailure(chunk.content).code ?? undefined }),
+            data: JSON.stringify({ error: chunk.content, code: classifyGenerationFailure(chunk.content, { isByok: resolved.isByok }).code ?? undefined }),
           });
           return;
         }
@@ -4263,6 +4297,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
             hasAudioDirective: contParseResult.audioEffects.length > 0,
             userId: currentUser.id, sessionId, path: "continue", signal: abortController.signal,
             playerOpenRouterKey: turnPlayerOpenRouterKey(resolved, currentUser.id),
+            storyEffects: contParseResult.effects,
           });
           const contTextWithImage = applyJudgeSceneImages(worldDef, contParseResult.cleanText, contContinuity);
           const contSceneImageResult = resolveSceneImageDirectives(contTextWithImage, worldDef.sceneImages ?? []);
@@ -4296,10 +4331,12 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           }
           outputAttempt.audit.appliedCount = changes.length;
 
-          // Evaluate reactions via event-based dispatch (continue: no user message)
+          // Evaluate reactions via event-based dispatch (continue: no user message).
+          // No turn:complete: continuing extends a reply whose turn already
+          // completed (a stopped send is discarded, never persisted), and firing
+          // it again rolled every-turn dice twice and spent maxFireCount.
           const contEvents: GameEvent[] = [
             buildMessageAIEvent(cleanContinuation),
-            buildTurnCompleteEvent(stateManager.getSnapshot().turnCount),
           ];
           for (const change of changes) {
             contEvents.push({ type: "state:changed", variableId: change.variableId, oldValue: change.oldValue, newValue: change.newValue });
@@ -4328,9 +4365,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           if (resumableContAudio.length > 0) {
             stateManager.setMetadata("activeAudio", resumableContAudio);
           }
-          if (contSystemResult.contextMessages.length > 0) {
-            stateManager.setMetadata("pendingContext", contSystemResult.contextMessages);
-          }
+          appendPendingContext(stateManager, contSystemResult.contextMessages);
 
           const finalState = stateManager.getSnapshot();
 
@@ -4547,7 +4582,8 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           let creditsCost: number | undefined;
           let creditsBalance: number | undefined;
           let grokTrialUsed = false;
-          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY";
+          // A policy refusal is free, like a filtered reply: the player got no story.
+          const wasFiltered = chunk.stopReason === "content_filter" || chunk.stopReason === "SAFETY" || continuationRefused;
           if (outputAttempt.storyCharge) {
             await refundTrialIfClaimed();
             creditsCost = outputAttempt.storyCharge.cost;
@@ -4576,12 +4612,12 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
                   // for as free. Drop it so the 0/0 rate is what applies.
                   providerCostUsd: freeRouterFallbackServed ? undefined : chunk.usage?.providerCostUsd,
                 });
-                const result = await deductCredits(
+                const result = await deductCreditsUpToBalance(
                   currentUser.id, cost, usageLogId,
                   `${actualModel} — ${pTokens + cTokens} tokens (continue)`,
                 );
-                creditsCost = cost;
-                creditsBalance = result.newBalance;
+                creditsCost = result?.creditsDeducted ?? 0;
+                creditsBalance = result?.newBalance ?? 0;
               } catch (err) {
                 console.error("[Credit] Deduction failed:", err instanceof Error ? err.message : err);
               }
@@ -4681,7 +4717,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
               ? "Server is restarting — your reply was interrupted. Please resend."
               : err instanceof Error ? err.message : "Continue failed",
             code: isShutdown ? "SERVER_RESTART"
-              : classifyGenerationFailure(err instanceof Error ? err.message : "").code ?? undefined,
+              : classifyGenerationFailure(err instanceof Error ? err.message : "", { isByok: resolved.isByok }).code ?? undefined,
           }),
         });
       } catch { /* client disconnected */ }

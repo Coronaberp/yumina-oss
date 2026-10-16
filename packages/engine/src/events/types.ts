@@ -126,9 +126,10 @@ export interface Reaction {
    *  the behaviour fires. Runs only while the game is open. */
   code?: string;
   /** 自定义: implemented outside the form — by `code`, or by interface code
-   *  that fires it (`api.executeAction(id)`). The when/if/then of the form
-   *  are not what runs it; the canvas shows the implementation, or that
-   *  there is none yet and a sticky note is wanted. */
+   *  that fires it (`api.executeAction(id)`). It still fires on its `when`
+   *  and `conditions`, but its `then` effects are not run (they stay stored,
+   *  so switching back to the form brings them back); the canvas shows the
+   *  implementation, or that there is none yet and a sticky note is wanted. */
   custom?: boolean;
 
   /** Which worldbook (module) this reaction belongs to. Undefined = Core

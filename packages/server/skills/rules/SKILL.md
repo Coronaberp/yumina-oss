@@ -193,7 +193,8 @@ Most published cards wrote these in their TSX. Build them with these pieces firs
 - `pieces: [{ conditions, text }]` — prompt text added only while true (e.g. language decay at a value, warmer tone at high affection).
 - `output: [{ name, type: text|number|choice|list, options?, min?, max?, hint?, to? }]` — the answer as JSON, validated (choices must be in `options`, numbers clamped), each field routed: `{kind:"say"}` (its words), `{kind:"variable", variableId, op: set|add|push}`, `{kind:"event", name?}`.
 - `say`: "story" (a chat message), "none", or a channel name — the card hears it with `api.onAiOutput(channel, cb)`.
-- `onError: { timeoutSec, retries, fallback: [lines], randomChoice }`, `cooldownSec`, `maxTokens`.
+- `onError: { timeoutSec, retries, fallback: [lines], randomChoice }`, `cooldownSec`.
+- `temperature` (0–1.5, default 0.2) and `maxTokens` (50–4000): leave both out — 0.2 is what a judge, a scorer or an AI seat choosing a legal move wants. Raise `temperature` only for an AI whose job is varied prose (a character's chat lines, ~0.7–1.0); raise `maxTokens` only if its answers get cut off. `model`: omit it (the session's summary model); if the creator wants one, an exact catalog id only — a player whose plan cannot run it falls back to the default summary model. Never set these just to "tune" a card. Out-of-range values are rejected.
 - The card calls it: `const r = await api.callAi("名字", input)` → `{ text, fields, fallback }` (null when not in play / cooling down / busy). A button step 「叫一个 AI」 (`run-ai`) calls it without code.
 
 **Behaviours**:

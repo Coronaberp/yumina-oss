@@ -1,7 +1,7 @@
 import { resolveDisplayMacros } from "@/lib/resolve-display-macros";
 import { memo, useEffect, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { BookOpen, ChevronDown, FolderOpen, GripVertical, Link2, MessageCircle, MoreHorizontal, Plus, Volume2 } from "lucide-react";
+import { BookOpen, ChevronDown, FolderMinus, FolderOpen, GripVertical, Link2, MessageCircle, MoreHorizontal, Pencil, Plus, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { isPlaceholderCharacterName, portHandleId, rowHandleId, type WorldEntry } from "@yumina/engine";
 import { cn } from "@/lib/utils";
@@ -33,9 +33,33 @@ const ROW_HEADER_HEIGHT = 40;
 const SLOT_HEIGHT = 24;
 
 /** One of the author's own folders, as the classic editor keeps them. */
-export interface WritingFolder { id: string; name: string; order: number }
+export interface WritingFolder {
+  id: string;
+  name: string;
+  order: number;
+  /** A group of a 条件触发 block (gate-groups.ts): which of the gating
+   *  variable's values it is sent at, and whether the preview lights it. */
+  gate?: { on: boolean[] | null; state?: "lit" | "dim" };
+}
+
+/** The preview strip of a block drawn as groups: drag the gating variable
+ *  and see which groups the AI would be sent. */
+export interface WritingGateBar {
+  label: string;
+  value: string;
+  index: number;
+  size: number;
+  /** What is sent at that value, in a sentence. */
+  answer: string;
+  active: boolean;
+  onChange: (index: number) => void;
+  onClear: () => void;
+}
 
 export type CanvasWritingNodeData = Record<string, unknown> & {
+  gateBar?: WritingGateBar;
+  /** Entries the preview says are not sent at the value picked. */
+  dimIds?: ReadonlySet<string>;
   /** A drop on the block is a drop on the frame it stands in. */
   dropIn?: { over: (e: React.DragEvent) => void; drop: (e: React.DragEvent) => void };
   kind: "opening" | "setting";
@@ -75,11 +99,26 @@ export type CanvasWritingNodeData = Record<string, unknown> & {
    *  system entries are not what a new card is about. */
   collapsedFolders?: ReadonlySet<string>;
   onToggleFolder?: (folderId: string) => void;
+  /** The author's own folders (not the presets group, not a chapter of a
+   *  gated block): renamed in place, dissolved (their entries stay where
+   *  they are), and a row dragged onto the header is filed into it. */
+  onRenameFolder?: (folderId: string, name: string) => void;
+  onDissolveFolder?: (folderId: string) => void;
+  onDropOnFolder?: (draggedObjectId: string, folderId: string) => void;
+  /** A folder just made from the menu opens with its name ready to type. */
+  renamingFolderId?: string | null;
+  onRenamingDone?: () => void;
+  /** Double-click a row: open the object's own page in the classic editor,
+   *  the same as a double-click on any other row on the board. */
+  onDrill?: (objectId: string) => void;
   compact?: boolean;
   /** Rows two abreast on a wide tile (see `rowColumns` in board.ts). */
   columns?: 1 | 2;
   /** Entries folded behind "N more"; the column lists them all. */
   hiddenCount?: number;
+  /** What dragging the header carries, when it is not the rows drawn: a
+   *  block grouped by chapter draws none and still carries all it holds. */
+  pieceIds?: string[];
   /** Everything the block holds, shown or folded — the header's count. */
   total?: number;
   onMore?: () => void;
@@ -126,7 +165,7 @@ export type CanvasWritingNodeData = Record<string, unknown> & {
   onPickOpening?: (id: string) => void;
 };
 
-type WritingLayout = Pick<CanvasWritingNodeData, "kind" | "entries" | "compact" | "columns" | "hiddenCount" | "expandedIds" | "folders" | "presetsTitle" | "collapsedFolders"> & { rows?: Pick<BlockRowView, "g" | "slots">[] };
+type WritingLayout = Pick<CanvasWritingNodeData, "kind" | "entries" | "compact" | "columns" | "hiddenCount" | "expandedIds" | "folders" | "presetsTitle" | "collapsedFolders" | "gateBar"> & { rows?: Pick<BlockRowView, "g" | "slots">[] };
 /** The "N more" row under a folded list. */
 export const CANVAS_WRITING_MORE_HEIGHT = 28;
 const objectIdFor = (kind: CanvasWritingNodeData["kind"], entry: WorldEntry) => `${kind === "opening" ? "greeting" : "entry"}:${entry.id}`;
@@ -161,6 +200,7 @@ const rowHeight = (data: WritingLayout, entry?: WorldEntry) =>
   rowBaseHeight(data, entry) + (entry ? rowById(data.rows, objectIdFor(data.kind, entry))?.slots.length ?? 0 : 0) * SLOT_HEIGHT;
 /** A folder's header line: one word and a count, shorter than a row. */
 export const CANVAS_WRITING_FOLDER_HEIGHT = 26;
+export const CANVAS_WRITING_GATE_HEIGHT = 60;
 export type WritingItem =
   | { kind: "entry"; entry: WorldEntry }
   | { kind: "folder"; folder: WritingFolder; entries: WorldEntry[] };
@@ -255,7 +295,7 @@ export function canvasWritingNodeHeight(data: WritingLayout): number {
   // order and is as tall as its taller column; a folder header is a full
   // line of its own above its run.
   const body = sections.reduce((sum, section) => sum + (section.folder ? CANVAS_WRITING_FOLDER_HEIGHT : 0) + dealtHeight(data, section.entries, columns), 0);
-  return CANVAS_WRITING_NODE_HEADER_HEIGHT + 2 +
+  return CANVAS_WRITING_NODE_HEADER_HEIGHT + 2 + (data.gateBar ? CANVAS_WRITING_GATE_HEIGHT : 0) +
     (sections.length ? body : rowBaseHeight(data)) +
     ((data.hiddenCount ?? 0) > 0 ? CANVAS_WRITING_MORE_HEIGHT : 0);
 }
@@ -286,12 +326,44 @@ function CanvasWritingFolder({ data, folder, entries }: { data: CanvasWritingNod
   const ids = entries.map(entry => objectIdFor(data.kind, entry));
   const selected = !!data.multiSelected && ids.length > 0 && ids.every(id => data.multiSelected!.has(id));
   const shut = data.collapsedFolders?.has(folder.id) ?? false;
+  const gate = folder.gate;
+  const size = gate?.on?.length ?? 0;
+  const own = !gate && folder.id !== PRESETS_GROUP_ID && !data.readOnly && !!data.onRenameFolder;
+  const [renaming, setRenaming] = useState(false);
+  const [landing, setLanding] = useState(false);
+  const editing = own && (renaming || data.renamingFolderId === folder.id);
+  const finishRename = (name: string | null) => {
+    setRenaming(false);
+    data.onRenamingDone?.();
+    const next = name?.trim();
+    if (next && next !== folder.name) data.onRenameFolder?.(folder.id, next);
+  };
   return <div
     data-canvas-writing-folder={folder.id}
+    data-canvas-writing-folder-landing={landing || undefined}
+    onDragOver={own && data.onDropOnFolder ? event => {
+      const types = Array.from(event.dataTransfer.types);
+      if (!types.includes(OBJECT_MIME) || !types.includes("application/yumina-kind-entry")) return;
+      event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move";
+      if (!landing) setLanding(true);
+    } : undefined}
+    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) setLanding(false); }}
+    onDrop={own && data.onDropOnFolder ? event => {
+      setLanding(false);
+      const dragged = event.dataTransfer.getData(OBJECT_MIME);
+      if (!dragged.startsWith("entry:")) return;
+      event.preventDefault(); event.stopPropagation(); data.onDropOnFolder?.(dragged, folder.id);
+    } : undefined}
     data-canvas-writing-folder-shut={shut || undefined}
+    data-gate-group={gate ? gate.state ?? "" : undefined}
     className={cn(
-      "nodrag flex w-full items-center border-b border-white/[0.06] pr-3 text-[11px] font-semibold transition-colors",
-      selected ? "bg-amber-400/[0.14] text-amber-100" : "bg-violet-500/[0.07] text-violet-200/90 hover:bg-violet-500/[0.14]",
+      "nodrag flex w-full items-center border-b border-white/[0.06] pr-3 text-[11px] font-semibold transition-[background-color,opacity]",
+      selected ? "bg-amber-400/[0.14] text-amber-100"
+        : gate?.state === "lit" ? "bg-emerald-400/[0.10] text-emerald-100 hover:bg-emerald-400/[0.16]"
+        : "bg-violet-500/[0.07] text-violet-200/90 hover:bg-violet-500/[0.14]",
+      gate?.state === "dim" && "opacity-40",
+      landing && "ring-1 ring-inset ring-amber-300/80 bg-amber-400/[0.16]",
+      "group/folder",
     )}
     style={{ height: CANVAS_WRITING_FOLDER_HEIGHT }}
   >
@@ -307,18 +379,77 @@ function CanvasWritingFolder({ data, folder, entries }: { data: CanvasWritingNod
     >
       <ChevronDown className={cn("h-3 w-3 transition-transform", shut && "-rotate-90")} />
     </button>
-    <button
+    {editing ? <input
+      autoFocus
+      defaultValue={folder.name}
+      aria-label={t("blueprint.folder.rename")}
+      onFocus={event => event.currentTarget.select()}
+      onKeyDown={event => {
+        stopEditorKeys(event);
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter") finishRename(event.currentTarget.value);
+        if (event.key === "Escape") finishRename(null);
+      }}
+      onBlur={event => finishRename(event.currentTarget.value)}
+      onClick={event => event.stopPropagation()}
+      onDoubleClick={event => event.stopPropagation()}
+      className="h-[20px] min-w-0 flex-1 rounded border border-amber-500/50 bg-black/30 px-1.5 text-[11px] font-semibold text-white focus:outline-none"
+    /> : <button
       type="button"
       aria-pressed={selected}
       title={t("blueprint.writing.folderSelect", { count: ids.length })}
+      onDoubleClick={own ? event => { event.stopPropagation(); setRenaming(true); } : undefined}
       onKeyDown={stopEditorKeys}
       onClick={event => { event.stopPropagation(); data.onSelectFolder?.(ids, event.shiftKey || event.ctrlKey || event.metaKey); }}
       className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
     >
-      <FolderOpen className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+      {!gate && <FolderOpen className="h-3 w-3 shrink-0" />}
+      <span className={cn("min-w-0 truncate", gate ? "shrink" : "flex-1")}>{folder.name}</span>
       <span className="tabular-nums opacity-60">{ids.length}</span>
-    </button>
+      {/* Where on the variable this group is sent: a strip with the values
+          it covers filled, so 卷 3 and 卷 18–20 read as places on one line. */}
+      {gate?.on && <span aria-hidden className="relative ml-1 h-1.5 min-w-[48px] flex-1 rounded-full bg-white/[0.07]">
+        {gate.on.map((on, i) => on && <i key={i} className={cn("absolute inset-y-0 rounded-full", gate.state === "lit" ? "bg-emerald-300" : "bg-violet-300/70")} style={{ left: `${(i / size) * 100}%`, width: `${100 / size}%` }} />)}
+      </span>}
+    </button>}
+    {own && !editing && <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover/folder:opacity-100 group-focus-within/folder:opacity-100 [@media(hover:none)]:opacity-100">
+      <button type="button" data-canvas-writing-folder-rename={folder.id} onKeyDown={stopEditorKeys}
+        onClick={event => { event.stopPropagation(); setRenaming(true); }}
+        title={t("blueprint.folder.rename")} aria-label={`${t("blueprint.folder.rename")} · ${folder.name}`}
+        className="flex h-5 w-5 items-center justify-center rounded hover:bg-white/10"><Pencil className="h-3 w-3" /></button>
+      <button type="button" data-canvas-writing-folder-dissolve={folder.id} onKeyDown={stopEditorKeys}
+        onClick={event => { event.stopPropagation(); data.onDissolveFolder?.(folder.id); }}
+        title={t("blueprint.folder.dissolveHint")} aria-label={`${t("blueprint.folder.dissolve")} · ${folder.name}`}
+        className="flex h-5 w-5 items-center justify-center rounded hover:bg-white/10"><FolderMinus className="h-3 w-3" /></button>
+    </span>}
+  </div>;
+}
+
+function WritingGateStrip({ bar }: { bar: WritingGateBar }) {
+  const { t } = useTranslation("editor");
+  return <div
+    data-gate-bar=""
+    className="nodrag nowheel nokey flex flex-col justify-center gap-1 border-b border-white/[0.06] bg-amber-300/[0.04] px-3"
+    style={{ height: CANVAS_WRITING_GATE_HEIGHT }}
+    onKeyDown={stopEditorKeys}
+  >
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className="shrink-0 text-zinc-400">{t("blueprint.gateGroups.preview", { name: bar.label })}</span>
+      <span className="shrink-0 font-mono font-semibold tabular-nums text-amber-200">{bar.active ? bar.value : "—"}</span>
+      <span className="min-w-0 flex-1 truncate text-zinc-400" title={bar.active ? bar.answer : undefined}>{bar.active ? bar.answer : t("blueprint.gateGroups.hint")}</span>
+      {bar.active && <button type="button" onClick={event => { event.stopPropagation(); bar.onClear(); }} className="shrink-0 rounded px-1.5 text-zinc-400 hover:bg-white/10 hover:text-zinc-100">{t("blueprint.gateGroups.clear")}</button>}
+    </div>
+    <input
+      type="range"
+      min={0}
+      max={bar.size - 1}
+      step={1}
+      value={bar.index}
+      aria-label={t("blueprint.gateGroups.preview", { name: bar.label })}
+      onPointerDown={event => event.stopPropagation()}
+      onChange={event => bar.onChange(Number(event.target.value))}
+      className="w-full accent-amber-300"
+    />
   </div>;
 }
 
@@ -448,7 +579,8 @@ function CanvasWritingRow({ data, entry }: { data: CanvasWritingNodeData; entry?
         // Picked reads at a glance: a gold edge and a warm wash on the row
         // itself, the same for one row or ten.
         picked ? "bg-amber-400/[0.11] shadow-[inset_3px_0_0_#f0c674,inset_0_0_0_1px_rgba(240,198,116,0.5)]" : expanded && "bg-white/[0.025]",
-        lifted && "opacity-35 outline-dashed outline-1 -outline-offset-2 outline-amber-300/60")}
+        lifted && "opacity-35 outline-dashed outline-1 -outline-offset-2 outline-amber-300/60",
+        !lifted && entry && data.dimIds?.has(entry.id) && "opacity-40")}
       style={{ height: rowHeight(data, entry) }}
       onClickCapture={() => { if (objectId) data.onEngage?.(objectId); }}
       onFocusCapture={() => { if (objectId) data.onEngage?.(objectId); }}
@@ -491,7 +623,14 @@ function CanvasWritingRow({ data, entry }: { data: CanvasWritingNodeData; entry?
         {/* The whole bar answers a click, not only the name on it: a click in
             the gap beside a short name used to do nothing at all. */}
         <div className="relative flex items-center gap-1 px-2" style={{ height: ROW_HEADER_HEIGHT }}
-          onClick={event => { if (!(event.target as Element).closest("button, input, textarea, a, [contenteditable=true]")) open(event); }}>
+          onClick={event => { if (!(event.target as Element).closest("button, input, textarea, a, [contenteditable=true]")) open(event); }}
+          onDoubleClick={event => {
+            // The bar only: a double-click in the name field or the open
+            // editor below selects a word, it does not leave the board.
+            if (!objectId || (event.target as Element).closest("input, textarea, [contenteditable=true]")) return;
+            event.stopPropagation();
+            data.onDrill?.(objectId);
+          }}>
           {entry && !data.readOnly && <button type="button" data-canvas-writing-drag={objectId} draggable onDragStart={beginDrag} onDragEnd={() => setLifted(false)} onPointerDown={event => event.stopPropagation()} onContextMenu={openMore} title={t("blueprint.writing.dragToReorder")} aria-label={`${entry.name || title} · ${t("blueprint.writing.dragToReorder")}`} className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center rounded text-zinc-500 opacity-0 group-hover/writing:opacity-100 group-focus-within/writing:opacity-100 [@media(hover:none)]:opacity-100 hover:text-zinc-300 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400">
             <GripVertical className="h-3.5 w-3.5" />
           </button>}
@@ -604,7 +743,7 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
   const title = data.title ?? t(`blueprint.starter.${data.kind}Title`);
   // The same gesture the other blocks have: the header lifts the whole
   // piece (every opening / entry it lists) into another module.
-  const pieceIds = data.readOnly ? [] : (data.rows ?? []).map((r) => r.g.id)
+  const pieceIds = data.readOnly ? [] : (data.pieceIds ?? (data.rows ?? []).map((r) => r.g.id))
     .filter((id) => id.startsWith("entry:") || id.startsWith("greeting:"));
   const canDragPiece = pieceIds.length > 0;
   const selectedIds = data.multiSelected;
@@ -706,6 +845,12 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
       {data.loose && !data.readOnly && <button type="button" data-canvas-writing-share-all className="nodrag nowheel nokey h-8 max-w-[45%] shrink-0 truncate rounded border border-white/20 bg-white/5 px-2 text-[11px] font-medium text-zinc-200 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40" title={t("blueprint.loose.shareAll")} onKeyDown={stopEditorKeys} onClick={event => { event.stopPropagation(); data.loose?.onShareAll(); }}>{t("blueprint.loose.shareAll")}</button>}
       {data.onAdd && !data.readOnly && <button type="button" data-writing-add={data.kind} className="nodrag nowheel nokey flex h-8 w-8 shrink-0 items-center justify-center rounded text-zinc-300 hover:bg-white/5 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400" onKeyDown={stopEditorKeys} onClick={event => { event.stopPropagation(); data.onAdd?.(); }} title={t(opening ? "blueprint.writing.moreOpening" : "blueprint.writing.moreSetting")} aria-label={t(opening ? "blueprint.writing.moreOpening" : "blueprint.writing.moreSetting")}><Plus className="h-4 w-4" /></button>}
     </header>
+    {/* Where the wires of rows that are not drawn land — folded past the
+        block's limit, or inside a shut group. Without them those wires had
+        no end and React Flow dropped them without a word. */}
+    <Handle id="block-in" type="target" position={Position.Left} isConnectable={false} style={{ top: CANVAS_WRITING_NODE_HEADER_HEIGHT / 2 }} className={cn(HANDLE_CLASS, "!pointer-events-none !opacity-0")} />
+    <Handle id="block-out" type="source" position={Position.Right} isConnectable={false} style={{ top: CANVAS_WRITING_NODE_HEADER_HEIGHT / 2 }} className={cn(HANDLE_CLASS, "!pointer-events-none !opacity-0")} />
+    {data.gateBar && <WritingGateStrip bar={data.gateBar} />}
     {/* A module with nothing of its own here says what it counts instead of
         inviting a first entry with the card's own template title. */}
     {sections.length === 0

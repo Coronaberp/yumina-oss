@@ -1,22 +1,11 @@
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Code2, FileCode2 } from "lucide-react";
 import type { FrontendAiCall, Worldbook } from "@yumina/engine";
 
-/**
- * An AI call the card's own code makes, opened in place on the AI block.
- *
- * It has no settings form: the model, lore and output live in the code, and
- * the code is where you change them. What the row CAN say is what the scan
- * read off the call — which situations it draws lore from, whether it rides
- * the session, whether it asks for JSON — and the way to the line itself.
- * A sticky note stuck to this row is where the creator writes the rest.
- */
-export function CodeAiCallCard({ call, books, onOpenFile }: {
-  call: FrontendAiCall;
-  books: readonly Worldbook[];
-  onOpenFile?: (file: string, line: number) => void;
-}) {
-  const { t } = useTranslation("editor");
+/** What the scan read off a call, as label/value lines: the same facts on
+ *  the AI block's row and in Context's 自定义 list. */
+export function codeCallFacts(call: FrontendAiCall, books: readonly Worldbook[], t: TFunction<"editor">): Array<[string, string]> {
   const name = (id: string) => {
     const b = books.find((x) => x.id === id);
     return b ? (b.station?.name?.trim() || b.name) : id;
@@ -37,6 +26,25 @@ export function CodeAiCallCard({ call, books, onOpenFile }: {
   rows.push([t("blueprint.codeCall.session"), call.sessionContext ? t("blueprint.codeCall.yes") : t("blueprint.codeCall.no")]);
   rows.push([t("blueprint.codeCall.answer"), call.json ? t("blueprint.codeCall.answerJson") : t("blueprint.codeCall.answerText")]);
   if (call.model) rows.push([t("blueprint.codeCall.model"), call.model]);
+  return rows;
+}
+
+/**
+ * An AI call the card's own code makes, opened in place on the AI block.
+ *
+ * It has no settings form: the model, lore and output live in the code, and
+ * the code is where you change them. What the row CAN say is what the scan
+ * read off the call — which situations it draws lore from, whether it rides
+ * the session, whether it asks for JSON — and the way to the line itself.
+ * A sticky note stuck to this row is where the creator writes the rest.
+ */
+export function CodeAiCallCard({ call, books, onOpenFile }: {
+  call: FrontendAiCall;
+  books: readonly Worldbook[];
+  onOpenFile?: (file: string, line: number) => void;
+}) {
+  const { t } = useTranslation("editor");
+  const rows = codeCallFacts(call, books, t);
 
   return (
     <div className="space-y-2 text-[11.5px]" data-code-ai-call={`${call.file}:${call.line}`}>

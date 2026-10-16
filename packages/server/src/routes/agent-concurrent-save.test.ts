@@ -59,11 +59,11 @@ async function fixture() {
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-async function runLoop(f: Fixture, provider: LLMProvider, maxIterations = 4) {
+async function runLoop(f: Fixture, provider: LLMProvider, maxIterations = 4, extra: Partial<AgentLoopParams> = {}) {
   const params: AgentLoopParams = {
     runId: f.runId, conversationId: f.conversationId, worldId: f.worldId, userId: f.userId,
     world: f.world, messages: [{ role: "user", content: "Add a variable." }], model: "test/byok",
-    provider, isByok: true, apiKeyTier: "regular", iteration: 0, maxIterations, tools: TOOLS,
+    provider, isByok: true, apiKeyTier: "regular", iteration: 0, maxIterations, tools: TOOLS, ...extra,
   };
   const app = new Hono();
   app.post("/loop", c => streamAgentLoop(c, params));
@@ -221,17 +221,76 @@ describe("Studio agent outside credit recovery", { concurrency: false }, () => {
     assert.deepEqual((await stored(f)).variables.map(v => v.id), ["kept"]);
   });
 
-  it("explains a stop caused by an identical repeated write", async () => {
+  it("lets one landed repeat through with a note, and explains the stop on the third", async () => {
     const f = await fixture();
     const same: Script = async function* () {
       yield { type: "tool_call_end", content: "", toolCall: writeVariable("dup") };
       yield { type: "done", content: "", usage, stopReason: "tool_use" };
     };
-    const events = await runLoop(f, new ScriptedProvider([same, same]));
+    const provider = new ScriptedProvider([same, same, same]);
+    const events = await runLoop(f, provider);
+    assert.equal(provider.calls.length, 3, "An idempotent repeat no longer ends the run");
+    assert.match(JSON.stringify(provider.calls[2]!.messages.at(-1)), /exactly the same writes/);
     const commits = events.filter(e => e.event === "assistant_turn_commit").map(e => String(e.data.textContent));
     assert.ok(commits.some(t => /repeated exactly the same edit/.test(t)), "The user is told why the run ended");
     const run = await readRun(f);
     assert.ok(run.committedTurns?.some(t => t.lane === "notice"));
+  });
+});
+
+describe("agent honesty", { concurrency: false }, () => {
+  it("keeps a failed write in front of the model until its final reply", async () => {
+    const f = await fixture();
+    const broken: ToolCall = { id: "call-broken", type: "function", function: { name: "write_variable", arguments: "{not json" } };
+    const provider = new ScriptedProvider([
+      async function* () {
+        yield { type: "tool_call_end", content: "", toolCall: broken };
+        yield { type: "done", content: "", usage, stopReason: "tool_use" };
+      },
+      text("The variable could not be written."),
+    ]);
+    await runLoop(f, provider);
+    const lastResult = JSON.stringify(provider.calls[1]!.messages.at(-1));
+    assert.match(lastResult, /Still not done in this request/);
+    assert.match(lastResult, /write_variable/);
+  });
+
+  it("does not show a short reply to the harness nudge as the run's last word", async () => {
+    const f = await fixture();
+    const events = await runLoop(f, new ScriptedProvider([
+      text("I'll explain: the range is 0 to 100, so nothing needs changing."),
+      text("I was only explaining."),
+    ]));
+    const commits = events.filter(e => e.event === "assistant_turn_commit").map(e => String(e.data.textContent));
+    assert.ok(commits.some(t => /range is 0 to 100/.test(t)));
+    assert.equal(commits.some(t => /only explaining/.test(t)), false);
+    const run = await readRun(f);
+    assert.equal(run.status, "completed");
+    assert.match(String(run.textContent), /range is 0 to 100/);
+  });
+});
+
+describe("advise go-ahead", { concurrency: false }, () => {
+  const SAVE_BRIEF: ToolDefinition = { type: "function", function: { name: "save_brief", description: "Offer building", parameters: { type: "object", properties: {} } } };
+  const offer = (reply: string) => [
+    { role: "user" as const, content: "The selection page never shows." },
+    { role: "assistant" as const, content: reply },
+    { role: "user" as const, content: "Yes" },
+  ];
+
+  it("reminds the advisor once to offer building when the creator agreed to its offer", async () => {
+    const f = await fixture();
+    const provider = new ScriptedProvider([text("Okay, I'll get on it."), text("Here is the brief.")]);
+    await runLoop(f, provider, 4, { messages: offer("Found it: the page is not the entry page. Proceed?"), context: { mode: "advise" }, tools: [...TOOLS, SAVE_BRIEF] });
+    assert.equal(provider.calls.length, 2);
+    assert.match(JSON.stringify(provider.calls[1]!.messages.at(-1)), /call save_brief now/);
+  });
+
+  it("leaves a plain answer to a question alone", async () => {
+    const f = await fixture();
+    const provider = new ScriptedProvider([text("Great, a map it is.")]);
+    await runLoop(f, provider, 4, { messages: offer("Map or list? I'd pick the map."), context: { mode: "advise" }, tools: [...TOOLS, SAVE_BRIEF] });
+    assert.equal(provider.calls.length, 1);
   });
 });
 
@@ -285,6 +344,21 @@ describe("agent run control", { concurrency: false }, () => {
   it("maps stored errors to stable codes", () => {
     assert.equal(agentErrorCode("Agent stalled — no model output for 3 minutes."), "AGENT_STALLED");
     assert.equal(agentErrorCode("Server restarted. Please retry."), "SERVER_RESTART");
+    for (const [text, code] of [
+      ['Custom endpoint error (403): {"status":403,"title":"Forbidden","detail":"Authorization failed"}', "BYOK_AUTH"],
+      ['Custom endpoint error (402): {"error":{"message":"Insufficient Balance"}}', "BYOK_BALANCE"],
+      ['Custom endpoint error (404): {"error":{"message":"No endpoints found that support tool use. Try disabling \"read_entities\"."}}', "BYOK_NO_TOOLS"],
+      ['Custom endpoint error (404): {"error":{"message":"Model not found, inaccessible, and/or not deployed"}}', "BYOK_MODEL"],
+      ['Custom endpoint error (429): {"error":{"message":"Too many pending requests, please retry later"}}', "BYOK_RATE"],
+      ["Custom endpoint request failed: fetch failed", "BYOK_UNREACHABLE"],
+      [`Custom endpoint error (400): {"error":{"message":"This endpoint's maximum context length is 1050000 tokens."}}`, "BYOK_CONTEXT"],
+      ["OpenRouter error (500): upstream", "AGENT_ERROR"],
+      ['Anthropic error (400): {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}', "BYOK_BALANCE"],
+      ['OpenAI error (429): {"error":{"message":"You have no credits remaining. Add credits to continue."}}', "BYOK_BALANCE"],
+      ["Google AI rate limit (429) on this API key: retry in 28s", "BYOK_RATE"],
+      // The echoed prompt mentions an invalid API key; the server's complaint is the format.
+      [`Custom endpoint error (400): {"error":{"message":"3 request validation errors: Input should be a valid string, field: 'messages[0].content.str', value: [{'type': 'text', 'text': 'If the key is invalid, say so'}]"}}`, "AGENT_ERROR"],
+    ] as const) assert.equal(agentErrorCode(text), code, text);
     assert.equal(agentErrorCode("Superseded by new agent run."), "SUPERSEDED");
     assert.equal(agentErrorCode("CLAIM_LOST"), "CLAIM_LOST");
     assert.equal(agentErrorCode('duplicate key value violates unique constraint "x"'), "AGENT_ERROR");

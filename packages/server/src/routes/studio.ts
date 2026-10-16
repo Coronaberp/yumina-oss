@@ -19,6 +19,7 @@ import {
 import { restoreStudioSnapshot } from "../lib/world-versioning.js";
 import { SourceLimitError, addSource, listSources, removeSource, sourceIncomingPrefix } from "../lib/studio-sources.js";
 import { BIBLE_SUFFIX, readDigestStatus, stopDigests } from "../lib/studio-source-digest.js";
+import { loadRunCosts } from "../lib/studio-run-costs.js";
 
 const studioRoutes = new Hono<AppEnv>();
 
@@ -253,7 +254,12 @@ studioRoutes.get("/:worldId/conversations/:convId", async (c) => {
     return c.json({ error: "Conversation not found" }, 404);
   }
 
-  return c.json({ data: conversation });
+  // Each run's settled cost, so the bubble keeps it after a reload.
+  const runIds = (Array.isArray(conversation.messages) ? conversation.messages : [])
+    .map((message) => (message as { agentRunId?: unknown }).agentRunId)
+    .filter((id): id is string => typeof id === "string");
+  const runCosts = await loadRunCosts(runIds).catch(() => ({}));
+  return c.json({ data: { ...conversation, runCosts } });
 });
 
 // PATCH /api/studio/:worldId/conversations/:id — Update (save messages)

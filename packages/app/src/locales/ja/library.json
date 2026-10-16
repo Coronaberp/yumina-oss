@@ -405,6 +405,8 @@
     "deleteBundleFailed": "バンドルを削除できません",
     "downloadBundleFailed": "バンドルをダウンロードできません",
     "deleteAssetFailed": "アセットを削除できません",
+
+    "deleteAssetInUse": "この画像は「{{name}}」のカバーとして使われています。先にカバーを変更してください。",
     "renameAssetFailed": "アセット名を変更できません",
     "moveAssetFailed": "アセットを移動できません",
     "createFolderFailed": "フォルダを作成できません",
@@ -687,7 +689,8 @@
         "variant": "クラシック"
       },
       "nsfw-anime": {
-        "name": "NSFWアニメ"
+        "name": "無制限アニメ",
+        "variant": "クラシック"
       },
       "realistic": {
         "name": "リアル"
@@ -696,7 +699,7 @@
         "name": "2.5D"
       },
       "guofeng": {
-        "name": "国風"
+        "name": "水墨画"
       },
       "western": {
         "name": "洋風"
@@ -710,6 +713,14 @@
       "anime-story": {
         "name": "アニメ · ストーリー",
         "variant": "ストーリー"
+      },
+      "anime-anima": {
+        "name": "アニメ · Anima",
+        "variant": "Anima"
+      },
+      "nsfw-anima": {
+        "name": "無制限アニメ · Anima",
+        "variant": "Anima"
       }
     },
     "videoStyleFromReference": "動画は参照画像の画風をそのまま引き継ぎます。",
@@ -765,6 +776,8 @@
       "VIDEO_NO_LAST_FRAME": "このモデルは最後のフレームを指定できません。",
       "VIDEO_ONE_FRAME_ONLY": "このモデルは最初か最後のフレームのどちらか 1 枚だけです。",
       "VIDEO_TOO_MANY_REFERENCES": "キャラ参考画像がこのモデルの上限を超えています。",
+      "VIDEO_FRAMES_OR_REFERENCES": "このモデルはフレームかキャラ参考画像のどちらか一方だけです。",
+      "VIDEO_LAST_NEEDS_FIRST": "このモデルは最後のフレームの前に最初のフレームが必要です。",
       "VIDEO_NEEDS_FRAME": "このモデルには参考画像が必要です。",
       "VIDEO_NO_SOUND": "このモデルは音声を生成できません。",
       "VIDEO_NO_TUNING": "このモデルはこれらのパラメータを公開していません。",
@@ -775,7 +788,9 @@
       "VIDEO_BAD_STYLE": "この画風はこの動画では使えません。別の画風を選んでください。",
       "VIDEO_NO_STYLE": "この画風はこの動画では使えません。別の画風を選んでください。",
       "VIDEO_STYLE_WITH_FRAME": "この画風はこの動画では使えません。別の画風を選んでください。",
-      "QUALITY_BATCH": "4Kは1回に1枚だけです。枚数を1にしてもう一度お試しください。"
+      "QUALITY_BATCH": "4Kは1回に1枚だけです。枚数を1にしてもう一度お試しください。",
+      "MODEL_UNAVAILABLE": "このモデルは現在使えません。別のモデルを選んでください。",
+      "REFERENCE_UNSUPPORTED": "このモデルは参考画像を使えません。画像を外すか、別のモデルを選んでください。"
     },
     "queue": {
       "waiting": "順番待ち中…",
@@ -808,12 +823,40 @@
       "fewer": "1枚減らす",
       "more": "1枚増やす",
       "tier": {
+        "seedreamFlash": "最安",
         "seedreamLite": "速い",
         "seedreamPro": "バランス",
-        "nanoBanana2": "編集に強い",
+        "nanoBanana21": "最新 · 編集に強い",
+        "nanoBanana2": "512 対応",
         "nanoBananaPro": "高品質",
-        "gptImage2": "最高 · 遅い"
-      }
+        "gptImage25Flare": "精緻 · 速い",
+        "gptImage25Sunburst": "最高 · 遅い",
+        "gptImage2": "前世代 · 遅い",
+        "flux2Pro": "コスパ",
+        "flux2Max": "高精細",
+        "flux3": "最新 · 描き込み",
+        "qwenImage3": "安い · 遅い",
+        "qwenImage3Pro": "高精細 · 遅い",
+        "grokImagine": "最安 · 速い",
+        "grokImagineQuality": "速い",
+        "grokImagine2": "高精細 · とても遅い",
+        "klingO1": "すっきりアニメ",
+        "lumaUni1": "4MP · 遅い",
+        "lumaUni1Max": "4MP 高精細 · 遅い",
+        "ideogram45": "文字に強い",
+        "wan25": "絵画調 · プレビュー",
+        "recraft41": "デザイン · フラット",
+        "krea2Turbo": "最安",
+        "krea2Medium": "スタイル重視",
+        "krea2Large": "スタイル重視 · 遅い",
+        "maiImage26": "すっきり · 速い",
+        "hunyuan35": "安い · 2K"
+      },
+      "version": "バージョン",
+      "noReference": "{{model}} は参考画像を使えません。画像を外すか、別のモデルを選んでください。",
+      "fromPerImage": "{{count}} / 枚から",
+      "moreModels": "他のモデル（{{count}}）",
+      "fewerModels": "閉じる"
     },
     "loading": "読み込み中…",
     "loadTemplatesError": "画像生成の設定を読み込めませんでした。下書きは保持されています。",
@@ -931,6 +974,17 @@
       "saving": "保存中"
     },
     "video": {
+      "modeLabel": "動画モード",
+      "mode": {
+        "partner": {
+          "name": "言葉で動画生成",
+          "desc": "Seedance・Kling・Veo などのトップモデル"
+        },
+        "custom": {
+          "name": "カスタム生成",
+          "desc": "自社GPU · LoRA・全パラメータ"
+        }
+      },
       "describe": "シーンの説明",
       "enhance": "AI で整える",
       "enhanceHint": "生成前に AI が説明を動画モデル向けに書き直します",
@@ -947,24 +1001,31 @@
         "last": "この画像で動画が終わる"
       },
       "slotRefHint": "見た目を保ち、場面は新しくできる・最大 {{count}} 枚、1 枚 +{{price}}",
+      "slotRefHintFree": "見た目を保ち、場面は新しくできる・最大 {{count}} 枚",
       "notSupported": "{{model}} は非対応",
       "oneFrameOnly": "{{model}} は最初か最後のどちらか 1 枚だけ使えます。両方使うなら別のモデルへ。",
+      "aspectFromFrame": "フレームを使うと、動画はそのフレームの比率になります。",
+      "framesOrReferences": "{{model}} はこの組み合わせを使えません。キャラ参考画像と一緒に使えるのは最初のフレームだけです。どれかを外してください。",
+      "lastNeedsFirst": "{{model}} は最後のフレームと一緒に最初のフレームが必要です。",
+      "needsFrame": "{{model}} は画像を動かすモデルです。上で最初のフレームを追加してください。",
       "remove": "外す",
       "closePicker": "閉じる",
       "modelSpec": "モデルとサイズ",
       "model": "モデル",
-      "models": {
-        "h3-max": "最速・高画質",
-        "h3": "最も鮮明・音声付き可",
-        "wan-2.2": "自社サーバー・全パラメータ"
-      },
       "tag": {
         "text": "文章",
         "image": "画像",
         "sound": "音声",
-        "selfHosted": "無制限"
+        "selfHosted": "無制限",
+        "firstLast": "最初と最後のフレーム",
+        "refs": "参考画像 最大 {{count}} 枚",
+        "firstLastShort": "首尾フレーム",
+        "refsShort": "参考画像",
+        "fast": "速い",
+        "needsImage": "画像が必要"
       },
       "priceFrom": "{{count}} / {{seconds}} 秒から",
+      "priceFor": "{{count}} / {{seconds}}秒",
       "aspect": "画面比率",
       "resolution": "解像度",
       "duration": "長さ",
@@ -972,6 +1033,7 @@
       "etaSeconds": "約 {{count}} 秒",
       "etaMinutes": "約 {{count}} 分",
       "sound": "環境音とセリフも一緒に生成",
+      "soundAlways": "このモデルは常に音声付きで生成します。",
       "more": "詳細設定",
       "fast": "4 ステップ高速",
       "fastHint": "数倍速く大幅に安い。オフでステップ数と CFG を調整",
@@ -1041,6 +1103,30 @@
       },
       "redo": "4K版 · {{count}} マッシー",
       "redoNote": "右の生成済みの画像は「4K版」で同じ構図のまま4Kにできます。"
+    },
+    "badge": {
+      "limitless": "無制限",
+      "textOnly": "文章のみ"
+    },
+    "trait": {
+      "style": {
+        "realistic": "リアル中心",
+        "anime": "アニメ",
+        "2.5d": "2.5D",
+        "3d": "アニメが3D寄り",
+        "versatile": "アニメに強い"
+      },
+      "strength": {
+        "anime": "アニメが得意",
+        "photoreal": "人物がリアル",
+        "text": "文字が正確",
+        "design": "ポスター・デザイン",
+        "detail": "描き込み",
+        "fast": "速い",
+        "motion": "激しい動き",
+        "camera": "カメラワーク",
+        "dialogue": "口パク付き台詞"
+      }
     }
   },
   "media": {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { selectWorldArtwork } from "./world-cover-crop";
+import { DISCOVER_COVER_ASPECTS, selectProfileWorldArtwork, selectWorldArtwork } from "./world-cover-crop";
 
 const portrait = { x: 0, y: -20, zoom: .8, fit: "cover" as const };
 const wide = { x: 12, y: -10, zoom: .9, fit: "cover" as const };
@@ -23,4 +23,19 @@ test("missing artwork remains missing; a wide source does not silently reuse a p
   assert.equal(artwork.crop.x, 0);
   assert.equal(artwork.crop.y, 0);
   assert.equal(artwork.crop.zoom, 1);
+});
+
+test("profile cards show the dedicated landscape cover, tagged with the 16:9 frame it was cropped in", () => {
+  const world = { thumbnailUrl: "portrait.jpg", coverCrop: portrait, landscapeCoverUrl: "wide.jpg", landscapeCoverCrop: wide };
+  assert.deepEqual(selectProfileWorldArtwork(world), {
+    src: "wide.jpg",
+    crop: { ...wide, aspect: DISCOVER_COVER_ASPECTS.gallery },
+    dedicated: true,
+  });
+});
+
+test("profile cards leave legacy gallery crops untagged, so they render as before", () => {
+  const legacy = { thumbnailUrl: "old.jpg", coverCrop: portrait, galleryCoverCrop: wide };
+  assert.deepEqual(selectProfileWorldArtwork(legacy), selectWorldArtwork(legacy, "landscape"));
+  assert.equal("aspect" in selectProfileWorldArtwork(legacy).crop, false);
 });

@@ -95,14 +95,15 @@ const layoutStrings: Record<string, string> = { title: "Lin Zhou" };
 for (const key of template.stringKeys) layoutStrings[key] = `word:${key}`;
 const names = Object.fromEntries(template.needs.map(need => [need.key, `N:${need.key}`]));
 
-test("a layout arrives with the variables it is bound to, seeded from the card's own art", () => {
+test("a layout arrives with its bound variables and an empty portrait even when the card has cover art", () => {
   store.setState({ worldDraft: { ...draft(), avatar: "https://cdn.example/cover.png" } });
   store.getState().applyUiTemplate("portrait-scene", layoutStrings, names);
 
   const made = draft().variables;
   assert.deepEqual(made.map(v => v.name), template.needs.map(need => `N:${need.key}`));
   const portrait = made.find(v => v.name === "N:portrait")!;
-  assert.equal(portrait.defaultValue, "https://cdn.example/cover.png", "the card's cover IS the portrait until someone changes it");
+  assert.equal(portrait.defaultValue, "", "the creator picks portrait art separately from the card cover");
+  assert.equal(draft().avatar, "https://cdn.example/cover.png", "choosing a layout preserves the card cover");
   const affinity = made.find(v => v.name === "N:affinity")!;
   assert.deepEqual([affinity.type, affinity.min, affinity.max, affinity.defaultValue], ["number", 0, 100, 50]);
   // A json variable is authored through its text field; writing only the value

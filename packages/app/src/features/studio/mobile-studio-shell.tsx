@@ -41,6 +41,7 @@ import {
   LayoutGrid,
   Loader2,
   MessageCircle,
+  Monitor,
   MoreVertical,
   Package,
   Play,
@@ -922,6 +923,13 @@ export function MobileStudioShell() {
                   </DropdownMenuItem>
                 </>
               )}
+              {/* Phone creators come here looking for the board they heard
+                  about; it lives on the computer. A note, not an item. */}
+              <DropdownMenuSeparator />
+              <div className="flex items-start gap-2 px-2 py-2 text-[11px] leading-snug text-muted-foreground" data-desktop-canvas-note="">
+                <Monitor className="mt-px h-3.5 w-3.5 shrink-0" />
+                {t("shell.desktopCanvasNote")}
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
 

@@ -15,6 +15,9 @@ function stageTokens(doc: UiDoc): Record<string, string> {
   return { ...(readableThemeTokens(doc.theme?.tokens, designed) ?? {}), ...uiDocInk(doc).tokens };
 }
 
+/** Light themes: the ink planner darkens their muted labels. */
+const LIGHT_THEMES = ["paper", "linen"];
+
 const isLarge = (size: number, weight: number) => size >= 24 || (size >= 18.5 && weight >= 700);
 
 interface Reading { id: string; canvas: "phone" | "desktop"; ratio: number; before: number; large: boolean }
@@ -130,17 +133,18 @@ describe("text on the page", () => {
     expect(src).toContain("--yp-ground-muted");
   });
 
-  it("素纸: every label and caption on every starter and layout reads at 4.5:1", () => {
+  it.each(LIGHT_THEMES)("%s (light): every label and caption on every starter and layout reads at 4.5:1", (themeId) => {
     for (const starter of UI_STARTERS) {
-      for (const accent of UI_THEMES.find((t) => t.id === "paper")!.accents) {
-        const doc = starter.build({ strings: {}, theme: { id: "paper", accent } });
+      for (const accent of UI_THEMES.find((t) => t.id === themeId)!.accents) {
+        const doc = starter.build({ strings: {}, theme: { id: themeId, accent } });
         expect(failing(doc), `${starter.id} ${accent}`).toEqual([]);
         for (const r of readings(doc)) expect(r.ratio, `${starter.id} ${r.id}@${r.canvas}`).toBeGreaterThanOrEqual(4.5);
       }
     }
     for (const template of UI_TEMPLATES) {
-      expect(failing(templateDoc(template, "paper")), template.id).toEqual([]);
+      expect(failing(templateDoc(template, themeId)), template.id).toEqual([]);
     }
+    if (themeId !== "paper") return;
     // The case as it was: 素纸's quiet labels at 4.1:1.
     const doc = getUiStarter("character-setup")!.build({ strings: {}, theme: { id: "paper" } });
     const sub = readings(doc).find((r) => r.id === "form-sub" && r.canvas === "phone")!;
@@ -148,7 +152,7 @@ describe("text on the page", () => {
   });
 
   it("an official preset whose words already read compiles exactly as before", () => {
-    for (const theme of UI_THEMES.filter((t) => t.id !== "paper")) {
+    for (const theme of UI_THEMES.filter((t) => !LIGHT_THEMES.includes(t.id))) {
       for (const accent of theme.accents) {
         for (const starter of UI_STARTERS) {
           const doc = starter.build({ strings: {}, theme: { id: theme.id, accent } });

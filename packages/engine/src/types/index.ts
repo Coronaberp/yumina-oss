@@ -567,6 +567,11 @@ export interface WorldEntry {
   name: string;
   content: string;
   role: "system" | "character" | "personality" | "scenario" | "lore" | "plot" | "style" | "example" | "greeting" | "custom";
+  /** What the entry was before a move into the examples section made it an
+   *  example; restored when it moves out. Without it a character or a
+   *  setting moved there and back stayed an "example", which only the
+   *  example-dialogue parser reads, and quietly left the prompt. */
+  roleBeforeExample?: "system" | "character" | "personality" | "scenario" | "lore" | "plot" | "style" | "greeting" | "custom";
   /** The actual API role sent to the LLM. Defaults to "system" if undefined. */
   apiRole?: "system" | "user" | "assistant";
   /** For section="chat-history" only — number of messages from the end to inject */
@@ -782,8 +787,13 @@ export interface ModuleStation {
   onError?: AiOnError;
   /** Seconds before it may be called again. */
   cooldownSec?: number;
-  /** Most tokens one answer may take (default 800). */
+  /** Most tokens one answer may take. Absent: the kind's default (800 for a
+   *  custom AI, 900 for one behind the scenes). Never read by a narrator,
+   *  which answers with the player's own settings. */
   maxTokens?: number;
+  /** Sampling temperature, 0–1.5. Absent: 0.2 (steady, for bookkeeping work).
+   *  Never read by a narrator, which answers with the player's own settings. */
+  temperature?: number;
 }
 
 export interface AiSees {
@@ -1212,6 +1222,14 @@ export interface WorldSettings {
    *  per-send override wins. "author": this card's maxContext wins; the plan
    *  cap and the model window still clamp it. */
   contextPolicy?: "player" | "author";
+  /** Whose sampling style the story AI uses (temperature, topP, topK, minP,
+   *  penalties). "player" (default): the player's Yumina settings. "author":
+   *  this card's values, clamped to AUTHOR_SAMPLING_LIMITS. Reply length and
+   *  the model always stay the player's: they decide what the player pays. */
+  samplingPolicy?: "player" | "author";
+  /** The model the author suggests for the story AI. Shown to the player as a
+   *  suggestion; never forced, never checked against their plan. */
+  recommendedModel?: string;
   /**
    * Author-side story memory (Context → 摘要 + 最新 N 条). When on, the turns
    * that have left the window are not simply gone: the server keeps a rolling
@@ -1222,11 +1240,12 @@ export interface WorldSettings {
    */
   storySummary?: { enabled: boolean; focus?: string };
   /**
-   * A line the author pins near the end of the history every turn — the
-   * author's note. `depth` counts messages from the end (1 = right before
-   * the newest message, 0 = after it); default 1. Delivered through the same
-   * channel as a chat-history entry with a depth, without being an entry the
-   * lorebook lists.
+   * Legacy (10/7–10/9): a line pinned near the end of the history every
+   * turn. It was an always-on chat-history entry with a depth under a second
+   * name, so the editor no longer offers it; write that entry instead. Still
+   * read so a card that has one keeps sending it. `depth` counts messages
+   * from the end (1 = right before the newest message, 0 = after it);
+   * default 1.
    */
   pinnedNote?: { content: string; depth?: number; apiRole?: "system" | "user" | "assistant" };
   /**

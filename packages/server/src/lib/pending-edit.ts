@@ -2,7 +2,7 @@ import { syncSearchDocNormalized } from "./normalize-search.js";
 import { readVersionState } from "./world-version-store.js";
 import { versionMetadata, worldVersionHash, type VersionMetadata } from "./world-version-content.js";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { captureAutomaticVersion, capturePublishVersion, lockVersionWorld } from "./world-version-history.js";
+import { captureAutomaticVersion, capturePublishVersion, findMaterialVersion, lockVersionWorld } from "./world-version-history.js";
 import { db } from "../db/index.js";
 import { viewerSeesWorkingCopy } from "./working-copy.js";
 import {
@@ -676,8 +676,13 @@ export async function submitPendingEdit(args: {
     if (pending.status === "pending") return { ok: false as const, error: "Already submitted for review", code: "ALREADY_SUBMITTED" };
 
     // Snapshot what is being submitted so the publish lineage keeps its
-    // live provenance.
-    await capturePublishVersion(tx, live, pending);
+    // live provenance — and what it replaces, so the review can show the diff
+    // after the hold is gone.
+    const versionId = await capturePublishVersion(tx, live, pending);
+    // Read-only: approval already keeps the live version (and retention
+    // protects it). Cards live since before versioning have none — their
+    // history diff then reports it wasn't recorded rather than adding a row.
+    const baseVersionId = (await findMaterialVersion(tx, worldId, live))?.id ?? null;
 
     await tx
       .update(worldPendingEdits)
@@ -691,6 +696,8 @@ export async function submitPendingEdit(args: {
       submittedAt: now,
       decision: "pending",
       submissionType: "edit",
+      versionId,
+      baseVersionId,
       snapshotAgeRating: pending.ageRating,
       snapshotIsNsfw: isAdult(pending.ageRating),
       snapshotTargetAudience: w.targetAudience,
@@ -785,16 +792,6 @@ export async function withdrawPendingEdit(args: {
   return { ok: true };
 }
 
-/** True if this queue group is a held-edit review (vs a first-publish review). */
-export async function groupHasPendingEdits(groupKey: string): Promise<boolean> {
-  const [row] = await db
-    .select({ worldId: worldPendingEdits.worldId })
-    .from(worldPendingEdits)
-    .where(and(eq(worldPendingEdits.groupKey, groupKey), eq(worldPendingEdits.status, "pending")))
-    .limit(1);
-  return !!row;
-}
-
 /**
  * Approve every submitted edit in a group: commit the proposed material values
  * onto the live `worlds` row, clear the holds, mark submissions approved, and
@@ -868,6 +865,7 @@ export async function commitPendingEditsForGroup(
     const liveById = new Map(liveRows.map((r) => [r.id, r]));
     const publishedForEmbedding: Array<typeof worlds.$inferSelect> = [];
     const postedUpdates: Array<{ worldId: string; updateId: string; title: string; isMajor: boolean }> = [];
+    const liveVersionIds = new Map<string, string>();
 
     for (const p of pendings) {
       // Heal the name copy inside the held schema before it goes live. Renames
@@ -892,7 +890,7 @@ export async function commitPendingEditsForGroup(
         })
         .where(eq(worlds.id, p.worldId)).returning();
       if (published) {
-        await captureAutomaticVersion(tx, published, "live", published);
+        liveVersionIds.set(p.worldId, await captureAutomaticVersion(tx, published, "live", published));
         publishedForEmbedding.push(published);
       }
 
@@ -922,6 +920,15 @@ export async function commitPendingEditsForGroup(
         // submission isn't marked decided while its hold is left for a human.
         inArray(worldReviewSubmissions.worldId, worldIds),
       ));
+    // Record what actually went live (the name heal above can differ from the
+    // submitted snapshot).
+    for (const [worldId, versionId] of liveVersionIds) {
+      await tx.update(worldReviewSubmissions).set({ versionId }).where(and(
+        eq(worldReviewSubmissions.worldId, worldId),
+        eq(worldReviewSubmissions.submissionType, "edit"),
+        eq(worldReviewSubmissions.decidedAt, now),
+      ));
+    }
     await tx.insert(adminActions).values({
       adminId: reviewerId,
       actionType: "approve_world_edit",
@@ -1108,69 +1115,4 @@ export async function rejectPendingEditsForGroup(args: {
   }
 
   return { handled: true };
-}
-
-export interface PendingEditDiff {
-  worldId: string;
-  worldName: string;
-  reasons: MaterialChangeReason[];
-  diff: WorldDiff;
-  ageRating: { before: string; after: string; changed: boolean };
-  cover: { before: string | null; after: string | null; changed: boolean };
-  landscapeCover: { before: string | null; after: string | null; changed: boolean };
-  /** The "what's new" note that will be posted to library subscribers on
-   *  approval — surfaced so the admin reviews the exact text that ships. */
-  updateNote: { title: string | null; content: string | null; isMajor: boolean };
-}
-
-/**
- * For each submitted edit in a group, build a section-summary + text diff of
- * live (last-approved) vs proposed, for the admin "what changed" panel.
- */
-export async function buildGroupPendingDiffs(groupKey: string): Promise<PendingEditDiff[]> {
-  const pendings = await db
-    .select()
-    .from(worldPendingEdits)
-    .where(and(eq(worldPendingEdits.groupKey, groupKey), eq(worldPendingEdits.status, "pending")));
-  if (pendings.length === 0) return [];
-
-  const liveRows = await db
-    .select({ id: worlds.id, name: worlds.name, schema: worlds.schema, thumbnailUrl: worlds.thumbnailUrl, ageRating: worlds.ageRating })
-    .from(worlds)
-    .where(inArray(worlds.id, pendings.map((p) => p.worldId)));
-  const liveById = new Map(liveRows.map((r) => [r.id, r]));
-
-  return pendings.map((p) => {
-    const live = liveById.get(p.worldId);
-    const liveSchema = live?.schema ?? {};
-    const liveRating = live?.ageRating ?? "all";
-    const liveThumb = live?.thumbnailUrl ?? null;
-    const diff = diffWorldSchemas(migrate(liveSchema), migrate(p.schema), { detail: true });
-    return {
-      worldId: p.worldId,
-      worldName: live?.name ?? "",
-      reasons: (p.reasons ?? []) as MaterialChangeReason[],
-      diff,
-      ageRating: {
-        before: liveRating,
-        after: p.ageRating ?? "all",
-        changed: isAdult(liveRating) !== isAdult(p.ageRating),
-      },
-      cover: {
-        before: resolveImageCdn(liveThumb),
-        after: resolveImageCdn(p.thumbnailUrl),
-        changed: (liveThumb ?? "").trim() !== (p.thumbnailUrl ?? "").trim(),
-      },
-      landscapeCover: {
-        before: resolveImageCdn((liveSchema as Record<string, unknown>).landscapeCover as string | null ?? null),
-        after: resolveImageCdn(p.schema.landscapeCover as string | null ?? null),
-        changed: ((liveSchema as Record<string, unknown>).landscapeCover ?? "") !== (p.schema.landscapeCover ?? ""),
-      },
-      updateNote: {
-        title: p.updateTitle ?? null,
-        content: p.updateContent ?? null,
-        isMajor: p.updateIsMajor ?? false,
-      },
-    };
-  });
 }

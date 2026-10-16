@@ -24,6 +24,8 @@ import { PLAYTEST_TURNS_PER_HOUR, snapshotBeforeOutsideWrite, takePlaytestTurns 
 import { GENERATE_IMAGE, SET_COVER, runGenerateImage, runSetCover } from "./outside-ai-media.js";
 import { SCREENSHOT_UI, isScreenshotEnabled, runScreenshot } from "./outside-ai-screenshot.js";
 import { stickyNotes } from "./studio-tools/sticky-notes.js";
+import { VARIANT_TOOL_NAMES, listLanguageVariants, resolveVariant, variantArg, variantKey, variantLabel, withVariantParam, type LanguageVariants } from "./studio-tools/language-variants.js";
+import { executeSimulateBehaviors } from "./studio-tools/simulate-behaviors.js";
 
 /**
  * World ops — one set of operations on a card, for any AI that is not ours.
@@ -99,7 +101,7 @@ function skillPages(content: string): string[] {
   });
 }
 
-const PICKED_READS = ["read_entities", "grep_world", "load_skill", "list_assets", "read_ui_doc", "validate_world", "analyze_token_cost"];
+const PICKED_READS = ["read_entities", "grep_world", "load_skill", "list_assets", "read_ui_doc", "validate_world", "analyze_token_cost", "simulate_behaviors"];
 const PICKED_WRITES = [
   "write_entry", "write_variable", "write_behavior", "write_worldbook", "write_custom_ui", "edit_custom_ui",
   "edit_ui_doc", "set_ui_knobs", "write_ui_knob_groups", "write_audio", "write_scene_image", "update_settings",
@@ -117,15 +119,25 @@ function idOptional(tool: ToolDefinition): ToolDefinition {
   return { ...tool, function: { ...tool.function, parameters: { ...params, required: params.required.filter((r) => r !== "id") } } };
 }
 
+/** The in-editor playtest description speaks of the editor's jobs; an outside
+ *  agent is in its own chat with the creator, so it gets the same rule in
+ *  those terms. */
+function outsidePlaytest(tool: ToolDefinition | undefined): ToolDefinition | undefined {
+  if (!tool) return tool;
+  const description = tool.function.description
+    .replace(/Every move is billed[^]*?which is free\. /, "Every move is billed to the creator like a player's turn: say how many moves you will play before you do, unless the creator asked you to play. To check behaviors alone use simulate_behaviors, which is free. ");
+  return { ...tool, function: { ...tool.function, description } };
+}
+
 /** What an outside agent may call. Jobs and questions to the creator stay with
  *  the in-editor assistant: they need the creator present. Images are
  *  generated directly (lib/outside-ai-media.ts), capped and billed as usual. */
 export const WORLD_OPS: ToolDefinition[] = [
   GET_WORLD,
-  ...PICKED_READS.map((n) => n === "load_skill" ? LOAD_SKILL : byName.get(n)!).filter(Boolean),
+  ...withVariantParam(PICKED_READS.map((n) => n === "load_skill" ? LOAD_SKILL : byName.get(n)!).filter(Boolean)),
   SET_CARD_NAME,
-  ...PICKED_WRITES.map((n) => byName.get(n)!).filter(Boolean).map(idOptional),
-  byName.get("playtest")!,
+  ...withVariantParam(PICKED_WRITES.map((n) => byName.get(n)!).filter(Boolean)).map(idOptional),
+  outsidePlaytest(byName.get("playtest"))!,
   GENERATE_IMAGE,
   SET_COVER,
   ...(isScreenshotEnabled() ? [SCREENSHOT_UI] : []),
@@ -158,7 +170,7 @@ async function loadWorking(worldId: string, userId: string): Promise<{ world: Wo
   return { world: migrateWorldDefinition(raw as unknown as WorldDefinition), raw, updatedAt: row.updatedAt?.getTime() ?? null };
 }
 
-function overview(world: WorldDefinition) {
+function overview(world: WorldDefinition, variants: LanguageVariants) {
   return {
     name: world.name,
     description: world.description,
@@ -181,6 +193,13 @@ function overview(world: WorldDefinition) {
     interface: world.rootComponent ? { entryFile: world.rootComponent.entryFile, files: Object.keys(world.rootComponent.files ?? {}) } : null,
     // The creator's sticky notes: what a part is for, what to do with it.
     stickyNotes: stickyNotes(world),
+    ...(variants.siblings.length ? {
+      languageVariants: {
+        language: variants.language,
+        others: variants.siblings.map((s) => ({ variant: variantKey(s, variants), id: s.id, name: s.name, status: s.status, ...(s.held ? { heldEdit: true } : {}) })),
+        note: "Separate cards with the same design and translated text. Work on this card unless the request needs them; then pass variant (language code or id) to read or write that version. Keep ids and structure aligned, and write each version's text in its own language.",
+      },
+    } : {}),
   };
 }
 
@@ -212,6 +231,22 @@ export async function runWorldOp(args: { userId: string; worldId: string; name: 
   if (!loaded) return { ok: false, error: "Card not found." };
   const { world } = loaded;
 
+  // Another language version of this card, named by `variant`: the same op,
+  // run on that sibling. Only the creator's own versions in this card's group resolve.
+  const variant = variantArg(input);
+  if (variant !== undefined || "variant" in input) {
+    delete input.variant;
+    if (variant !== undefined) {
+      if (!VARIANT_TOOL_NAMES.has(name)) return { ok: false, error: `${name} does not take variant.` };
+      const target = resolveVariant(await listLanguageVariants(worldId, userId), worldId, variant);
+      if (target.kind === "error") return { ok: false, error: target.error };
+      if (target.kind === "sibling") {
+        const r = await runWorldOp({ ...args, worldId: target.sibling.id, args: input });
+        return r.ok ? { ...r, result: { variant: variantLabel(target), result: r.result } } : { ...r, error: `[${target.key}] ${r.error ?? "Failed"}` };
+      }
+    }
+  }
+
   if (name === "playtest") {
     const moves = (Array.isArray(input.moves) ? input.moves : [])
       .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
@@ -238,7 +273,7 @@ export async function runWorldOp(args: { userId: string; worldId: string; name: 
   }
 
   switch (name) {
-    case "get_world": return { ok: true, result: overview(world) };
+    case "get_world": return { ok: true, result: overview(world, await listLanguageVariants(worldId, userId)) };
     case "list_assets": return { ok: true, result: await loadAssetCatalog(userId, worldId, input) };
     case "read_entities": return { ok: true, result: executeReadEntities(world, (input.ids as string[]) ?? [], { offset_lines: input.offset_lines as number | undefined, limit_lines: input.limit_lines as number | undefined }).results };
     case "grep_world": {
@@ -248,6 +283,10 @@ export async function runWorldOp(args: { userId: string; worldId: string; name: 
     case "read_ui_doc": return { ok: true, result: executeReadUiDoc(world, { page: input.page as never, parts: input.parts as never }) };
     case "validate_world": return { ok: true, result: executeValidateWorld(world) };
     case "analyze_token_cost": return { ok: true, result: executeAnalyzeTokenCost(world) };
+    case "simulate_behaviors": {
+      const r = executeSimulateBehaviors(world, input);
+      return r.error ? { ok: false, error: r.error } : { ok: true, result: r };
+    }
   }
 
   if (name === "set_card_name") {

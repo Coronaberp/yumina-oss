@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { captureHubEvent } from "@/lib/analytics";
 
 const INTRO_SEEN_KEY = "yumina-canvas-beta-intro-seen";
 /** Phones land on the 完整 editor by design; the card would only cover the name box. */
@@ -74,6 +75,11 @@ export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", i
     setShowIntro(true);
   }, [intro, on]);
 
+  const toggle = (via: "pill" | "intro") => {
+    captureHubEvent("studio_surface_switch", { to: on ? "classic" : "visual", via, surface });
+    onToggle();
+  };
+
   const dismiss = () => {
     markIntroSeen();
     setShowIntro(false);
@@ -88,7 +94,7 @@ export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", i
         // The canvas lessons point at the way out under this name.
         data-visual-surface-switch=""
         data-tour={tour}
-        onClick={onToggle}
+        onClick={() => toggle("pill")}
         disabled={disabled}
         title={t(on ? (studio ? "shell.studioExitHint" : "shell.visualExitHint") : (studio ? "shell.studioEnterHint" : "shell.visualEnterHint"))}
         className={cn(
@@ -159,7 +165,7 @@ export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", i
             <button
               type="button"
               disabled={disabled}
-              onClick={() => { dismiss(); onToggle(); }}
+              onClick={() => { dismiss(); toggle("intro"); }}
               className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {t("shell.visualIntroTry")}

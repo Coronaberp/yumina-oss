@@ -105,6 +105,8 @@ import { registerStateUpdateGuard } from "./extensions/state-update-guard/hooks.
 import { registerLiveCanonExtension } from "./extensions/live-canon/hooks.js";
 import { runWithRequestCache } from "./lib/request-cache.js";
 import { edition, editionRoutes } from "./edition/index.js";
+import { changelogRoutes } from "./routes/changelog.js";
+import { getChangelogEntries } from "./lib/changelog.js";
 import { storageRoutes } from "./routes/storage.js";
 
 // Register first-party extension hooks before any request is served — the
@@ -252,6 +254,10 @@ app.route("/api/auth", authRoutes);
 // The edition descriptor is public: a logged-out browser reads it to decide
 // between a login screen and single-user auto sign-in.
 app.route("/api/edition", editionRoutes);
+// The update log is public (internal entries only for admins) and read from
+// changelog/ at the repo root, so parse it once at boot and log any bad file.
+getChangelogEntries();
+app.route("/api/changelog", changelogRoutes);
 app.route("/api/local-auth", localAuthRoutes);
 app.route("/api/users", users);
 app.route("/api/discover", discoverRoutes);

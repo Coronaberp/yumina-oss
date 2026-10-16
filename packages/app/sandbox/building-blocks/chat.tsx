@@ -90,6 +90,11 @@ export function Chat({ renderBubble, className, children, design, fontMap }: Cha
   // only on renderBubble *presence*, so the bridge is created once and merely
   // re-invoked with fresh content on each chunk — no remount.
   const renderBubbleRef = useRef(renderBubble);
+  // A new closure means the card re-rendered, maybe with new state of its own
+  // that a bubble draws; the bridge above stays put, so this count is what
+  // tells the live bubbles to redraw (see MessageBubble's rendererEpoch).
+  const rendererEpochRef = useRef(0);
+  if (renderBubbleRef.current !== renderBubble) rendererEpochRef.current += 1;
   renderBubbleRef.current = renderBubble;
   const apiVariablesRef = useRef(api.variables);
   apiVariablesRef.current = api.variables;
@@ -157,7 +162,9 @@ export function Chat({ renderBubble, className, children, design, fontMap }: Cha
 
       {/* Message list with optional custom renderer */}
       <div className="relative z-[1] flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <MessageList rendererComponent={rendererComponent} design={design} fontMap={fontMap} />
+        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${!renderBubble && !design ? "play-default-chat" : ""}`}>
+          <MessageList rendererComponent={rendererComponent} rendererEpoch={rendererEpochRef.current} design={design} fontMap={fontMap} />
+        </div>
         {!api.readOnly && <MessageInput />}
         {api.readOnly &&
           (api.messages as unknown[])?.length > 0 && (

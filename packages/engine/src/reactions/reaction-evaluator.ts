@@ -123,7 +123,10 @@ export class ReactionEvaluator {
 
       // Reaction fires. Dynamic effects (random values) are resolved HERE, at
       // fire time, so a draw can read the current cooldown history from state.
-      for (const effect of reaction.then) {
+      // A custom behaviour fires (its code and the interface that calls it
+      // need that) but its form's effects are not what it does: the form
+      // hides them once 自定义 is chosen, so they must not run unseen.
+      for (const effect of reaction.custom ? [] : reaction.then) {
         allEffects.push(...resolveDynamicEffect(effect, state));
       }
       firedIds.push(reaction.id);

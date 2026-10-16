@@ -495,9 +495,11 @@ export function convertTavernCard(card: STCharacterCard, labelOverrides: Partial
         name: labels.exampleDialogue,
         content: mesExample,
         role: "example",
-        section: "system-presets",
+        // Where the board shows examples. In the presets section it looked
+        // like a setting sent every turn, which an example is not.
+        section: "examples",
         alwaysSend: true,
-        position: systemPresetPos++,
+        position: 0,
       })
     );
   }

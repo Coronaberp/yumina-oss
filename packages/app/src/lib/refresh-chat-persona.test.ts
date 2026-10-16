@@ -148,3 +148,22 @@ test("identity-only refresh with absent persona metadata preserves an empty stat
   assert.deepEqual(state.session.state.metadata, {});
   assert.equal(state.session.personaLocked, true);
 });
+
+test("greeting receipts accompany identity only while the same idle chat is active", async () => {
+  for (const mode of ["current", "navigation", "streaming", "aborted"] as const) {
+    const { state, data } = fixture();
+    const signal = new AbortController();
+    const greeting = { id: "opening", role: "assistant", content: "Welcome New" };
+    let received: unknown = null;
+    await refreshChatPersona({ sessionId: "chat", signal: signal.signal, apiBase: "", getState: () => state,
+      apply: session => { state.session = session; }, applyGreeting: value => { received = value; },
+      request: async () => {
+        if (mode === "navigation") state.session = { ...state.session, id: "other" };
+        if (mode === "streaming") state.isStreaming = true;
+        if (mode === "aborted") signal.abort();
+        return Response.json({ data: { ...data, greeting } });
+      },
+    });
+    assert.deepEqual(received, mode === "current" ? greeting : null, mode);
+  }
+});

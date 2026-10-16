@@ -30,6 +30,10 @@ import { bumpWorldMessageCount } from "../lib/world-message-counter.js";
 import { registerStream } from "../lib/stream-registry.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { resolveProviderForModel } from "../lib/resolve-provider.js";
+import { classifyGenerationFailure } from "../lib/turn-failure-codes.js";
+import { planFallbackModel } from "../lib/plan-model-gate.js";
+import { loadPlayerAiConfig } from "../lib/player-ai-config.js";
+import { DEFAULT_STORY_SUMMARY_MODEL } from "../lib/session-compaction.js";
 import {
   checkSideCallRateLimit,
   acquireConcurrency,
@@ -38,7 +42,7 @@ import {
 } from "../middleware/rate-limit.js";
 import {
   checkBalance,
-  deductCredits,
+  deductCreditsUpToBalance,
   calculateCost,
   validateModelAccess,
   getModelCostRates,
@@ -50,7 +54,10 @@ import type { ChatMessage, GenerateParams } from "../lib/llm/types.js";
 import { captureServerEvent } from "../lib/analytics.js";
 import type { AppEnv } from "../lib/types.js";
 import {
+  AUTHOR_SAMPLING_LIMITS,
+  clampToRange,
   LorebookMatcher,
+  estimateTokens,
   filterEntriesByActiveWorldbooks,
   migrateWorldDefinition,
   type WorldDefinition,
@@ -98,6 +105,9 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     context?: 'session';
     overrides?: import('@yumina/shared').AiGenerationConfig;
     responseFormat?: unknown;
+    /** "card": the card's code named this model (the parent tells it apart
+     *  from the player's own pick). Only then does a plan miss fall back. */
+    modelSource?: "card";
   }>();
 
   // ── Validate input ──
@@ -159,7 +169,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     .where(eq(worlds.id, session.worldId));
   const isProtectedWorld = worldRow?.allowCustomApi === false && worldRow.creatorId !== currentUser.id;
 
-  const model = body.model ?? DEFAULT_MODEL;
+  let model = body.model ?? DEFAULT_MODEL;
   const resolved = await resolveProviderForModel(currentUser.id, model, { forceOfficial: isProtectedWorld, allowRetiredForAccessCheck: true });
   if (!resolved) {
     if (isProtectedWorld) {
@@ -185,17 +195,25 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
   // Side calls have NO Sonnet trial. Without a plan gate, a card could fire
   // premium-model side calls that drain a free user's credits (the model the
   // card picks is billed directly). Gate by the fresh wallet plan the same way
-  // the main chat does. Cards should catch MODEL_NOT_ALLOWED and retry with a
-  // cheaper model.
+  // the main chat does. A model the card's code named that the plan can't run
+  // falls back to the player's own chat model (or the default summary model),
+  // the same rule as a card's own AIs. The player's own pick gets MODEL_NOT_ALLOWED.
   let walletBalance = Infinity; // BYOK and unlimited plans are not credit-gated
+  let memoryCap: number | null = null; // the plan's context cap; BYOK is uncapped like chat
   if (!resolved.isByok) {
     const walletCheck = await checkBalance(currentUser.id);
+    memoryCap = walletCheck.wallet.memoryCap;
     if (!walletCheck.ok) {
       return c.json({ error: "Insufficient credits", code: "INSUFFICIENT_CREDITS" }, 402);
     }
     const modelAccess = await validateModelAccess(walletCheck.wallet.plan, model);
     if (!modelAccess.allowed) {
-      return c.json({ error: modelAccess.reason, code: "MODEL_NOT_ALLOWED" }, 403);
+      // The player's own pick is refused, like the chat; a card's pick falls back.
+      const fallback = body.modelSource === "card" ? await planFallbackModel(
+        walletCheck.wallet.plan, (await loadPlayerAiConfig(currentUser.id)).selectedModel, DEFAULT_STORY_SUMMARY_MODEL,
+      ) : null;
+      if (!fallback) return c.json({ error: modelAccess.reason, code: "MODEL_NOT_ALLOWED" }, 403);
+      model = fallback;
     }
     if (!(PLANS[walletCheck.wallet.plan] ?? PLANS.free).unlimited) {
       walletBalance = walletCheck.balance;
@@ -219,7 +237,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     providerMessages = await buildSessionCompletionMessages({
       session: { ...session, state: session.state ?? {}, sessionPersona: session.sessionPersona ?? null, personaLocked: session.personaLocked ?? false },
       account: currentUser, world: worldDef, model, messages: providerMessages,
-      settings: sessionSettings.data, json: responseFormat?.type === 'json_object',
+      settings: sessionSettings.data, json: responseFormat?.type === 'json_object', memoryCap,
     });
   }
   const lorebookSystem = body.context === 'session' ? null : await resolveLorebookSystemMessage(
@@ -227,6 +245,9 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     session.worldId,
     providerMessages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content.filter(p => p.type === "text").map(p => p.text).join("\n") })),
     currentUser.id,
+    memoryCap === null ? Infinity : Math.max(0, memoryCap
+      - Math.min(body.maxTokens ?? DEFAULT_MAX_TOKENS, MAX_MAX_TOKENS)
+      - Math.ceil(imagePromptChars(providerMessages) / 3)),
   );
 
   // ── Build provider messages ──
@@ -279,7 +300,8 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
 
   // ── Stream ──
   const maxTokens = Math.min(body.maxTokens ?? DEFAULT_MAX_TOKENS, MAX_MAX_TOKENS);
-  const temperature = Math.max(0, Math.min(body.temperature ?? 1.0, 2));
+  // The card's code picks this temperature: an author value, clamped like every other.
+  const temperature = clampToRange(body.temperature ?? 1.0, AUTHOR_SAMPLING_LIMITS.temperature);
   const abortController = new AbortController();
   const abortFromRequest = () => abortController.abort();
   c.req.raw.signal.addEventListener("abort", abortFromRequest, { once: true });
@@ -346,9 +368,10 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
           session_id: sessionId,
           endpoint: "completions",
         });
+        const failure = classifyGenerationFailure(err?.message ?? "Generation failed", { isByok: resolved.isByok });
         await stream.writeSSE({
           event: "error",
-          data: JSON.stringify({ error: err?.message ?? "Generation failed" }),
+          data: JSON.stringify({ error: failure.message, code: failure.code ?? undefined }),
         });
       }
     } finally {
@@ -382,7 +405,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
             providerCostUsd,
           });
           if (cost > 0) {
-            await deductCredits(
+            await deductCreditsUpToBalance(
               currentUser.id,
               cost,
               usageLogId,
@@ -390,38 +413,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
             );
           }
         } catch (err) {
-          const failedBalance = (err instanceof Error && err.message === "INSUFFICIENT_CREDITS")
-            ? (err as any).balance : null;
-          if (typeof failedBalance !== "number" || failedBalance <= 0) {
-            console.error("[Credit] Side completion deduction failed:", err instanceof Error ? err.message : err);
-          } else {
-            // Cost exceeded balance. deductCredits is all-or-nothing, and swallowing
-            // the failure left the wallet positive — checkBalance kept admitting
-            // streams the user could never pay for. Clamp instead: drain the
-            // remaining balance to 0 so the next preflight rejects. Retry with the
-            // balance from each failure, since a concurrent stream's deduction can
-            // shrink it between attempts.
-            let remaining = failedBalance;
-            for (let attempt = 0; attempt < 3 && remaining > 0; attempt++) {
-              try {
-                await deductCredits(
-                  currentUser.id,
-                  remaining,
-                  usageLogId,
-                  `Side LLM call (clamped to balance): ${model} — ${promptTokens + completionTokens} tokens`,
-                );
-                remaining = 0;
-              } catch (clampErr) {
-                const b = (clampErr instanceof Error && clampErr.message === "INSUFFICIENT_CREDITS")
-                  ? (clampErr as any).balance : null;
-                if (typeof b !== "number") {
-                  console.error("[Credit] Side completion clamped deduction failed:", clampErr instanceof Error ? clampErr.message : clampErr);
-                  break;
-                }
-                remaining = b;
-              }
-            }
-          }
+          console.error("[Credit] Side completion deduction failed:", err instanceof Error ? err.message : err);
         }
       }
     }
@@ -500,6 +492,8 @@ async function resolveLorebookSystemMessage(
   worldId: string,
   messages: Array<{ role: string; content: string }>,
   viewerId: string,
+  /** Lore tokens left under the player's plan memory cap. */
+  tokenBudget: number,
 ): Promise<string | null> {
   if (!mode) return null;
   const resolvedMode: "all" | "matched" = mode === "matched" ? "matched" : "all";
@@ -527,7 +521,7 @@ async function resolveLorebookSystemMessage(
       sideEntries,
       recent,
       sideState,
-      Infinity,
+      tokenBudget,
       worldDef.settings,
       undefined,
       worldDef.loreUiBindings,
@@ -544,13 +538,18 @@ async function resolveLorebookSystemMessage(
 
   // Render: name + content per entry, separated by blank lines. Section
   // headers would only confuse a side LLM that's playing one specific role.
-  const blocks = chosen
-    .map((e) => {
-      const heading = e.name ? `【${e.name}】` : "";
-      return heading ? `${heading}\n${e.content}` : e.content;
-    })
-    .filter(Boolean);
-  return blocks.join("\n\n");
+  const blocks: string[] = [];
+  let used = 0;
+  for (const e of chosen) {
+    const heading = e.name ? `【${e.name}】` : "";
+    const block = heading ? `${heading}\n${e.content}` : e.content;
+    if (!block) continue;
+    // Entries stay whole: stop at the first one past the plan's memory cap.
+    used += estimateTokens(block);
+    if (used > tokenBudget) break;
+    blocks.push(block);
+  }
+  return blocks.length ? blocks.join("\n\n") : null;
 }
 
 export { completionRoutes };

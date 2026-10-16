@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ModelBrowser } from "./model-browser";
+import { sessionRecommendedModel } from "./recommended-model";
 import {
   FullscreenFloatingControls,
   shouldPauseFloatingBarAutoHide,
@@ -1607,5 +1608,7 @@ function ChatModelBrowser(props: Omit<Parameters<typeof ModelBrowser>[0], "conte
     }
     return null;
   });
-  return <ModelBrowser {...props} contextTokens={contextTokens} />;
+  // The card's recommended model is marked in the list, never chosen.
+  const recommendedModel = useChatStore((s) => sessionRecommendedModel(s.session));
+  return <ModelBrowser {...props} contextTokens={contextTokens} recommendedModel={recommendedModel} />;
 }

@@ -15,6 +15,7 @@
  */
 
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
+import { toWireContent } from "./wire-content.js";
 import {
   dispatchJob,
   getAdvertisedModels,
@@ -58,10 +59,6 @@ export function toRuntimeModelId(modelId: string): string {
   return modelId.replace(/^local\//, "");
 }
 
-/** Content parts survive as-is; the browser hands them to an OpenAI-shaped endpoint. */
-function toWireContent(content: MessageContent): unknown {
-  return content;
-}
 
 function flattenText(content: MessageContent): string {
   if (typeof content === "string") return content;

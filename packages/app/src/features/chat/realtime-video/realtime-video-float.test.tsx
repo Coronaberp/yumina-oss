@@ -46,6 +46,7 @@ async function harness(url = "http://localhost", mobile = false, touch = false) 
     userProfile: { profile: { filmOffered: true, preferences: { autoFullscreenOnPlay: false, experimentalFilm: true } } },
     extensions: { installState: { "session-memory": "installed", "state-update-guard": "installed" } },
     audio: { cleanup: noop }, models: { models: [], addToRecent: noop },
+    editor: { worldDraft: {}, readOnlyInspect: true, guestMode: false },
     credit: { plan: "free" },
     translate: (key: string) => key.split(".").reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], en) ?? key,
   };
@@ -87,6 +88,7 @@ async function harness(url = "http://localhost", mobile = false, touch = false) 
         ["stores/ui.ts", "useUiStore", "ui"], ["stores/user-profile.ts", "useUserProfileStore", "userProfile"],
         ["stores/extensions.ts", "useExtensionsStore", "extensions"], ["stores/audio.ts", "useAudioStore", "audio"],
         ["stores/models.ts", "useModelsStore", "models"],
+        ["stores/editor.ts", "useEditorStore", "editor"],
       ]) if (path.endsWith(`/src/${file}`)) return `export const ${name} = Object.assign((selector) => selector(globalThis.__videoFloatFixture.${key}), { getState: () => globalThis.__videoFloatFixture.${key} });`;
       if (path.endsWith("/src/edition/slots.state.ts")) return `export const useCreditStore = (selector) => selector(globalThis.__videoFloatFixture.credit); export const fetchCreditsForChat = () => {};`;
       if (path.endsWith("/src/edition/edition.ts")) return `export const useFeature = () => false;`;

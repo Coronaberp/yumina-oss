@@ -378,8 +378,14 @@ export function formatRunMemoryBlock(record: RunRecord, moduleName: string): str
       : record.summaryStatus === "failed"
         ? RUN_MEMORY_FAILED_TEXT
         : RUN_MEMORY_PENDING_TEXT;
-  return `【副本记忆 · ${moduleName} · 第${record.runIndex}次】\n${body}`;
+  return `【副本记忆 · ${moduleName} · 第${record.runIndex}次】\n${body}\n${RUN_MEMORY_OVER_TEXT}`;
 }
+
+const RUN_MEMORY_OVER_TEXT = "（这一段已经结束。剧情从后面的消息接着写，不要重演进入时的场景。）";
+
+/** How much of the newest closed run stays verbatim after its block: from
+ *  the run's last player message on, at most this many rows. */
+const RUN_TAIL_MAX_ROWS = 4;
 
 /**
  * Replace every CLOSED run's messages with its single memory block.
@@ -395,6 +401,15 @@ export function formatRunMemoryBlock(record: RunRecord, moduleName: string): str
  *   row" check would wrongly veto every frontend-closed run.)
  * - rows are matched purely by timestamp within [fromAt, toAt]; a record
  *   whose span matches no rows folds nothing and injects nothing.
+ * - a run whose summary FAILED is not folded: the stub would erase the run
+ *   from the narrator's memory, and keeping its words costs only tokens.
+ * - the NEWEST closed run whose module is not active stays partly in view:
+ *   its last exchange (from its last player message on) follows the block
+ *   verbatim. Fold everything and the narrator's last real line is the one
+ *   that walked INTO the run — the player's "ready" with its answer folded
+ *   away — and it answers it again: the party sets out for the dungeon it
+ *   just came back from (DanMachi, 2026-10-13). An active module means a new
+ *   attempt is running, and the old attempt's last scene would only confuse it.
  */
 export function foldClosedRuns<T extends FoldableRow>(
   rows: T[],
@@ -413,6 +428,10 @@ export function foldClosedRuns<T extends FoldableRow>(
     .map((record) => ({ record, book: byId.get(record.bookId) }))
     .filter(({ record, book }) => {
       if (!isArchivingModule(book) || record.preserveTranscript) return false;
+      // No memory to stand in for the run (the summarizer ran out of room,
+      // or had nothing to read): keep its transcript rather than fold it
+      // into an empty "sealed" stub the narrator cannot continue from.
+      if (record.summaryStatus === "failed") return false;
       const from = toMs(record.fromAt);
       const to = toMs(record.toAt);
       if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return false;
@@ -425,12 +444,40 @@ export function foldClosedRuns<T extends FoldableRow>(
   let foldedMessageCount = 0;
   const emitted = new Set<RunRecord>();
 
-  for (const row of rows) {
+  const hitOf = (row: T) => {
     const ms = toMs(row.createdAt);
-    const hit = Number.isFinite(ms)
+    return Number.isFinite(ms)
       ? applicable.find(({ record }) => toMs(record.fromAt) <= ms && ms <= toMs(record.toAt))
       : undefined;
+  };
+  const hits = rows.map(hitOf);
+
+  // The newest closed run (by toAt) that left the stage: its tail stays.
+  let tailRecord: RunRecord | undefined;
+  for (const { record } of applicable) {
+    if (currentlyActiveBookIds.has(record.bookId)) continue;
+    if (!tailRecord || toMs(record.toAt) > toMs(tailRecord.toAt)) tailRecord = record;
+  }
+  const keep = new Set<number>();
+  if (tailRecord) {
+    const runIdx = hits.flatMap((hit, i) => (hit?.record === tailRecord ? [i] : []));
+    let start = runIdx.length - 1; // no player message in the run: just its last row
+    for (let k = runIdx.length - 1; k >= 0; k--) {
+      if (rows[runIdx[k]!]!.role === "user") { start = k; break; }
+    }
+    const tail = runIdx.slice(start).slice(-RUN_TAIL_MAX_ROWS);
+    // A run that is nothing but its tail still folds its first row, so the
+    // block lands at the run's start and the subscription dedupe holds.
+    for (const i of tail) if (i !== runIdx[0]) keep.add(i);
+  }
+
+  for (const [i, row] of rows.entries()) {
+    const hit = hits[i];
     if (!hit) {
+      out.push(row);
+      continue;
+    }
+    if (keep.has(i)) {
       out.push(row);
       continue;
     }

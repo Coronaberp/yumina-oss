@@ -4,7 +4,7 @@ import { useModelControls as useYumina } from "./model-controls-context";
 import type { LocalBridgeChannelData } from "../protocol";
 import { SandboxPlatformOverlay } from "../platform-overlay-portal";
 import { initializeSandboxPlatformOverlay } from "../platform-overlay-root";
-import { PLAY_MODELS, PLAN_HIERARCHY as SHARED_PLAN_HIERARCHY, MAX_PINNED_MODELS, formatAvgCost } from "@yumina/shared";
+import { PLAY_MODELS, PLAN_HIERARCHY as SHARED_PLAN_HIERARCHY, MAX_PINNED_MODELS, formatAvgCost, groupPlayModels } from "@yumina/shared";
 import {
   DeepSeekPricingInfo,
   type DeepSeekPricingCopy,
@@ -273,6 +273,9 @@ const MODEL_DESCRIPTION_BY_LANG = {
     "google/gemini-3.8-flash": "Strong writing — refuses Japanese adult",
     "moonshotai/kimi-k2.6": "Best prose, fully Limitless, slow",
     "openai/gpt-5.6-sol": "OpenAI flagship — no explicit scenes",
+    "openai/gpt-6.1-sol": "Newest Sol — no explicit scenes",
+    "anthropic/claude-sonnet-5.5": "Newest Sonnet — adjustable reasoning",
+    "google/gemini-4-argon": "Newest Gemini — strong writing; explicit needs Unrestricted",
     "google/gemini-2.5-flash-lite": "Ultra lightweight",
   },
   zh: {
@@ -313,6 +316,9 @@ const MODEL_DESCRIPTION_BY_LANG = {
     "google/gemini-3.8-flash": "文笔强，但日语成人内容会拒答",
     "moonshotai/kimi-k2.6": "文笔最好，完全不回避，但慢",
     "openai/gpt-5.6-sol": "OpenAI 旗舰，不写露骨场面",
+    "openai/gpt-6.1-sol": "最新 Sol，不写露骨场面",
+    "anthropic/claude-sonnet-5.5": "最新 Sonnet，可调思考深度",
+    "google/gemini-4-argon": "最新 Gemini，文笔好；露骨内容要开「解除限制」",
     "google/gemini-2.5-flash-lite": "超轻量",
   },
   ja: {
@@ -353,6 +359,9 @@ const MODEL_DESCRIPTION_BY_LANG = {
     "google/gemini-3.8-flash": "文章力は高いが日本語アダルトは拒否",
     "moonshotai/kimi-k2.6": "文章が最高・完全対応だが低速",
     "openai/gpt-5.6-sol": "OpenAI 旗艦・露骨描写なし",
+    "openai/gpt-6.1-sol": "最新Sol・露骨描写なし",
+    "anthropic/claude-sonnet-5.5": "最新Sonnet・思考の深さを調整可",
+    "google/gemini-4-argon": "最新Gemini・文章力高め。露骨な描写は「制限解除」が必要",
     "google/gemini-2.5-flash-lite": "超軽量",
   },
   es: {
@@ -393,6 +402,9 @@ const MODEL_DESCRIPTION_BY_LANG = {
     "google/gemini-3.8-flash": "Buena prosa, rechaza adulto en japonés",
     "moonshotai/kimi-k2.6": "La mejor prosa, sin límites, lenta",
     "openai/gpt-5.6-sol": "Buque insignia de OpenAI, sin escenas explícitas",
+    "openai/gpt-6.1-sol": "El Sol más nuevo, sin escenas explícitas",
+    "anthropic/claude-sonnet-5.5": "El Sonnet más nuevo, razonamiento ajustable",
+    "google/gemini-4-argon": "El Gemini más nuevo, buena prosa; lo explícito requiere Sin restricciones",
     "google/gemini-2.5-flash-lite": "Ultraligero",
   },
 } as const;
@@ -981,9 +993,10 @@ function OfficialPicker({
   const canAccess = (minPlan: string) =>
     PLAN_HIERARCHY.indexOf(userPlan) >= PLAN_HIERARCHY.indexOf(minPlan);
 
-  const models = OFFICIAL_MODELS
+  // MIRROR: same family rows as OfficialView in features/chat/model-browser.tsx.
+  const groups = groupPlayModels(OFFICIAL_MODELS
     .filter((m) => m.tier === activeTier)
-    .sort((a, b) => a.avgCostMushies - b.avgCostMushies);
+    .sort((a, b) => a.avgCostMushies - b.avgCostMushies));
 
   const handleSelect = (modelId: string, minPlan: string) => {
     if (!canAccess(minPlan)) return;
@@ -1061,15 +1074,18 @@ function OfficialPicker({
       {/* Model list */}
       <div className="flex-1 overflow-y-auto px-4 py-2">
         <div className="space-y-1.5">
-          {models.map((m) => {
-            const isSelected = !isMixActive && selectedModel === m.id;
+          {groups.map((group) => {
+            const family = group.variants.length > 1;
+            const active = group.variants.find((v) => v.model.id === selectedModel) ?? group.variants[0]!;
+            const m = active.model;
+            const isSelected = !isMixActive && group.variants.some((v) => v.model.id === selectedModel);
             const locked = !canAccess(m.minPlan);
             const meta = TIER_META[m.tier as Tier];
 
             return (
               <div
-                key={m.id}
-                className={`group flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition-all ${
+                key={group.key}
+                className={`group flex w-full flex-wrap items-center gap-x-3 rounded-xl border p-3.5 text-left transition-all ${
                   locked
                     ? "cursor-not-allowed border-white/[0.04] bg-white/[0.01] opacity-45"
                     : isSelected
@@ -1134,6 +1150,30 @@ function OfficialPicker({
                   modelName={m.name}
                   copy={deepSeekPricingCopy}
                 />
+                {family && (
+                  <div role="group" aria-label={group.name} className="flex basis-full flex-wrap gap-1 pl-[22px] pt-2">
+                    {group.variants.map((v) => {
+                      const current = !isMixActive && v.model.id === selectedModel;
+                      return (
+                        <button
+                          type="button"
+                          key={v.model.id}
+                          disabled={locked}
+                          aria-pressed={current}
+                          aria-label={v.model.name}
+                          onClick={() => handleSelect(v.model.id, v.model.minPlan)}
+                          className={`min-w-[34px] rounded-md border px-2 py-0.5 text-[11px] tabular-nums transition-colors ${
+                            current
+                              ? `${meta.border} ${meta.bg} ${meta.color}`
+                              : "border-white/[0.08] text-white/55 hover:border-white/20 hover:text-white/85"
+                          }`}
+                        >
+                          {v.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

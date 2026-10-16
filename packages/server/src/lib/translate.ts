@@ -213,6 +213,8 @@ const TERMINAL_REASONS: readonly TranslationSkipReason[] = ["no_prose"];
 
 export const MAX_ATTEMPTS_TERMINAL = 2;
 export const MAX_ATTEMPTS_TRANSIENT = 5;
+/** How long a transient pair that used up its attempts waits for its next one. */
+export const PARKED_RETRY_DAYS = 7;
 /** First retry after 30 min, then 1h, 2h, 4h, 8h. */
 export const RETRY_BASE_MINUTES = 30;
 
@@ -236,8 +238,15 @@ export function shouldRetryAttempt(
   if (!ledger) return true;
   // A new revision of the source is a clean slate.
   if (ledger.sourceHash !== requestHash) return true;
-  const max = maxAttemptsFor(ledger.lastReason as TranslationSkipReason | null);
-  if (ledger.attempts >= max) return false;
+  const reason = ledger.lastReason as TranslationSkipReason | null;
+  const max = maxAttemptsFor(reason);
+  // Past the ceiling a model failure is parked, not abandoned: one more try
+  // a week, so a pair that hit a bad stretch (an outage, a model regression)
+  // gets translated eventually instead of showing its source forever.
+  if (ledger.attempts >= max) {
+    return max === MAX_ATTEMPTS_TRANSIENT &&
+      now.getTime() - ledger.lastAttemptAt.getTime() >= PARKED_RETRY_DAYS * 86_400_000;
+  }
   const waitMs = RETRY_BASE_MINUTES * 60_000 * Math.pow(2, Math.min(ledger.attempts, 6));
   return now.getTime() - ledger.lastAttemptAt.getTime() >= waitMs;
 }
@@ -664,7 +673,7 @@ function cleanJsonTranslation(raw: string): string {
   return raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
 }
 
-export function looksLikeRefusal(translated: string): boolean {
+export function looksLikeRefusal(translated: string, source?: string): boolean {
   // Qwen and other instruct models occasionally refuse to translate content
   // that reads like a jailbreak prompt (e.g. meta-discussions about
   // bypassing safety filters). Don't cache the refusal — that would show
@@ -677,17 +686,30 @@ export function looksLikeRefusal(translated: string): boolean {
   // three `refused` pairs in the prod ledger on 2026-09-06 were that, each one
   // re-sent through the fallback model five times and never cached, so those
   // posts had no English translation at all.
+  //
+  // Same for a post that is itself about translating: 有的时候就是翻译不了 →
+  // "sometimes they just can't translate" (prod post 92a20af2, 2026-10-15)
+  // read as the model declining, so both models' faithful answers were
+  // dropped and English readers saw the Chinese. When the source talks about
+  // translation, "can't translate" in the answer is the post speaking; only
+  // the shapes no post produces by accident still count.
   const head = translated.trim().slice(0, 200);
   const lower = head.toLowerCase();
+  const sourceMentionsTranslation = source != null && /翻[译譯訳]|translat|tradu[cz]/i.test(source);
+  const declinesToTranslate = !sourceMentionsTranslation && (
+    /\b(?:can(?:no|')t|cannot|unable to|won't|will not|not able to)\s+(?:translate|provide a translation)\b/.test(lower) ||
+    /(?:无法|不能)(?:翻译|提供翻译)|翻訳(?:することは|することが|は)?できません|no puedo traducir/.test(head)
+  );
   return (
+    declinesToTranslate ||
     // "can't help" alone is an idiom ("can't help but laugh"); require the
     // object a model would name.
-    /\b(?:can(?:no|')t|cannot|unable to|won't|will not|not able to)\s+(?:help (?:you )?with|assist|translate|fulfil|fulfill|comply|provide a translation)\b/.test(lower) ||
+    /\b(?:can(?:no|')t|cannot|unable to|won't|will not|not able to)\s+(?:help (?:you )?with|assist|fulfil|fulfill|comply)\b/.test(lower) ||
     /\b(?:this|that|your) request\b/.test(lower) && /\b(?:can(?:no|')t|cannot|unable|decline)\b/.test(lower) ||
     lower.startsWith("as an ai") ||
     /\bas an? (?:ai|language model)\b/.test(lower) ||
     // The same refusal, when the model answers in the target language.
-    /(?:无法|不能)(?:翻译|协助|提供翻译)|翻訳(?:することは|することが|は)?できません|no puedo (?:traducir|ayudar con)/.test(head)
+    /(?:无法|不能)协助|no puedo ayudar con/.test(head)
   );
 }
 
@@ -879,6 +901,7 @@ export async function translateOne(
     return;
   }
 
+  const isRefusal = (translated: string) => looksLikeRefusal(translated, title ? `${title}\n${content}` : content);
   const chunks = chunksForTranslation(content);
   const isChunked = chunks.length > 1;
   // JSON mode carries the title and body in one response, which only works
@@ -890,7 +913,7 @@ export async function translateOne(
   /** One request for the whole document — the path all but one source takes. */
   const attemptWhole = async (sysMsg: string, model: string): Promise<{ title: string | null; content: string } | null> => {
     const result = await requestFormattedTranslation({
-      content, title, systemMessage: sysMsg, isRefusal: looksLikeRefusal,
+      content, title, systemMessage: sysMsg, isRefusal,
       request: (system, user, json) => requestTranslationRaw(system, user, triggeredByUserId, json, model),
     });
     if (!result.ok) {
@@ -915,7 +938,7 @@ export async function translateOne(
 
     for (const chunk of chunks) {
       const formatted = await requestFormattedTranslation({
-        content: chunk, systemMessage: sysMsg, isRefusal: looksLikeRefusal,
+        content: chunk, systemMessage: sysMsg, isRefusal,
         userMessage: (protectedContent) => buildChunkUserMessage(protectedContent, previous),
         request: (system, user, json) => requestTranslationRaw(system, user, triggeredByUserId, json, model),
       });
@@ -931,7 +954,7 @@ export async function translateOne(
       // Surface a mid-document refusal to the caller's refusal path by handing
       // it back as the result: the retry then re-runs the whole document on the
       // permissive fallback, rather than stitching two models' voices together.
-      if (looksLikeRefusal(raw)) return { title: null, content: raw };
+      if (isRefusal(raw)) return { title: null, content: raw };
       // An echoed chunk must fail here, per chunk. Judged only on the stitched
       // whole, one untranslated chunk among twenty passes every ratio and
       // ships: the 106k-character prod thread's "Spanish" translation is 41%
@@ -956,7 +979,7 @@ export async function translateOne(
     let translatedTitle: string | null = null;
     if (title) {
       const formatted = await requestFormattedTranslation({
-        content: title, systemMessage: buildTranslationSystemPrompt(targetLang, false), isRefusal: looksLikeRefusal,
+        content: title, systemMessage: buildTranslationSystemPrompt(targetLang, false), isRefusal,
         request: (system, user, json) => requestTranslationRaw(system, user, triggeredByUserId, json, model),
       });
       if (!formatted.ok) {
@@ -972,7 +995,7 @@ export async function translateOne(
   const attempt = isChunked ? attemptChunked : attemptWhole;
 
   const resultIsRefusal = (r: { title: string | null; content: string }): boolean =>
-    looksLikeRefusal(r.content) || (r.title != null && looksLikeRefusal(r.title));
+    isRefusal(r.content) || (r.title != null && isRefusal(r.title));
 
   let result = await attempt(systemMessage, TRANSLATION_PRIMARY_MODEL);
   if (!result) {

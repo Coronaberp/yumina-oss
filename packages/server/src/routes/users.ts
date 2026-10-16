@@ -14,7 +14,7 @@ import { optionalAccountBinding } from "../middleware/account-binding.js";
 import { invalidateSessionUser } from "../lib/session-user-cache.js";
 import { rateLimitMiddleware } from "../middleware/rate-limit.js";
 import { isReservedUsername } from "@yumina/shared";
-import { updateProfileSchema, getAgeFromBirthYear, aiConfigSchema, MAX_PROFILE_POST_LENGTH, PROFILE_POSTS_PAGE_SIZE, normalizeProfileWorldSort, sanitizeTtsVoicePool, sanitizeTtsCustomVoices } from "@yumina/shared";
+import { updateProfileSchema, getAgeFromBirthYear, aiConfigSchema, MAX_PROFILE_POST_LENGTH, PROFILE_POSTS_PAGE_SIZE, normalizeProfileWorldSort, normalizeProfileWorldOrder, sanitizeTtsVoicePool, sanitizeTtsCustomVoices } from "@yumina/shared";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { sanitizeDisplayName } from "../lib/sanitize.js";
 import { aggregatedCounters } from "../lib/world-aggregates.js";
@@ -605,6 +605,8 @@ users.get("/:id/recent-played", optionalAuthMiddleware, async (c) => {
       thumbnailUrl: worlds.thumbnailUrl,
       coverCrop: coverCropCols.coverCrop,
       galleryCoverCrop: coverCropCols.galleryCoverCrop,
+      landscapeCoverUrl: worlds.landscapeCoverUrl,
+      landscapeCoverCrop: worlds.landscapeCoverCrop,
       ageRating: worlds.ageRating,
       isNsfw: worlds.isNsfw,
       blurCover: worlds.blurCover,
@@ -627,6 +629,8 @@ users.get("/:id/recent-played", optionalAuthMiddleware, async (c) => {
     thumbnailUrl: resolveImageCdn(r.thumbnailUrl),
     coverCrop: r.coverCrop,
     galleryCoverCrop: r.galleryCoverCrop,
+    landscapeCoverUrl: resolveImageCdn(r.landscapeCoverUrl),
+    landscapeCoverCrop: r.landscapeCoverCrop,
     ageRating: r.ageRating,
     isNsfw: r.isNsfw,
     lastPlayedAt: r.lastPlayedAt,
@@ -672,6 +676,8 @@ users.get("/:id/library", optionalAuthMiddleware, async (c) => {
       worldThumbnailUrl: worlds.thumbnailUrl,
       worldCoverCrop: coverCropCols.coverCrop,
       worldGalleryCoverCrop: coverCropCols.galleryCoverCrop,
+      worldLandscapeCoverUrl: worlds.landscapeCoverUrl,
+      worldLandscapeCoverCrop: worlds.landscapeCoverCrop,
       worldTags: worlds.tags,
       worldAgeRating: worlds.ageRating,
       worldIsNsfw: worlds.isNsfw,
@@ -711,6 +717,7 @@ users.get("/:id/library", optionalAuthMiddleware, async (c) => {
   const resolved = items.map((item) => ({
     ...item,
     worldThumbnailUrl: resolveImageCdn(item.worldThumbnailUrl),
+    worldLandscapeCoverUrl: resolveImageCdn(item.worldLandscapeCoverUrl),
   }));
 
   return c.json({ data: resolved, total, limit, offset });
@@ -853,6 +860,10 @@ users.on(["POST", "PATCH"], "/me", authMiddleware, rateLimitMiddleware("profile-
     }
     if ("ttsCustomVoices" in clientPreferences) {
       clientPreferences.ttsCustomVoices = sanitizeTtsCustomVoices(clientPreferences.ttsCustomVoices);
+    }
+    // The profile's own order is read into a query: store only a bounded list of ids.
+    if ("profileWorldOrder" in clientPreferences) {
+      clientPreferences.profileWorldOrder = normalizeProfileWorldOrder(clientPreferences.profileWorldOrder);
     }
     parsed.data.preferences = clientPreferences;
   }

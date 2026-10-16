@@ -16,6 +16,40 @@ describe("applyGraphEdit", () => {
     expect(next.rules[0]!.actions[0]).toMatchObject({ type: "modify-variable", variableId: "hp" });
   });
 
+  it("wiring a variable into an always-on entry gates it without touching its own flag, and unwiring hands it back", () => {
+    const entry = { id: "e1", name: "secret", content: "x", keywords: [], conditions: [], alwaysSend: true, enabled: true };
+    const world = { ...base, entries: [entry] } as unknown as WorldDefinition;
+    const wired = applyGraphEdit(world, { op: "add-edge", edge: { id: "e", from: "var:hp", fromPort: "read", to: "entry:e1", toPort: "gate" } });
+    expect(wired.entries[0]!.conditions).toHaveLength(1);
+    expect(wired.entries[0]!.alwaysSend).toBe(true);
+    const unwired = applyGraphEdit(wired, { op: "remove-edge", edgeId: "e:var:hp->entry:e1:0" });
+    expect(unwired.entries[0]).toMatchObject({ conditions: [], alwaysSend: true });
+  });
+
+  it("unwiring the last condition clears a leftover variableBound flag, so the entry is not left gated on nothing", () => {
+    const entry = {
+      id: "e1", name: "secret", content: "x", keywords: [], alwaysSend: false, enabled: true, variableBound: true,
+      conditions: [{ variableId: "hp", operator: "gt", value: 0 }, { variableId: "hp", operator: "lt", value: 50 }],
+    };
+    const world = { ...base, entries: [entry] } as unknown as WorldDefinition;
+    const one = applyGraphEdit(world, { op: "remove-edge", edgeId: "e:var:hp->entry:e1:1" });
+    expect(one.entries[0]).toMatchObject({ variableBound: true });
+    const none = applyGraphEdit(one, { op: "remove-edge", edgeId: "e:var:hp->entry:e1:0" });
+    expect(none.entries[0]).toMatchObject({ conditions: [], variableBound: false });
+  });
+
+  it("removing a behaviour's write into an array item of a variable removes that effect", () => {
+    const world = {
+      ...base,
+      reactions: [{
+        id: "r1", name: "x", enabled: true, priority: 0, when: { eventType: "turn:complete" },
+        conditions: [], conditionLogic: "all", then: [{ type: "set", path: "inv[0].n", value: "sword" }],
+      }],
+    } as unknown as WorldDefinition;
+    const next = applyGraphEdit(world, { op: "remove-edge", edgeId: "e:reaction:r1->var:inv:0" });
+    expect(next.reactions![0]!.then).toHaveLength(0);
+  });
+
   it("does not mutate the input world", () => {
     applyGraphEdit(base, { op: "add-edge", edge: { id: "e", from: "rule:r1", fromPort: "effect", to: "var:hp", toPort: "write" } });
     expect(base.rules[0]!.actions).toHaveLength(0);

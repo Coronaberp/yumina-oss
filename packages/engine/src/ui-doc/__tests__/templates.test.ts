@@ -116,7 +116,7 @@ describe.each(UI_TEMPLATES.map((t) => [t.id, t] as const))("the %s layout", (_id
       // and two runs of hand placement meeting in the middle is exactly how
       // "第 12 天 · 黄昏" ended up underneath a meter.
       const page = scene();
-      const GROUND = /^(tpl-rail|tpl-hud|tpl-portrait|tpl-art-|tpl-portrait-empty)/;
+      const GROUND = /^(tpl-rail|tpl-hud|tpl-portrait|tpl-art-|tpl-portrait-empty|tpl-ground-)/;
       const placed = page.elements
         .filter((el) => !GROUND.test(el.id) && el.type !== "messages" && el.type !== "composer")
         .map((el) => ({ id: el.id, b: wide(el) }))

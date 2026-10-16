@@ -1,5 +1,5 @@
-import { expandMacros, isAiReadable, PromptBuilder, type GameState, type WorldDefinition } from "@yumina/engine";
-import { aiGenerationConfigSchema, resolveLorebookBudget, sideCompletionWorldbookIdsSchema } from "@yumina/shared";
+import { AUTHOR_SAMPLING_LIMITS, clampToRange, expandMacros, isAiReadable, PromptBuilder, type GameState, type WorldDefinition } from "@yumina/engine";
+import { aiGenerationConfigSchema, clampPlayerSampling, PLAYER_SAMPLING_BOUNDS, resolveLorebookBudget, sideCompletionWorldbookIdsSchema } from "@yumina/shared";
 import { z } from "zod";
 import type { playSessions } from "../db/schema.js";
 import type { ChatMessage, GenerateParams } from "./llm/types.js";
@@ -29,11 +29,16 @@ type CompletionSession = Pick<typeof playSessions.$inferSelect, "id" | "userId" 
 export function resolveSessionCompletionSettings(input: Settings, world: WorldDefinition): Pick<GenerateParams,
   "maxTokens" | "temperature" | "topP" | "frequencyPenalty" | "presencePenalty" | "repetitionPenalty" | "topK" | "minP" | "reasoningEffort" | "stream"
 > {
-  const prefs = input.overrides;
+  // Same request-time clamp as the story call: a card's side call runs on the
+  // player's saved sampling, so an extreme stored penalty garbles it the same way.
+  const prefs = clampPlayerSampling(input.overrides);
   const defaults = world.settings;
   return {
     maxTokens: Math.max(1, Math.min(input.maxTokens ?? prefs?.maxTokens ?? defaults?.maxTokens ?? 2048, 8192)),
-    temperature: Math.max(0, Math.min(input.temperature ?? prefs?.temperature ?? defaults?.temperature ?? 1, 2)),
+    // The card's own temperature is an author value: clamped like every other.
+    temperature: input.temperature !== undefined
+      ? clampToRange(input.temperature, AUTHOR_SAMPLING_LIMITS.temperature)
+      : clampToRange(prefs?.temperature ?? defaults?.temperature ?? 1, PLAYER_SAMPLING_BOUNDS.temperature),
     topP: prefs?.topP ?? defaults?.topP,
     frequencyPenalty: prefs?.frequencyPenalty ?? defaults?.frequencyPenalty,
     presencePenalty: prefs?.presencePenalty ?? defaults?.presencePenalty,
@@ -60,6 +65,8 @@ export async function buildSessionCompletionMessages(options: {
   messages: ChatMessage[];
   settings: Settings;
   json: boolean;
+  /** The player's plan memory cap (tokens); null/undefined = uncapped. */
+  memoryCap?: number | null;
 }): Promise<ChatMessage[]> {
   const { session, account, world, model, messages, settings } = options;
   const [persona, prompts] = await Promise.all([
@@ -97,10 +104,12 @@ export async function buildSessionCompletionMessages(options: {
     .map(e => ({ ...e, enabled: toggles[e.id] ?? e.enabled }));
   const all = settings.includeLorebook === true || settings.includeLorebook === "all";
   const generation = resolveSessionCompletionSettings(settings, world);
+  const memoryCap = options.memoryCap ?? Infinity;
+  const historyTokens = Math.ceil(textHistory.reduce((sum, m) => sum + m.content.length, 0) / 3);
   const budget = resolveLorebookBudget({
-    maxContext: settings.overrides?.maxContext ?? world.settings?.maxContext ?? 200_000,
+    maxContext: Math.min(settings.overrides?.maxContext ?? world.settings?.maxContext ?? 200_000, memoryCap),
     outputReserve: generation.maxTokens!,
-    storyMemory: Math.ceil(textHistory.reduce((sum, m) => sum + m.content.length, 0) / 3),
+    storyMemory: historyTokens,
     storyMemorySource: "chosen",
     budgetPercent: world.settings?.lorebookBudgetPercent,
     budgetCap: world.settings?.lorebookBudgetCap,
@@ -113,7 +122,8 @@ export async function buildSessionCompletionMessages(options: {
     // Side calls own their history. Scan every supplied user observation so a
     // trailing JSON repair instruction cannot displace the original scene.
     recentMessages: textHistory.filter(m => m.role === "user").map(m => m.content),
-    state, tokenBudget: all ? Infinity : budget, settings: world.settings,
+    // "All" skips the keyword budget, never the player's plan memory cap.
+    state, tokenBudget: all ? Math.max(0, memoryCap - generation.maxTokens! - historyTokens) : budget, settings: world.settings,
     modelId: model, loreUiBindings: world.loreUiBindings, worldbooks: world.worldbooks,
   });
   const builder = new PromptBuilder();

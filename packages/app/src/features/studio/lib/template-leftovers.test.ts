@@ -16,7 +16,8 @@ function layoutVariables(): Variable[] {
   }));
 }
 function layoutDoc(): UiDoc {
-  return template.build({ strings: { title: "T" }, variableIds: Object.fromEntries(template.needs.map((need) => [need.key, `v-${need.key}`])) });
+  const strings = { ...Object.fromEntries(template.stringKeys.map((key) => [key, `word:${key}`])), title: "T" };
+  return template.build({ strings, variableIds: Object.fromEntries(template.needs.map((need) => [need.key, `v-${need.key}`])) });
 }
 const emptyDoc = (): UiDoc => ({ version: 1, entryPageId: "page-1", pages: [{ id: "page-1", name: "Main", height: 812, elements: [] }], surface: "chat" });
 const world = (patch: Partial<WorldDefinition>): WorldDefinition => ({

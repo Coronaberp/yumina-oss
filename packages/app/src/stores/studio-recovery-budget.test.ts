@@ -66,6 +66,7 @@ test("the stall watchdog stays well inside the absolute timeout", () => {
   const idle = readProductConst(agentRoute, "IDLE_TIMEOUT_MS");
   const absolute = readProductConst(agentRoute, "CHAT_TIMEOUT_MS");
   assert.ok(idle < absolute, "IDLE_TIMEOUT_MS must trip before the shortest absolute timeout");
+  assert.ok(readProductConst(agentRoute, "BYOK_IDLE_TIMEOUT_MS") < absolute, "BYOK_IDLE_TIMEOUT_MS must trip before the shortest absolute timeout");
 });
 
 test("recovery treats a stale heartbeat as death, not a slow model", () => {

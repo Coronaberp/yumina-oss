@@ -330,14 +330,16 @@ export class GameStateManager {
     };
   }
 
-  /** Expire directives whose duration has been exceeded */
+  /** Expire directives whose duration has been exceeded. A directive marked
+   *  `persistent: false` with no duration is a one-shot: it lasts one turn. */
   expireDirectives(currentTurn: number): Directive[] {
     const ruleState = this.getRuleState();
     const expired: Directive[] = [];
     const remaining: Directive[] = [];
 
     for (const d of ruleState.activeDirectives) {
-      if (d.duration !== undefined && currentTurn - d.injectedAtTurn >= d.duration) {
+      const duration = d.duration ?? (d.persistent === false ? 1 : undefined);
+      if (duration !== undefined && currentTurn - d.injectedAtTurn >= duration) {
         expired.push(d);
       } else {
         remaining.push(d);

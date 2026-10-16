@@ -24,6 +24,7 @@ export interface ReactionRunResult {
 }
 
 const DEFAULT_MAX_DEPTH = 5;
+const MAX_CHAIN_DEPTH_CAP = 20;
 
 /**
  * Evaluate reactions against `initialEvents` and follow the chain: effects that
@@ -48,7 +49,10 @@ export function runReactionChain(
   rules: Rule[],
   options?: { maxDepth?: number; worldbooks?: Worldbook[] },
 ): ReactionRunResult {
-  const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  // A behaviour may ask for a longer chain (maxChainDepth); each one still fires
+  // at most once per chain, so the bound only caps how far a cascade travels.
+  const maxDepth = options?.maxDepth ?? Math.min(MAX_CHAIN_DEPTH_CAP,
+    Math.max(DEFAULT_MAX_DEPTH, ...reactions.map((r) => r.maxChainDepth ?? 0)));
   const worldbooks = options?.worldbooks;
 
   const cooldownById = new Map<string, number | undefined>();
@@ -124,7 +128,7 @@ export function runReactionChain(
     // rules stay retired when settlement re-enters the bounded chain.
     const settled = runReactionChain(evaluator, stateManager,
       settledChanges.map(change => ({ type: "state:changed" as const, ...change })),
-      activeReactions, activeRules, { maxDepth: maxDepth - depth - 1 });
+      activeReactions, activeRules, { maxDepth: maxDepth - depth - 1, worldbooks });
     out.changes.push(...settled.changes);
     out.changeCauses.push(...settled.changeCauses);
     out.audioEffects.push(...settled.audioEffects);

@@ -4,10 +4,8 @@ import type { ChatStringKey } from "./i18n";
 /**
  * What the chat shows between "sent" and the first token.
  *
- * Heavy cards take 40–56s to the first token (huge prompts on slow models).
- * A bare "…" for that long reads as a hang, so the line grows a little more
- * explicit the longer it waits — always on one line, inside the same box, so
- * nothing below it jumps when the wording changes.
+ * Elapsed time is not evidence of prompt size or provider reasoning. Describe
+ * waiting without guessing its cause, and keep the line's layout stable.
  */
 
 /** Seconds after which the wait is worth naming, then worth explaining. */

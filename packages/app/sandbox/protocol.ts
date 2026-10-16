@@ -402,6 +402,7 @@ export interface InstallRootMessage {
   compiledCode?: string;
   /** If parent-side compile/bundle failed, delivered here and the sandbox renders the error. */
   compileError?: string;
+  diagnostic?: import("../src/lib/tsx/diagnostics").CodeDiagnostic;
 }
 
 /** Push a single state channel update */
@@ -543,6 +544,7 @@ export interface ResizeMessage {
 export interface ComponentErrorMessage {
   type: "component-error";
   message: string;
+  diagnostic?: import("../src/lib/tsx/diagnostics").CodeDiagnostic;
 }
 
 /** The root component has been installed AND painted its first frame (or a

@@ -1,6 +1,13 @@
 # Publishing, Exporting & Bundles
 
+> Cover and asset rules: effective October 24, 2026 at 11:59 p.m. Pacific time. [See the notice and previous rules](/legal/community-guidelines).
+
 ## The short version
+
+- **Limited:** every asset must be safe for work and non-suggestive, including during gameplay.
+- **Limitless:** public covers, galleries, and previews cannot show nudity, sexual acts, or graphic gore; intimate areas must be covered with opaque clothing.
+- **Blur is optional for viewers, not an exception to the rules.** Mark suggestive Limitless covers **Blurred** and check the fully visible image.
+- Check the [publishing checklist](/creator/publishing#content-checklist) and [full media rules](/legal/community-guidelines#publishing-media) before submitting.
 
 When your world is done, click **Not live** in the top right of the canvas and publish it.
 
@@ -31,7 +38,15 @@ The publish button in the top right shows where a world stands:
 
 A draft, a rejected world and an unpublished world can all be submitted for review. While a world is in review you can't edit it; **Stop review request** takes it back to a draft. A published world can be unpublished from the publish menu.
 
-When you unpublish a world, players who've added it to their library get a notification, and players with existing sessions see it as "No longer available" and can't keep playing. When you re-publish, they're notified again.
+Click **Unpublish** and choose the scope before confirming:
+
+- **Current variant only** (default): take down the variant you opened.
+- **All published variants**: take down your published variants in the same language group.
+- **Choose variants**: select the exact versions to take down, including separate variants in the same language.
+
+Drafts and other variants that are not published cannot be selected. The dialog shows the selection and which variants will remain published. Only the selected versions are affected; unselected published variants stay available. If a selected variant's status has changed, refresh the list and review your selection before retrying.
+
+For each selected variant, players who've added it to their library get a notification, and players with existing sessions see it as "No longer available" and can't keep playing. When you re-publish that variant, they're notified again and access is restored.
 
 After a world is live, edits you save become **Unpublished changes**. Players keep seeing the live version until you submit the changes and they pass review. See [Publishing](/creator/publishing#updating-a-published-world).
 
@@ -43,8 +58,8 @@ These are set in the **publish dialog** (from **Publish** in the publish menu), 
 
 | UI label | Meaning |
 |----------|---------|
-| **Limited** | Standard content boundaries — visible to everyone |
-| **Limitless** | Expanded content boundaries — available to eligible accounts |
+| **Limited** | Safe for work and non-suggestive throughout; suitable for ages 13+ |
+| **Limitless** | Permitted adult content for eligible users aged 18+; public media still follows the non-explicit cover and preview rules |
 
 If you don't pick anything, publishing defaults to **Limited**.
 
@@ -78,6 +93,8 @@ Up to 50 tags. Very useful for search and filtering on the Discover page — the
 **Cover image**
 
 Upload it in **Card settings** (**Cover & blurb** on the canvas). Used on Discover cards, search results, and in **My Library**.
+
+A cover is required for publication. Both covers must meet the [cover and asset rules](/legal/community-guidelines#publishing-media), even for a Limitless World. The **Blurred / Clear** setting controls presentation for viewers who enable blur; it does not make a prohibited cover publishable.
 
 ### Forking
 

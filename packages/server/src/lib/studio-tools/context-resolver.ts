@@ -140,37 +140,35 @@ const STOP_WORDS = new Set([
 /** CJK Unified Ideographs + common CJK ranges */
 const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/;
 
+/** A pasted document can be megabytes: `results.push(...words)` overflowed the
+ *  stack on it (5 runs) and `includes` per bigram went quadratic. The request's
+ *  opening says what it is about; matching more of it only adds noise. */
+const KEYWORD_SOURCE_CHARS = 8000;
+const MAX_KEYWORDS = 300;
+
 export function extractKeywords(request: string): string[] {
-  const lower = request.toLowerCase();
-  const results: string[] = [];
+  const lower = request.slice(0, KEYWORD_SOURCE_CHARS).toLowerCase();
+  const results = new Set<string>();
+  const add = (kw: string) => { if (results.size < MAX_KEYWORDS) results.add(kw); };
 
   // Extract Latin/digit words (existing logic)
-  const latinWords = lower
-    .replace(/[^\w\s-]/g, (ch) => (CJK_RE.test(ch) ? ch : " "))
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !CJK_RE.test(w[0]!) && !STOP_WORDS.has(w));
-  results.push(...latinWords);
+  for (const w of lower.replace(/[^\w\s-]/g, (ch) => (CJK_RE.test(ch) ? ch : " ")).split(/\s+/)) {
+    if (w.length > 1 && !CJK_RE.test(w[0]!) && !STOP_WORDS.has(w)) add(w);
+  }
 
   // Extract CJK: individual characters + bigrams for better matching
   // e.g. "修改猫猫的性格" → ["修改", "猫猫", "性格", "猫", "格"]
   const cjkChars = lower.replace(/[^\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g, " ").split(/\s+/).filter(Boolean);
   for (const run of cjkChars) {
     // Full run as keyword (good for multi-char names like "猫猫")
-    if (run.length >= 2) results.push(run);
+    if (run.length >= 2) add(run);
     // Bigrams for substring matching
-    for (let i = 0; i < run.length - 1; i++) {
-      const bigram = run.slice(i, i + 2);
-      if (!results.includes(bigram)) results.push(bigram);
-    }
+    for (let i = 0; i < run.length - 1; i++) add(run.slice(i, i + 2));
     // Single chars only for short runs (avoid noise from long strings)
-    if (run.length <= 2) {
-      for (const ch of run) {
-        if (!results.includes(ch)) results.push(ch);
-      }
-    }
+    if (run.length <= 2) for (const ch of run) add(ch);
   }
 
-  return results;
+  return [...results];
 }
 
 // ── Entity Matching ──
@@ -364,6 +362,10 @@ export function buildInventory(world: WorldDefinition, assets: AssetSummary[]): 
       if (wb.frontendFile) parts.push(`    frontend scene: ${wb.frontendFile}`);
       if (st) {
         if (st.model) parts.push(`    model: ${st.model}`);
+        // Read by background AIs only; a narrator uses the player's own.
+        if (st.kind !== "narrator" && (wb.station?.temperature != null || wb.station?.maxTokens != null)) {
+          parts.push(`    sampling: ${[wb.station?.temperature != null ? `temp=${wb.station.temperature}` : "", wb.station?.maxTokens != null ? `maxTokens=${wb.station.maxTokens}` : ""].filter(Boolean).join(", ")}`);
+        }
         if (st.inputs.length > 0) {
           const wires = st.inputs
             .map((i) => `${i.kind}<-${i.from}(${i.as ?? "history"}${"limit" in i && i.limit ? `, ${i.limit}` : ""})`)
@@ -574,8 +576,16 @@ export function buildInventory(world: WorldDefinition, assets: AssetSummary[]): 
   const s = world.settings;
   if (s) {
     const settingParts: string[] = [];
-    if (s.maxTokens) settingParts.push(`maxTokens=${s.maxTokens}`);
-    if (s.temperature != null) settingParts.push(`temp=${s.temperature}`);
+    // The story AI follows the player's sampling unless samplingPolicy is
+    // "author"; the card's temp is stored either way, so say which applies.
+    if (s.samplingPolicy === "author") {
+      const sampled = (["temperature", "topP", "topK", "minP", "frequencyPenalty", "presencePenalty"] as const)
+        .filter((k) => s[k] != null).map((k) => `${k === "temperature" ? "temp" : k}=${s[k]}`);
+      settingParts.push(`sampling=author${sampled.length ? ` (${sampled.join(", ")})` : ""}`);
+    } else {
+      settingParts.push(`sampling=player (card temp/topP/… inactive)`);
+    }
+    if (s.recommendedModel) settingParts.push(`recommendedModel=${s.recommendedModel}`);
     if (s.playerName) settingParts.push(`playerName="${s.playerName}"`);
     if (s.narratorVoice) settingParts.push(`narratorVoice=${s.narratorVoice}`);
     if (s.voiceInputMode) settingParts.push(`voiceInputMode=${s.voiceInputMode}`);

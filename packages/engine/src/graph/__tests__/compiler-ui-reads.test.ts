@@ -102,6 +102,25 @@ describe("toGraph — the dead-binding warning", () => {
     expect(node(g, "var:health")!.data.uiReadNeverWritten).toBeUndefined();
   });
 
+  it("stays quiet when a behavior writes into an array item of it, and draws that write", () => {
+    // `inv[0].n` lives in `inv`. Cut at the first dot it read as `inv[0]`,
+    // which is no variable: no wire, and a false "never written" flag.
+    const writer: Reaction = {
+      id: "r1", name: "rename", enabled: true, priority: 0,
+      when: { eventType: "turn:complete" },
+      conditions: [], conditionLogic: "all",
+      then: [{ type: "set", path: "inv[0].n", value: "sword" }],
+    };
+    const g = toGraph({
+      variables: [variable({ id: "inv", type: "json", defaultValue: [], aiAccess: "read" })],
+      rules: [], reactions: [writer],
+      rootComponent: frontendWith("api.variables.inv"),
+    });
+    expect(node(g, "var:inv")!.data.uiReadNeverWritten).toBeUndefined();
+    const wire = g.edges.find((e) => e.from === "reaction:r1" && e.to === "var:inv");
+    expect(wire?.id).toBe("e:reaction:r1->var:inv:0");
+  });
+
   it("stays quiet when the AI may write it (the default)", () => {
     const g = toGraph({
       variables: [variable({ id: "health" })],

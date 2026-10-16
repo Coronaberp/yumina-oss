@@ -10,8 +10,8 @@ import {
   createUploadTimeout,
 } from "@/lib/asset-upload";
 
-const tr = (key: string, fallback: string) =>
-  (i18n.t as (k: string, o?: Record<string, unknown>) => string)(key, { defaultValue: fallback });
+const tr = (key: string, fallback: string, vars?: Record<string, unknown>) =>
+  (i18n.t as (k: string, o?: Record<string, unknown>) => string)(key, { defaultValue: fallback, ...vars });
 
 export interface UserAsset {
   id: string;
@@ -232,6 +232,13 @@ export const useUserAssetStore = create<UserAssetState>((set, get) => ({
         credentials: "include",
       });
       if (!res.ok) {
+        // Still a card's cover: retrying can't help, say which card to change first.
+        const body = res.status === 409 ? ((await res.json().catch(() => null)) as { code?: string; worlds?: Array<{ name?: string }> } | null) : null;
+        if (body?.code === "ASSET_IN_USE") {
+          const name = body.worlds?.[0]?.name || "";
+          feedback.error(tr("library:toast.deleteAssetInUse", "This image is still the cover of “{{name}}”. Change that cover first.", { name }));
+          return;
+        }
         feedback.error(tr("library:toast.deleteAssetFailed", "Couldn't delete asset"), {
           label: tr("common:action.retry", "Retry"),
           onClick: () => void useUserAssetStore.getState().deleteAsset(assetId),

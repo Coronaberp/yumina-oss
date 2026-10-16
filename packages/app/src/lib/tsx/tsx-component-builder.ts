@@ -14,10 +14,12 @@
  */
 import React from "react";
 import { LucideScope } from "./lucide-scope";
+import { createCodeDiagnostic, type CodeDiagnostic } from "./diagnostics";
 
 export interface CompileResult {
   Component: React.ComponentType<Record<string, unknown>> | null;
   error: string | null;
+  diagnostic?: CodeDiagnostic;
 }
 
 export interface CompileRuntimeScope {
@@ -41,7 +43,8 @@ export interface CompileRuntimeScope {
 export function buildComponent(
   transformedCode: string,
   useYuminaHook?: () => unknown,
-  runtimeScope: CompileRuntimeScope = {}
+  runtimeScope: CompileRuntimeScope = {},
+  context?: { files: Record<string, string> },
 ): CompileResult {
   // Strip ES module syntax (not supported by new Function())
   let strippedCode = transformedCode;
@@ -171,11 +174,17 @@ export function buildComponent(
     return {
       Component: null,
       error: "No component exported. Use `export default function ...`",
+      diagnostic: createCodeDiagnostic("No component exported. Use `export default function ...`", { phase: "load", files: context?.files }),
     };
   } catch (err) {
+    const files = context?.files;
+    // A single source file can be attributed even when eval gives no usable
+    // line. Multi-file attribution is handled by the bundler's failure probe.
+    const file = files && Object.keys(files).length === 1 ? Object.keys(files)[0] : undefined;
     return {
       Component: null,
       error: err instanceof Error ? err.message : "Runtime error",
+      diagnostic: createCodeDiagnostic(err, { phase: "load", file, files }),
     };
   }
 }

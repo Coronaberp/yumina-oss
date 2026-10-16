@@ -5,7 +5,7 @@ import { db } from "../db/index.js";
 import { creditWallets, modelPrices, playSessions, user, worlds } from "../db/schema.js";
 import { env } from "./env.js";
 import { invalidateModelPriceCache } from "./model-price-cache.js";
-import { generateStorySummaryText } from "./session-compaction.js";
+import { DEFAULT_STORY_SUMMARY_MODEL, generateStorySummaryText } from "./session-compaction.js";
 import { OpenRouterProvider } from "./llm/openrouter.js";
 import { LocalBridgeProvider } from "./llm/local-bridge.js";
 import type { GenerateParams, StreamChunk } from "./llm/types.js";
@@ -18,6 +18,7 @@ before(async () => {
     { modelId: "test/free", inputPricePerM: 1, outputPricePerM: 1, minPlan: "free" },
     { modelId: "test/premium", inputPricePerM: 1, outputPricePerM: 1, minPlan: "pro" },
     { modelId: "deepseek/deepseek-v3.2", inputPricePerM: 1, outputPricePerM: 1, minPlan: "pro" },
+    { modelId: DEFAULT_STORY_SUMMARY_MODEL, inputPricePerM: 1, outputPricePerM: 1, minPlan: "free" },
   ]);
   invalidateModelPriceCache();
 });
@@ -62,20 +63,41 @@ test("protected worlds in private mode do not silently spend official credits", 
   assert.equal(requests.length, 0);
 });
 
-for (const reason of ["MODEL_NOT_ALLOWED", "NO_CREDITS", "SUSPENDED"]) {
+for (const reason of ["NO_CREDITS", "SUSPENDED"]) {
   test(`${reason} prevents all upstream module requests`, async () => {
     const session = await fixture({ balance: reason === "NO_CREDITS" ? 0 : 100, suspended: reason === "SUSPENDED" });
     const requests = providerMock();
-    await assert.rejects(call(session, reason === "MODEL_NOT_ALLOWED" ? "test/premium" : "test/free"), new RegExp(reason));
+    await assert.rejects(call(session, "test/free"), new RegExp(reason));
     assert.equal(requests.length, 0);
   });
 }
 
+test("a creator model above the player's plan runs on the default summary model", async () => {
+  const session = await fixture();
+  const requests = providerMock();
+  assert.equal(await call(session, "test/premium"), "A usable answer.");
+  assert.deepEqual(requests.map((r) => r.model), [DEFAULT_STORY_SUMMARY_MODEL], "the premium model must never reach a provider");
+});
+
+test("a creator model no key can run (a typo, an unpriced id) runs on the default summary model", async () => {
+  const session = await fixture();
+  const requests = providerMock();
+  assert.equal(await call(session, "ollama/llama3.2:3b"), "A usable answer.");
+  assert.deepEqual(requests.map((r) => r.model), [DEFAULT_STORY_SUMMARY_MODEL]);
+});
+
+test("a player's own endpoint model is never swapped for one billed on the official key", async () => {
+  const session = await fixture();
+  const requests = providerMock();
+  await assert.rejects(call(session, "custom/deepseek-v4-pro", "story-compaction"));
+  assert.equal(requests.length, 0);
+});
+
 test("a refusal fallback must pass the same plan check", async () => {
   const session = await fixture();
   const requests = providerMock("official", true);
-  await assert.rejects(call(session, "test/free"), /MODEL_NOT_ALLOWED/);
-  assert.equal(requests.length, 1, "the disallowed fallback must not contact a provider");
+  await assert.rejects(call(session, "test/free"), /content filter/);
+  assert.deepEqual(requests.map((r) => r.model), ["test/free", DEFAULT_STORY_SUMMARY_MODEL], "the premium fallback must never reach a provider");
 });
 
 for (const creator of [false, true]) {
@@ -106,11 +128,11 @@ test("a session cannot be billed to a different user", async () => {
   assert.equal(requests.length, 0);
 });
 
-test("existing story compaction keeps its separate model policy", async () => {
+test("a story summary model above the player's plan runs on the default summary model", async () => {
   const session = await fixture();
   const requests = providerMock();
   assert.equal(await call(session, "test/premium", "story-compaction"), "A usable answer.");
-  assert.equal(requests.length, 1);
+  assert.deepEqual(requests.map((r) => r.model), [DEFAULT_STORY_SUMMARY_MODEL]);
 });
 
 test("a tiny positive balance cannot start a call it cannot afford", async () => {

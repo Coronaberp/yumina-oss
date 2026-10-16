@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { classifyChatError, errorDetail } from "../../sandbox/chat/error-codes";
+import { makeChatT } from "../../sandbox/chat/i18n";
 
 // Launch QA: Chinese players saw "No API key configured for this provider. Add
 // one in Settings. Dismiss". Every raw server/provider line must map to a
@@ -41,4 +43,42 @@ test("unknown errors stay unknown instead of getting a confident wrong label", (
   assert.equal(classifyChatError(""), null);
   assert.equal(errorDetail("a\n  b"), "a b");
   assert.equal(errorDetail("x".repeat(300)).length, 140);
+});
+
+test("upstream balance wording never becomes a Mushies recharge instruction", () => {
+  for (const raw of [
+    'Custom endpoint error (402): {"error":"Insufficient Balance"}',
+    "OpenRouter error (402): Insufficient credits",
+    'OpenAI error (429): {"code":"insufficient_quota"}',
+    "Insufficient balance",
+    "Insufficient credits",
+    "Upstream error: You have used all your credits",
+  ]) {
+    assert.equal(classifyChatError(raw), "UPSTREAM_BALANCE", raw);
+    assert.equal(classifyChatError(raw, "PRIVATE_API_BALANCE"), "PRIVATE_API_BALANCE", raw);
+  }
+});
+
+test("explicit platform and provider balance codes remain distinct", () => {
+  assert.equal(classifyChatError("Insufficient credits", "NO_CREDITS"), "NO_CREDITS");
+  assert.equal(classifyChatError("Insufficient credits", "INSUFFICIENT_CREDITS"), "NO_CREDITS");
+  assert.equal(classifyChatError("Not enough mushies", "UPSTREAM_BALANCE"), "UPSTREAM_BALANCE");
+  assert.equal(classifyChatError("Not enough mushies", "PRIVATE_API_BALANCE"), "PRIVATE_API_BALANCE");
+  assert.equal(classifyChatError("You've used all your credits for this period. Purchase additional credits or upgrade your plan."), "NO_CREDITS");
+});
+
+test("live banners and saved failed turns give the same balance advice in every language", () => {
+  for (const language of ["en", "zh", "zh-Hant", "ja", "es"]) {
+    const errors = JSON.parse(readFileSync(new URL(`../locales/${language}/chat.json`, import.meta.url), "utf8")).errors;
+    const t = makeChatT(language);
+    for (const [code, key] of [
+      ["PRIVATE_API_BALANCE", "errPrivateApiBalance"],
+      ["UPSTREAM_BALANCE", "errUpstreamBalance"],
+    ] as const) {
+      assert.equal(classifyChatError("Insufficient balance", code), code);
+      assert.ok(errors[code]?.length > 0, `${language}: missing ${code}`);
+      assert.equal(t(key), errors[code], `${language}: failed turn and banner disagree`);
+      assert.doesNotMatch(t(key), /mushies|蘑菇/i, `${language}: upstream failure must not send players to recharge Mushies`);
+    }
+  }
 });

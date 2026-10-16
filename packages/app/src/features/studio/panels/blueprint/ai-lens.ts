@@ -1,4 +1,4 @@
-import { resolveStation, type WorldDefinition } from "@yumina/engine";
+import { isAlwaysSendEntry, resolveStation, type WorldDefinition } from "@yumina/engine";
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -20,7 +20,8 @@ export function lensAis(world: WorldDefinition, t: Translate): LensAi[] {
   for (const book of world.worldbooks ?? []) {
     const st = resolveStation(book);
     if (!st) continue;
-    out.push({ key: `book:${book.id}`, name: book.name, kind: st.kind === "narrator" ? "narrator" : st.trigger?.on === "quiet" ? "quiet" : "worker" });
+    // The name it is called by (`api.callAi`), as its title says.
+    out.push({ key: `book:${book.id}`, name: st.name?.trim() || book.name, kind: st.kind === "narrator" ? "narrator" : st.trigger?.on === "quiet" ? "quiet" : "worker" });
   }
   if (world.continuity?.enabled !== false && precise(world).length > 0) {
     out.push({ key: "judge", name: String(t("blueprint.lens.judge")), kind: "judge" });
@@ -41,8 +42,8 @@ export function lensCall(world: WorldDefinition, key: string, opts: { seesScene:
   const { t, seesScene } = opts;
   const books = world.worldbooks ?? [];
   const entries = (world.entries ?? []).filter((e) => e.enabled !== false && e.role !== "greeting");
-  const always = (owner: string | null) => entries.filter((e) => e.alwaysSend && (e.worldbookId ?? null) === owner).length;
-  const keyed = (owner: string | null) => entries.filter((e) => !e.alwaysSend && (e.worldbookId ?? null) === owner).length;
+  const always = (owner: string | null) => entries.filter((e) => isAlwaysSendEntry(e) && (e.worldbookId ?? null) === owner).length;
+  const keyed = (owner: string | null) => entries.filter((e) => !isAlwaysSendEntry(e) && (e.worldbookId ?? null) === owner).length;
   const vars = (world.variables ?? []).length;
   const historyLimit = world.settings?.historyLimit;
   const scene = seesScene ? [String(t("blueprint.lens.sees.scene"))] : [];

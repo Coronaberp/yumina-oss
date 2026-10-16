@@ -1,6 +1,7 @@
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
 import { parseUnsupportedParam, stripParamFromBody } from "./param-fallback.js";
+import { toWireContent } from "./wire-content.js";
 import { LLM_CONNECTION_TIMEOUT_MS, LLM_REQUEST_TIMEOUT_MS, LLM_STREAM_INACTIVITY_TIMEOUT_MS } from "./constants.js";
 
 const OPENAI_BASE = "https://api.openai.com/v1";
@@ -383,9 +384,9 @@ function serializeMessage(m: ChatMessage): Record<string, unknown> {
     return { role: "tool", tool_call_id: m.tool_call_id, content: m.content };
   }
   if (m.role === "assistant" && "tool_calls" in m && m.tool_calls && m.tool_calls.length > 0) {
-    return { role: "assistant", content: m.content ?? "", tool_calls: m.tool_calls };
+    return { role: "assistant", content: toWireContent(m.content ?? ""), tool_calls: m.tool_calls };
   }
-  return { role: m.role, content: m.content };
+  return { role: m.role, content: toWireContent(m.content) };
 }
 
 function* flushToolCalls(

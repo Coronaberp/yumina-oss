@@ -13,6 +13,7 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import { useTranslation } from "react-i18next";
 import { useAssetStore, type Asset } from "@/stores/assets";
 import { useUserAssetStore, type UserAsset } from "@/stores/user-assets";
@@ -22,6 +23,7 @@ import { cardImageUrl, fallbackToOriginalOnError, getAssetCdnUrl } from "@/lib/a
 
 interface AssetPickerProps {
   worldId: string;
+  mediaUsage?: "public" | "assets";
   /** "media" = a picture or a video (the second argument of onSelect says which). */
   filterType?: "image" | "video" | "audio" | "font" | "txt" | "other" | "media";
   onSelect: (assetRef: string, type: string) => void;
@@ -39,7 +41,7 @@ const TYPE_ICONS: Record<string, typeof ImageIcon> = {
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
-export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPickerProps) {
+export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSelect, onClose }: AssetPickerProps) {
   const { t } = useTranslation("editor");
   const { assets, loading, uploading, uploadingCount, uploadProgress: progress, fetchAssets, uploadAsset } = useAssetStore();
   const {
@@ -184,6 +186,8 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        <MediaGuidelinesNote usage={mediaUsage} className="mx-4 my-3 max-h-[25vh] shrink-0 overflow-y-auto" />
 
         {/* Search + Upload */}
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">

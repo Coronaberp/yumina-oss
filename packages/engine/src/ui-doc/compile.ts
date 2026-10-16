@@ -554,6 +554,25 @@ function rectOn(el: UiElement, canvas: "phone" | "desktop"): Rect | null {
   return b && b.w > 0 && b.h > 0 ? b : null;
 }
 
+/** The part types that ARE the chat: `chat` mounts `<Chat/>`, `messages` and
+ *  `composer` its two halves. */
+const CHAT_PART_TYPES: ReadonlySet<string> = new Set(["chat", "messages", "composer"]);
+
+/**
+ * Whether the document places a chat part on any page. `surface: "chat"`
+ * means "the platform chat underneath, because there is no other" — a doc
+ * that places one itself has outgrown it, and keeping the stock layer drew
+ * two chats stacked (2026-10-15, "The Potter Project": the Studio agent
+ * added a chat part to a surface-chat doc and both rendered).
+ *
+ * Built-in parts only. A custom part that mounts `<Chat>` in its own code
+ * was written that way on purpose, over the stock chat, and compiles as it
+ * always has.
+ */
+export function uiDocDrawsChat(doc: Pick<UiDoc, "pages">): boolean {
+  return (doc.pages ?? []).some((page) => (page?.elements ?? []).some((el) => !!el && CHAT_PART_TYPES.has(el.type)));
+}
+
 /**
  * The strip across the top of a page that a stock-chat card's own parts
  * take — a status line, a meter, a title — in design pixels, or 0.
@@ -1444,7 +1463,15 @@ export function compileUiDoc(doc: UiDoc): CompiledUi {
   // — unscaled, full bleed — with the theme's tokens on the stage around it.
   // Same layer, same rules as a preserved frontend; the only difference is
   // that there is no file to import.
-  const stockBase = !baseFile && doc.surface === "chat";
+  //
+  // Not when a page places a chat part: the stock layer is the chat for a
+  // card that has none, never a second one under a card that does
+  // (2026-10-15, two chats stacked). Whole-document, not per page: the layer
+  // is one node outside the page switch and decides the stage's whole shape,
+  // and both writers (the editor's chat page, edit_ui_doc) clear `surface`
+  // for the whole doc — a per-page rule here would compile differently the
+  // moment either of them next touched the card.
+  const stockBase = !baseFile && doc.surface === "chat" && !uiDocDrawsChat({ pages });
   const hasBase = Boolean(baseFile) || stockBase;
   const baseLayer = baseFile ? "<__Base />" : `{typeof Chat !== "undefined" ? <Chat /> : null}`;
   // A stock chat makes room for the bars a page puts across its top (see

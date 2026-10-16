@@ -12,14 +12,17 @@ export interface SideCompletionParams {
   responseFormat?: CompletionResponseFormat;
 }
 
-type Preferences = Omit<AiGenerationConfig, "reasoningEffort" | "storyMemory"> & { reasoningEffort?: string };
+type Preferences = Omit<AiGenerationConfig, "reasoningEffort" | "storyMemory"> & { reasoningEffort?: string; selectedModel?: string };
 
 /** Explicit allowlist: a sandbox posting its own `overrides` cannot replace
  * the parent's current player settings. Read config at the time of each call. */
-export function buildSideCompletionRequest(params: SideCompletionParams, preferences: Preferences): SideCompletionParams & { overrides?: Preferences } {
+export function buildSideCompletionRequest(params: SideCompletionParams, preferences: Preferences): SideCompletionParams & { overrides?: Preferences; modelSource?: "card" } {
   return {
     messages: params.messages,
     model: params.model,
+    // A model the card's code named itself (not the player's own pick) falls
+    // back on the server when the player's plan can't run it.
+    ...(params.model && params.model !== preferences.selectedModel && { modelSource: "card" as const }),
     maxTokens: params.maxTokens,
     temperature: params.temperature,
     context: params.context,

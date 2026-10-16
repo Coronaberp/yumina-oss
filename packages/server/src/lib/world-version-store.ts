@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { worldPendingEdits, worldVersions } from "../db/schema.js";
 import type { WorldEditExecutor } from "./pending-edit.js";
 import { versionMetadata, worldVersionHash, type VersionMetadata } from "./world-version-content.js";
+import { assetRefsCover, versionAssetRefs } from "./world-version-asset-refs.js";
 
 export async function readVersionState(tx: WorldEditExecutor, worldId: string) {
   const result = await tx.execute(sql`SELECT to_jsonb(w) AS row FROM worlds w WHERE id = ${worldId} FOR UPDATE`);
@@ -37,6 +38,7 @@ async function insertWorldCheckpoint(tx: WorldEditExecutor, args: {
     worldId: args.worldId, createdBy: args.creatorId,
     name: `Saved version · ${new Date().toISOString()}`,
     schema: args.schema, metadata: args.metadata, source: args.source, contentHash,
+    ...versionAssetRefs(args.schema, args.metadata),
     publishedAt: args.published ? new Date() : null,
   }).returning();
   if (!version) throw new Error("Version checkpoint was not saved");
@@ -55,8 +57,17 @@ export async function checkpointWorld(tx: WorldEditExecutor, worldId: string, so
 
 /** Retained content references protect hosted bytes from ordinary asset deletion. */
 export async function assetIsVersioned(tx: WorldEditExecutor, id: string, url: string): Promise<boolean> {
-  const result = await tx.execute(sql`SELECT 1 FROM world_versions
-    WHERE strpos(schema::text, ${id}) > 0 OR strpos(schema::text, ${url}) > 0
-      OR strpos(COALESCE(metadata::text, ''), ${id}) > 0 OR strpos(COALESCE(metadata::text, ''), ${url}) > 0 LIMIT 1`);
+  const readsContent = sql`(strpos(schema::text, ${id}) > 0 OR strpos(schema::text, ${url}) > 0
+      OR strpos(COALESCE(metadata::text, ''), ${id}) > 0 OR strpos(COALESCE(metadata::text, ''), ${url}) > 0)`;
+  if (!assetRefsCover(id, url)) {
+    const result = await tx.execute(sql`SELECT 1 FROM world_versions WHERE ${readsContent} LIMIT 1`);
+    return result.rows.length > 0;
+  }
+  // Only rows saved before the reference columns still need their content read.
+  const result = await tx.execute(sql`
+    SELECT 1 FROM world_versions WHERE asset_ids @> ARRAY[${id}]::text[]
+    UNION ALL SELECT 1 FROM world_versions v, unnest(v.asset_paths) p WHERE strpos(p, ${url}) > 0
+    UNION ALL SELECT 1 FROM world_versions WHERE asset_ids IS NULL AND ${readsContent}
+    LIMIT 1`);
   return result.rows.length > 0;
 }

@@ -1,4 +1,5 @@
 import { assetIsVersioned } from "../lib/world-version-store.js";
+import { worldsUsingAsCover } from "../lib/asset-cover-use.js";
 import { userAssetFilters } from "../lib/user-asset-filters.js";
 import { detachGenerationAsset } from "../lib/generation/asset-receipts.js";
 import { Hono } from "hono";
@@ -897,6 +898,11 @@ userAssetRoutes.delete("/:id", async (c) => {
   if (rows.length === 0) {
     return c.json({ error: "Asset not found" }, 404);
   }
+
+  // A live cover (any card, any language) must not turn into a broken image.
+  // Checked before the version lock: it scans worlds and doesn't need it.
+  const covers = await worldsUsingAsCover(db, assetId, rows[0]!.url);
+  if (covers.length) return c.json({ error: "This image is still a card's cover.", code: "ASSET_IN_USE", worlds: covers }, 409);
 
   const retained = await db.transaction(async tx => {
     await tx.execute(sql`LOCK TABLE world_versions IN SHARE ROW EXCLUSIVE MODE`);

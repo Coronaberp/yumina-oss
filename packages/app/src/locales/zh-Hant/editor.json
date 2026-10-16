@@ -47,6 +47,7 @@
     "visualIntroBody": "左上角這個開關打開後，整張卡會鋪成一張畫布：開場白、設定、數值、行為和玩家介面都在同一張板上，點哪改哪，創作助手也直接在板上工作。隨時可以關掉切回完整編輯器。",
     "visualIntroTry": "打開畫布試試",
     "visualIntroLater": "先不用",
+    "desktopCanvasNote": "在電腦上打開這張卡，可以用畫布編輯（Beta）。",
     "recoverDraftMerged": "這張卡之後在別處改過——已保留你恢復的版本"
   },
   "sections": {
@@ -218,7 +219,6 @@
     "recursionDepth": "遞迴深度",
     "recursionDepthHint": "級聯詞條觸發的最大深度。0 = 禁用。",
     "addOfficialPresets": "新增官方預設 (缺少 {{count}} 個)",
-    "messages": "...訊息...",
     "name": "名稱",
     "portrait": "立繪",
     "sendAs": "傳送方式",
@@ -615,11 +615,15 @@
     "blurb": "玩家從聊天旁邊的停靠欄打開的小 App：訊息、角色關係、廣場、時間……每個 App 的資料放在一個變數裡，由 AI 跟著劇情填寫。每張卡片上方就是這個 App 的真實樣子，你什麼都不用寫。",
     "add": "加進這張卡",
     "added": "已加入停靠欄",
-    "footnote": "App 裡的文字跟著卡的語言走（中文、英文或西班牙語）。在 Bundles 頁移除後，按鈕、資料和規則會一起刪掉。",
+    "footnote": "App 裡的文字跟著卡的語言走（中文、英文或西班牙語）。移除 App 時，停靠欄按鈕、資料和規則會一起刪掉。",
     "sets": "推薦組合——這類卡大多在追蹤這些",
     "addSet": "四個一起加",
     "setAdded": "已全部加入",
-    "installed": "已裝「{{name}}」"
+    "installed": "已裝「{{name}}」",
+    "remove": "移除",
+    "removeSet": "四個一起移除",
+    "removed": "已移除「{{name}}」",
+    "varDeleteHint": "這個變數是「{{name}}」App 的資料。刪除它會把整個 App 一起移除，停靠欄按鈕也會消失。"
   },
   "audio": {
     "title": "音訊",
@@ -751,6 +755,14 @@
     "announcement": "公告",
     "announcementPlaceholder": "撰寫公告...",
     "markdownSupported": "支援 Markdown",
+    "descriptionInsertImage": "新增圖片",
+    "descriptionImageUploading": "上傳中…",
+    "descriptionImageNeedsSave": "先儲存一次卡片，再插入圖片。",
+    "descriptionImageTooLong": "簡介字數已滿，放不下更多圖片了。",
+    "descriptionImageFromAssets": "從素材庫選",
+    "descriptionImageFromComputer": "從電腦上傳",
+    "descriptionImageRemove": "移除這張圖",
+    "descriptionImageLabel": "圖片",
     "descriptionTitle": "描述",
     "descriptionDesc": "顯示在發現頁的卡片和詳情頁上。用於設定、玩法說明或致謝。",
     "descriptionPlaceholder": "撰寫描述...",
@@ -1484,6 +1496,8 @@
         "stillGenerating": "還在畫",
         "stillGeneratingDetail": "等得比平時久，圖畫好後會出現在素材庫裡。"
       },
+      "imageBlind": "{{model}} 看不到圖片，附的圖會被略過。",
+      "imageBlindSwitch": "換 {{model}}",
       "creditPause": {
         "retryStep": "重試下一步",
         "paused": "額度不足，進度已儲存",
@@ -1512,6 +1526,8 @@
         "shortfall": "還差 {{amount}} 蘑菇幣",
         "errorStale": "內容已修改，請發起新請求，避免覆蓋你的改動。",
         "restartHere": "從這裡重新開始",
+        "cheaperModel": "換 {{model}} 繼續",
+        "cheaperModelNote": "{{model}} 每一步約 {{amount}} 蘑菇幣，餘額夠用，會從停下的地方接著做。",
         "restartMessage": "從剛才停下的地方繼續，以卡片現在的內容為準。",
         "errorActive": "該任務正在執行，請等待狀態更新。",
         "errorFailed": "未能恢復任務，已儲存的進度仍在，請重試。",
@@ -1633,14 +1649,22 @@
       "proposalRejectedReply": "好的，告訴我你想怎麼繼續。",
       "agentError": {
         "generic": "助手出錯了，請重試。",
-        "stalled": "助手 3 分鐘沒有回應，任務已結束，請重試。",
+        "stalled": "助手好幾分鐘沒有回應，任務已結束。已經改好的部分都保存了。",
         "timedOut": "任務執行超過 30 分鐘已結束，試試拆成更小的步驟。",
         "outputBudget": "模型多次在完成修改前用完了輸出空間，請拆小步驟或換個模型。",
         "provider": "AI 模型服務回傳了錯誤，請重試或換個模型。",
-        "serverRestart": "任務進行中伺服器重新啟動了，請重試。",
+        "serverRestart": "任務進行中伺服器重啟了。助手已經改好的部分都保存了。",
         "superseded": "這個任務已被新的請求取代。",
         "stopped": "已停止。",
-        "noCredits": "蘑菇不夠繼續了，儲值後再重試。"
+        "noCredits": "蘑菇不夠繼續了，儲值後再重試。",
+        "byokAuth": "你的 API key 被拒絕了（無效、過期，或沒有這個模型的權限）。請到 AI 設定裡檢查 key。",
+        "byokBalance": "你的 API 服務商提示餘額或額度用完了。去那邊儲值，或者換成官方模型。",
+        "byokModel": "你的服務商找不到這個模型。請到 AI 設定裡核對模型名，或換一個模型。",
+        "byokNoTools": "這個模型不支援工具呼叫，助手改卡需要它。請換一個支援工具呼叫的模型。",
+        "byokRate": "你的服務商在限流。稍等一會兒再繼續。",
+        "byokUnreachable": "連不上你的 API 位址。請檢查位址是否正確、服務是否在運行。",
+        "byokContext": "這次請求超出了模型的上下文長度。開一個新對話，或換上下文更長的模型。",
+        "continue": "從停下的地方繼續"
       },
       "digest": {
         "read": "通讀「{{source}}」· 已讀 {{done}}/{{total}} 段",
@@ -1650,6 +1674,12 @@
       },
       "turnEstimate": "約 {{count}} 蘑菇幣起",
       "turnEstimateCold": "一小時內第一條會貴一些",
+      "rateRun": "評價這次回覆",
+      "rateUp": "有幫助",
+      "rateDown": "沒幫上",
+      "turnTypical": "通常每次 {{low}}–{{high}} 蘑菇幣",
+      "turnTypicalHint": "最近兩週用這個模型的運行：一半不超過 {{low}}，九成不超過 {{high}}。一次回覆至少約 {{floor}}。",
+      "conversationSpend": "本對話已用 {{count}}",
       "turnCost": "本輪 {{count}} 蘑菇幣",
       "generatingTool": "正在寫：{{tool}}",
       "mode": {
@@ -2232,7 +2262,15 @@
         "paper": "素紙",
         "night": "夜航",
         "terminal": "終端",
-        "blossom": "緋櫻"
+        "blossom": "緋櫻",
+        "velvet": "緋頁",
+        "harbor": "港灣",
+        "linen": "亞麻",
+        "coolant": "冷屏",
+        "moss": "苔夜",
+        "tape": "磁帶",
+        "gilded": "鎏金",
+        "tavern": "酒館"
       },
       "fontName": {
         "sans": "黑體",
@@ -2259,13 +2297,29 @@
         "portrait-scene": "立繪對話",
         "adventure-hud": "冒險狀態",
         "stat-panel": "養成面板",
-        "character-sheet": "角色卡"
+        "character-sheet": "角色卡",
+        "chapter-portrait": "章節立繪",
+        "masthead": "報頭",
+        "margin-notes": "頁邊札記",
+        "status-strip": "底欄終端",
+        "night-card": "夜讀卡片",
+        "cassette": "磁帶",
+        "art-split": "半屏立繪",
+        "guild-card": "冒險者登記"
       },
       "presetHint": {
         "portrait-scene": "立繪 + 兩條狀態 + 詳情頁。講一個角色的卡用這套。",
         "adventure-hud": "當前位置 + 天數時段 + 兩條狀態。文字冒險、探索類用這套。",
         "stat-panel": "四條狀態 + 金幣 + 天數。養成、經營、生存類用這套。",
-        "character-sheet": "玩家自己的名字、身分、位置和劇情階段。角色扮演用這套。"
+        "character-sheet": "玩家自己的名字、身分、位置和劇情階段。角色扮演用這套。",
+        "chapter-portrait": "頂部一條章節橫幅，右邊一欄是立繪、心情和三條狀態。",
+        "masthead": "卡名、四條數值和登場人物排在頂部，對話在下面。",
+        "margin-notes": "淺色背景，右邊三張便籤，分別放標題和地點、四條狀態、認識的人。",
+        "status-strip": "輸入框下面一條數據欄，顯示時間、金幣、地點、體力精力和在場的人。",
+        "night-card": "右上角顯示第幾天，右下角是一張人物卡，放心情、地點、四條狀態和認識的人。",
+        "cassette": "輸入框下面放一盤磁帶，標籤上寫卡名，旁邊是目前章節、地點和心情。",
+        "art-split": "右半邊是立繪，卡名和兩條狀態顯示在立繪底部。",
+        "guild-card": "左邊一張羊皮紙登記卡，寫著玩家的名字、職業、等級、金幣和體力精力。"
       },
       "vars": {
         "portrait": "立繪",
@@ -2283,13 +2337,17 @@
         "playerRole": "玩家身份",
         "gender": "性別",
         "age": "玩家年齡",
-        "phase": "劇情階段"
+        "phase": "劇情階段",
+        "mood": "心情",
+        "rank": "冒險者等級"
       },
       "varDefaults": {
         "timeOfDay": "清晨",
         "location": "未知之地",
         "playerRole": "旅人",
-        "phase": "序章"
+        "phase": "序章",
+        "mood": "平靜",
+        "rank": "銅牌"
       },
       "s": {
         "common": {
@@ -2308,10 +2366,11 @@
           "actionWaitSays": "我沒有接話，等對方先開口。",
           "toolRewind": "撤回一輪",
           "toolRegenerate": "重新生成",
-          "toolCopy": "複製"
+          "toolCopy": "複製",
+          "castLabel": "登場"
         },
         "portrait-scene": {
-          "portraitEmpty": "這裡放立繪 — 在「卡片資訊」裡傳一張，或用「立繪」變數換人",
+          "portraitEmpty": "放一張立繪\n選中這塊，在右邊選圖",
           "meterPrimary": "好感度",
           "meterSecondary": "體力"
         },
@@ -2336,6 +2395,65 @@
           "phaseLabel": "劇情階段",
           "meterPrimary": "好感度",
           "meterSecondary": "體力"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "放一張立繪\n選中這塊，在右邊選圖",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "好感度",
+          "meterSecondary": "體力",
+          "meterThird": "精力"
+        },
+        "masthead": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "goldFormat": "金幣 {gold}",
+          "meterPrimary": "體力",
+          "meterSecondary": "精力",
+          "meterThird": "好感度",
+          "meterFourth": "進度"
+        },
+        "margin-notes": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "體力",
+          "meterThird": "精力",
+          "meterFourth": "進度"
+        },
+        "status-strip": {
+          "whenLabel": "時間",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "金幣",
+          "placeLabel": "位置",
+          "meterPrimary": "體力",
+          "meterSecondary": "精力"
+        },
+        "night-card": {
+          "clockFormat": "第 {day} 天",
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "體力",
+          "meterThird": "精力",
+          "meterFourth": "進度"
+        },
+        "cassette": {
+          "sideFormat": "A 面 · 第 {day} 天",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "心情",
+          "meterPrimary": "好感度"
+        },
+        "art-split": {
+          "portraitEmpty": "放一張立繪\n選中這塊，在右邊選圖",
+          "meterPrimary": "好感度",
+          "meterSecondary": "體力"
+        },
+        "guild-card": {
+          "guildTitle": "冒險者",
+          "guildSubFormat": "登記於 {location}",
+          "nameLabel": "姓名",
+          "roleLabel": "職業",
+          "rankLabel": "等級",
+          "goldLabel": "金幣",
+          "meterPrimary": "體力",
+          "meterSecondary": "精力"
         }
       }
     },
@@ -2511,7 +2629,9 @@
       "layoutOffDesktop": "電腦上不顯示",
       "layoutOffHere": "電腦上不顯示",
       "layoutFollowPhone": "改回跟手機一樣",
-      "nameLinked": "改這裡的名字，後面接的變數（{{name}}）也一起改，AI 看到的就是這個名字。"
+      "nameLinked": "改這裡的名字，後面接的變數（{{name}}）也一起改，AI 看到的就是這個名字。",
+      "pickStartImage": "選一張圖放進來",
+      "changeStartImage": "換一張圖"
     },
     "style": {
       "none": "無",
@@ -2679,6 +2799,7 @@
         "copy": "複製",
         "paste": "貼上",
         "duplicate": "建立副本",
+        "ungroup": "取消群組",
         "delete": "刪除"
       }
     },
@@ -2841,7 +2962,7 @@
       "newPage": "新建",
       "title": "新建 · 選一個模板",
       "tutorTip": "這裡是 18 個做好的模板 ✧ 上面是開局頁（玩家進故事之前），下面是玩的時候從選單打開的頁面。點一個就加進卡裡，每個都能直接玩。現在不想選也沒關係，右上角關掉就好，以後隨時點「新建」再來。",
-      "sub": "22 個做好的模板（4 個整個介面、18 個單頁），都已經接好變數、按鈕和給 AI 的說明，加上就能玩。顏色、大小、位置照樣可以拖、可以改。",
+      "sub": "30 個做好的模板（12 個整個介面、18 個單頁），都已經接好變數、按鈕和給 AI 的說明，加上就能玩。顏色、大小、位置照樣可以拖、可以改。",
       "groupOpening": "開局 · 玩家進故事之前",
       "blank": "空白頁",
       "blankDesc": "什麼都沒有，自己擺。",
@@ -4346,6 +4467,15 @@
     }
   },
   "blueprint": {
+    "folder": {
+      "fileIn": "放進資料夾",
+      "new": "新增資料夾",
+      "newName": "新資料夾",
+      "takeOut": "移出資料夾",
+      "rename": "重新命名資料夾",
+      "dissolve": "解散資料夾",
+      "dissolveHint": "解散資料夾（裡面的詞條保留）"
+    },
     "notes": {
       "fold": "摺起來",
       "unstick": "取下來",
@@ -4360,7 +4490,15 @@
       "byPattern": "規則",
       "byTag": "標籤 <…>",
       "speakerBubbles": "按說話人分成多個氣泡（以名字開頭的行）",
-      "title": "回覆處理"
+      "title": "回覆處理",
+      "opLabel": "怎麼寫進去",
+      "op": {
+        "set": "設為",
+        "append": "接在後面",
+        "push": "追加進清單",
+        "replace": "整個替換（JSON）"
+      },
+      "badPattern": "這條規則是空的或寫法有誤，什麼也抓不到。"
     },
     "aiCustom": {
       "randomChoice": "還是失敗就從選項裡隨機挑一個",
@@ -4399,7 +4537,8 @@
       "history": "讀最近幾條對話",
       "addVariable": "＋ 一個變數",
       "sees": "它看得到",
-      "title": "回答格式"
+      "title": "回答格式",
+      "piecesNeedVariable": "先建一個變數：片段要等變數滿足條件才加進去。"
     },
     "aiType": {
       "code": "程式型",
@@ -4576,7 +4715,8 @@
       "writer": "寫的人",
       "legendOwn": "粉色：只有它、它收到",
       "legendCond": "金色：在某個情境裡時，或說到才知道",
-      "legendNo": "灰色：不知道"
+      "legendNo": "灰色：不知道",
+      "gated": "條件滿足才知道"
     },
     "frame": {
       "collapse": "收起",
@@ -4603,7 +4743,8 @@
         "background": "後台"
       },
       "readiness": "就緒 {{done}}/{{total}}",
-      "readinessNext": "下一步：{{label}}"
+      "readinessNext": "下一步：{{label}}",
+      "showOpening": "在卡片上顯示這段開場"
     },
     "scene": {
       "none": "沒有專屬介面",
@@ -4712,7 +4853,7 @@
       "triggerConditionsHint": "這些條件決定寫手什麼時候跑：只在「不成立→成立」的那一刻跑一次，一直成立不會反覆跑。",
       "model": "模型",
       "modelInherit": "跟隨玩家選的",
-      "modelHint": "玩家用不了這個模型時會自動回落到他自己選的，不會把卡卡死。",
+      "modelHint": "玩家用不了這個模型時會自動換：回覆玩家的 AI 改用玩家自己的模型，幕後的 AI 改用預設模型。",
       "inputs": "從別處接進來的",
       "inputKind": {
         "memory": "某情境的經歷",
@@ -4786,7 +4927,17 @@
       "quietSeconds": "沒人說話",
       "quietSecondsUnit": "秒後",
       "triggerQuietHint": "玩家開著遊戲、這個情境在生效、而且這麼久沒人說話時，它會判斷要不要插一句，可以改數值；沒什麼可說就不出聲。按調用計費。",
-      "isQuietHint": "沒人說話一陣子後被叫醒，自己判斷要不要插一句、改數值；沒什麼可說就不出聲。"
+      "isQuietHint": "沒人說話一陣子後被叫醒，自己判斷要不要插一句、改數值；沒什麼可說就不出聲。",
+      "modelAndParams": "模型和參數",
+      "modelDefault": "跟隨預設",
+      "modelHintNarrator": "玩家用不了這個模型時，改用玩家自己的聊天模型，卡不會因此玩不了。",
+      "modelHintBackground": "留空用預設後台模型。玩家用不了這裡填的模型時，也改用預設後台模型。",
+      "paramsNarrator": "它回覆玩家，參數和故事 AI 一樣。",
+      "params": "參數",
+      "paramsDefault": "預設：溫度 {{temperature}} · 最長 {{tokens}} tokens",
+      "temperature": "溫度（{{min}}–{{max}}）",
+      "maxTokens": "最長 tokens（{{min}}–{{max}}）",
+      "maxTokensLabel": "最長 tokens"
     },
     "addGreeting": "開場白",
     "emptyCta": "寫下第一條開場白",
@@ -4945,11 +5096,6 @@
       "summaryFocusHint": "給寫摘要的 AI 一句話，說什麼不能丟：人物關係、承諾、欠的債、時間線。",
       "summaryFocusPlaceholder": "例如：記住每一個承諾，以及誰欠誰什麼。",
       "summaryCost": "摘要在背景用便宜模型更新，玩家每次通常花不到 1 蘑菇幣；玩家可以在「遊玩記憶」面板裡看和改這段摘要。",
-      "pinnedNote": "置頂提醒",
-      "pinnedNoteHint": "每回合都貼在歷史末尾附近的一句話，AI 在那裡最聽話。文風提醒、長期規則放這裡最合適。",
-      "pinnedNotePlaceholder": "例如：保持第二人稱。每段回覆停在一個懸念上。",
-      "pinnedDepth": "倒數第幾則前",
-      "pinnedDepthHint": "0 = 放在最新一則之後，1 = 放在它之前。",
       "budget": "上下文預算",
       "budgetValue": "約 {{tokens}} token",
       "budgetAuthor": "按本卡設定",
@@ -4968,7 +5114,7 @@
       "recursionDepth": "級聯觸發深度",
       "recursionDepthHint": "進來的詞條還能再觸發別的詞條，最多連幾層。0 = 關。",
       "variablesToAi": "變數給 AI 的方式",
-      "variablesToAiHint": "全部：每回合給所有可讀變數。只給有變化的：只給離開預設值的。不給：完全不發狀態塊，變數只歸介面用。",
+      "variablesToAiHint": "全部：每回合給所有可讀變數的當前值。只給有變化的：只給離開預設值的。不給：不發當前值，但變數寫了的「行為規則」照樣發給 AI。想讓 AI 完全看不到某個變數，把它的 AI 權限設為「僅引擎」。",
       "variablesAll": "全部",
       "variablesChanged": "只給有變化的",
       "variablesNone": "不給",
@@ -5013,7 +5159,8 @@
       "varFieldWriter_behavior": "行為",
       "varFieldWriter_ai-call": "自訂 AI 呼叫",
       "varFieldWriterAny": "未說明",
-      "varFieldRemove": "刪掉這個欄位"
+      "varFieldRemove": "刪掉這個欄位",
+      "previewCode": "另有 {{count}} 處介面程式碼自己拼上下文"
     },
     "addModule": "情境",
     "addVariable": "變數",
@@ -5057,7 +5204,8 @@
       "value": "值",
       "seedValue": "初始值",
       "apply": "套用",
-      "remove": "刪除"
+      "remove": "刪除",
+      "seedJsonFixed": "清單/物件類變數的開場初始值不能在這裡改：開場白只存數字、文字和開關。可以刪掉這根線，改在變數的預設值裡。"
     },
     "ports": {
       "write": "寫入",
@@ -5114,7 +5262,8 @@
       "summaryRemoved": "刪除 {{count}}",
       "undo": "撤銷這一回合",
       "dismiss": "知道了",
-      "undoFailed": "撤銷沒成功，卡片沒有改動。"
+      "undoKeptYours": "已撤銷助手這一回合；你之後改過的 {{count}} 處保留了你的版本",
+      "undoAllKept": "這一回合改過的地方你之後都動過了，保留了你的版本"
     },
     "links": {
       "in": "{{count}} 條進線",
@@ -5336,9 +5485,9 @@
         "memoryCardAlone": "記得整段對話",
         "memoryCardHint": "沒有情境接管時，跑的就是這個 AI；說過的話它全都記得。",
         "summaryOn": "更早的回合寫成摘要",
-        "pinnedRow": "置頂：{{text}}",
         "continuityOn": "智慧追蹤：開",
-        "continuityOff": "智慧追蹤：關"
+        "continuityOff": "智慧追蹤：關",
+        "codeContext": "介面程式碼自己拼 · {{count}} 處"
       }
     },
     "turnCtx": {
@@ -5716,6 +5865,7 @@
       "whenFires": "這條行為什麼時候檢查一次：預設每回合；也可以是玩家說了某句話、某個變數變了、某個按鈕被點了。",
       "onlyIf": "這些條件滿足了，才會執行下面的效果。條件多的時候，可以選「全部滿足」或「滿足一個就行」。空著就是每次都執行。",
       "alwaysSend": "開啟：每回合都發給 AI。關掉：只有出現觸發關鍵詞、或者滿足條件時才發，省字數，AI 也更專注。",
+      "alwaysSendGated": "接了變數條件，什麼時候發給 AI 由條件決定。去掉這些條件後，這個開關才會重新起作用。",
       "excludeRecursion": "別的設定的正文裡碰巧有這裡的關鍵詞時，不會順帶把這一條也帶出來。只有玩家和 AI 的對話能觸發它。",
       "preventRecursion": "這條設定發出去以後，它的正文不會再去觸發別的設定的關鍵詞。",
       "secondary": "和觸發關鍵詞搭配用的第二組詞，用來加限制，比如「還必須同時出現」或「不能出現」。一般不用填。",
@@ -5984,6 +6134,20 @@
           "title": "從介面觸發",
           "body": "api.executeAction(id)"
         }
+      },
+      "context": {
+        "messages": {
+          "title": "自己寫訊息",
+          "body": "api.ai.complete({ messages })，送什麼由程式碼定"
+        },
+        "lore": {
+          "title": "挑資料",
+          "body": "includeLorebook、worldbookIds，只帶某些詞條或某個情境"
+        },
+        "session": {
+          "title": "帶上存檔",
+          "body": "context: \"session\"，加上玩家人設和預設"
+        }
       }
     },
     "custom": {
@@ -5995,7 +6159,97 @@
       "behaviorIntro": "由程式碼實作。",
       "implementedBy": "實作在 {{count}} 處",
       "implementedCode": "自己的程式碼 · {{count}} 行",
-      "firedFrom": "介面程式碼觸發 · {{file}} 第 {{line}} 行"
+      "firedFrom": "介面程式碼觸發 · {{file}} 第 {{line}} 行",
+      "contextIntro": "AI 讀什麼，也可以由介面程式碼自己定：訊息自己寫，詞條和情境自己挑。下面是卡裡這樣做的 AI 呼叫。",
+      "codeAt": "{{file}} 第 {{line}} 行"
+    },
+    "gateGroups": {
+      "preview": "預覽 {{name}} =",
+      "hint": "拖一下，看看這一檔 AI 會讀到哪些",
+      "clear": "不預覽",
+      "answer": "AI 會讀到 {{count}} 條 · 約 {{chars}} 字",
+      "answerMaybe": "AI 會讀到 {{count}} 條 · 約 {{chars}} 字，另有 {{maybe}} 條還要看別的條件",
+      "one": "{{name}} {{value}}",
+      "range": "{{name}} {{from}}–{{to}}",
+      "list": "{{name}} {{values}}",
+      "always": "任何{{name}}都發",
+      "never": "{{name}} 哪一檔都不發",
+      "other": "看別的條件",
+      "yes": "是",
+      "no": "否"
+    },
+    "aiCalls": {
+      "view": "這張卡的 AI",
+      "title": "這張卡的 AI",
+      "count": "共 {{count}} 個",
+      "col": {
+        "name": "AI",
+        "when": "什麼時候跑",
+        "payer": "誰付",
+        "model": "模型",
+        "params": "參數"
+      },
+      "kind": {
+        "story": "故事 AI",
+        "narrator": "回覆玩家",
+        "behind": "幕後",
+        "quiet": "冷場時說話",
+        "ui": "介面按鈕叫它",
+        "custom": "自訂",
+        "code": "卡裡的程式碼"
+      },
+      "story": "故事 AI",
+      "storyTakenOver": "不跑：「{{name}}」一直替它回覆",
+      "whereCard": "整張卡",
+      "whereNone": "沒放",
+      "off": "不會執行",
+      "whenCustom": "介面程式碼叫它時",
+      "whenCode": "程式碼執行到這裡時 · {{kind}}",
+      "payerPlayer": "玩家",
+      "followPlayer": "跟隨玩家設定",
+      "followDefault": "跟隨預設",
+      "authorCustom": "作者自訂",
+      "authorSet": "作者自訂",
+      "recommended": "推薦：{{model}}",
+      "lengthPlayer": "回覆長度跟隨玩家",
+      "narratorParams": "和故事 AI 一樣",
+      "defaultModelNote": "玩家設的後台模型，沒設就用預設的便宜模型",
+      "restPlayer": "沒寫的跟隨玩家",
+      "rawDefaults": "程式碼沒寫的用預設值",
+      "computed": "程式碼裡計算",
+      "temperature": "溫度 {{v}}",
+      "topP": "Top P {{v}}",
+      "maxTokens": "最長 {{n}} tokens",
+      "modelUnknown": {
+        "player": "不在模型列表裡：玩家會改用自己的模型",
+        "default": "不在模型列表裡：玩家會改用預設模型",
+        "none": "不在模型列表裡：玩家可能用不了"
+      },
+      "modelShut": {
+        "player": "{{plans}} 玩家會改用自己的模型",
+        "default": "{{plans}} 玩家會改用預設模型",
+        "none": "{{plans}} 玩家用不了這個模型"
+      },
+      "openAi": "去改",
+      "openCode": "打開程式碼",
+      "footRules": "故事 AI 的模型永遠跟隨玩家，作者只能推薦。卡裡的 AI 指定了模型而玩家用不了時，會自動換回玩家能用的。",
+      "footClamp": "作者設的數值會被限制在安全範圍內。",
+      "legendAuthor": "粉色：作者自訂"
+    },
+    "storyAi": {
+      "title": "故事 AI 的模型和參數",
+      "hint": "模型由玩家自己選、自己付。參數（溫度、Top P）預設也跟隨玩家；選「作者自訂」後用這張卡的。",
+      "recommendedModel": "推薦模型",
+      "recommendedModelHint": "玩家選模型時會看到「作者推薦」，不會強制。",
+      "recommendedModelNone": "不推薦",
+      "recommendedUnknown": "不在 Yumina 的模型列表裡，玩家那邊不會標出來。",
+      "sampling": "參數",
+      "samplingHint": "選「作者自訂」後，故事 AI 用這張卡的溫度和 Top P，不用玩家的。",
+      "temperature": "溫度",
+      "temperatureHint": "{{min}}–{{max}}，越高越放得開",
+      "topP": "Top P",
+      "topPHint": "{{min}}–{{max}}",
+      "alwaysPlayer": "模型和回覆長度始終跟隨玩家，由玩家付費。"
     }
   },
   "modules": {

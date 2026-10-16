@@ -246,6 +246,7 @@
     "popular": "Popular",
     "allModels": "All Models",
     "modelsFound": "{{count}} model",
+    "versions": "{{name}} versions",
     "modelsFound_other": "{{count}} models",
     "pinToQuickSelect": "Pin to quick select",
     "unpinFromQuickSelect": "Unpin from quick select",
@@ -318,7 +319,8 @@
     "popularityInfoTitle": "How popularity is ranked",
     "popularityInfoBody": "50% OpenRouter entertainment Token share + 50% Yumina Token share. Both compare the available chat models. Yumina counts official chat replies, excluding private APIs, background tasks and empty replies. Missing measurements contribute no score.",
     "popularityWindow": "Yumina, last 30 days: {{start}}–{{end}}. OpenRouter monthly report: {{externalDate}} ({{count}} apps, public data only). Updated {{date}}. Reporting cutoffs may differ.",
-    "compactCostUnit": "Est. mushies / reply"
+    "compactCostUnit": "Est. mushies / reply",
+    "authorRecommended": "Author recommends"
   },
   "readOnly": {
     "worldUnavailable": "This world is no longer available",
@@ -365,6 +367,8 @@
   "errors": {
     "PROTECTED_WORLD": "This world's creator has protected it from prompt scraping. Only official Yumina API models are available — private API keys cannot be used.",
     "NO_CREDITS": "You've run out of mushies! Finish daily quests for free mushies, or upgrade your plan.",
+    "PRIVATE_API_BALANCE": "Your private API has insufficient balance. Check your provider account.",
+    "UPSTREAM_BALANCE": "The model provider reports insufficient balance. Try another model or contact support.",
     "NO_CREDITS_MSG_TOO_EXPENSIVE": "This conversation is too long for your remaining {{balance}} mushies. Switch to a cheaper model or shorten the chat, then try again.",
     "MODEL_NOT_ALLOWED": "This model requires a higher plan. Switch to a free model or upgrade.",
     "MODEL_SWITCHED_FALLBACK": "That model isn't included in your plan — switched to {{model}} and resent your message.",
@@ -553,5 +557,6 @@
     "shortPaused": "Paused. Films already being made still finish and stay with their replies; roll camera to watch them.",
     "shortPause": "Pause (films being made still finish)",
     "shortClose": "Turn off short films (films being made still finish)"
-  }
+  },
+  "memoryModelNeedsPlan": "{{model}} needs the {{plan}} plan. Pick another model for memory, or upgrade."
 }

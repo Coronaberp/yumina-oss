@@ -1,5 +1,6 @@
 import { discoverAccess } from "../lib/discover-access.js";
 import { assetIsVersioned } from "../lib/world-version-store.js";
+import { worldsUsingAsCover } from "../lib/asset-cover-use.js";
 import { Hono } from "hono";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -273,6 +274,10 @@ assetRoutes.delete("/worlds/:worldId/assets/:id", async (c) => {
   if (rows.length === 0) {
     return c.json({ error: "Asset not found" }, 404);
   }
+
+  // Still a card's cover (this card or a translation of it): keep the file.
+  const covers = await worldsUsingAsCover(db, assetId, rows[0]!.url);
+  if (covers.length) return c.json({ error: "This image is still a card's cover.", code: "ASSET_IN_USE", worlds: covers }, 409);
 
   const retained = await db.transaction(async tx => {
     // Serialize against checkpoint insertion until deletion completes.

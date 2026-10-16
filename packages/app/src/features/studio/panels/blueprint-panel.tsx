@@ -6,6 +6,8 @@ import { flowNodeBlockKind, learningStageHides } from "../learn/learning-stage";
 import { TOUR_CARD_HEIGHT } from "../learn/tour-spotlight";
 import { aiRoster, hasSeveralAis } from "./blueprint/ai-roster";
 import { AiTable } from "./blueprint/ai-table";
+import { AiCallsTable, OPEN_AI_CALLS_EVENT } from "./blueprint/ai-calls-table";
+import type { AiCallRow } from "./blueprint/ai-calls";
 import { NOTE_SIZE, StickyNoteLayer } from "./blueprint/sticky-note-layer";
 import { rowFacts, type Translate } from "./blueprint/row-facts";
 import { useLearningWorkspace } from "../learn/learning-workspace";
@@ -58,7 +60,7 @@ import {
 import { useAiFocus } from "../lib/ai-focus";
 import { describeFocus } from "../lib/ai-focus-describe";
 import { resolveBackground, UNPLACED_WORLDBOOK_ID } from "@yumina/engine";
-import type { Worldbook } from "@yumina/engine";
+import type { Worldbook, WorldEntry } from "@yumina/engine";
 import { absoluteImageUrl } from "@/lib/asset-url";
 import {
   AlertTriangle,
@@ -68,6 +70,9 @@ import {
   CopyPlus,
   ClipboardPaste,
   FolderInput,
+  FolderOpen,
+  FolderPlus,
+  FolderMinus,
   ArrowUpToLine,
   ChevronRight,
   ExternalLink,
@@ -165,11 +170,11 @@ import { isDefaultChatInterface } from "./blueprint/starter-state";
 import { withStarterSlots, type CanvasBlock, type TrayItem } from "./blueprint/starter-board";
 import { canvasBlockHostMap, canvasBlockHostsMap, resolveCanvasBlockId, resolveSourceBlockId } from "./blueprint/canvas-block-hosts";
 import { cardReadiness } from "../lib/card-readiness";
-import { askForBlock, blockAskKey, type AskableBlockKind } from "../lib/block-ask";
 import { useBlueprintDocumentKey } from "./blueprint/use-blueprint-document";
-import { CanvasWritingNode, canvasWritingNodeHeight, PRESETS_GROUP_ID, type CanvasWritingNodeData } from "./blueprint/canvas-writing-node";
+import { CanvasWritingNode, canvasWritingNodeHeight, PRESETS_GROUP_ID, type CanvasWritingNodeData, type WritingFolder, type WritingGateBar } from "./blueprint/canvas-writing-node";
+import { GATE_MIN_ENTRIES, gateGrouping, gateLabel, type GateGrouping, type GateLabel, type GateValue } from "./blueprint/gate-groups";
 import { BlueprintRowEditor, canEditRowInline } from "./blueprint/row-editor";
-import { FloatingEditor, type FloatingAnchor } from "./blueprint/floating-editor";
+import { FLOATING_WIDE, FloatingEditor, type FloatingAnchor } from "./blueprint/floating-editor";
 import { useSmoothWheelZoom } from "./blueprint/use-smooth-wheel-zoom";
 import { glide } from "./blueprint/glide";
 import { PieceSlotNode, PIECE_SLOT_H, type PieceSlotNodeData } from "./blueprint/piece-slot-node";
@@ -403,6 +408,13 @@ function drillPanelFor(g: GraphNode, _handwritten = false): { panelId: string; t
   }
 }
 
+/** The page a list block's title opens on a double-click. Blocks with no
+ *  editor page of their own (context, the AIs, the tray) open nothing. */
+const BLOCK_PAGE: Partial<Record<Block["kind"], string>> = {
+  lore: "lorebook", opening: "first-message", state: "variables", behavior: "rules",
+  audio: "audio", image: "scene-images", background: "backgrounds", card: "overview",
+};
+
 const PANEL_TITLE_KEY: Record<string, string> = {
   variables: "studio.panels.variables",
   lorebook: "studio.panels.lorebook",
@@ -465,8 +477,9 @@ function renderOpening(text: string): string {
 }
 
 /** Objects that can belong to a module. Projections (the frontend, event
- *  sources, folded summaries) belong to no one. */
-const PARENTABLE_ID = /^(var|entry|greeting|reaction|rule):/;
+ *  sources, folded summaries) belong to no one, and neither does an opening:
+ *  it is the card's, and a situation opens from it instead. */
+const PARENTABLE_ID = /^(var|entry|reaction|rule):/;
 
 /** Dragging a gate's output onto a row is how an object joins a module now
  *  that a module is no longer a box you can drop things into. */
@@ -614,6 +627,12 @@ function isCanvasRowTarget(target: EventTarget | null | undefined): boolean {
   return target instanceof Element && Boolean(target.closest("[data-row-anchor]"));
 }
 
+/** Over the floating editor or a sticky note a drag is not over bare board:
+ *  letting go there must not take the row out of every situation. */
+function overBoardFurniture(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("[data-floating-editor], [data-sticky-note]"));
+}
+
 /** Stable "no search", so an idle search box never re-forces the board. */
 const NO_SEARCH_RESULTS: never[] = [];
 
@@ -677,19 +696,20 @@ const LEGEND_ITEMS = [
 
 // ── Panel ───────────────────────────────────────────────────────────
 
-/** Only the card and a situation take the right-hand column: each is a whole
- *  form with sections of its own. Everything else is a few settings, edited
- *  beside the row it belongs to so the eye does not cross the screen. */
-const floatsBeside = (target: InspectorTarget) =>
-  !(target.type === "node" && (target.node.kind === "world" || target.node.kind === "module") && target.section !== "memory");
+/** The card and a situation are whole forms with sections of their own, so
+ *  their editor stands wider. Everything opens on the board either way: the
+ *  right-hand column is the assistant's, and nothing clicked takes it. */
+const isWholeForm = (target: InspectorTarget) =>
+  target.type === "node" && (target.node.kind === "world" || target.node.kind === "module") && target.section !== "memory";
 
 /** Everything the canvas needs from its host. The dockview adapter and the
  *  full-bleed stage both provide these — the core knows neither. */
 type BlueprintCanvasCoreProps = {
   /** Hidden workspaces stay mounted without consuming canvas shortcuts. */
   active?: boolean;
-  /** Open an object's full editor (lorebook / variables / rules / …). */
-  onDrillPanel: (panelId: string) => void;
+  /** Open an object's full editor (lorebook / variables / rules / …).
+   *  `focus`: a double-click, which gives that editor a page of its own. */
+  onDrillPanel: (panelId: string, how?: { focus?: boolean }) => void;
   /** Maximize control — omitted on the stage, which is already full-bleed. */
   /** `kind: "rail"` — the stage's button folds the assistant rail away, and
    *  the assistant is shut by default, so "exit focus mode" was the first
@@ -697,19 +717,6 @@ type BlueprintCanvasCoreProps = {
    *  says what it does to the rail instead. `"maximize"` (the dock) keeps the
    *  focus-mode wording, because there it is one. */
   focus?: { active: boolean; toggle: () => void; kind?: "rail" | "maximize" };
-  /** Fires when something is selected, i.e. when the inspector has an
-   *  occupant. */
-  onInspectorChange?: (open: boolean) => void;
-  /**
-   * Where to render the selected object's editor.
-   *
-   * The stage hands over its right column. A creator is doing exactly one of
-   * three things at any instant — talking to the assistant, playing the card,
-   * or editing the thing they just clicked — so those three share one column
-   * instead of the third one shoving the canvas aside. Absent (the dockview
-   * adapter) the editor stays a column of the panel, as it was.
-   */
-  inspectorHost?: HTMLElement | null;
   /** Screen edges covered by the stage's floating docks. React Flow sizes
    *  itself to the whole element, so without this "fit" centres the graph
    *  under the AI dock and the card is off-screen on open. */
@@ -727,19 +734,41 @@ function BlueprintCanvas({
   active = true,
   onDrillPanel,
   focus,
-  onInspectorChange,
-  inspectorHost,
   edgeInsets,
   previewOwnedElsewhere,
   toolbarHost,
 }: BlueprintCanvasCoreProps) {
   const { t } = useTranslation("editor");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  /** Whether the creator's last click landed on the board. A key aimed at
+   *  the page itself (nothing focused) belongs to whatever was clicked last:
+   *  Backspace after a click in the assistant's transcript must not delete
+   *  the variable still selected on the board. */
+  const boardClickedLastRef = useRef(true);
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const root = containerRef.current;
+      boardClickedLastRef.current = !!root && e.target instanceof Node && root.contains(e.target);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, []);
+  /** The board's keys are the board's: never a key pressed in the assistant,
+   *  a dialog, a menu or anywhere else on the page. */
+  const keyIsForBoard = useCallback((target: EventTarget | null | undefined) => {
+    const root = containerRef.current;
+    if (!root) return false;
+    if (target instanceof Node && root.contains(target)) return true;
+    const page = !target || target === document.body || target === document.documentElement;
+    return page && boardClickedLastRef.current;
+  }, []);
   const worldDraft = useEditorStore((s) => s.worldDraft);
   const entryFolders = worldDraft.entryFolders;
   const presetsTitle = t("blueprint.starter.presetsTitle");
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
-  const readOnly = useEditorStore((s) => s.readOnlyInspect);
+  // A guest's edits are dropped by the store; the board says so up front
+  // instead of letting them type into nothing.
+  const readOnly = useEditorStore((s) => s.readOnlyInspect || s.guestMode);
   // Decides where the frontend block drills: somebody's code, or the visual
   // builder. A card already on a uiDoc is never "hand-written" again.
   const interfaceIsHandwritten =
@@ -1071,7 +1100,7 @@ function BlueprintCanvas({
   }, [showTurnContext, liveGating, worldDraft]);
 
   // ── The AI's last write turn, as an audit rather than a notification ──
-  const { turn, dismiss: dismissTurn, restore: undoTurn, restoring: undoingTurn } = useTurnDiff(graph, serverWorldId, graphOptions);
+  const { turn, dismiss: dismissTurn, restore: undoTurn } = useTurnDiff(graph, serverWorldId, graphOptions);
   const turnMark = useMemo(() => {
     const marks = new Map<string, "added" | "changed">();
     if (!turn) return marks;
@@ -1134,6 +1163,14 @@ function BlueprintCanvas({
     });
   }, []);
   const [relationshipId, setRelationshipId] = useState<string | null>(null);
+  /** The AI block an AI row was opened from. Every situation's AI block has
+   *  a row for the card's own AI (`ai:narrator`), so the selection alone
+   *  cannot say which row was clicked: the card would stand beside the first
+   *  one on the page and light every one of them. */
+  const [aiOpenedIn, setAiOpenedIn] = useState<string | null>(null);
+  useEffect(() => {
+    if (selection?.type !== "node" || !selection.id.startsWith("ai:")) setAiOpenedIn(null);
+  }, [selection]);
   const showRelationships = useCallback((objectId: string) => {
     setSelection({ type: "node", id: objectId });
     setRelationshipId(objectId);
@@ -1142,19 +1179,6 @@ function BlueprintCanvas({
   useEffect(() => {
     if (relationshipId && (selection?.type !== "node" || selection.id !== relationshipId)) setRelationshipId(null);
   }, [selection, relationshipId]);
-  /** Drawer width — dragging its edge sticks, so writing an opening in the
-   *  drawer isn't stuck in a 290px slot. */
-  const [inspectorWidth, setInspectorWidth] = useState(() => {
-    const stored = Number(readLocalPref("yumina-blueprint-inspector-w"));
-    return Number.isFinite(stored) && stored >= 260 ? Math.min(stored, 900) : 340;
-  });
-  const inspectorWidthRef = useRef(inspectorWidth);
-  inspectorWidthRef.current = inspectorWidth;
-  const commitInspectorWidth = useCallback((w: number) => {
-    const clamped = Math.max(260, Math.min(900, Math.round(w)));
-    setInspectorWidth(clamped);
-    writeLocalPref("yumina-blueprint-inspector-w", String(clamped));
-  }, []);
   useEffect(() => {
     if (!selection) return;
     // A list block selected as a whole ("N more") is not a graph node; it
@@ -1208,7 +1232,21 @@ function BlueprintCanvas({
    *  row in place never takes the drawer away and vice versa. The same field
    *  rendered in both stays in sync: the unfocused copy re-reads the draft
    *  when the focused one commits. */
+  const headOpenedRef = useRef(headOpened);
+  headOpenedRef.current = headOpened;
   const toggleOpenRow = useCallback((objectId: string) => {
+    // A row the head opened shuts on its own chevron, the others staying
+    // open: the chevron only knew the one row a click opens, so after a
+    // click on the head no row could be closed except all of them at once.
+    if (headOpenedRef.current.has(objectId)) {
+      setHeadOpened((prev) => {
+        const next = new Set(prev);
+        next.delete(objectId);
+        return next;
+      });
+      setOpenRowId((current) => (current === objectId ? null : current));
+      return;
+    }
     setOpenRowId((current) => (current === objectId ? null : objectId));
   }, []);
   // Selecting a setting, an opening or a scene image opens it in its row —
@@ -1265,6 +1303,9 @@ function BlueprintCanvas({
    *  first thing on the shelf, and the one thing a beginner should not be
    *  reading first. */
   const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(() => new Set([PRESETS_GROUP_ID]));
+  /** A folder just made from the right-click menu: its header opens with the
+   *  name selected, ready to type over "New folder". */
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const toggleFolder = useCallback((folderId: string) => {
     setCollapsedFolders((prev) => {
       const next = new Set(prev);
@@ -1546,12 +1587,17 @@ function BlueprintCanvas({
   }, [onDrillPanel]);
   const trayAddRef = useRef<((item: "state" | "behavior") => void) | null>(null);
 
+  /** The platform's narration presets: never rows on the board (see
+   *  writingEntriesFor), so never counted against a block's rows either. */
+  const presetKey = worldDraft.entries.filter((e) => e.presetId).map((e) => e.id).join(",");
+  const presetEntryIds = useMemo(() => new Set(presetKey ? presetKey.split(",").map((id) => `entry:${id}`) : []), [presetKey]);
   /** The card's AIs (ai-roster.ts). */
   const roster = useMemo(() => aiRoster(worldDraft, t as Translate), [worldDraft, t]);
   const blocks = useMemo(
     () =>
       withStarterSlots(buildBoard(boardGraph, {
         forced: forcedRowIds,
+        omit: presetEntryIds,
         preferred: budget.preferred,
         expanded: expandedBlocks,
         // The card is the root module: its own tile beside the modules, its
@@ -1580,7 +1626,7 @@ function BlueprintCanvas({
       .concat([placeAisBlock(), ...situationBooks(worldDraft.worldbooks).map((b) => placeAisBlock(b.id))])
       // The card's Context too: the engine draws one for every scenario.
       .concat([{ id: blockId.context(), kind: "context", headSlots: [], rows: [], hiddenCount: 0, total: 0, sharedCount: 0 } satisfies Block]),
-    [boardGraph, forcedRowIds, budget.preferred, expandedBlocks, storyBoard, readOnly, teaching, inLesson, cardHasBackground, revealedSlots, worldDraft.worldbooks],
+    [boardGraph, forcedRowIds, presetEntryIds, budget.preferred, expandedBlocks, storyBoard, readOnly, teaching, inLesson, cardHasBackground, revealedSlots, worldDraft.worldbooks],
   );
   /** 「这里的 AI」 of every frame, keyed by owner ("" is the card). */
   const placeAisByOwner = useMemo(() => {
@@ -1590,17 +1636,114 @@ function BlueprintCanvas({
     return map;
   }, [worldDraft, t]);
 
+  // ── 条件触发 as groups (gate-groups.ts) ──
+  /** Groups opened by hand, as `block|group`, and the value each block's
+   *  preview is set to. A block with no value set previews nothing. */
+  const [openGateGroups, setOpenGateGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const [gatePreview, setGatePreview] = useState<Readonly<Record<string, number>>>({});
+  const toggleGateGroup = useCallback((key: string) => setOpenGateGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  }), []);
+  /** Long 条件触发 blocks that one variable mostly gates, with every entry
+   *  they hold — the board's rows stop at the limit; the groups do not. */
+  const gateBlocks = useMemo(() => {
+    const out = new Map<string, { grouping: GateGrouping; entries: WorldEntry[]; members: ReadonlySet<string> }>();
+    for (const block of blocks) {
+      if (block.kind !== "lore" || block.trigger !== "conditions" || block.head) continue;
+      if (block.rows.length + block.hiddenCount < GATE_MIN_ENTRIES) continue;
+      const sourceId = block.sourceBlockId ?? block.id;
+      const entries = graph.nodes
+        .filter((n) => n.kind === "entry" && blockIdForNode(n) === sourceId)
+        .map((n) => draftById.entries.get(String(n.data.entryId ?? n.id.slice(n.id.indexOf(":") + 1))))
+        .filter((e): e is WorldEntry => !!e && !e.presetId);
+      const grouping = gateGrouping(entries, worldDraft.variables);
+      if (grouping) out.set(block.id, { grouping, entries, members: new Set(entries.map((e) => `entry:${e.id}`)) });
+    }
+    return out;
+  }, [blocks, graph, draftById, worldDraft.variables]);
+  // A row picked by search, by a jump or by being made is a row to see:
+  // open the group it is in.
+  useEffect(() => {
+    if (selection?.type !== "node" || !selection.id.startsWith("entry:")) return;
+    const id = selection.id.slice("entry:".length);
+    const keys: string[] = [];
+    for (const [blockKey, gate] of gateBlocks) {
+      const group = gate.grouping.groups.find((g) => g.entryIds.includes(id));
+      if (group) keys.push(`${blockKey}|${group.id}`);
+    }
+    if (keys.length) setOpenGateGroups((prev) => (keys.every((k) => prev.has(k)) ? prev : new Set([...prev, ...keys])));
+  }, [selection, gateBlocks]);
+  const gateLabelText = useCallback((label: GateLabel, name: string) => {
+    const v = (x: GateValue) => (typeof x === "boolean" ? String(t(x ? "blueprint.gateGroups.yes" : "blueprint.gateGroups.no")) : String(x));
+    switch (label.kind) {
+      case "other": return String(t("blueprint.gateGroups.other"));
+      case "never": return String(t("blueprint.gateGroups.never", { name }));
+      case "always": return String(t("blueprint.gateGroups.always", { name }));
+      case "one": return String(t("blueprint.gateGroups.one", { name, value: v(label.value) }));
+      case "range": return String(t("blueprint.gateGroups.range", { name, from: v(label.from), to: v(label.to) }));
+      case "list": return String(t("blueprint.gateGroups.list", { name, values: label.values.map(v).join("、") }));
+    }
+  }, [t]);
+  /** How a grouped block is drawn: its entries filed under their groups,
+   *  shut unless opened, the preview strip, and what the preview dims. Null
+   *  for a block drawn as rows. */
+  const gateLayoutFor = useCallback((block: Block) => {
+    const gate = gateBlocks.get(block.id);
+    if (!gate) return null;
+    const { grouping, entries } = gate;
+    const name = worldDraft.variables.find((v) => v.id === grouping.variableId)?.name ?? grouping.variableId;
+    const picked = gatePreview[block.id];
+    const active = picked !== undefined;
+    const index = active ? picked : grouping.defaultIndex;
+    const folderOf = new Map<string, string>();
+    const folders: WritingFolder[] = grouping.groups.map((g, order) => {
+      for (const id of g.entryIds) folderOf.set(id, g.id);
+      const state = !active || !g.on ? undefined : g.on[index] ? "lit" as const : "dim" as const;
+      return { id: g.id, name: gateLabelText(gateLabel(g, grouping.domain), name), order, gate: { on: g.on, state } };
+    });
+    const shut = grouping.groups.filter((g) => !openGateGroups.has(`${block.id}|${g.id}`)).map((g) => g.id);
+    const liveIds = active ? grouping.groups.filter((g) => g.on?.[index]).flatMap((g) => g.entryIds) : [];
+    const sure = liveIds.filter((id) => !grouping.alsoGated.has(id));
+    const chars = sure.reduce((sum, id) => sum + (draftById.entries.get(id)?.content.length ?? 0), 0);
+    const value = grouping.domain[index];
+    const gateBar: WritingGateBar = {
+      label: name,
+      value: typeof value === "boolean" ? String(t(value ? "blueprint.gateGroups.yes" : "blueprint.gateGroups.no")) : String(value),
+      index,
+      size: grouping.domain.length,
+      active,
+      answer: String(t(liveIds.length > sure.length ? "blueprint.gateGroups.answerMaybe" : "blueprint.gateGroups.answer", {
+        count: sure.length, chars: chars.toLocaleString(), maybe: liveIds.length - sure.length,
+      })),
+      onChange: (i: number) => setGatePreview((prev) => ({ ...prev, [block.id]: i })),
+      onClear: () => setGatePreview((prev) => { const next = { ...prev }; delete next[block.id]; return next; }),
+    };
+    return {
+      entries: entries.map((e) => ({ ...e, folderId: folderOf.get(e.id) })),
+      folders,
+      collapsedFolders: new Set([...collapsedFolders, ...shut]) as ReadonlySet<string>,
+      dimIds: active ? new Set(grouping.groups.filter((g) => g.on && !g.on[index]).flatMap((g) => g.entryIds)) as ReadonlySet<string> : undefined,
+      gateBar,
+    };
+  }, [gateBlocks, worldDraft.variables, gatePreview, openGateGroups, collapsedFolders, draftById, gateLabelText, t]);
+
   /** What fires each object, when the answer sits in the same block as it —
    *  an event source, or the upstream behaviour whose emit it listens for.
    *  Those wires would have to leave the block and loop back to say anything,
    *  so the row carries the name instead. Cross-block triggers stay wires. */
   const firedBy = useMemo(() => {
-    const hosts = canvasBlockHostMap(blocks, graph);
+    // Every block each end is drawn in, not just the first: an event source
+    // is drawn in the card's behaviour block AND in each situation's, and a
+    // situation's own behaviour shares a block only with the second copy.
+    const hosts = canvasBlockHostsMap(blocks, graph);
     const map = new Map<string, string>();
     for (const e of graph.edges) {
       const from = hosts.get(e.from);
       const to = hosts.get(e.to);
-      if (!from || !to || from.host !== to.host) continue;
+      if (!from || !to || !from.some((f) => to.some((x) => x.host === f.host))) continue;
       const source = graphById.get(e.from);
       if (source) map.set(e.to, displayTitle(source));
     }
@@ -1746,7 +1889,7 @@ function BlueprintCanvas({
           if (!n) return undefined;
           return n.parentId?.startsWith("module:") ? n.parentId.slice("module:".length) : null;
         };
-        const moved = pieceMoves(many.split(",").filter(Boolean), ownerOf, ownerId);
+        const moved = pieceMoves(many.split(",").filter((id) => PARENTABLE_ID.test(id)), ownerOf, ownerId);
         inOneUndoStep(() => {
           for (const id of moved) {
             applyGraphPatch({ op: "set-parent", nodeId: id, parentId: ownerId ? `module:${ownerId}` : undefined });
@@ -1760,7 +1903,7 @@ function BlueprintCanvas({
         return;
       }
       const objId = e.dataTransfer.getData("application/yumina-object");
-      if (!objId) return;
+      if (!objId || !PARENTABLE_ID.test(objId)) return;
       const node = graphRef.current.nodes.find((n: GraphNode) => n.id === objId);
       if (!node) return;
       const currentOwner = node.parentId?.startsWith("module:")
@@ -1840,7 +1983,7 @@ function BlueprintCanvas({
    *  "somewhere" — and said it over the blocks too.) */
   const [paneDropHint, setPaneDropHint] = useState<{ x: number; y: number; w: number } | null>(null);
   const paneDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("application/yumina-object")) return;
+    if (!e.dataTransfer.types.includes("application/yumina-object") || overBoardFurniture(e.target)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }, []);
@@ -1909,7 +2052,7 @@ function BlueprintCanvas({
     startEdgePanRef.current();
     // Over a block or a situation the drop is theirs (they light up and say
     // what it does); only bare board shows the landing card.
-    if ((e.target as Element | null)?.closest?.(".react-flow__node")) { setPaneDropHint(null); return; }
+    if ((e.target as Element | null)?.closest?.(".react-flow__node") || overBoardFurniture(e.target)) { setPaneDropHint(null); return; }
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const zoom = rf.getViewport().zoom;
@@ -1927,7 +2070,7 @@ function BlueprintCanvas({
     (e: React.DragEvent) => {
       setPaneDropHint(null);
       const objId = e.dataTransfer.getData("application/yumina-object");
-      if (!objId || useEditorStore.getState().readOnlyInspect) return;
+      if (!objId || useEditorStore.getState().readOnlyInspect || overBoardFurniture(e.target)) return;
       e.preventDefault();
       setDropFrameId(null);
       setPiece(null);
@@ -2046,22 +2189,40 @@ function BlueprintCanvas({
       if (collapsedSet.has(host.host) && !writingBlockIds.has(host.host)) map.set(id, { ...host, shown: false });
     }
     for (const g of gates) map.set(g.id, { host: g.id, shown: true });
+    for (const [id, host] of map) if (gateBlocks.get(host.host)?.members.has(id)) map.set(id, { ...host, shown: false });
     return map;
-  }, [blocks, graph, gates, collapsedSet, writingBlockIds]);
+  }, [blocks, graph, gates, collapsedSet, writingBlockIds, gateBlocks]);
 
   /** Every block that renders each object, per frame — a shared object has
    *  one per module. Wires pick their ends from this; `hostOf` keeps the
    *  first for selection and reveal. */
   const hostsOf = useMemo(() => {
     const map = canvasBlockHostsMap(blocks, graph);
+    // A shut situation draws none of its blocks, so a wire into one of them
+    // had no end on the board and was dropped without a word. It lands on the
+    // situation itself instead, the way a folded row's wire lands on its block.
+    const openNow = new Set(openFrames);
+    for (const f of frames) if (f.strip) openNow.add(f.id);
+    const blockById = new Map(blocks.map((b) => [b.id, b]));
+    const shutIn = (hostId: string): string | null => {
+      const b = blockById.get(hostId);
+      if (!b || b.loose || !b.ownerId || openNow.has(blockId.frame(b.ownerId))) return null;
+      const gate = `module:${b.ownerId}`;
+      return gateIdSet.has(gate) ? gate : null;
+    };
     for (const [id, hosts] of map) {
-      map.set(id, hosts.map((h) => (collapsedSet.has(h.host) && !writingBlockIds.has(h.host) ? { ...h, shown: false } : h)));
+      map.set(id, hosts.map((h) => {
+        const gate = shutIn(h.host);
+        if (gate) return { host: gate, shown: false, ownerId: h.ownerId };
+        if (gateBlocks.get(h.host)?.members.has(id)) return { ...h, shown: false };
+        return collapsedSet.has(h.host) && !writingBlockIds.has(h.host) ? { ...h, shown: false } : h;
+      }));
     }
     // A gate lives in its own frame, so a wire from a shared variable into
     // module B lands on B's copy of the variable.
     for (const g of gates) map.set(g.id, [{ host: g.id, shown: true, ownerId: g.id.slice("module:".length) }]);
     return map;
-  }, [blocks, graph, gates, collapsedSet, storyBoard, writingBlockIds]);
+  }, [blocks, graph, gates, gateIdSet, collapsedSet, storyBoard, writingBlockIds, openFrames, frames, gateBlocks]);
 
   /** Everything wired to the current selection. Selecting a row lights up its
    *  neighbours and greys the rest — on a card with sixty objects that is the
@@ -2134,7 +2295,6 @@ function BlueprintCanvas({
    *  narrow it further; that is the module's own block's business. */
   const cardHistoryLimit = useEditorStore(s => s.worldDraft.settings?.historyLimit) || 0;
   const cardSummaryOn = useEditorStore(s => s.worldDraft.settings?.storySummary?.enabled === true);
-  const cardPinnedNote = useEditorStore(s => (s.worldDraft.settings?.pinnedNote?.content ?? "").trim());
   /**
    * A colour per memory pool, stable across renders and shared by everyone in
    * it. The pool's id would do as a key, but it is a random string — so the
@@ -2177,11 +2337,13 @@ function BlueprintCanvas({
         const open = () => setSelection({ type: "node", id: blockId.context() });
         const text = String(t("blueprint.ctx.row.memoryCardAlone")) + (cardHistoryLimit ? ` · ${t("blueprint.turnCtx.historyLimitCard", { count: cardHistoryLimit })}` : "");
         const cardRows: ContextRowView[] = [{ key: "memory", icon: "memory", text, title: t("blueprint.ctx.row.memoryCardHint"), onClick: open }];
-        // The two settings that change what the AI is handed show as lines of
-        // their own, so a card with a summary or a pinned note says so on the
-        // board rather than only in the column.
+        // A summary changes what the AI is handed, so a card with one says so
+        // on the board rather than only in the form.
         if (cardSummaryOn) cardRows.push({ key: "summary", icon: "in", text: t("blueprint.ctx.row.summaryOn"), title: t("blueprint.insp.historySummaryHint"), onClick: open });
-        if (cardPinnedNote) cardRows.push({ key: "pinned", icon: "in", text: t("blueprint.ctx.row.pinnedRow", { text: cardPinnedNote.length > 40 ? `${cardPinnedNote.slice(0, 40)}…` : cardPinnedNote }), title: cardPinnedNote, onClick: open });
+        // The card's own code asks the AI with contexts it builds itself
+        // (Godot's companions, 1984's room director): the engine's recipe is
+        // not the whole story, and the block says so.
+        if (frontendFacts.aiCalls) cardRows.push({ key: "code", icon: "in", text: t("blueprint.ctx.row.codeContext", { count: frontendFacts.aiCalls }), title: t("blueprint.custom.contextIntro"), onClick: open });
         return cardRows;
       }
       if (!book) return rows;
@@ -2228,7 +2390,7 @@ function BlueprintCanvas({
       });
       return rows;
     },
-    [worldDraft.worldbooks, contextBadges, cardHistoryLimit, cardSummaryOn, cardPinnedNote, poolTint, t],
+    [worldDraft.worldbooks, contextBadges, cardHistoryLimit, cardSummaryOn, frontendFacts.aiCalls, poolTint, t],
   );
 
 
@@ -2293,10 +2455,6 @@ function BlueprintCanvas({
    *  places a new creator stalls, so they get a second door beside the "+":
    *  a pack they can read instead of a form they have to fill. Both the
    *  layout (height) and the node (button) ask this, so they agree. */
-  // The assistant writes entries, variables, behaviours and openings. It has
-  // no tool for the card's interface or its memory, so those blocks do not
-  // offer a button that would lead nowhere.
-  const ASKABLE = useMemo(() => new Set(["opening", "lore", "state", "behavior", "image", "audio"]), []);
 
   const hasPackDoor = useCallback(
     (block: Block) =>
@@ -2341,14 +2499,18 @@ function BlueprintCanvas({
       // On a tile a writing block is a list of rows. Simple mode makes them
       // names; detail mode gives each one what it says and when the AI is
       // told it; an open row is that object's whole editor, in place.
-      ...(isWritingBlock(block) ? { collapsed: false, starterHeight: canvasWritingNodeHeight({ kind: block.kind === "opening" ? "opening" : "setting", entries: writingEntriesFor(block), rows: block.head ? [{ g: block.head, slots: block.headSlots }] : block.rows, compact: glance, expandedIds: openRowIds, columns: block.kind === "opening" ? 1 : rowColumns(writingEntriesFor(block).length, width), hiddenCount: block.hiddenCount, folders: entryFolders, presetsTitle, collapsedFolders }) } : {}),
+      ...(isWritingBlock(block) ? (() => {
+        const gate = gateLayoutFor(block);
+        const entries = gate?.entries ?? writingEntriesFor(block);
+        return { collapsed: false, starterHeight: canvasWritingNodeHeight({ kind: block.kind === "opening" ? "opening" : "setting", entries, rows: gate ? [] : block.head ? [{ g: block.head, slots: block.headSlots }] : block.rows, compact: glance, expandedIds: openRowIds, columns: block.kind === "opening" ? 1 : rowColumns(entries.length, width), hiddenCount: gate ? 0 : block.hiddenCount, folders: gate?.folders ?? entryFolders, presetsTitle, collapsedFolders: gate?.collapsedFolders ?? collapsedFolders, gateBar: gate?.gateBar }) };
+      })() : {}),
       ...(block.kind === "context" ? { contextRows: contextRowsFor(block).length } : {}),
       ...(block.kind === "ais" ? { aiRows: placeAisByOwner.get(block.ownerId ?? "")?.rows.length ?? 1 } : {}),
       ...(block.kind === "scene" ? { sceneWide: device === "desktop", sceneBare: isBareScene(block) } : {}),
       ...(block.kind === "frontend" ? { frontendDesktop: device === "desktop", frontendFilesH: defaultChat ? 0 : frontendFilesStripHeight(frontendFacts.files.length) } : {}),
       ...(hasPackDoor(block) ? { packDoor: true } : {}),
     }),
-    [collapsedSet, openedTexts, openRowIds, contextRowsFor, placeAisByOwner, glance, device, worldDraft.description, worldDraft.entries, defaultChat, isWritingBlock, writingEntriesFor, isBareScene, hasPackDoor, entryFolders, presetsTitle, collapsedFolders, cardHasBackground, anyOpeningWritten, screenFolded, frontendFacts],
+    [collapsedSet, openedTexts, openRowIds, contextRowsFor, placeAisByOwner, glance, device, worldDraft.description, worldDraft.entries, defaultChat, isWritingBlock, writingEntriesFor, isBareScene, hasPackDoor, entryFolders, presetsTitle, collapsedFolders, cardHasBackground, anyOpeningWritten, screenFolded, frontendFacts, gateLayoutFor],
   );
   /** Whether a face block (the card's interface, a module's scene) has a
    *  real preview to show — which puts it on a row of its own, full width. */
@@ -2529,26 +2691,38 @@ function BlueprintCanvas({
   *  over the card's open editor. */
   const loosePlaced = useMemo(() => {
     const out: Record<string, { x: number; y: number }> = {};
-    const W = BLOCK_W, H = 120, GAP = 24;
+    const W = BLOCK_W, GAP = 24;
+    // Each loose block at its own height: a variable is ~126 and an entry
+    // open for writing well over 400, and kept apart as if every one were
+    // 120 tall, a tall one covered the block below it.
+    const heightOf = new Map<string, number>();
+    for (const b of blocks) {
+      const id = b.loose ? b.rows[0]?.g.id : undefined;
+      if (id) heightOf.set(id, blockHeight(b, chromeFor(b)));
+    }
     const frames = [...frameBoxes.values()];
-    const hit = (x: number, y: number, r: { x: number; y: number; width: number; height: number }) =>
-      x < r.x + r.width && x + W > r.x && y < r.y + r.height && y + H > r.y;
+    const hit = (x: number, y: number, h: number, r: { x: number; y: number; width: number; height: number }) =>
+      x < r.x + r.width && x + W > r.x && y < r.y + r.height && y + h > r.y;
     const right = frames.reduce((m, f) => Math.max(m, f.x + f.width), 0);
     const top = frames.reduce((m, f) => Math.min(m, f.y), Infinity);
     const placed: Array<{ x: number; y: number; width: number; height: number }> = [];
     let nextY = Number.isFinite(top) ? top : 0;
     for (const [id, at] of Object.entries(looseStored)) {
+      const H = heightOf.get(id) ?? 120;
       let pos = at;
-      if (frames.some((f) => hit(pos.x, pos.y, f)) || placed.some((p) => hit(pos.x, pos.y, p))) {
+      if (frames.some((f) => hit(pos.x, pos.y, H, f)) || placed.some((p) => hit(pos.x, pos.y, H, p))) {
         pos = { x: right + 48, y: nextY };
-        while (placed.some((p) => hit(pos.x, pos.y, p))) pos = { x: pos.x, y: pos.y + H + GAP };
+        for (let guard = 0; guard < 400 && placed.some((p) => hit(pos.x, pos.y, H, p)); guard++) {
+          const blocker = placed.find((p) => hit(pos.x, pos.y, H, p))!;
+          pos = { x: pos.x, y: blocker.y + blocker.height + GAP };
+        }
         nextY = pos.y + H + GAP;
       }
       placed.push({ ...pos, width: W, height: H });
       out[id] = pos;
     }
     return out;
-  }, [frameBoxes, looseStored]);
+  }, [frameBoxes, looseStored, blocks, chromeFor]);
   const frameBoxesRef = useRef(frameBoxes);
   frameBoxesRef.current = frameBoxes;
 
@@ -3179,7 +3353,8 @@ function BlueprintCanvas({
     addSetting: () => void;
     onRowContextMenu: (objId: string, e: React.MouseEvent, ownerId?: string) => void;
     onRowDrop: (dragged: string, target: string) => void;
-  }>({ onAdd: () => {}, addOpening: () => {}, addSetting: () => {}, onRowContextMenu: () => {}, onRowDrop: () => {} });
+    onDropOnFolder: (dragged: string, folderId: string) => void;
+  }>({ onAdd: () => {}, addOpening: () => {}, addSetting: () => {}, onRowContextMenu: () => {}, onRowDrop: () => {}, onDropOnFolder: () => {} });
 
   // Carry the object and its scope into the full editor; opening only the
   // section used to select whichever item that editor happened to show first.
@@ -3206,7 +3381,7 @@ function BlueprintCanvas({
     setSelection({ type: "node", id: objId });
     if (writing) expandTimer.current = setTimeout(() => { expandTimer.current = null; setOpenRowId(objId); }, 280);
   }, [pressInlineRow]);
-  const drillObject = useCallback((objId: string) => {
+  const drillObject = useCallback((objId: string, how: { focus?: boolean } = {}) => {
     if (expandTimer.current) { clearTimeout(expandTimer.current); expandTimer.current = null; }
     const g = graphById.get(objId);
     const drill = g && drillPanelFor(g, interfaceIsHandwritten);
@@ -3223,7 +3398,10 @@ function BlueprintCanvas({
     else if (g.kind === "image") store.focusObject("sceneImage", id);
     else if (objId === "core-entries") store.setModuleScope("core");
     else if (objId.startsWith("module-entries:")) store.setModuleScope(`mod:${id}`);
-    onDrillPanel(drill.panelId);
+    // A double-click (and "Open full editor") gives the object's editor a
+    // page of its own, opened on it; the inspector's expand keeps the page
+    // under the stage's bar.
+    onDrillPanel(drill.panelId, how.focus ? { focus: true } : undefined);
   }, [graphById, onDrillPanel, interfaceIsHandwritten]);
   /** For the frames, built in an effect that should not re-run on it. */
   const drillObjectRef = useRef(drillObject);
@@ -3238,7 +3416,7 @@ function BlueprintCanvas({
     clickRow(objId);
   }, [toggleMulti, clickRow]);
 
-  const onRowDoubleClick = drillObject;
+  const onRowDoubleClick = useCallback((objId: string) => drillObject(objId, { focus: true }), [drillObject]);
 
   /** What the turn that just ran actually used.
    *
@@ -3461,6 +3639,15 @@ function BlueprintCanvas({
         // the modules, it is what the modules sit beside.
         tint: g ? tintFor(frame.ownerId, idx) : "#8b8b96",
         ...(g ? { activationLabel: activationLabelFor(frame.ownerId) } : {}),
+        // Only the opening on show has its wires on the board — the others
+        // are not drawn — so a situation entered from another opening says
+        // which one, and that line puts it on show.
+        ...(g ? (() => {
+          const book = (worldDraft.worldbooks ?? []).find((b) => b.id === frame.ownerId);
+          const ids = book?.activation.mode === "greeting" ? book.activation.greetingIds : [];
+          const target = ids.find((id) => worldDraft.entries.some((e) => e.id === id && e.role === "greeting"));
+          return target && target !== previewGreetingId ? { onShowOpening: () => selectPreviewOpening(target) } : {};
+        })() : {}),
         // The title says only what the place is and when it is on: who
         // answers there is the 「AI」 block at its foot.
         aiLit: litFrames?.has(frame.id) ?? false,
@@ -3509,14 +3696,25 @@ function BlueprintCanvas({
       const ownBox = isFace ? frameBoxes.get(block.id) : undefined;
       if (isWritingBlock(block)) {
         const kind = block.kind === "opening" ? "opening" : "setting";
-        const entries = writingEntriesFor(block);
+        const gate = gateLayoutFor(block);
+        const entries = gate?.entries ?? writingEntriesFor(block);
         const data: CanvasWritingNodeData = {
           kind, entries, readOnly, compact: glance, ownerId: block.ownerId, shared: block.sharedCount, total: block.total - block.sharedCount,
           width: laid?.w, flush: !!laid && !block.loose, fillHeight: laid?.h,
           onPieceDrag, onPieceSelect,
-          folders: entryFolders, onSelectFolder: selectPieces, presetsTitle, collapsedFolders, onToggleFolder: toggleFolder,
+          folders: gate?.folders ?? entryFolders, onSelectFolder: selectPieces, presetsTitle,
+          collapsedFolders: gate?.collapsedFolders ?? collapsedFolders,
+          onToggleFolder: gate ? (id: string) => (id.startsWith("gate:") ? toggleGateGroup(`${block.id}|${id}`) : toggleFolder(id)) : toggleFolder,
+          onDrill: onRowDoubleClick,
+          ...(readOnly ? {} : {
+            onRenameFolder: (id: string, name: string) => useEditorStore.getState().renameFolder(id, name),
+            onDissolveFolder: (id: string) => useEditorStore.getState().removeFolder(id),
+            onDropOnFolder: (dragged: string, id: string) => blockActionsRef.current.onDropOnFolder(dragged, id),
+            renamingFolderId, onRenamingDone: () => setRenamingFolderId(null),
+          }),
+          ...(gate ? { gateBar: gate.gateBar, dimIds: gate.dimIds, pieceIds: gate.entries.map((e) => `entry:${e.id}`) } : {}),
           multiSelected: multiSelected.size > 0 ? multiSelected : null,
-          columns: kind === "opening" ? 1 : rowColumns(entries.length, laid?.w ?? BLOCK_W), hiddenCount: block.hiddenCount,
+          columns: kind === "opening" ? 1 : rowColumns(entries.length, laid?.w ?? BLOCK_W), hiddenCount: gate ? 0 : block.hiddenCount,
           ...(kind === "opening" && !block.ownerId
             ? {
                 openings: cardOpenings.map((g) => ({ id: g.id, selected: g.id === previewGreetingId, title: g.name || t("blueprint.starter.openingTitle") })),
@@ -3526,7 +3724,9 @@ function BlueprintCanvas({
           onMore: () => { setRelationshipId(null); setSelection({ type: "node", id: resolveSourceBlockId(block.id, blocksRef.current) }); },
           // Inside an AI, its settings are who it is: only it reads them.
           title: kind === "setting" && block.ownerId && aiFrameIds.has(blockId.frame(block.ownerId)) ? t("blueprint.aiForm.self") : block.total > 0 ? titleFor(block) : t(`blueprint.starter.${kind}Title`),
-          rows: block.head ? [rowView(block.head, block.headSlots)] : block.rows.map(row => rowView(row.g, row.slots, row.shared === true)),
+          // Grouped, the rows hand their wires to the block's head (hostsOf):
+          // a row inside a shut group has nowhere else to take them.
+          rows: gate ? [] : block.head ? [rowView(block.head, block.headSlots)] : block.rows.map(row => rowView(row.g, row.slots, row.shared === true)),
           selectedId: selection?.type === "node" ? selection.id : null,
           documentKey: blueprintDocumentKey,
           onOpen: (id: string) => { preferredWritingHosts.current.set(id, block.id); setRelationshipId(null); clickRow(id); },
@@ -3591,11 +3791,6 @@ function BlueprintCanvas({
         // The two blocks where a new creator stalls get a second door: the "+"
         // opens a blank form, this opens a working example they can read.
         onOpenPacks: hasPackDoor(block) ? () => openPanel("packs") : undefined,
-        // Every block the assistant has a tool for gets the second way in.
-        // The "+" opens a blank row; this opens a sentence.
-        ...(ASKABLE.has(block.kind) && !block.loose
-          ? { onAsk: () => { openPanel("ai-chat"); askForBlock(String(t(blockAskKey(block.kind as AskableBlockKind, block.total === 0) as never))); } }
-          : {}),
         emptyLabel:
           // A module with nothing of its own in this block but the card's
           // objects counted into it says so, rather than "none yet".
@@ -3641,16 +3836,17 @@ function BlueprintCanvas({
           ? {
               ais: {
                 ...placeAisByOwner.get(block.ownerId ?? "")!,
-                // A row opens in the column, like every object on the board:
+                // A row opens in the floating editor beside it, like every object on the board:
                 // an AI on its settings, the card's own AI on its judge. The
                 // open one is lit the way a selected row is.
-                openKey: selection?.type === "node"
+                openKey: selection?.type === "node" && (aiOpenedIn === null || aiOpenedIn === block.id)
                   ? placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => aiInspectorId(r.bookId ?? undefined) === selection.id)?.key ?? null
                   : null,
                 onToggle: (key: string, _memory?: boolean, bookId?: string) => {
                   // A bare code call has no object to inspect: open the code at the call.
                   const row = placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => r.key === key);
                   if (row?.code && !row.bookId) { setPendingCodeJump(row.code.file, row.code.line); onDrillPanel("code-view"); return; }
+                  setAiOpenedIn(block.id);
                   setSelection({ type: "node", id: aiInspectorId(bookId) });
                 },
                 ...(readOnly ? {} : { onRemove: (bookId: string) => removeAi(bookId), onNote: () => addNoteOnRef.current(block.id) }),
@@ -3710,7 +3906,7 @@ function BlueprintCanvas({
           coverUrl: typeof block.head?.data.coverUrl === "string" ? block.head.data.coverUrl : undefined,
           onCommitName: (v: string) => useEditorStore.getState().setField("name", v),
           onCommitDescription: (v: string) => useEditorStore.getState().setField("description", v),
-          // The cover, 卡片信息 and 设置 all open the card in the column,
+          // The cover, 卡片信息 and 设置 all open the card's editor on the board,
           // which carries the whole 概览 now — no detour off the canvas.
           onOpenCover: () => { setRelationshipId(null); setSelection({ type: "node", id: "world:root" }); },
           onOpenAssets: () => onDrillPanel("assets"),
@@ -3865,10 +4061,10 @@ function BlueprintCanvas({
   }, [
     blocks, gates, graph, positions, frameBoxes, collapsedSet, openedTexts, openRowIds, toggleOpenRow, selection, multiSelected, focusIds, firedBy,
     gateIndex, displayTitle, previewFor, graphById, draftById, t, readOnly, recentIds, turnMark,
-    budget, linkCounts, liveGating, liveVars, recentChanges, lastTurn, lastWhy, onDrillPanel, toggleBlockCollapse, contextRowsFor, contextScopeFor, placeAisByOwner,
+    budget, linkCounts, liveGating, liveVars, recentChanges, lastTurn, lastWhy, onDrillPanel, toggleBlockCollapse, contextRowsFor, contextScopeFor, placeAisByOwner, aiOpenedIn,
     toggleOpeningText, expandBlockRows, onRowClick, onRowDoubleClick, worldDraft.name,
     worldDraft.description, previewOwnedElsewhere, glance, pickTrayItem, activationLabelFor, roster, litFrames, lightSources, headerHFor, clickRow, toggleMulti, screenFolded, toggleScreenFold,
-    defaultChat, storyBoard, worldDraft.entries, chromeFor, presetsTitle, collapsedFolders, toggleFolder, cardHasBackground, blockTools, isWritingBlock, writingEntriesFor, showRelationships, blueprintDocumentKey, previewGreeting, previewGreetingId, selectPreviewOpening,
+    defaultChat, storyBoard, worldDraft.entries, chromeFor, presetsTitle, collapsedFolders, renamingFolderId, toggleFolder, gateLayoutFor, toggleGateGroup, cardHasBackground, blockTools, isWritingBlock, writingEntriesFor, showRelationships, blueprintDocumentKey, previewGreeting, previewGreetingId, selectPreviewOpening,
     sceneOverrides, sceneFiles, worldDraft.worldbooks, dropLabelFor, looseStored, loosePlaced, unloose, device, toggleDevice,
     piece, onPieceDrag, worldDraft.sceneImages, worldDraft.continuity,
     // Read by the build but missing here, so the card frame's readiness and
@@ -4004,12 +4200,14 @@ function BlueprintCanvas({
       if (!structural && !showAllWires && !touched && !selectedEdge && !recent && !byTurn && liveGate !== true)
         continue;
 
-      const sourceHandle = gateIdSet.has(e.from)
+      // A situation's own wire, or one whose end is inside a shut situation
+      // and lands on its frame: the frame's two handles.
+      const sourceHandle = gateIdSet.has(e.from) || gateIdSet.has(fromHost.host)
         ? "governs"
         : fromHost.shown
           ? rowHandleId(e.from, "out")
           : "block-out";
-      const targetHandle = gateIdSet.has(e.to)
+      const targetHandle = gateIdSet.has(e.to) || gateIdSet.has(toHost.host)
         ? "activate"
         : toHost.shown
           ? e.toPort.startsWith("slot:")
@@ -4436,7 +4634,7 @@ function BlueprintCanvas({
     async ({ nodes, edges }: { nodes: BlueprintNode[]; edges: Edge[] }) => {
       // ReactFlow's own key handler excludes inputs but still fires from
       // buttons/links. Protect selected module gates and wires there too.
-      if (readOnly || isInteractiveDeleteTarget(document.activeElement)) return false;
+      if (readOnly || isInteractiveDeleteTarget(document.activeElement) || !keyIsForBoard(document.activeElement)) return false;
       // Delete key removes real objects and wires; projections (summaries, the
       // frontend, event sources) and derived emit-chain wires stay put.
       const deletableEdges = edges.filter((e) => !isDerivedEdge(graphEdgeId(e)));
@@ -4446,7 +4644,7 @@ function BlueprintCanvas({
       if (deletableEdges.length === 0 && deletableNodes.length === 0) return false;
       return { nodes: deletableNodes, edges: deletableEdges };
     },
-    [readOnly],
+    [readOnly, keyIsForBoard],
   );
 
   const onEdgesDelete = useCallback(
@@ -4509,7 +4707,7 @@ function BlueprintCanvas({
         return;
       }
       // A block that is not itself an object (a list): the block itself is
-      // selected, so the column lists what it holds — a click that only
+      // selected, so the floating editor lists what it holds — a click that only
       // zoomed read as broken. "Add into this module" still works, because
       // the module a new object joins is read off the selected block's owner
       // (currentModuleId). The selection effect brings the board to it.
@@ -4567,17 +4765,41 @@ function BlueprintCanvas({
         // A frame's title bar too: its first click opens the settings column
         // and moves the board just as a row's does.
         ?? (target?.closest("button") ? null : target?.closest("[data-frame-drill]")?.getAttribute("data-frame-drill"))
+        // And a block's title bar (角色和世界, 开场白, 变量…): its first click
+        // selects the block and the column moves the board the same way, so
+        // the second press never reached the block and a double-click on a
+        // title did nothing. Its own controls (＋, ⋯, the opening tabs) keep
+        // their clicks.
+        ?? (target?.closest("button, input, textarea, [role='tab']")
+          ? null
+          : target?.closest("[data-block-head]")?.closest(".react-flow__node")?.getAttribute("data-id"))
         ?? null;
     lastRowPress.current = id && e.detail === 1 ? { id, t: e.timeStamp, x: e.clientX, y: e.clientY } : null;
   }, []);
+  /** A double-click's destination, whatever was double-clicked: an object
+   *  opens its own page on it; a block whose head is one object opens that;
+   *  a list block (角色和世界, 变量, 行为…) opens the page of the kind of
+   *  thing it lists, narrowed to the card or the module it belongs to. */
+  const openPageFor = useCallback((id: string) => {
+    if (!isBlockId(id)) { drillObject(id, { focus: true }); return; }
+    const head = blockHeadIdRef.current.get(id);
+    if (head) { drillObject(head, { focus: true }); return; }
+    const block = blocksRef.current.find((b) => b.id === id);
+    const panelId = block ? BLOCK_PAGE[block.kind] : undefined;
+    if (!block || !panelId) return;
+    if (panelId === "lorebook" || panelId === "variables" || panelId === "rules" || panelId === "first-message") {
+      useEditorStore.getState().setModuleScope(block.ownerId ? `mod:${block.ownerId}` : "core");
+    }
+    onDrillPanel(panelId, { focus: true });
+  }, [drillObject, onDrillPanel]);
   const onCanvasDoubleClickCapture = useCallback((e: React.MouseEvent) => {
     const prev = pairsWithRowPress(e);
     if (!prev) return;
     lastRowPress.current = null;
     e.stopPropagation();
     e.preventDefault();
-    drillObject(prev.id);
-  }, [drillObject]);
+    openPageFor(prev.id);
+  }, [openPageFor]);
 
   // -- Marquee: Shift-drag on empty canvas sweeps up rows --
   // Rows are not flow nodes, so React Flow's own selection box cannot see
@@ -4680,11 +4902,8 @@ function BlueprintCanvas({
     window.setTimeout(close, 6000);
   }, [multiSelected, applyGraphPatch, flashRecent, t]);
   const onNodeDoubleClick = useCallback(
-    (_e: unknown, node: BlueprintNode) => {
-      const objId = isBlockId(node.id) ? (blockHeadIdRef.current.get(node.id) ?? null) : node.id;
-      if (objId) drillObject(objId);
-    },
-    [drillObject],
+    (_e: unknown, node: BlueprintNode) => openPageFor(node.id),
+    [openPageFor],
   );
 
   // ── Toolbar adds: localized default names + auto-open the inspector ──
@@ -4791,7 +5010,7 @@ function BlueprintCanvas({
           setPinnedEntryIds((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
           // Outside, the next thing to do is drag it into a frame, so the
           // view stays put (the writing focus would zoom onto it and push
-          // every frame off screen); it opens in the column to write.
+          // every frame off screen); it opens on the board to write.
           if (loose) setSelection({ type: "node", id: `entry:${created.id}` });
           else selectNewest(`entry:${created.id}`);
           return;
@@ -4875,6 +5094,21 @@ function BlueprintCanvas({
     setSelection({ type: "node", id: aiInspectorId(made.bookId) });
     window.setTimeout(() => fitFocusedBlockRef.current(block, 420), 300);
   }, [currentModuleId, t]);
+
+  /** A row of 「这张卡的 AI」 opens where that call is edited: an AI on its
+   *  form, beside its place's AI block; a call in the code at its line. */
+  const openAiCall = useCallback((row: AiCallRow) => {
+    setShowAiCalls(false);
+    if (row.open.kind === "code") {
+      setPendingCodeJump(row.open.file, row.open.line);
+      onDrillPanel("code-view");
+      return;
+    }
+    const block = blockId.ais(row.open.block);
+    setAiOpenedIn(null);
+    setSelection({ type: "node", id: aiInspectorId(row.open.bookId) });
+    window.setTimeout(() => fitFocusedBlockRef.current(block, 420), 120);
+  }, [onDrillPanel]);
 
   // A custom AI's or behaviour's panel found its implementation and asks to
   // open the file at that line.
@@ -5059,7 +5293,7 @@ function BlueprintCanvas({
     return () => window.removeEventListener("keydown", onKey);
   }, [active, toggleViewLock]);
   // A newly made opening or entry, or one arrived at from somewhere else: show
-  // the block it lives in and hand the object to the column, which is where it
+  // the block it lives in and hand the object to its floating editor, which is where it
   // is written. This used to hunt the canvas for the row's textarea and focus
   // it; there is no textarea on the canvas any more, and the selection pass
   // below already pans a selected row into view.
@@ -5400,6 +5634,13 @@ function BlueprintCanvas({
   const [showDirectory, setShowDirectory] = useState(false);
   /** 「AI 分工表」 over the board. */
   const [showAiTable, setShowAiTable] = useState(false);
+  /** 「这张卡的 AI」: every AI call, its model and settings, over the board. */
+  const [showAiCalls, setShowAiCalls] = useState(false);
+  useEffect(() => {
+    const open = () => setShowAiCalls(true);
+    window.addEventListener(OPEN_AI_CALLS_EVENT, open);
+    return () => window.removeEventListener(OPEN_AI_CALLS_EVENT, open);
+  }, []);
   const [batchMoveOpen, setBatchMoveOpen] = useState(false);
   // Both popovers close on any click outside them, the way the add menu does.
   useEffect(() => {
@@ -5422,7 +5663,9 @@ function BlueprintCanvas({
   const [menu, setMenu] = useState<Menu | null>(null);
   /** 移到's list, open under it inside the right-click menu. */
   const [menuMoveOpen, setMenuMoveOpen] = useState(false);
-  useEffect(() => { if (!menu) setMenuMoveOpen(false); }, [menu]);
+  /** The folder list, open under its item the same way. */
+  const [menuFolderOpen, setMenuFolderOpen] = useState(false);
+  useEffect(() => { if (!menu) { setMenuMoveOpen(false); setMenuFolderOpen(false); } }, [menu]);
   /** The toolbar's ＋ menu — the pane context menu's add section, visible. */
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -5595,6 +5838,49 @@ function BlueprintCanvas({
   }, [applyGraphPatch, setLoose, flashRecent, reorderEntries]);
   blockActionsRef.current.onRowDrop = rowDrop;
 
+  /**
+   * Folders on the board: the classic editor's folders, made and filled here
+   * too. A folder belongs to one section of one book, so entries are only
+   * filed into a folder of their own section and book, and a new one is made
+   * there: filing an entry must never change how, or by whom, it is sent.
+   * Null when the picked entries span more than one such place.
+   */
+  const folderPlaceOf = useCallback((objectIds: string[]) => {
+    const all = useEditorStore.getState().worldDraft.entries;
+    const picked = objectIds.map((id) => (id.startsWith("entry:") ? all.find((e) => e.id === id.slice("entry:".length)) : undefined));
+    if (!picked.length || picked.some((e) => !e || e.role === "greeting" || e.presetId)) return null;
+    const entries = picked as WorldEntry[];
+    const section = entries[0]!.section ?? "system-presets";
+    const worldbookId = entries[0]!.worldbookId ?? undefined;
+    if (entries.some((e) => (e.section ?? "system-presets") !== section || (e.worldbookId ?? undefined) !== worldbookId)) return null;
+    return { section, worldbookId, entries };
+  }, []);
+  const fileEntries = useCallback((objectIds: string[], folderId: string | null) => {
+    const store = useEditorStore.getState();
+    inOneUndoStep(() => {
+      for (const id of objectIds) store.updateEntry(id.slice("entry:".length), { folderId: folderId ?? undefined });
+    });
+    flashRecent(objectIds);
+  }, [flashRecent]);
+  const fileIntoNewFolder = useCallback((objectIds: string[]) => {
+    const place = folderPlaceOf(objectIds);
+    if (!place) return;
+    const store = useEditorStore.getState();
+    let folderId = "";
+    inOneUndoStep(() => {
+      folderId = store.addFolder(place.section, String(t("blueprint.folder.newName")), place.worldbookId);
+      for (const entry of place.entries) store.updateEntry(entry.id, { folderId });
+    });
+    setRenamingFolderId(folderId);
+    flashRecent(objectIds);
+  }, [folderPlaceOf, flashRecent, t]);
+  blockActionsRef.current.onDropOnFolder = (draggedId: string, folderId: string) => {
+    const folder = (useEditorStore.getState().worldDraft.entryFolders ?? []).find((f) => f.id === folderId);
+    const place = folderPlaceOf([draggedId]);
+    if (!folder || !place || folder.section !== place.section || (folder.worldbookId ?? undefined) !== place.worldbookId) return;
+    fileEntries([draggedId], folderId);
+  };
+
   // ── Sticky notes: canvas-only annotations (graphLayout.notes) ──
   const notes = worldDraft.graphLayout?.notes ?? [];
   const noteSaveRef = useRef<number | null>(null);
@@ -5755,6 +6041,7 @@ function BlueprintCanvas({
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.composedPath?.()[0] ?? e.target;
+      if (!keyIsForBoard(target)) return;
       // A real text field only: the row itself sits in a .nokey wrapper (so
       // the board's own shortcuts leave it alone), and that is exactly where
       // focus is after the click that picked it.
@@ -5790,7 +6077,7 @@ function BlueprintCanvas({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [active, readOnly, selection, multiSelected, openRowId]);
+  }, [active, readOnly, selection, multiSelected, openRowId, keyIsForBoard]);
 
   /** Rows share flow nodes, so they need a separate Delete handler.
    * Form controls keep their own keys, without deleting a canvas selection. */
@@ -5804,7 +6091,7 @@ function BlueprintCanvas({
       // ReactFlow prevents the document event even when the selected object
       // is one of our rows, so defaultPrevented cannot suppress this handler.
       const target = e.composedPath?.()[0] ?? e.target;
-      if (e.isComposing || isTextEntryTarget(target)) return;
+      if (e.isComposing || isTextEntryTarget(target) || !keyIsForBoard(target)) return;
       if (!isCanvasRowTarget(target) && isInteractiveDeleteTarget(target)) return;
       e.preventDefault();
       deleteObjects(single ? [...batch, single] : batch);
@@ -5812,7 +6099,7 @@ function BlueprintCanvas({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selection, multiSelected, readOnly, deleteObjects]);
+  }, [active, selection, multiSelected, readOnly, deleteObjects, keyIsForBoard]);
 
   // Esc lets go of what is picked. Menus, forms and editors open over the
   // board take the key first and mark it handled.
@@ -5820,13 +6107,14 @@ function BlueprintCanvas({
     if (!active || (!selection && multiSelected.size === 0)) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
-      if (isTextEntryTarget(e.composedPath?.()[0] ?? e.target)) return;
+      const target = e.composedPath?.()[0] ?? e.target;
+      if (isTextEntryTarget(target) || !keyIsForBoard(target)) return;
       setSelection(null);
       setMultiSelected(EMPTY_MULTI);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selection, multiSelected]);
+  }, [active, selection, multiSelected, keyIsForBoard]);
 
   /**
    * Copy and paste, across modules.
@@ -5946,7 +6234,7 @@ function BlueprintCanvas({
       // Never steal the shortcut from a field the creator is typing in — the
       // whole board is full of them.
       const target = e.composedPath?.()[0] ?? e.target;
-      if (isTextEntryTarget(target)) return;
+      if (isTextEntryTarget(target) || !keyIsForBoard(target)) return;
       if (key !== "a" && typeof window !== "undefined" && (window.getSelection()?.toString() ?? "")) return;
 
       if (key === "a") {
@@ -5975,7 +6263,7 @@ function BlueprintCanvas({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, readOnly, selection, multiSelected, copyIds, pasteInto, ownerOf, selectAllVisible, duplicateMulti]);
+  }, [active, readOnly, selection, multiSelected, copyIds, pasteInto, ownerOf, selectAllVisible, duplicateMulti, keyIsForBoard]);
 
   /** 放到最前: the entries go to the top of their section — the top of the
    *  block they sit in, and first in the prompt — in the order they had. */
@@ -6033,7 +6321,7 @@ function BlueprintCanvas({
     if (selection.type === "node") {
       const resolved = resolveCanvasInspectorNode(selection.id, graph.nodes);
       const g = resolved?.node;
-      // A list block as a whole — "N more" on a tile: the column lists
+      // A list block as a whole — "N more" on a tile: the floating editor lists
       // everything the block holds, which the tile no longer has room for.
       if (!g && isBlockId(selection.id)) {
         const block = blocks.find((b) => b.id === selection.id) ?? blocks.find((b) => b.sourceBlockId === selection.id);
@@ -6093,17 +6381,17 @@ function BlueprintCanvas({
     }
     return out;
   }, [graph]);
-  const renderInspector = (ownColumn = false) => inspectorTarget ? <BlueprintInspector
+  const renderInspector = () => inspectorTarget ? <BlueprintInspector
     target={inspectorTarget} world={worldDraft} graph={graph} readOnly={readOnly} onPatch={applyGraphPatch}
     onDrill={drillFromInspector} onExpand={expandInspector} onShowRelations={showRelationships} onClose={closeAuxiliary}
     onOpenMemory={id => { setRelationshipId(null); setSelection({ type: "node", id: blockId.context(id) }); }}
     onOpenModule={id => { setRelationshipId(null); setSelection({ type: "node", id: `module:${id}` }); }}
     onOpenObject={id => { setRelationshipId(null); jumpTo(id); }}
-    width={ownColumn ? inspectorWidth : undefined} onResize={ownColumn ? commitInspectorWidth : undefined}
     autoFocusName={inspectorTarget.type === "node" && inspectorTarget.node.id === newObjectId && newObjectId?.startsWith("var:") === true}
   /> : null;
   const visibleRelationshipId = active && selection?.type === "node" && selection.id === relationshipId ? relationshipId : null;
-  const auxiliaryPane = visibleRelationshipId ? <ObjectRelationshipsPanel
+  // An object's relationships and its settings share the one floating card.
+  const floatingPane = visibleRelationshipId ? <ObjectRelationshipsPanel
     key={visibleRelationshipId} world={worldDraft} graph={graph} objectId={visibleRelationshipId}
     onOpenObject={id => { setRelationshipId(null); jumpTo(id); }} onEditObject={configureObject}
     onShowInBlueprint={showObjectInBlueprint} onClose={closeAuxiliary}
@@ -6118,33 +6406,60 @@ function BlueprintCanvas({
     }}
     onRemove={edgeIds => inOneUndoStep(() => { for (const id of edgeIds) if (!isDerivedEdge(id)) applyGraphPatch({ op: "remove-edge", edgeId: id }); })}
     onSelectRelated={ids => selectPieces(ids, false)}
-  /> : inspectorTarget && !floatsBeside(inspectorTarget) ? renderInspector() : null;
-  /** The small ones stand beside the row on the board instead. */
-  const floatingPane = !visibleRelationshipId && inspectorTarget && floatsBeside(inspectorTarget) ? renderInspector() : null;
-  // Content editing and relationship inspection share the same auxiliary slot.
-  const inspectorOpen = auxiliaryPane !== null;
-  useEffect(() => {
-    onInspectorChange?.(inspectorOpen);
-  }, [inspectorOpen, onInspectorChange]);
+  /> : renderInspector();
+  const floatingWide = !!visibleRelationshipId || (!!inspectorTarget && isWholeForm(inspectorTarget));
 
   // Selecting a row must never bury it under the inspector: nudge the
-  // viewport just enough to keep the block it lives in beside the drawer.
+  // viewport just enough to keep the block it lives in on screen beside its editor.
   const selectedNodeId = selection?.type === "node" ? (preferredHostFor(selection.id)?.host ?? selection.id) : null;
+  /** The elements the floating card stands by, found once per selection.
+   *  The card asks every frame to follow the board as it pans; searching the
+   *  whole board each time (every row, on a big card) was work on every
+   *  frame while the card was open. A lookup that finds nothing is retried a
+   *  few times a second, for a row that has not been drawn yet. */
+  const anchorCacheRef = useRef<{ key: string; row: Element | null; host: Element | null; at: number } | null>(null);
   const floatingAnchor = (): FloatingAnchor => {
     const root = containerRef.current;
     if (!root || !selection) return { row: null, host: null };
-    if (selection.type === "edge") {
-      const edge = root.querySelector(`.react-flow__edge[data-id="${CSS.escape(selection.id)}"]`);
-      const box = edge?.getBoundingClientRect() ?? null;
-      return { row: box, host: box };
+    const key = `${selection.type}|${selection.id}|${aiOpenedIn ?? ""}|${selectedNodeId ?? ""}`;
+    const cached = anchorCacheRef.current;
+    const fresh = !!cached && cached.key === key
+      && (!cached.host || cached.host.isConnected)
+      && (!cached.row || cached.row.isConnected)
+      && ((!!cached.host && !!cached.row) || performance.now() - cached.at < 250);
+    let rowEl: Element | null;
+    let hostEl: Element | null;
+    if (fresh) {
+      rowEl = cached!.row;
+      hostEl = cached!.host;
+    } else {
+      if (selection.type === "edge") {
+        rowEl = hostEl = root.querySelector(`.react-flow__edge[data-id="${CSS.escape(selection.id)}"]`);
+      } else {
+        // An AI row is drawn in its place's AI block, not as a graph node:
+        // stand beside that block, level with the row, like any other row.
+        const inBlock = aiOpenedIn ? `.react-flow__node[data-id="${CSS.escape(aiOpenedIn)}"] ` : "";
+        const aiRow = selection.id.startsWith("ai:")
+          ? root.querySelector(`${inBlock}[data-place-ai][data-ai-open]`) ?? root.querySelector("[data-place-ai][data-ai-open]")
+          : null;
+        if (aiRow) {
+          rowEl = aiRow;
+          hostEl = aiRow.closest(".react-flow__node");
+        } else {
+          const hostId = selectedNodeId ?? selection.id;
+          hostEl = root.querySelector(`.react-flow__node[data-id="${CSS.escape(hostId)}"]`);
+          rowEl = objectRowElement(selection.id, hostId) ?? null;
+        }
+      }
+      anchorCacheRef.current = { key, row: rowEl, host: hostEl, at: performance.now() };
     }
-    const hostId = selectedNodeId ?? selection.id;
-    const host = root.querySelector(`.react-flow__node[data-id="${CSS.escape(hostId)}"]`)?.getBoundingClientRect() ?? null;
-    const row = objectRowElement(selection.id, hostId)?.getBoundingClientRect() ?? null;
-    return { row, host };
+    return { row: rowEl?.getBoundingClientRect() ?? null, host: hostEl?.getBoundingClientRect() ?? null };
   };
   useEffect(() => {
-    if (!selectedNodeId || !inspectorOpen || viewLockedRef.current) return;
+    // A whole form (the card, a situation, an AI) is what the add menu opens
+    // on a just-made object, which may not be on screen yet. The small
+    // editors stand beside a row that was clicked, so it already is.
+    if (!selectedNodeId || !floatingWide || viewLockedRef.current) return;
     // A staged lesson frames its own block beside the column, and the
     // behaviour it opens there is already in the clear; a nudge on top of
     // that fought the frame's animation and left the block at the edge.
@@ -6183,11 +6498,7 @@ function BlueprintCanvas({
       }
       const bottomRight = rf.flowToScreenPosition({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
       const margin = 20;
-      // Only reserve the editor's width when the editor is a column of THIS
-      // panel. On the stage it lives in the right column, outside the canvas
-      // element entirely, so reserving it here would shove every selection
-      // 340px left for nothing.
-      const rightLimit = rect.right - (inspectorHost ? edgeInsets?.right ?? 0 : inspectorWidthRef.current) - margin;
+      const rightLimit = rect.right - (edgeInsets?.right ?? 0) - margin;
       const vp = rf.getViewport();
       // A node wider than the strip the drawer leaves free cannot be nudged
       // into it: pushing its right edge clear of the drawer only pushes its
@@ -6265,7 +6576,7 @@ function BlueprintCanvas({
     const observer = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(attempt); });
     if (containerRef.current) observer.observe(containerRef.current);
     return () => { cancelAnimationFrame(raf); observer.disconnect(); };
-  }, [selectedNodeId, selection?.id, rf, inspectorHost, inspectorOpen, objectBounds, objectRowElement, edgeInsets?.right]);
+  }, [selectedNodeId, selection?.id, rf, floatingWide, objectBounds, objectRowElement, edgeInsets?.right]);
 
   /** An opened row grows by the height of an editor, and the board relays
    *  itself out over the next few frames — the tile's own height, the frames
@@ -6321,10 +6632,7 @@ function BlueprintCanvas({
       let dy = 0;
       if (box.top < top) dy = top - box.top;
       else if (box.bottom > bottom) dy = Math.max(bottom - box.bottom, top - box.top);
-      // The drawer may be open on something else — the two ways in are
-      // independent, so both can be on screen. Keep the open row out from
-      // under it, the way a selected row is kept out from under it.
-      const right = rect.right - (inspectorOpen ? (inspectorHost ? edgeInsets?.right ?? 0 : inspectorWidthRef.current) : 0) - margin;
+      const right = rect.right - margin;
       let dx = 0;
       if (box.right > right) dx = Math.max(right - box.right, rect.left + margin - box.left);
       else if (box.left < rect.left + margin) dx = rect.left + margin - box.left;
@@ -6335,7 +6643,7 @@ function BlueprintCanvas({
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);
-  }, [openRowId, rf, inspectorOpen, inspectorHost, edgeInsets?.right]);
+  }, [openRowId, rf]);
 
   /** The board's own strip narrowing or widening — the assistant opening
    *  beside it, a window resized — keeps the board where the eye left it:
@@ -6409,6 +6717,7 @@ function BlueprintCanvas({
             container={containerRef.current}
             anchor={floatingAnchor}
             onClose={closeAuxiliary}
+            width={floatingWide ? FLOATING_WIDE : undefined}
           >{floatingPane}</FloatingEditor>
         )}
         {paneDropHint && (
@@ -6950,6 +7259,9 @@ function BlueprintCanvas({
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setViewMenuOpen(false)} />
                     <div className="absolute right-0 top-full z-20 mt-1.5 studio-pill w-[248px] overflow-hidden rounded-xl border py-1">
+                      <div data-learn="ai-calls"><ViewMenuItem icon={Bot} on={showAiCalls} onClick={() => { captureHubEvent("studio_view_toggle", { world_id: eventWorldId(), item: "ai-calls", on: true }); setShowAiCalls(true); setViewMenuOpen(false); }}>
+                        {t("blueprint.aiCalls.view")}
+                      </ViewMenuItem></div>
                       {hasSeveralAis(roster) && (
                         <div data-learn="ai-table"><ViewMenuItem icon={Table2} on={showAiTable} onClick={() => { captureHubEvent("studio_view_toggle", { world_id: eventWorldId(), item: "ai-table", on: true }); setShowAiTable(true); setViewMenuOpen(false); }}>
                           {t("blueprint.aiTable.view")}
@@ -7024,8 +7336,7 @@ function BlueprintCanvas({
             {!readOnly && (
               <button
                 type="button"
-                onClick={() => { void undoTurn(); }}
-                disabled={undoingTurn}
+                onClick={undoTurn}
                 className="studio-control shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:text-foreground disabled:opacity-50"
               >
                 {t("blueprint.turn.undo")}
@@ -7103,7 +7414,7 @@ function BlueprintCanvas({
                     frame is not one object, and both items did nothing there. */}
                 {!menu.id.startsWith("block:") && !menu.id.startsWith("frame:") && (
                   <>
-                    <MenuItem icon={ExternalLink} onClick={() => { drillObject(menu.id); setMenu(null); }}>
+                    <MenuItem icon={ExternalLink} onClick={() => { drillObject(menu.id, { focus: true }); setMenu(null); }}>
                       {t("blueprint.insp.openFull")}
                     </MenuItem>
                     {/* A row's own wires. This used to be a second icon on every
@@ -7134,8 +7445,15 @@ function BlueprintCanvas({
                   const movable = gates.length > 0 && targets.some((id) => isShareableObject(id));
                   const frontable = targets.some((id) => id.startsWith("entry:") || id.startsWith("greeting:"));
                   const deletable = targets.some((id) => isDeletableObject(id));
+                  const place = readOnly ? null : folderPlaceOf(targets);
+                  const folderChoices = place
+                    ? (worldDraft.entryFolders ?? [])
+                      .filter((f) => f.section === place.section && (f.worldbookId ?? undefined) === place.worldbookId)
+                      .sort((a, b) => a.order - b.order)
+                    : [];
+                  const anyFiled = !!place && place.entries.some((e) => !!e.folderId && folderChoices.some((f) => f.id === e.folderId));
                   const mod = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
-                  const done = () => { setMenu(null); setMenuMoveOpen(false); };
+                  const done = () => { setMenu(null); setMenuMoveOpen(false); setMenuFolderOpen(false); };
                   return (
                     <>
                       {(copyable || clipboardRef.current.length > 0) && <div className="my-1 h-px bg-border" />}
@@ -7183,6 +7501,52 @@ function BlueprintCanvas({
                                   {displayTitle(fr.module!)}
                                 </button>
                               ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {place && (
+                        <>
+                          <MenuItem
+                            icon={FolderOpen}
+                            onClick={() => setMenuFolderOpen((v) => !v)}
+                            trailing={<ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", menuFolderOpen && "rotate-90")} />}
+                          >
+                            {t("blueprint.folder.fileIn")}
+                          </MenuItem>
+                          {menuFolderOpen && (
+                            <div data-menu-folder className="mx-2 mb-1 max-h-56 overflow-y-auto rounded-lg border border-border/60 bg-background/40 py-1">
+                              {folderChoices.map((f) => (
+                                <button
+                                  key={f.id}
+                                  type="button"
+                                  disabled={place.entries.every((e) => e.folderId === f.id)}
+                                  onClick={() => { fileEntries(targets, f.id); done(); }}
+                                  className="flex w-full items-center gap-2 truncate rounded px-2.5 py-1.5 text-left text-xs text-foreground/85 hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent"
+                                >
+                                  <FolderOpen className="h-3 w-3 shrink-0 text-violet-300" />
+                                  <span className="truncate">{f.name}</span>
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                data-menu-folder-new
+                                onClick={() => { fileIntoNewFolder(targets); done(); }}
+                                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-xs text-foreground/85 hover:bg-accent"
+                              >
+                                <FolderPlus className="h-3 w-3 shrink-0 text-amber-300" />
+                                {t("blueprint.folder.new")}
+                              </button>
+                              {anyFiled && (
+                                <button
+                                  type="button"
+                                  onClick={() => { fileEntries(targets, null); done(); }}
+                                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-xs text-foreground/85 hover:bg-accent"
+                                >
+                                  <FolderMinus className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                  {t("blueprint.folder.takeOut")}
+                                </button>
+                              )}
                             </div>
                           )}
                         </>
@@ -7239,6 +7603,14 @@ function BlueprintCanvas({
           />
         )}
 
+        {showAiCalls && (
+          <AiCallsTable
+            world={worldDraft}
+            onOpen={openAiCall}
+            onClose={() => setShowAiCalls(false)}
+          />
+        )}
+
         {focusedModule && (
           <div className="absolute left-4 top-16 z-20 flex max-w-[calc(100%-2rem)] studio-pill items-center gap-2 rounded-xl border px-3 py-2">
             <button type="button" onClick={leaveModuleFocus} className="shrink-0 text-xs font-semibold text-amber-300 hover:text-amber-100">{t("blueprint.workspace.back")}</button>
@@ -7268,18 +7640,6 @@ function BlueprintCanvas({
         )}
       </div>
 
-      {/* The selected object's editor.
-          On the stage it goes into the right column — the creator is doing
-          exactly one of talking to the assistant, playing the card, or editing
-          what they clicked, so those three take turns in one place instead of
-          a third column shoving the canvas aside. The dockview adapter has no
-          column to lend, so there it stays a column of the panel. */}
-      {auxiliaryPane && !inspectorHost && (visibleRelationshipId
-        ? <div className="min-h-0 shrink-0 border-l border-border/70" style={{ width: inspectorWidth }}>{auxiliaryPane}</div>
-        : renderInspector(true))}
-      {auxiliaryPane && inspectorHost
-        ? createPortal(auxiliaryPane, inspectorHost)
-        : null}
     </div>
   );
 }

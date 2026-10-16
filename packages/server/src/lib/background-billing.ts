@@ -64,11 +64,19 @@ export async function backgroundUsageCost(args: {
 }
 
 /** Pre-gate for a multi-call run: false when the wallet clearly can't cover
- *  it. Unlimited plans always pass. */
-export async function hasBackgroundRunBudget(userId: string): Promise<boolean> {
+ *  it. Unlimited plans always pass. `estimateCredits`, when given, is the
+ *  run's expected total cost; it is only computed for billed plans. A flat
+ *  minimum alone let a long first-time story compaction (~17 mushies) start
+ *  on 15, drain the wallet mid-run and fail before the merge — every episode
+ *  charged, no summary saved (2026-10-15). */
+export async function hasBackgroundRunBudget(
+  userId: string,
+  estimateCredits?: () => Promise<number>,
+): Promise<boolean> {
   const { plan, balance } = await effectivePlanFor(userId);
   if (PLANS[plan]?.unlimited) return true;
-  return balance >= BACKGROUND_RUN_MIN_BALANCE;
+  if (balance < BACKGROUND_RUN_MIN_BALANCE) return false;
+  return !estimateCredits || balance >= await estimateCredits();
 }
 
 /**

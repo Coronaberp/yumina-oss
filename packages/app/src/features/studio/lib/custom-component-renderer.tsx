@@ -1,15 +1,15 @@
-import React, {
+import {
   useMemo,
   useContext,
   createContext,
-  Component,
   useEffect,
   useRef,
 } from "react";
 import { compileTSX } from "@/lib/tsx/tsx-compiler";
 import { useAssetFont } from "@/lib/asset-font";
 import { resolveAssetRefs, resolveAssetUrl } from "@/lib/asset-url";
-import { CopyErrorButton } from "@/components/copy-error-button";
+import { codeRevision, createCodeDiagnostic } from "@/lib/tsx/diagnostics";
+import { StudioCodeDiagnostic, StudioCodeBoundary } from "./code-diagnostic";
 
 /** API exposed to custom components via the useYumina() hook */
 /** One of the card's entries as a card's interface sees it. */
@@ -135,34 +135,6 @@ interface CustomComponentRendererProps {
   api?: YuminaAPI;
   /** Extra props spread onto the compiled component (e.g., content + role for message renderers) */
   extraProps?: Record<string, unknown>;
-}
-
-class ErrorBoundary extends Component<
-  { children: React.ReactNode; fallback: (error: string) => React.ReactNode },
-  { error: string | null }
-> {
-  state = { error: null as string | null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error: error.message };
-  }
-
-  render() {
-    if (this.state.error) {
-      return this.props.fallback(this.state.error);
-    }
-    return this.props.children;
-  }
-}
-
-function ErrorCard({ message }: { message: string }) {
-  return (
-    <div className="relative rounded-lg border border-destructive/30 bg-destructive/5 p-3 pr-9">
-      <p className="text-xs font-medium text-destructive">Component Error</p>
-      <p className="mt-1 text-xs text-destructive/70 font-mono whitespace-pre-wrap break-all">{message}</p>
-      <CopyErrorButton text={`Component Error:\n${message}`} />
-    </div>
-  );
 }
 
 function parseArbitraryColorToken(token: string, prefix: string): string | null {
@@ -439,17 +411,17 @@ export function CustomComponentRenderer({
 
   // Compile once per code change. The useYumina hook reads from context,
   // so it always gets the latest effectiveAPI via the Provider below.
-  const { Component: CompiledComponent, error } = useMemo(
+  const { Component: CompiledComponent, error, diagnostic } = useMemo(
     () => compileTSX(code, useYumina, { useAssetFont }),
     [code]
   );
 
   if (error) {
-    return <ErrorCard message={error} />;
+    return <StudioCodeDiagnostic diagnostic={diagnostic ?? createCodeDiagnostic(error, { phase: "compile" })} />;
   }
 
   if (!CompiledComponent) {
-    return <ErrorCard message="No component exported" />;
+    return <StudioCodeDiagnostic diagnostic={createCodeDiagnostic("No component exported", { phase: "load" })} />;
   }
 
   useEffect(() => {
@@ -518,7 +490,7 @@ export function CustomComponentRenderer({
 
   return (
     <YuminaContext.Provider value={effectiveAPI}>
-      <ErrorBoundary fallback={(err) => <ErrorCard message={err} />}>
+      <StudioCodeBoundary key={codeRevision({ "<component>": code })} files={{ "<component>": code }}>
         <div ref={hostRef} className={hostClassName}>
           <CompiledComponent
             variables={variables}
@@ -527,7 +499,7 @@ export function CustomComponentRenderer({
             {...(extraProps ?? {})}
           />
         </div>
-      </ErrorBoundary>
+      </StudioCodeBoundary>
     </YuminaContext.Provider>
   );
 }

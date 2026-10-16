@@ -1,4 +1,5 @@
 import { aiDropReason, resolveEffectVariable, type AiDropReason, type ContinuityDecision, type Effect, type GameState, type JevQuestion, type WorldDefinition } from "@yumina/engine";
+import { textPrefix } from "./text-prefix.js";
 
 type Change = { variableId: string; oldValue: unknown; newValue: unknown };
 
@@ -95,8 +96,8 @@ export function buildChangeTrace(args: {
       const options = !q?.criteria ? [] : Array.isArray(q.criteria) ? q.criteria : Object.values(q.criteria);
       return {
         key: d.key, kind: d.kind,
-        question: (q?.instructions ?? "").slice(0, 400),
-        options: options.slice(0, 10).map((o) => String(o).slice(0, 80)),
+        question: textPrefix(q?.instructions ?? "", 400),
+        options: options.slice(0, 10).map((o) => textPrefix(String(o), 80)),
         chosen: d.chosen, confidence: d.confidence, applied: d.applied,
         ...(d.reason ? { reason: d.reason } : {}),
       };

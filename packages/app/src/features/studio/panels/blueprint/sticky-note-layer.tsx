@@ -138,7 +138,16 @@ export function StickyNoteLayer({
     return () => { window.clearTimeout(a); window.clearTimeout(b); };
   }, [measure, layoutKey, notes]);
 
-  const update = (id: string, patch: Partial<Note>) => write(notes.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  /** The notes as they are now, not as they were when a drag began: a note
+   *  written in and then carried straight away saved its new words on blur,
+   *  and the drop wrote the old list back over them. */
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const update = (id: string, patch: Partial<Note>) => {
+    const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch } : n));
+    notesRef.current = next;
+    write(next);
+  };
 
   /** Where each note stands on the board. A stuck note stands just outside
    *  the block its first target is in, level with the target, and never on
@@ -202,6 +211,10 @@ export function StickyNoteLayer({
     event.preventDefault();
     event.stopPropagation();
     const handle = event.currentTarget;
+    // Pressing the tape does not move focus, so words still being typed are
+    // saved before the note moves.
+    const typing = document.activeElement;
+    if (typing instanceof HTMLTextAreaElement && typing.closest(`[data-sticky-note="${CSS.escape(note.id)}"]`)) typing.blur();
     const zoom = rf.getZoom() || 1;
     const start = { x: event.clientX, y: event.clientY };
     const delta = (ev: PointerEvent) => ({ dx: (ev.clientX - start.x) / zoom, dy: (ev.clientY - start.y) / zoom });
@@ -341,11 +354,13 @@ export function StickyNoteLayer({
                     <Link2Off className="h-2.5 w-2.5" />
                   </button>
                 )}
-                <button type="button" title={t("blueprint.notes.fold")} onClick={() => update(n.id, { collapsed: true })} className="rounded p-0.5 opacity-60 hover:bg-black/10 hover:opacity-100">
-                  <Minus className="h-2.5 w-2.5" />
-                </button>
                 {!readOnly && (
-                  <button type="button" title={t("blueprint.insp.delete")} data-note-delete="" onClick={() => write(notes.filter((x) => x.id !== n.id))} className="rounded p-0.5 opacity-60 hover:bg-black/10 hover:opacity-100">
+                  <button type="button" title={t("blueprint.notes.fold")} onClick={() => update(n.id, { collapsed: true })} className="rounded p-0.5 opacity-60 hover:bg-black/10 hover:opacity-100">
+                    <Minus className="h-2.5 w-2.5" />
+                  </button>
+                )}
+                {!readOnly && (
+                  <button type="button" title={t("blueprint.insp.delete")} data-note-delete="" onClick={() => write(notesRef.current.filter((x) => x.id !== n.id))} className="rounded p-0.5 opacity-60 hover:bg-black/10 hover:opacity-100">
                     <X className="h-2.5 w-2.5" />
                   </button>
                 )}

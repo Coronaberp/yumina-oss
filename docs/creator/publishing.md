@@ -1,12 +1,22 @@
 # Publishing
 
+> Cover and asset rules: effective October 24, 2026 at 11:59 p.m. Pacific time. [See the notice and previous rules](/legal/community-guidelines).
+
 Once your card is done, publish it and players can find it on Discover.
+
+## Content checklist
+
+- **Limited = every asset is safe for work and non-suggestive**, including in-game art, audio, custom UI, and linked media.
+- **Limitless covers and public previews must be non-explicit:** no nudity, sexual acts, or graphic gore. Keep intimate areas covered with opaque clothing.
+- **Check all public material:** cover, gallery, screenshots, title, description, tags, and every language variant. Shared profile images must meet Limited standards.
+- **Blur does not make an explicit image acceptable.** Mark a suggestive Limitless cover **Blurred**, but make sure it passes the rules when fully visible.
+- **Use assets you have rights to publish** and follow the [full cover, asset, and content rules](/legal/community-guidelines#publishing-media). Review again after updates.
 
 ## Before You Publish
 
 - **Playtest.** Send 10 to 20 messages. Check that variables update properly, lore is sent when it should be, and how it plays.
 - **Write the blurb.** It's the first thing players see on Discover. Say clearly what the card is about.
-- **Upload a cover.** Cards with a cover get noticeably more clicks.
+- **Add a compliant cover image.** A cover is required to submit a World for publication.
 - **Pick the content mode.** **Limited** for regular content, **Limitless** for adult content. Mislabelling breaks the community guidelines.
 - **Add tags.** Players find your card through them when searching and filtering.
 
@@ -19,7 +29,7 @@ Once your card is done, publish it and players can find it on Discover.
 
 ![The Publish to Discover dialog, with tags, play time, visibility and content mode](./images/publish.png)
 
-Once it passes review, players can see it on Discover.
+Once it passes review, eligible players can discover it according to its visibility and content mode. Creators with review bypass enabled can publish without waiting for admin review; the same content rules apply.
 
 ### Lore Shift
 
@@ -56,9 +66,15 @@ One card can have several versions, like a Chinese version and an English versio
 
 Each variant is its own separate content: lore, openings and variables all need to be written again in that language. They're linked together through a language group, and players see the version in their own language on Discover.
 
+To unpublish, open the publish menu and click **Unpublish**. The dialog defaults to **Current variant only**. Choose **All published variants** to take down your published variants in the same language group, or **Choose variants** to select individual versions, including different variants in the same language. Drafts and other variants that are not published are excluded.
+
+Before confirming, check the selected variants and the ones that will remain published. Only the selected variants are taken down; players with existing sessions for those variants lose access until they are published again. Unselected published variants remain available.
+
 ## Gallery Images
 
 Add up to 8 gallery images to show off your world, like gameplay screenshots, custom UI or promo art. They appear on the card's details page.
+
+Every gallery image is a public preview and must follow the [cover and asset rules](/legal/community-guidelines#publishing-media), even if it is a screenshot from Limitless gameplay.
 
 ## Announcements
 

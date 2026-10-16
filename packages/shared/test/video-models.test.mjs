@@ -11,13 +11,13 @@ import {
 
 const base = { aspectRatio: "16:9", durationSeconds: 5 };
 
-test("OpenRouter video is charged at the provider's per-second price", () => {
+test("OpenRouter video includes the existing 20 percent partner markup", () => {
   const max = getVideoModel("h3-max");
-  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "768p" }), 400); // $0.08/s × 5
-  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "480p" }), 250); // $0.05/s × 5
-  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "768p", durationSeconds: 15 }), 1200);
+  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "768p" }), 480); // $0.08/s × 5 × 1.2
+  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "480p" }), 300); // $0.05/s × 5 × 1.2
+  assert.equal(computeVideoModelPrice(max, { ...base, resolution: "768p", durationSeconds: 15 }), 1440);
   const h3 = getVideoModel("h3");
-  assert.equal(computeVideoModelPrice(h3, { ...base, resolution: "2K", referenceAssetIds: ["a", "b"] }), 650 + 80);
+  assert.equal(computeVideoModelPrice(h3, { ...base, resolution: "2K", referenceAssetIds: ["a", "b"] }), 876); // (650 + 80) × 1.2
 });
 
 test("Comfy video price scales with length, steps, pixels and LoRAs", () => {

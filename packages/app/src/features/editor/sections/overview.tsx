@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { X, Plus, ImageIcon, Loader2, FolderOpen, Upload, Globe, Type, History, Sparkles, Volume2 } from "lucide-react";
 import { FieldError } from "@/components/ui/field-error";
 import { WorldUpdateHistory } from "@/features/library/world-update-history";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import { MAX_WORLD_DESCRIPTION, MAX_WORLD_NAME } from "@yumina/shared";
 import { parseImportedFile } from "@/lib/import-world";
 import {
@@ -21,11 +22,13 @@ import {
 import { adoptOwnWriteToken, useEditorStore } from "@/stores/editor";
 import { AssetPicker } from "../asset-picker";
 import { VoiceField } from "../components/voice-field";
-import { DebouncedInput, DebouncedTextarea } from "../components/debounced-field";
+import { DebouncedInput } from "../components/debounced-field";
+import { DescriptionField } from "../components/description-field";
 import { worldImportCounts } from "@/lib/import-summary";
 import { CoverCropDialog } from "../components/cover-crop-dialog";
 import { confirmAction } from "@/components/ui/global-confirm-dialog";
 import { TwoTapDeleteButton } from "@/components/ui/two-tap-delete-button";
+import { LiveCanonGroup } from "@/features/studio/panels/blueprint/live-canon";
 
 
 
@@ -512,6 +515,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
               {t("overview.coverImageDesc")}
             </p>
           </div>
+          <MediaGuidelinesNote className="mb-4" />
           <div className="grid grid-cols-1 gap-6 @[480px]:grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)]">
             {(["portrait", "landscape"] as const).map((target) => {
               const portrait = target === "portrait";
@@ -586,6 +590,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
             </span>
           </div>
 
+          <MediaGuidelinesNote className="mb-4" />
           <div className="grid grid-cols-2 @[640px]:grid-cols-4 gap-3">
             {galleryImages.map((url, index) => (
               <div
@@ -684,7 +689,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
               {t("overview.descriptionDesc")}
             </p>
           </div>
-          <DebouncedTextarea
+          <DescriptionField
             value={worldDraft.description}
             onCommit={(description) => setField("description", description)}
             placeholder={t("overview.descriptionPlaceholder")}
@@ -803,6 +808,13 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
           </div>
         </div>
 
+        {/* Lore Shift. The Studio menu's "Card settings" opens this page, and the
+            docs send creators to "Card settings" for it, but it only lived in
+            the publish dialog and the canvas inspector's card form. Embedded,
+            this page sits inside that inspector form, which already draws the
+            group below it, so it is left out there. */}
+        {!embedded && <LiveCanonGroup card />}
+
         {/* Variant Group removed — variant management is now in the tab bar above */}
       </div>
 
@@ -823,6 +835,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
 
       {showCoverPicker && (serverWorldId || useEditorStore.getState().serverWorldId) && (
         <AssetPicker
+          mediaUsage="public"
           worldId={(serverWorldId || useEditorStore.getState().serverWorldId)!}
           filterType="image"
           onSelect={(ref) => {
@@ -835,6 +848,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
 
       {showGalleryPicker && (serverWorldId || useEditorStore.getState().serverWorldId) && (
         <AssetPicker
+          mediaUsage="public"
           worldId={(serverWorldId || useEditorStore.getState().serverWorldId)!}
           filterType="image"
           onSelect={(ref) => {

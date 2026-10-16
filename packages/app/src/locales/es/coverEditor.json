@@ -3177,7 +3177,15 @@
         "paper": "Papel",
         "night": "Noche",
         "terminal": "Terminal",
-        "blossom": "Flor"
+        "blossom": "Flor",
+        "velvet": "Terciopelo",
+        "harbor": "Puerto",
+        "linen": "Lino",
+        "coolant": "Refrigerante",
+        "moss": "Musgo",
+        "tape": "Cinta",
+        "gilded": "Dorado",
+        "tavern": "Taberna"
       },
       "fontName": {
         "sans": "Palo seco",
@@ -3205,13 +3213,29 @@
         "portrait-scene": "Escena con retrato",
         "adventure-hud": "HUD de aventura",
         "stat-panel": "Panel de estadísticas",
-        "character-sheet": "Ficha de personaje"
+        "character-sheet": "Ficha de personaje",
+        "chapter-portrait": "Retrato por capítulos",
+        "masthead": "Cabecera",
+        "margin-notes": "Notas al margen",
+        "status-strip": "Franja de estado",
+        "night-card": "Tarjeta nocturna",
+        "cassette": "Casete",
+        "art-split": "Arte a media pantalla",
+        "guild-card": "Ficha de gremio"
       },
       "presetHint": {
         "portrait-scene": "Retrato + dos barras + página de detalles. Para una tarjeta sobre un personaje.",
         "adventure-hud": "Dónde estás + día y momento + dos barras. Para aventura textual y exploración.",
         "stat-panel": "Cuatro barras + oro + día. Para criar, gestionar, sobrevivir.",
-        "character-sheet": "El nombre, el rol, la ubicación y la fase del propio jugador. Para rol."
+        "character-sheet": "El nombre, el rol, la ubicación y la fase del propio jugador. Para rol.",
+        "chapter-portrait": "Una franja de capítulo arriba. La columna derecha tiene el retrato, el ánimo y tres barras.",
+        "masthead": "Nombre de la tarjeta, cuatro barras y el reparto en una banda arriba, con la conversación debajo.",
+        "margin-notes": "Fondo claro con tres notas a la derecha: título y lugar, cuatro barras y la gente que conoces.",
+        "status-strip": "Una franja bajo el cuadro de texto con la hora, el oro, el lugar, aguante, energía y quién está cerca.",
+        "night-card": "El día actual arriba a la derecha y una ficha del personaje abajo a la derecha con ánimo, lugar, cuatro barras y la gente que conoces.",
+        "cassette": "Un casete bajo el cuadro de texto con el nombre de la tarjeta en la etiqueta, junto al capítulo actual, el lugar y el ánimo.",
+        "art-split": "El retrato ocupa la mitad derecha, con el nombre de la tarjeta y dos barras abajo.",
+        "guild-card": "Una ficha de pergamino a la izquierda con el nombre, la clase, el rango, el oro, el aguante y la energía del jugador."
       },
       "vars": {
         "portrait": "Retrato",
@@ -3229,13 +3253,17 @@
         "playerRole": "Rol",
         "gender": "Género",
         "age": "Edad",
-        "phase": "Fase"
+        "phase": "Fase",
+        "mood": "Ánimo",
+        "rank": "Rango de aventurero"
       },
       "varDefaults": {
         "timeOfDay": "Mañana",
         "location": "Un lugar sin nombre",
         "playerRole": "Viajero",
-        "phase": "Prólogo"
+        "phase": "Prólogo",
+        "mood": "Tranquilo",
+        "rank": "Cobre"
       },
       "s": {
         "common": {
@@ -3254,10 +3282,11 @@
           "actionWaitSays": "No contesto, y espero a que hable primero.",
           "toolRewind": "Deshacer",
           "toolRegenerate": "Regenerar",
-          "toolCopy": "Copiar"
+          "toolCopy": "Copiar",
+          "castLabel": "Reparto"
         },
         "portrait-scene": {
-          "portraitEmpty": "Aquí va el retrato — añádelo en Detalles de la tarjeta o cámbialo con la variable Retrato",
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
           "meterPrimary": "Afecto",
           "meterSecondary": "Vigor"
         },
@@ -3282,6 +3311,65 @@
           "phaseLabel": "Fase",
           "meterPrimary": "Afecto",
           "meterSecondary": "Vigor"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía"
+        },
+        "masthead": {
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "goldFormat": "Oro {gold}",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía",
+          "meterThird": "Afinidad",
+          "meterFourth": "Progreso"
+        },
+        "margin-notes": {
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía",
+          "meterFourth": "Progreso"
+        },
+        "status-strip": {
+          "whenLabel": "Hora",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "Oro",
+          "placeLabel": "Lugar",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía"
+        },
+        "night-card": {
+          "clockFormat": "Día {day}",
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía",
+          "meterFourth": "Progreso"
+        },
+        "cassette": {
+          "sideFormat": "Cara A · Día {day}",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "Ánimo",
+          "meterPrimary": "Afinidad"
+        },
+        "art-split": {
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante"
+        },
+        "guild-card": {
+          "guildTitle": "Aventurero",
+          "guildSubFormat": "Registrado en {location}",
+          "nameLabel": "Nombre",
+          "roleLabel": "Clase",
+          "rankLabel": "Rango",
+          "goldLabel": "Oro",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía"
         }
       }
     },
@@ -3413,7 +3501,9 @@
       "randomMax": "Máx.",
       "randomFromPlaceholder": "Uno por línea; se elige uno al azar",
       "randomFromHint": "Al pulsar, se elige al azar una línea de arriba y se escribe en esta variable. Lo decide la tarjeta, no la IA.",
-      "randomNumberHint": "Al pulsar, se elige al azar un número entero en este rango y se escribe en esta variable."
+      "randomNumberHint": "Al pulsar, se elige al azar un número entero en este rango y se escribe en esta variable.",
+      "pickStartImage": "Elegir imagen",
+      "changeStartImage": "Cambiar imagen"
     },
     "style": {
       "none": "Ninguno",
@@ -3732,7 +3822,7 @@
       "newPage": "Nuevo",
       "title": "Nuevo · elige una plantilla",
       "tutorTip": "Aquí hay 18 plantillas listas ✧ Arriba, las de inicio (antes de que empiece la historia); abajo, las páginas que se abren desde el menú durante el juego. Haz clic en una para añadirla a tu tarjeta y ya funciona. ¿Aún no quieres ninguna? Cierra con la × y vuelve cuando quieras desde Nuevo.",
-      "sub": "22 plantillas listas (4 pantallas completas, 18 páginas), ya conectadas con variables, botones e instrucciones para la IA: añade una y se juega. Colores, tamaños y posiciones siguen siendo tuyos.",
+      "sub": "30 plantillas listas (12 pantallas completas, 18 páginas), ya conectadas con variables, botones e instrucciones para la IA: añade una y se juega. Colores, tamaños y posiciones siguen siendo tuyos.",
       "groupOpening": "Inicio · antes de que empiece la historia",
       "blank": "Página en blanco",
       "blankDesc": "Sin nada. La organizas tú.",
@@ -5029,10 +5119,14 @@
     "blurb": "Apps que el jugador abre desde una barra junto al chat: mensajes, relaciones, un feed, el reloj… Cada una guarda sus datos en una variable y la IA la va rellenando con la historia. La vista previa de cada tarjeta es la app real; no tienes que programar nada.",
     "add": "Añadir app",
     "added": "Añadida a la barra",
-    "footnote": "Los textos de la app siguen el idioma de la tarjeta (chino, inglés o español). Si la quitas desde la página de Bundles, se van con ella el botón, los datos y las reglas.",
+    "footnote": "Los textos de la app siguen el idioma de la tarjeta (chino, inglés o español). Al quitar una app se van con ella su botón del dock, sus datos y sus reglas.",
     "sets": "Combinaciones sugeridas: lo que suele seguir cada tipo de tarjeta",
     "addSet": "Añadir las cuatro",
-    "setAdded": "Todas añadidas"
+    "setAdded": "Todas añadidas",
+    "remove": "Quitar",
+    "removeSet": "Quitar las cuatro",
+    "removed": "Se quitó {{name}}",
+    "varDeleteHint": "Esta variable guarda los datos de la app {{name}}. Al borrarla se quita la app entera, botón del dock incluido."
   },
   "worldChanges": {
     "title": "¿Actualizar «{{name}}»?",

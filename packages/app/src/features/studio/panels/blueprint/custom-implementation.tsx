@@ -3,8 +3,13 @@ import { useTranslation } from "react-i18next";
 import { FileCode2, StickyNote } from "lucide-react";
 import { extractAiCallsFromFiles, type FrontendAiCall, type Worldbook } from "@yumina/engine";
 import { useEditorStore } from "@/stores/editor";
-import { CodeAiCallCard } from "./code-ai-call-card";
+import { CodeAiCallCard, codeCallFacts } from "./code-ai-call-card";
 import { CustomizationHints, requestOpenCode } from "./customization-hints";
+
+// One empty list for a card without situations. A fresh `[]` from a selector
+// is a new value on every render, and zustand re-renders until React gives up
+// (#185) — which is what opening Context on such a card did.
+const NO_BOOKS: Worldbook[] = [];
 
 /**
  * 「自定义」— the fourth option on a type switch, and what it opens onto.
@@ -18,7 +23,7 @@ import { CustomizationHints, requestOpenCode } from "./customization-hints";
  * nothing implements it yet, it says so and points at the note, which is the
  * author's half of the deal.
  */
-export function EmptyImplementation({ kind }: { kind: "ai" | "behavior" }) {
+export function EmptyImplementation({ kind }: { kind: "ai" | "behavior" | "context" }) {
   const { t } = useTranslation("editor");
   return (
     <div data-custom-empty={kind} className="rounded-lg border border-dashed border-white/15 px-3 py-3 text-[11.5px] leading-relaxed text-foreground/60">
@@ -39,7 +44,7 @@ export function callsImplementing(book: Pick<Worldbook, "id">, files: Record<str
 
 export function CustomAiPanel({ worldbookId }: { worldbookId: string }) {
   const { t } = useTranslation("editor");
-  const books = useEditorStore((s) => s.worldDraft.worldbooks ?? []);
+  const books = useEditorStore((s) => s.worldDraft.worldbooks ?? NO_BOOKS);
   const files = useEditorStore((s) => s.worldDraft.rootComponent?.files);
   const book = books.find((b) => b.id === worldbookId);
   const calls = useMemo(() => (book ? callsImplementing(book, files) : []), [book, files]);
@@ -53,7 +58,7 @@ export function CustomAiPanel({ worldbookId }: { worldbookId: string }) {
         <>
           <p className="text-[11px] font-semibold text-foreground/80">{t("blueprint.custom.implementedBy", { count: calls.length })}</p>
           {calls.map((c) => (
-            <div key={`${c.file}:${c.line}`} className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-2">
+            <div key={`${c.file}:${c.line}:${c.column}`} className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-2">
               <CodeAiCallCard call={c} books={books} onOpenFile={(file, line) => requestOpenCode(file, line)} />
             </div>
           ))}
@@ -116,6 +121,58 @@ export function CustomBehaviorPanel({ reactionId }: { reactionId: string }) {
         </ul>
       )}
       <CustomizationHints area="behavior" />
+    </div>
+  );
+}
+
+/**
+ * Context's 自定义: what the AI reads, decided by the card's own code.
+ *
+ * The rest of the Context form is the engine's recipe for the story turn.
+ * A card like Godot barely uses it — its interface writes the messages
+ * itself, picks the lore, names the situation — and every one of those
+ * calls is a context of its own. They are listed here so the form stops
+ * describing only the half of the card the engine assembles.
+ */
+export function CustomContextPanel() {
+  const { t } = useTranslation("editor");
+  const books = useEditorStore((s) => s.worldDraft.worldbooks ?? NO_BOOKS);
+  const files = useEditorStore((s) => s.worldDraft.rootComponent?.files);
+  const calls = useMemo(() => (files ? extractAiCallsFromFiles(files) : []), [files]);
+  return (
+    <div className="space-y-2" data-custom-context="">
+      <p className="text-[11px] leading-relaxed text-foreground/55">{t("blueprint.custom.contextIntro")}</p>
+      {calls.length === 0 ? (
+        <EmptyImplementation kind="context" />
+      ) : (
+        <>
+          <p className="text-[11px] font-semibold text-foreground/80">{t("blueprint.custom.implementedBy", { count: calls.length })}</p>
+          <ul className="space-y-1">
+            {calls.map((c) => {
+              // Kind, lore and situation say what it reads; the rest is on the AI block's row.
+              const reads = new Set([t("blueprint.codeCall.kind"), t("blueprint.codeCall.lore"), t("blueprint.codeCall.situations"), t("blueprint.codeCall.picksSituation")]);
+              const summary = codeCallFacts(c, books, t).filter(([k]) => reads.has(k)).map(([, v]) => v).join(" · ");
+              return (
+                <li key={`${c.file}:${c.line}:${c.column}`}>
+                  <button
+                    type="button"
+                    data-custom-context-call={`${c.file}:${c.line}`}
+                    className="nodrag w-full rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 text-left text-[11.5px] hover:border-white/20"
+                    onClick={(e) => { e.stopPropagation(); requestOpenCode(c.file, c.line); }}
+                  >
+                    <span className="flex items-center gap-1.5 text-foreground/85">
+                      <FileCode2 className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+                      <span className="min-w-0 truncate font-mono">{t("blueprint.custom.codeAt", { file: c.file, line: c.line })}</span>
+                    </span>
+                    <span className="mt-0.5 block leading-relaxed text-foreground/55">{summary}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+      <CustomizationHints area="context" />
     </div>
   );
 }

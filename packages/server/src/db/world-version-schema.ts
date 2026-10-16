@@ -53,6 +53,11 @@ ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS thumbnail_url text;
 ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS age_rating text;
 ALTER TABLE world_pending_edits ADD COLUMN IF NOT EXISTS preserve_draft boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS world_versions_world_hash_idx ON world_versions(world_id, content_hash);
+-- Asset ids and storage paths a version references, so asset deletion reads
+-- these instead of every version's full content. Null on rows saved before them.
+ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS asset_ids text[];
+ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS asset_paths text[];
+CREATE INDEX IF NOT EXISTS world_versions_asset_ids_idx ON world_versions USING gin (asset_ids);
 `;
 
 /** The worlds table as the app builds it, for tests that stand a database up

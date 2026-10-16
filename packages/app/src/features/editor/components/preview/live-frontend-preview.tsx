@@ -1,5 +1,5 @@
 import { previewMacroNames, resolveDisplayMacros } from "@/lib/resolve-display-macros";
-import React, { Component, createContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useEditorStore } from "@/stores/editor";
@@ -27,7 +27,9 @@ import {
 } from "@/../sandbox/chat/designed-message";
 import { useAudioStore } from "@/stores/audio";
 import { Layers, AlertCircle } from "lucide-react";
-import { CopyErrorButton } from "@/components/copy-error-button";
+import { CodeDiagnosticBoundary } from "@/lib/tsx/diagnostic-card";
+import { createCodeDiagnostic } from "@/lib/tsx/diagnostics";
+import { StudioCodeDiagnostic, askAboutCodeDiagnostic } from "@/features/studio/lib/code-diagnostic";
 import { resolvePreviewOpening } from "./preview-opening";
 import { resolvePreviewVariables } from "./preview-variables";
 
@@ -60,34 +62,6 @@ const EMPTY_OVERRIDES: Record<string, number | string | boolean | Record<string,
 // sandbox's component-host and custom-component-renderer. Callers should
 // set a React `key` tied to the compiled bundle so a fresh bundle gets a
 // fresh boundary (clearing any stale error state from a previous compile).
-
-class CanvasErrorBoundary extends Component<
-  { children: React.ReactNode },
-  { error: string | null }
-> {
-  state = { error: null as string | null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error: error.message };
-  }
-
-  render() {
-    if (this.state.error) {
-      const err = this.state.error;
-      return (
-        <div className="relative flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 pr-9 m-4">
-          <AlertCircle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-destructive">Component runtime error</p>
-            <p className="mt-1 text-xs text-destructive/70 font-mono break-all whitespace-pre-wrap">{err}</p>
-          </div>
-          <CopyErrorButton text={`Component runtime error:\n${err}`} />
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 // ── Shared shell ─────────────────────────────────────────────────────
 
@@ -373,6 +347,7 @@ function RootComponentCanvas({ previewVars, entryFileOverride, inspect, greeting
   const { t: tChat } = useTranslation("chat");
   const firstCompKey = useRef<string | null>(null);
   const rootComponent = useEditorStore(s => s.worldDraft.rootComponent);
+  const diagnosticReadOnly = useEditorStore(s => s.readOnlyInspect || s.guestMode);
   const worldName = useEditorStore(s => s.worldDraft.name);
   const entries = useEditorStore(s => s.worldDraft.entries);
   // The entries as play hands them to a card (see world-renderer's
@@ -797,19 +772,8 @@ function RootComponentCanvas({ previewVars, entryFileOverride, inspect, greeting
   if (!bundleInput) return null;
 
   if (bundleResult?.error) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-destructive font-mono break-all">{bundleResult.error}</p>
-          {Object.entries(bundleResult.fileErrors ?? {}).map(([file, msg]) => (
-            <p key={file} className="mt-1 text-[10px] text-destructive/70 font-mono break-all">
-              {file}: {msg}
-            </p>
-          ))}
-        </div>
-      </div>
-    );
+    return <StudioCodeDiagnostic key={bundleResult.diagnostic?.revision ?? bundleResult.error}
+      diagnostic={bundleResult.diagnostic ?? createCodeDiagnostic(bundleResult.error, { phase: "compile", files: bundleInput.files })} />;
   }
 
   // A bundle that "succeeded" but produced no component was, until now, an
@@ -883,11 +847,12 @@ function RootComponentCanvas({ previewVars, entryFileOverride, inspect, greeting
         {/* React key tied to Comp identity — each successful recompile produces
             a new function reference, so the boundary is replaced and any error
             state from the previous compile is cleared. */}
-        <CanvasErrorBoundary key={getCompKey(Comp)}>
+        <CodeDiagnosticBoundary key={getCompKey(Comp)} files={bundleInput.files} language={sampleLang}
+          onAsk={diagnosticReadOnly ? undefined : d => askAboutCodeDiagnostic(d, sampleLang)}>
           <AssetProcessingWrapper contain={fitToFrame ? "size" : "inline-size"}>
             <Comp />
           </AssetProcessingWrapper>
-        </CanvasErrorBoundary>
+        </CodeDiagnosticBoundary>
       </ShadowHost>
     </div>
     </PreviewRuntimeContext.Provider>

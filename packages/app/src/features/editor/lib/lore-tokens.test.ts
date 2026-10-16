@@ -38,3 +38,15 @@ test("the dot turns yellow past 30k and red past 60k", () => {
   assert.equal(big(Math.ceil(40_000 / per)), "caution");
   assert.equal(big(Math.ceil(70_000 / per)), "heavy");
 });
+
+test("an always-send entry wired to a variable waits on its condition, not every turn", () => {
+  // The canvas's var→entry wire adds a condition and leaves alwaysSend set;
+  // the runtime gates the entry on the condition, so the budget does too.
+  const gated = entry("gated", {
+    alwaysSend: true,
+    conditions: [{ variableId: "time", operator: "eq", value: "夜里" }] as WorldEntry["conditions"],
+  });
+  const s = summarizeLoreTokens([gated]);
+  assert.equal(s.alwaysSent, 0);
+  assert.equal(s.keywordTriggered, entryTokens(gated));
+});

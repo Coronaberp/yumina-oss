@@ -1,4 +1,5 @@
 import { worldAudienceCondition } from "../lib/world-publication-access.js";
+import { loadColdLaneSnapshot } from "../lib/cold-lanes.js";
 import { discoverAccess } from "../lib/discover-access.js";
 import { libraryWorldScope } from "../lib/library-world-scope.js";
 import { loadFeaturedSlots } from "../lib/editorial.js";
@@ -7,13 +8,13 @@ import { checkpointWorld } from "../lib/world-version-store.js";
 import { VERSION_METADATA_FIELDS, versionMetadata } from "../lib/world-version-content.js";
 import { worldVersionRoutes } from "./world-versions.js";
 import { lockWorldForSave } from "../lib/world-save-transaction.js";
-import { captureAutomaticVersion, capturePublishVersion, lockVersionDraft } from "../lib/world-version-history.js";
+import { captureAutomaticVersion, capturePublishVersion, latestLiveVersionId, lockVersionDraft } from "../lib/world-version-history.js";
 import { communityMuteMiddleware } from "../middleware/community-mute.js";
 import { requireUnmuted } from "../middleware/user-mute.js";
 import { Hono } from "hono";
 import { withWorldPlaytime } from "../lib/world-playtime.js";
 import { reviewPlaytimeQuery } from "../lib/review-playtime.js";
-import { eq, or, and, desc, ilike, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
+import { eq, or, and, asc, desc, ilike, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { db, readDb, readOwn, readPublic, flagWrite } from "../db/index.js";
 import { canonicalWorldPath, findWorldById, isPubliclyVisible } from "../lib/world-address.js";
 import { worlds, user, assetReferences, userLibrary, worldPendingEdits, worldUpdates, follows, reviews, worldRatings, contentTranslations, worldReviewSubmissions } from "../db/schema.js";
@@ -75,7 +76,7 @@ import { loadPublishedRankerModel } from "../lib/ranker-model.js";
 import { logFeedServe } from "../lib/feed-log.js";
 import { loadFeaturedHeroSlots } from "../lib/editorial.js";
 import { activeFeaturedSlots, readFeaturedCollection } from "../lib/featured-collection-store.js";
-import { featuredScopeSchema, getAgeFromBirthYear } from "@yumina/shared";
+import { featuredScopeSchema, getAgeFromBirthYear, normalizeProfileWorldOrder } from "@yumina/shared";
 import { DEFAULT_EDITORIAL_CATEGORIES, resolveEditorialCollection, resolveActiveEditorialHero, editorialHeroCopy, type EditorialSlot } from "@yumina/shared";
 import { publishedEditorial, activeEditorialSlots } from "../lib/discover-editorial.js";
 import { resolveProfileContentLevel } from "../lib/profile-content-level.js";
@@ -100,6 +101,7 @@ import { hasWorldDmShareGrant } from "../lib/dm-world-grant.js";
 import { WORLD_STATUS_TAKEN_DOWN } from "../lib/fork-orphan.js";
 import { estimateWorldCopyTokens } from "../lib/world-copy-material.js";
 import { parseWorldUpdateNoteBody } from "../lib/world-update-note.js";
+import { createWorldUnpublishRoutes } from "./world-unpublish.js";
 import { createWorldUpdateEditRoutes } from "./world-update-edits.js";
 import {
   canReadWorldUpdateHistory,
@@ -127,6 +129,10 @@ function normalizeTagsForStorage(tags: string[]): string[] {
 
 const worldRoutes = new Hono<AppEnv>();
 worldRoutes.use("/*", optionalAuthMiddleware, discoverPreviewMiddleware);
+worldRoutes.route("/", createWorldUnpublishRoutes(db, authMiddleware, rateLimitMiddleware("publishing"), {
+  flagWrite,
+  notify: (userIds, payload, actorUserId) => notifyMany(userIds, "world_unpublished", payload, { actorUserId }),
+}));
 
 /** Compatibility bound for explicit filtered/default feeds. Clean Recommended
  * instead continues through its eligible catalog with bounded page hydration. */
@@ -887,9 +893,12 @@ worldRoutes.get("/hub", async (c, next) => {
   if (cursorActor) {
     try {
       const startedAt = performance.now();
+      // A client scroll id is a random UUID; anything else is ignored.
+      const scrollParam = c.req.query("scroll");
+      const scrollId = scrollParam && /^[0-9a-f-]{36}$/i.test(scrollParam) ? scrollParam.toLowerCase() : undefined;
       const page = await serveDiscoveryFeed(rd, {
         actor: cursorActor,
-        userId: currentUser?.id, filters: baseFilters, limit, nsfwOnly, cursor: c.req.query("cursor"), starter,
+        userId: currentUser?.id, filters: baseFilters, limit, nsfwOnly, cursor: c.req.query("cursor"), starter, scrollId,
       });
       const rankingMs = performance.now() - startedAt;
       const data = await resolveHubMedia(page.data.map(stripRecommendationInternals) as any[], c.get("discoverPreviewEnabled"));
@@ -916,6 +925,7 @@ worldRoutes.get("/hub", async (c, next) => {
           world_ids: page.ids, tier: page.tier, variant: page.variant, cache: "cursor",
           policy_version: DISCOVERY_POLICY_VERSION, catalog_scans: page.scans,
           duration_ms: Math.round(performance.now() - startedAt), has_more: page.hasMore,
+          caught_up_index: page.caughtUpIndex ?? null, scroll_continuity: Boolean(scrollId),
           ranking_ms: Math.round(rankingMs), measurement_ms: Math.round(measurementMs), filters_ms: Math.round(filtersMs),
           // Where a fresh visit spent its ranking time (see serveDiscoveryFeed).
           ...Object.fromEntries(Object.entries(page.timings ?? {}).map(([name, ms]) => ["t_" + name, Math.round(ms)])),
@@ -925,7 +935,8 @@ worldRoutes.get("/hub", async (c, next) => {
         });
       }
       return c.json({ data, feedRequestId: page.feedRequestId, offset: page.offset,
-        positions: page.positions, nextCursor: page.nextCursor, hasMore: page.hasMore, ...(attributionToken ? { attributionToken } : {}) });
+        positions: page.positions, nextCursor: page.nextCursor, hasMore: page.hasMore, ...(attributionToken ? { attributionToken } : {}),
+        ...(page.caughtUpIndex !== undefined ? { caughtUpIndex: page.caughtUpIndex } : {}) });
     } catch (error) {
       if (error instanceof DiscoveryCursorError) {
         return c.json({ error: "Your Discover session has changed. Refresh to continue.", code: "discovery_cursor_expired" }, 409);
@@ -1053,6 +1064,8 @@ worldRoutes.get("/hub", async (c, next) => {
 
       const ranking = rankRecommendedWorlds(candidates, profile, {
         starter,
+        coldLanes: profile.tier === "cold" ? await loadColdLaneSnapshot(rd) : null,
+        coldLaneLanguage: baseFilters.preferredLang ?? null,
         sort,
         limit: completeCatalog ? candidates.length : limit,
         offset: completeCatalog ? 0 : offset,
@@ -1164,12 +1177,24 @@ worldRoutes.get("/hub", async (c, next) => {
   const trimmedQuery = q?.trim();
   const newestOrder = desc(hubNewestSortExpr);
   const popularOrder = desc(aggregatedCounters.downloadCount);
+  // One creator's works (their profile) can also be listed by name, or in the
+  // order the creator set themselves; works they have not placed follow, newest
+  // first. Read from the primary: the owner sees the order they just saved.
+  const profileSort = creatorId ? c.req.query("sort") : undefined;
+  let sortOrder = sort === "popular" ? [popularOrder, newestOrder] : [newestOrder, popularOrder];
+  if (profileSort === "alphabetical") {
+    sortOrder = [asc(sql`lower(${worlds.name})`), newestOrder];
+  } else if (profileSort === "custom") {
+    const [creatorRow] = await db.select({ preferences: user.preferences }).from(user).where(eq(user.id, creatorId!)).limit(1);
+    const placed = normalizeProfileWorldOrder((creatorRow?.preferences as Record<string, unknown> | null)?.profileWorldOrder);
+    if (placed.length > 0) {
+      const position = sql`array_position(ARRAY[${sql.join(placed.map((id) => sql`${id}`), sql`, `)}]::text[], ${worlds.id})`;
+      sortOrder = [sql`${position} asc nulls last`, newestOrder];
+    }
+  }
   const orderBy = trimmedQuery
-    ? buildHubSearchOrder(trimmedQuery, lang,
-        sort === "popular" ? [popularOrder, newestOrder] : [newestOrder, popularOrder])
-    : sort === "popular"
-      ? [popularOrder, newestOrder]
-      : [newestOrder, popularOrder];
+    ? buildHubSearchOrder(trimmedQuery, lang, sortOrder)
+    : sortOrder;
 
   const [result, countResult] = await Promise.all([
     rd
@@ -2560,6 +2585,7 @@ worldRoutes.post("/:id/status", authMiddleware, rateLimitMiddleware("publishing"
         .for("update");
 
       const audienceById = new Map<string, "male" | "female" | "all">();
+      const versionsById = new Map<string, { versionId: string; baseVersionId: string | null }>();
 
       for (const row of tagRows) {
         const audienceUpdate = resolveWorldAudience(row.tags ?? [], targetAudience as "male" | "female" | "all");
@@ -2590,7 +2616,14 @@ worldRoutes.post("/:id/status", authMiddleware, rateLimitMiddleware("publishing"
             updatedAt: now,
           })
           .where(eq(worlds.id, row.id)).returning();
-        if (submitted) await capturePublishVersion(tx, submitted, null);
+        if (submitted) {
+          // A card that was live before (unpublished, then resubmitted) is
+          // reviewed against what players last saw, not as a new card.
+          versionsById.set(row.id, {
+            versionId: await capturePublishVersion(tx, submitted, null),
+            baseVersionId: await latestLiveVersionId(tx, row.id),
+          });
+        }
       }
 
       for (const s of submittable) {
@@ -2600,6 +2633,7 @@ worldRoutes.post("/:id/status", authMiddleware, rateLimitMiddleware("publishing"
           submittedBy: currentUser.id,
           submittedAt: now,
           decision: "pending",
+          ...versionsById.get(s.id),
           snapshotAgeRating: ageRating,
           snapshotIsNsfw: isNsfw,
           snapshotTargetAudience: audienceById.get(s.id) ?? targetAudience,
@@ -2767,10 +2801,11 @@ worldRoutes.post("/:id/refresh-review", authMiddleware, rateLimitMiddleware("pub
       eq(worlds.id, worldId),
       eq(worlds.creatorId, currentUser.id), eq(worlds.status, "pending_review"),
     )).orderBy(worlds.id).for("update");
-    for (const row of reviewWorlds) await capturePublishVersion(tx, row, null);
+    let versionId: string | undefined;
+    for (const row of reviewWorlds) versionId = await capturePublishVersion(tx, row, null);
     await tx
       .update(worldReviewSubmissions)
-      .set({ submittedAt: now, ignoredAt: null, ignoredBy: null })
+      .set({ submittedAt: now, ignoredAt: null, ignoredBy: null, ...(versionId ? { versionId } : {}) })
       .where(and(
         eq(worldReviewSubmissions.worldId, worldId),
         eq(worldReviewSubmissions.submissionType, "initial"),

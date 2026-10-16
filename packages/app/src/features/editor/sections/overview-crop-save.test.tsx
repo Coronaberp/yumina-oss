@@ -40,6 +40,8 @@ for (const outcome of ["false", "throw"] as const) {
       "../asset-picker": { AssetPicker: empty },
       "../components/voice-field": { VoiceField: empty },
       "../components/debounced-field": { DebouncedInput: empty, DebouncedTextarea: empty },
+      "../components/description-field": { DescriptionField: empty },
+      "@/features/studio/panels/blueprint/live-canon": { LiveCanonGroup: empty },
       "@/lib/import-summary": { worldImportCounts: empty },
       "@/components/ui/global-confirm-dialog": { confirmAction: empty },
       "@/components/ui/two-tap-delete-button": { TwoTapDeleteButton: empty },

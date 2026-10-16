@@ -82,11 +82,16 @@ export function useSmoothWheelZoom({ container, getViewport, setViewport, minZoo
       // go inside it carries on down the board, the way nested page regions
       // hand off. The interface preview is marked `nowheel` and rarely
       // scrolls, and over it the board used to stand still.
-      if (el.closest(".nowheel")) {
-        if (explicitZoom) return;
+      // A zoom gesture over one of them zooms the board: let through, the
+      // browser zoomed the whole page instead.
+      if (el.closest(".nowheel") && !explicitZoom) {
         const path = event.composedPath();
         for (const node of path) {
-          if (!(node instanceof HTMLElement) || node.classList.contains("react-flow")) break;
+          if (!(node instanceof Element) || node.classList.contains("react-flow")) break;
+          // An icon's <svg>/<path> under the pointer is not the end of the
+          // way up: stopping there handed a scroll over a form's icon to the
+          // board.
+          if (!(node instanceof HTMLElement)) continue;
           const style = getComputedStyle(node);
           if (!/(auto|scroll)/.test(style.overflowY + style.overflowX)) continue;
           if (event.deltaY > 0 ? node.scrollTop + node.clientHeight < node.scrollHeight - 1 : event.deltaY < 0 && node.scrollTop > 0) return;

@@ -8,12 +8,14 @@
  * - Game events emitted via emitEvent() on the yumina API
  */
 
-import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { scheduleRootRendered } from "./schedule-root-rendered";
 
 import { installSandboxMedia } from "../src/lib/sandbox-media";
 
 const sandboxMedia = installSandboxMedia();
+import { CodeDiagnosticCard, CodeDiagnosticBoundary } from "../src/lib/tsx/diagnostic-card";
+import { createCodeDiagnostic, type CodeDiagnostic } from "../src/lib/tsx/diagnostics";
 import { buildComponent } from "../src/lib/tsx/tsx-component-builder";
 import { useAssetFont } from "../src/lib/asset-font";
 import { originalImageUrl, resolveAssetUrl, resolveAssetRefs } from "../src/lib/asset-url";
@@ -61,131 +63,6 @@ import { ModelPickerModal, ModelTrigger } from "./chat/model-picker-modal";
 import { SessionMemoryModal } from "./extensions/session-memory/session-memory-modal";
 import type { StateChannel } from "@yumina/engine";
 import type { SandboxState } from "./protocol";
-
-// ── Error Boundary ──────────────────────────────────────────────────
-
-// One-click copy button for the play-time component error. Self-contained
-// (inline SVG + inline styles) because the sandbox bundle deliberately
-// avoids lucide-react, sonner, and Tailwind. Uses navigator.clipboard with
-// an execCommand fallback for iframes where the async clipboard API is
-// blocked — both paths require a user gesture, which this button click
-// provides.
-function CopyErrorIconButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    let ok = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      ok = true;
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        ok = document.execCommand("copy");
-      } finally {
-        document.body.removeChild(ta);
-      }
-    }
-    if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      aria-label="Copy error"
-      title="Copy error"
-      style={{
-        position: "absolute",
-        top: 6,
-        right: 6,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 24,
-        padding: 0,
-        borderRadius: 4,
-        border: "none",
-        background: "transparent",
-        color: copied ? "#D3544B" : "rgba(211,84,75,0.7)",
-        cursor: "pointer",
-      }}
-    >
-      {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
-class ErrorBoundary extends Component<
-  { children: React.ReactNode; onError: (error: string) => void },
-  { error: string | null }
-> {
-  state = { error: null as string | null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error: error.message };
-  }
-
-  componentDidCatch() {
-    if (this.state.error) {
-      this.props.onError(this.state.error);
-    }
-  }
-
-  render() {
-    if (this.state.error) {
-      const err = this.state.error;
-      return (
-        <div
-          style={{
-            position: "relative",
-            padding: 12,
-            paddingRight: 36,
-            borderRadius: 8,
-            background: "rgba(211,84,75,0.08)",
-            border: "1px solid rgba(211,84,75,0.3)",
-          }}
-        >
-          <p style={{ fontSize: 12, fontWeight: 500, color: "#D3544B" }}>
-            Component Error
-          </p>
-          <p
-            style={{
-              fontSize: 12,
-              color: "rgba(211,84,75,0.7)",
-              fontFamily: "monospace",
-              marginTop: 4,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {err}
-          </p>
-          <CopyErrorIconButton text={`Component Error:\n${err}`} />
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 // ── Channel State ───────────────────────────────────────────────────
 
@@ -926,6 +803,8 @@ export function ComponentHost() {
     filesKey: string;
     CompiledComponent: React.ComponentType<Record<string, unknown>> | null;
     error: string | null;
+    diagnostic?: CodeDiagnostic;
+    files: Record<string, string>;
   } | null>(null);
 
   // ── Hydration gate ──
@@ -1067,12 +946,13 @@ export function ComponentHost() {
     switch (msg.type) {
       case "install-root": {
         voiceScopeRef.current.mode = msg.mode ?? "session";
-        const { entryFile, files, mode, compiledCode, compileError } = msg as {
+        const { entryFile, files, mode, compiledCode, compileError, diagnostic: receivedDiagnostic } = msg as {
           entryFile?: string;
           files?: Record<string, string>;
           mode?: SandboxMode;
           compiledCode?: string;
           compileError?: string;
+          diagnostic?: CodeDiagnostic;
         };
 
         if (mode) {
@@ -1087,6 +967,7 @@ export function ComponentHost() {
 
         let Compiled: React.ComponentType<Record<string, unknown>> | null = null;
         let error: string | null = compileError ?? null;
+        let diagnostic = receivedDiagnostic;
 
         if (!error) {
           if (compiledCode) {
@@ -1104,9 +985,18 @@ export function ComponentHost() {
               LorePanel: LorePanel as React.ComponentType<Record<string, unknown>>,
               LoreGroup: LoreGroup as React.ComponentType<Record<string, unknown>>,
               LoreSwitch: LoreSwitch as React.ComponentType<Record<string, unknown>>,
-            });
+            }, { files: files ?? {} });
             Compiled = result.Component;
             error = result.error;
+            diagnostic = result.diagnostic;
+            if (diagnostic?.name === "SyntaxError" && files && entryFile) {
+              // Only the exceptional path loads the compiler. This identifies
+              // the failing source file without executing creator code again.
+              try {
+                const { diagnoseBundleFailure } = await import("../src/lib/tsx/tsx-bundler");
+                diagnostic = diagnoseBundleFailure(diagnostic, { files, entryFile });
+              } catch { /* Keep the original evidence if diagnosis cannot load. */ }
+            }
           } else {
             // Legacy fallback: parent sent raw files without precompile. Keep the dynamic
             // import so the bundler chunk only loads for these rare cases, not every boot.
@@ -1129,16 +1019,23 @@ export function ComponentHost() {
               );
               Compiled = result.Component;
               error = result.error;
+              diagnostic = result.diagnostic;
             } catch (e) {
               error = e instanceof Error ? e.message : "Bundle compilation failed";
+              diagnostic = createCodeDiagnostic(e, { phase: "load", files });
             }
           }
         }
 
+        // A later install may arrive while the exceptional diagnosis/legacy
+        // bundle import is loading. Never resurrect the earlier error/card.
+        if (installedFilesKeyRef.current !== filesKey) break;
         if (error) {
+          diagnostic ??= createCodeDiagnostic(error, { phase: "compile", files });
           const errMsg: ComponentErrorMessage = {
             type: "component-error",
             message: error,
+            diagnostic,
           };
           postToParentWindow(wrapMessage(errMsg));
         }
@@ -1147,6 +1044,8 @@ export function ComponentHost() {
           filesKey,
           CompiledComponent: Compiled,
           error,
+          diagnostic,
+          files: files ?? {},
         });
         break;
       }
@@ -1304,10 +1203,11 @@ export function ComponentHost() {
 
   // ── Render ──
 
-  const handleError = useCallback((error: string) => {
+  const handleError = useCallback((diagnostic: CodeDiagnostic) => {
     const errMsg: ComponentErrorMessage = {
       type: "component-error",
-      message: error,
+      message: diagnostic.message,
+      diagnostic,
     };
     postToParentWindow(wrapMessage(errMsg));
   }, []);
@@ -1499,38 +1399,14 @@ export function ComponentHost() {
         style={{ width: "100%", height: "100%", position: "relative" }}
       >
         {rootComponent?.error ? (
-          <div
-            style={{
-              position: "relative",
-              padding: 16,
-              paddingRight: 40,
-              background: "rgba(211,84,75,0.08)",
-              border: "1px solid rgba(211,84,75,0.3)",
-              borderRadius: 8,
-              margin: 16,
-            }}
-          >
-            <p style={{ fontSize: 13, fontWeight: 500, color: "#D3544B" }}>
-              Compilation Error
-            </p>
-            <pre
-              style={{
-                fontSize: 12,
-                color: "rgba(211,84,75,0.7)",
-                fontFamily: "monospace",
-                marginTop: 8,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {rootComponent.error}
-            </pre>
-            <CopyErrorIconButton text={`Compilation Error:\n${rootComponent.error}`} />
-          </div>
+          <CodeDiagnosticCard key={rootComponent.filesKey}
+            diagnostic={rootComponent.diagnostic ?? createCodeDiagnostic(rootComponent.error, { phase: "compile" })}
+            language={assembledState.language} />
         ) : RootComp && (stateHydrated || hydrationTimedOut) ? (
-          <ErrorBoundary onError={handleError}>
+          <CodeDiagnosticBoundary key={rootComponent?.filesKey} files={rootComponent?.files}
+            language={assembledState.language} onError={handleError}>
             <RootComp />
-          </ErrorBoundary>
+          </CodeDiagnosticBoundary>
         ) : (
           // Either no root installed yet, or the hydration gate is still
           // closed (initial channel pushes in flight). The parent keeps its

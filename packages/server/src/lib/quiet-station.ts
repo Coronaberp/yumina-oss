@@ -1,4 +1,6 @@
+import { stationSampling } from "./station-sampling.js";
 import { and, desc, eq } from "drizzle-orm";
+import { appendPendingContext } from "./pending-context.js";
 import {
   buildMessageAIEvent,
   computeActiveWorldbookIds,
@@ -139,7 +141,7 @@ export function buildQuietPrompt(args: {
   // whose story it is. Always-sent card entries only, never another
   // situation's lore.
   const worldLore = (args.world.entries ?? [])
-    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, args.state.ruleState?.toggledEntries, args.world.loreUiBindings))
+    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, args.state.ruleState?.toggledEntries, args.world.loreUiBindings, args.state))
     .map((e) => e.content)
     .filter(Boolean)
     .join("\n\n")
@@ -265,7 +267,7 @@ export async function runQuietTick(args: { sessionId: string; userId: string; wo
       world, state, speaker, history, quietSeconds: Math.round(due.quietFor / 1000), scene,
     }),
     endpoint: "module-worker",
-    maxTokens: MAX_QUIET_TOKENS,
+    ...stationSampling(station, MAX_QUIET_TOKENS),
   }).catch((err) => {
     console.error(`[Quiet] ${sessionId} ${speaker.book.id} failed:`, err instanceof Error ? err.message : err);
     return "";
@@ -314,7 +316,7 @@ export async function runQuietTick(args: { sessionId: string; userId: string; wo
       ...changes.map((c) => ({ type: "state:changed" as const, variableId: c.variableId, oldValue: c.oldValue, newValue: c.newValue })),
     ];
     const rules = runReactionChain(reactionEvaluator, manager, events, world.reactions ?? [], world.rules ?? [], { worldbooks: world.worldbooks });
-    if (rules.contextMessages.length > 0) manager.setMetadata("pendingContext", rules.contextMessages);
+    appendPendingContext(manager, rules.contextMessages);
     const finalState = manager.getSnapshot();
     const allChanges = [...changes, ...rules.changes];
     const snapshot = thinSnapshotForStorage(finalState as unknown as Record<string, unknown>);

@@ -301,3 +301,43 @@ test("two columns share their lines: a short unwritten row beside a written one 
     assert.equal(canvasWritingNodeHeight(data()), 40 + 2 + 3 * 96, "three full lines, not 40 + 96 + 96 on the left");
   });
 });
+
+test("a double-click on a row opens its own editor; one in the open editor only selects a word", async () => {
+  const drilled: string[] = [];
+  const dblclick = (element: Element) => act(async () => { element.dispatchEvent(new dom.window.MouseEvent("dblclick", { bubbles: true })); });
+  await withNode({ kind: "setting", entries: [entry("worldview"), entry("town")], onDrill: id => drilled.push(id) }, async ({ container, update }) => {
+    await dblclick(container.querySelector('[data-canvas-writing-open="worldview"]')!);
+    assert.deepEqual(drilled, ["entry:worldview"], "the name on the bar opens the entry's page");
+    await update({ expandedIds: new Set(["entry:town"]) });
+    await dblclick(container.querySelector('[data-test-editor="entry:town"]')!);
+    assert.deepEqual(drilled, ["entry:worldview"], "a double-click while writing stays on the board");
+  });
+});
+
+test("the author's folder is renamed and dissolved in place; the presets group is not", async () => {
+  const renamed: Array<[string, string]> = [], dissolved: string[] = [], dropped: Array<[string, string]> = [];
+  const folders = [{ id: "cast", name: "Cast", order: 0 }];
+  const entries = [entry("own"), entry("hero", { folderId: "cast" }), entry("preset", { presetId: "official-0" })];
+  await withNode({
+    kind: "setting", entries, folders, presetsTitle: "Defaults",
+    onRenameFolder: (id, name) => renamed.push([id, name]),
+    onDissolveFolder: id => dissolved.push(id),
+    onDropOnFolder: (dragged, id) => dropped.push([dragged, id]),
+  }, async ({ container, click, update }) => {
+    const header = container.querySelector('[data-canvas-writing-folder="cast"]')!;
+    assert.equal(container.querySelector('[data-canvas-writing-folder="__presets"] [data-canvas-writing-folder-rename]'), null, "the platform's presets are not a folder to rename");
+    await act(async () => { header.querySelector("button[aria-pressed]")!.dispatchEvent(new dom.window.MouseEvent("dblclick", { bubbles: true })); });
+    const input = header.querySelector("input")!;
+    assert.ok(input, "a double-click on the name opens it for typing");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, "Main cast");
+      input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    assert.deepEqual(renamed, [["cast", "Main cast"]]);
+    await click(container.querySelector('[data-canvas-writing-folder-dissolve="cast"]')!);
+    assert.deepEqual(dissolved, ["cast"]);
+    // A folder made from the menu arrives with its name ready to type.
+    await update({ renamingFolderId: "cast" });
+    assert.ok(container.querySelector('[data-canvas-writing-folder="cast"] input'));
+  });
+});

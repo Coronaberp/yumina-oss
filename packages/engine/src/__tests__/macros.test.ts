@@ -69,12 +69,23 @@ describe("expandMacros", () => {
       );
     });
 
-    it("defaults to 'Assistant' when no character entry exists", () => {
-      const world = bareWorld();
+    it("uses the imported card name when no character entry exists", () => {
+      const world = bareWorld({ name: "Elon Musk" });
       const state = createMockGameState();
       expect(expandMacros("{{char}} says hi", world, state)).toBe(
-        "Assistant says hi"
+        "Elon Musk says hi"
       );
+    });
+
+    it("uses Assistant only if both character and card names are missing", () => {
+      expect(expandMacros("{{char}}", bareWorld({ name: " " }), createMockGameState())).toBe("Assistant");
+    });
+
+    it("consumes the ST parent-prompt placeholder without hiding other macros or variables", () => {
+      expect(expandMacros("Before {{original}} after {{unknown}}", bareWorld(), createMockGameState()))
+        .toBe("Before  after {{unknown}}");
+      expect(expandMacros("{{original}}", bareWorld(), createMockGameState({ variables: { original: "explicit value" } })))
+        .toBe("explicit value");
     });
 
     it("skips disabled character entries", () => {

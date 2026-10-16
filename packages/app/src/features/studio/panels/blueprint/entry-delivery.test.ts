@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { filterEntriesByActiveLoreSlots, filterEntriesByActiveWorldbooks, LorebookMatcher, PromptBuilder, worldDefinitionSchema } from "@yumina/engine";
 import type { GameState, LoreUiBinding, Worldbook, WorldEntry } from "@yumina/engine";
-import { getEntryDeliverySummary } from "./entry-delivery";
+import { contextPreviewCounts, getEntryDeliverySummary } from "./entry-delivery";
 
 const base: WorldEntry = {
   id: "setting", name: "Setting", content: "A secret behind the gate.", role: "lore",
@@ -70,4 +70,24 @@ test("enabled alone does not promise delivery without a trigger, and disabled en
   assert.equal(matcher.match([{ ...base, enabled: false }], [], state(true)).length, 0);
   const loreUiBindings: LoreUiBinding[] = [{ entryId: entry.id, slotId: "secret", conditions: [], conditionLogic: "all" }];
   assert.equal(getEntryDeliverySummary(entry, { loreUiBindings }).mode, "frontend");
+});
+
+test("the Context preview counts each entry on one line, by the same gates the engine applies", () => {
+  const entries: WorldEntry[] = [
+    { ...base, id: "setting" },
+    { ...base, id: "example", role: "example" },
+    // A stale always-send flag on an entry gated by a variable: it waits.
+    { ...base, id: "gated", conditions: [{ variableId: "open", operator: "eq", value: true }] },
+    { ...base, id: "keyword", alwaysSend: false, keywords: ["gate"] },
+    // Always-send but wired to an interface slot: the engine holds it back
+    // until the slot is open.
+    { ...base, id: "slot" },
+    // Reaches nobody: switched off, or outside every situation.
+    { ...base, id: "off", enabled: false },
+    { ...base, id: "off-example", role: "example", enabled: false },
+    { ...base, id: "loose", worldbookId: "unplaced" },
+    { ...base, id: "opening", role: "greeting" },
+  ];
+  const loreUiBindings: LoreUiBinding[] = [{ entryId: "slot", slotId: "codex", conditions: [], conditionLogic: "all" }];
+  assert.deepEqual(contextPreviewCounts(entries, { loreUiBindings }), { alwaysIds: ["setting"], exampleCount: 1, waitingCount: 3 });
 });

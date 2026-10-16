@@ -34,6 +34,9 @@ import {
   FILM_MARKUP, filmOptedIn, realtimeFilmEnabled, takeFilmCredits, type FilmEndpoint,
 } from "../lib/realtime-video/film-billing.js";
 import { providerCostUsdToCredits } from "../lib/provider-cost.js";
+import { checkBalance } from "../lib/credit-service.js";
+import { getModelPrice } from "../lib/model-price-cache.js";
+import { planMeetsMinimum, type PlanId } from "../lib/plan-config.js";
 import { recordUsageLog } from "../lib/usage-log.js";
 import {
   bindFilmAssets, DEPLOY_REF_RE, filmDeployWarm, maybeWakeFilmDeploy, noteFilmDeployDone, noteFilmDeployFailed,
@@ -92,12 +95,20 @@ const SCRIPT_DIRECTOR_MODEL = process.env.REALTIME_SCRIPT_DIRECTOR_MODEL || "goo
 // The opening breakdown is one long structured answer; this model keeps its JSON valid.
 const OPENING_MODEL = process.env.REALTIME_OPENING_MODEL || "google/gemini-3.1-flash-lite";
 
-/** Director models a player may pick (OpenRouter ids); anything else falls back to the default. */
-const DIRECTOR_MODELS = new Set([
-  "google/gemini-3.8-flash", "anthropic/claude-sonnet-5.5", "deepseek/deepseek-v4.1-flash",
-  "x-ai/grok-4.7", "z-ai/glm-5.3", "google/gemini-3.1-flash-lite",
+/** Director models a player may pick (OpenRouter ids), with the plan each needs. The catalog's
+ *  own tier wins for models it prices; the others follow their family's tier there. Anything
+ *  else, or a model above the player's plan, falls back to the default. */
+const DIRECTOR_MODELS = new Map<string, PlanId>([
+  ["google/gemini-3.8-flash", "go"], ["anthropic/claude-sonnet-5.5", "plus"], ["deepseek/deepseek-v4.1-flash", "free"],
+  ["x-ai/grok-4.7", "go"], ["z-ai/glm-5.3", "free"], ["google/gemini-3.1-flash-lite", "free"],
 ]);
-const pickModel = (m: unknown, fallback: string) => (typeof m === "string" && DIRECTOR_MODELS.has(m) ? m : fallback);
+async function pickModel(userId: string, m: unknown, fallback: string): Promise<string> {
+  if (typeof m !== "string" || m === fallback) return fallback;
+  const familyPlan = DIRECTOR_MODELS.get(m);
+  if (!familyPlan) return fallback;
+  const [{ wallet }, price] = await Promise.all([checkBalance(userId), getModelPrice(m)]);
+  return planMeetsMinimum(wallet.plan, (price?.minPlan as PlanId | undefined) ?? familyPlan) ? m : fallback;
+}
 
 type SceneCard = { id: string; sheet: string };
 
@@ -310,6 +321,7 @@ realtimeVideoRoutes.post("/realtime-video/opening", async (c) => {
   const lore = characterNotes(world.schema);
   const n = Math.min(10, Math.max(3, Number(body.beats) || 7));
   if (!(await canAffordFilm(userId, 1))) return c.json(NO_CREDITS, 402);
+  const model = await pickModel(userId, body.model, OPENING_MODEL);
   const bill: FilmBill = { userId, sessionId: body.sessionId, credits: 0 };
   const t0 = Date.now();
   const coverUrl = resolveImageCdn(world.thumbnailUrl);
@@ -330,13 +342,13 @@ ${lore}
 Output JSON only: {"cast":[…],"scenes":[…],"beats":[…]}`,
       `Opening text:\n${body.greeting.slice(0, 12000)}`,
       12000,
-      pickModel(body.model, OPENING_MODEL),
+      model,
       bill,
     );
     const cast = (Array.isArray(out.cast) ? out.cast : []) as { name: string; look: string }[];
     const beats = (Array.isArray(out.beats) ? out.beats : []) as { text?: string; shot?: string; scene?: string }[];
     for (const b of beats) if (typeof b?.shot === "string") b.shot = withVoice(withStyle(pinLooks(b.shot, cast), body.style, look));
-    return c.json({ cast, scenes: out.scenes ?? [], beats, coverUrl, look, ms: Date.now() - t0, model: pickModel(body.model, OPENING_MODEL), credits: bill.credits });
+    return c.json({ cast, scenes: out.scenes ?? [], beats, coverUrl, look, ms: Date.now() - t0, model, credits: bill.credits });
   } catch (e) {
     return c.json({ error: String((e as Error).message ?? e) }, 502);
   }
@@ -394,6 +406,7 @@ SHOTS: count shots by visible action, not by sentence. A spoken line, a sound, a
     : body.maxBeats === 1
     ? "film it in exactly 1 shot of about ten seconds: its key visible moment (the main event the reply is about, as far as it has gone) with the action that leads into it. Do not try to show everything."
     : `cut it into exactly ${maxBeats} consecutive shot${maxBeats > 1 ? "s" : ""} in story order that together show everything visible that happens in it${maxBeats > 1 ? ", splitting the reply into " + maxBeats + " consecutive passages of similar length" : ""}. Each shot films its own passage of the reply, in that passage's order, and does not jump ahead to later events. Shots in the same place are one continuous take: each starts where the previous one ended.`;
+  const model = await pickModel(bill.userId, body.model, body.script ? SCRIPT_DIRECTOR_MODEL : DIRECTOR_MODEL);
   const ask = (extra = "") => callDirector(
     `You direct a realtime video stream that follows an interactive story, like a film editor who can intercut storylines. The story just advanced by one turn. Film this turn: ${filming}
 
@@ -428,7 +441,7 @@ ${(body.userText ?? "").slice(0, 1500)}
 Story reply:
 ${body.aiText.slice(0, 6000)}${partNote}`,
     body.script ? 9000 : 5000,
-    pickModel(body.model, body.script ? SCRIPT_DIRECTOR_MODEL : DIRECTOR_MODEL),
+    model,
     bill,
   );
   let out = await ask();

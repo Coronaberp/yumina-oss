@@ -157,6 +157,22 @@ test("a plain-chat card with no document gets one over the platform chat", () =>
   assert.match(result.world.rootComponent!.files["index.tsx"]!, /HP /);
 });
 
+test("a plain-chat card that gets its own chat part drops the platform chat underneath (2026-10-15, two chats stacked)", () => {
+  const world = makeWorld({
+    rootComponent: { id: "rc", name: "Root", entryFile: "index.tsx", files: { "index.tsx": "export default function MyWorld() {\n  return <Chat />;\n}" }, updatedAt: "" },
+  } as Partial<WorldDefinition>);
+  const result = edit(world, [
+    { op: "add_page", id: "story", name: "Story" },
+    { op: "add_part", page: "story", part: { type: "chat", id: "story-chat", x: 0, y: 60, w: 375, h: 752 } },
+  ]);
+  assert.equal(result.success, true, result.summary);
+  assert.equal(result.world.uiDoc!.surface, undefined);
+  assert.match(result.results[0]!.note!, /surface: chat\) was removed/);
+  const code = result.world.rootComponent!.files["index.tsx"]!;
+  assert.equal(code.match(/<Chat\b/g)?.length, 1, "one chat, the part's own");
+  assert.equal(editorSave(result.world), result.world.rootComponent);
+});
+
 test("a hand-written frontend is kept as the base layer when a document is created", () => {
   const code = `export default function App() {\n  const api = useYumina();\n  return <div onClick={() => api.sendMessage("hi")}>${"x".repeat(900)}</div>;\n}`;
   const world = makeWorld({

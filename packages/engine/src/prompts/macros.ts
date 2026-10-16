@@ -354,7 +354,7 @@ export function expandMacros(
   world: WorldDefinition,
   state: GameState
 ): string {
-  const charName = primaryCharacterEntry(world)?.name ?? "Assistant";
+  const charName = primaryCharacterEntry(world)?.name ?? (world.name?.trim() || "Assistant");
   // Final fallback label. Precedence is:
   //   personaName (server-populated: active persona OR account username) →
   //   world.settings.playerName (creator's default) →
@@ -390,6 +390,10 @@ export function expandMacros(
       const value = state.variables[inner];
       if (value !== undefined) return String(value);
     }
+
+    // SillyTavern's inheritance marker has no parent prompt in Yumina. Keep
+    // explicitly authored variables above, but don't send a dangling marker.
+    if (inner === "original") return "";
 
     // Unknown macro — leave literal
     return `{{${inner}}}`;

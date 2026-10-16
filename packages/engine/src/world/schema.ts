@@ -347,6 +347,7 @@ export const worldEntrySchema = z.object({
   name: z.string().min(1),
   content: z.string(),
   role: z.enum(["system", "character", "personality", "scenario", "lore", "plot", "style", "example", "greeting", "custom"]),
+  roleBeforeExample: z.enum(["system", "character", "personality", "scenario", "lore", "plot", "style", "greeting", "custom"]).optional(),
   apiRole: z.enum(["system", "user", "assistant"]).optional(),
   depth: z.number().int().optional(),
   alwaysSend: z.boolean().default(false),
@@ -481,6 +482,7 @@ export const moduleStationSchema = z.object({
   }).optional(),
   cooldownSec: z.number().int().min(0).max(3600).optional(),
   maxTokens: z.number().int().min(50).max(4000).optional(),
+  temperature: z.number().min(0).max(1.5).optional(),
 });
 
 /** A situation can also be a door the player opens by saying a word — a
@@ -581,6 +583,8 @@ export const worldSettingsSchema = z.object({
   // Whose context budget counts on a send: the player's per-send override
   // (default) or the card's own maxContext ("author").
   contextPolicy: z.enum(["player", "author"]).optional(),
+  samplingPolicy: z.enum(["player", "author"]).optional(),
+  recommendedModel: z.string().max(200).optional(),
   layoutMode: z.enum(["split", "game-focus", "immersive"]).optional().default("split"),
   uiMode: z.enum(["chat", "per-reply", "persistent"]).optional().default("chat"),
 });

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   BLOCK_ROW_LIMIT,
   blockHostMap,
+  blockHostsMap,
   blockId,
   blockIdForNode,
   buildBoard,
@@ -31,6 +32,16 @@ describe("entryTrigger", () => {
     expect(entryTrigger({})).toBe("manual");
     // Imports and older builds hand us nulls where the type promises arrays.
     expect(entryTrigger({ keywords: null, conditions: null })).toBe("manual");
+  });
+
+  it("puts an always-send entry gated by variables under conditions, as the runtime gates it", () => {
+    // A variable wired into an always-on entry adds a condition and leaves
+    // the flag set; the matcher sends it only while the condition holds.
+    expect(entryTrigger({ alwaysSend: true, conditions: [{}] })).toBe("conditions");
+    expect(entryTrigger({ alwaysSend: true, conditions: [{}], keywords: ["x"] })).toBe("conditions");
+    // The classic editor's bare "bound" flag also takes it off every turn.
+    expect(entryTrigger({ alwaysSend: true, variableBound: true, keywords: ["x"] })).toBe("keywords");
+    expect(entryTrigger({ alwaysSend: true, variableBound: true })).toBe("manual");
   });
 });
 
@@ -88,7 +99,7 @@ describe("buildBoard", () => {
     expect(lore?.rows).toHaveLength(1);
   });
 
-  it("folds a long list but never folds a row that carries a wire", () => {
+  it("folds a long list but keeps a row that carries a wire before the others", () => {
     const many = Array.from({ length: BLOCK_ROW_LIMIT.lore + 6 }, (_, i) =>
       node(`entry:e${i}`, "entry", { trigger: "always" }),
     );
@@ -100,6 +111,20 @@ describe("buildBoard", () => {
     expect(lore.rows.length).toBe(BLOCK_ROW_LIMIT.lore);
     expect(lore.hiddenCount).toBe(many.length - BLOCK_ROW_LIMIT.lore);
     expect(lore.rows.some((r) => r.g.id === wiredId)).toBe(true);
+  });
+
+  it("folds wired rows past the limit too, and their wires land on the block's head", () => {
+    const many = Array.from({ length: BLOCK_ROW_LIMIT.lore + 14 }, (_, i) =>
+      node(`entry:e${i}`, "entry", { trigger: "always" }),
+    );
+    const edges = many.map((n, i) => ({ id: `w${i}`, from: "var:v", fromPort: "read", to: n.id, toPort: "gate" }));
+    const g = graph([node("world:root", "world"), node("var:v", "variable"), ...many], edges);
+    const blocks = buildBoard(g);
+    const lore = blocks.find((b) => b.kind === "lore")!;
+    expect(lore.rows.length).toBe(BLOCK_ROW_LIMIT.lore);
+    expect(lore.hiddenCount).toBe(14);
+    const folded = blockHostsMap(blocks, g).get(`entry:e${many.length - 1}`)!;
+    expect(folded[0]).toMatchObject({ host: lore.id, shown: false });
   });
 
   it("keeps a forced row on screen and shows every row once expanded", () => {

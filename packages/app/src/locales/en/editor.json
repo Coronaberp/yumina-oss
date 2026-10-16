@@ -47,6 +47,7 @@
     "visualIntroBody": "Turn on this switch and the whole card is laid out on one board: openings, lore, numbers, behaviors and the player screen, side by side. Edit anything where it sits, and the assistant works right on the board. Turn it off any time to come back to the Full editor.",
     "visualIntroTry": "Try the Canvas",
     "visualIntroLater": "Not now",
+    "desktopCanvasNote": "Open this card on a computer to edit it on the Canvas (Beta).",
     "recoverDraftMerged": "This card changed elsewhere since then — your recovered version was kept"
   },
   "sections": {
@@ -224,7 +225,6 @@
     "recursionDepth": "Recursion Depth",
     "recursionDepthHint": "Max depth for cascading entry triggers. 0 = disabled.",
     "addOfficialPresets": "Add Official Presets ({{count}} missing)",
-    "messages": "...messages...",
     "name": "Name",
     "portrait": "Portrait",
     "sendAs": "Send as",
@@ -624,11 +624,15 @@
     "blurb": "Apps the player opens from a dock beside the chat: messages, relationships, a feed, the clock… Each one keeps its data in one variable and the AI fills it in as the story goes — the preview above each card is the real app. You don't build anything.",
     "add": "Add app",
     "added": "Added — in the dock",
-    "footnote": "The app's words follow the card's language (Chinese, English or Spanish). Remove it from the Bundles page and its button, data and rules go with it.",
+    "footnote": "The app's words follow the card's language (Chinese, English or Spanish). Removing an app takes its dock button, data and rules with it.",
     "sets": "Starter sets — what most cards of each kind track",
     "addSet": "Add all four",
     "setAdded": "All added",
-    "installed": "Added {{name}}"
+    "installed": "Added {{name}}",
+    "remove": "Remove",
+    "removeSet": "Remove all four",
+    "removed": "Removed {{name}}",
+    "varDeleteHint": "This variable is the {{name}} app's data. Deleting it removes the whole app, dock button included."
   },
   "audio": {
     "title": "Audio",
@@ -760,6 +764,14 @@
     "announcement": "Announcement",
     "announcementPlaceholder": "Write an announcement...",
     "markdownSupported": "Markdown supported",
+    "descriptionInsertImage": "Add images",
+    "descriptionImageUploading": "Uploading…",
+    "descriptionImageNeedsSave": "Save the card once before adding images.",
+    "descriptionImageTooLong": "No room left in the description for another image.",
+    "descriptionImageFromAssets": "Choose from assets",
+    "descriptionImageFromComputer": "Upload from computer",
+    "descriptionImageRemove": "Remove this image",
+    "descriptionImageLabel": "Image",
     "descriptionTitle": "Description",
     "descriptionDesc": "Shown on the Discover card and the world detail page. Use this for lore, gameplay instructions, or credits.",
     "descriptionPlaceholder": "Write a description...",
@@ -1499,6 +1511,8 @@
         "stillGenerating": "Still drawing",
         "stillGeneratingDetail": "Taking longer than usual; it will appear in the asset library when done."
       },
+      "imageBlind": "{{model}} can't see pictures, so the attached image will be left out.",
+      "imageBlindSwitch": "Use {{model}}",
       "creditPause": {
         "retryStep": "Retry step",
         "paused": "Not enough credits · progress saved",
@@ -1527,6 +1541,8 @@
         "shortfall": "{{amount}} Mushies short",
         "errorStale": "The world has changed. Start a new request to avoid overwriting your edits.",
         "restartHere": "Start again from here",
+        "cheaperModel": "Continue with {{model}}",
+        "cheaperModelNote": "About {{amount}} Mushies a step on {{model}}, which your balance covers. It starts again from where this stopped.",
         "restartMessage": "Continue from where you stopped, working from the card as it is now.",
         "errorActive": "This task is already running. Please wait for its status to update.",
         "errorFailed": "Could not resume the task. Your saved progress is still available; please retry.",
@@ -1649,14 +1665,22 @@
       "proposalRejectedReply": "Understood. Let me know how you'd like to proceed.",
       "agentError": {
         "generic": "The assistant hit an error. Please retry.",
-        "stalled": "The assistant stopped responding for 3 minutes, so the task ended. Please retry.",
+        "stalled": "The assistant stopped responding for several minutes, so the task was ended. What it already changed is saved.",
         "timedOut": "The task ran for more than 30 minutes and was stopped. Try smaller steps.",
         "outputBudget": "The model ran out of output space before finishing its changes several times. Try smaller steps or another model.",
         "provider": "The AI model service returned an error. Retry or pick another model.",
-        "serverRestart": "The server restarted during the task. Please retry.",
+        "serverRestart": "The server restarted during this task. What the assistant already changed is saved.",
         "superseded": "This task was replaced by a newer request.",
         "stopped": "Stopped.",
-        "noCredits": "Not enough mushrooms to continue. Top up, then retry."
+        "noCredits": "Not enough mushrooms to continue. Top up, then retry.",
+        "byokAuth": "Your API key was refused (invalid, expired, or not allowed to use this model). Check the key in AI settings.",
+        "byokBalance": "Your API provider says the account is out of balance or quota. Top it up there, or switch to an official model.",
+        "byokModel": "Your provider can't find this model. Check the model name in AI settings, or pick another.",
+        "byokNoTools": "This model can't use tools, which the assistant needs to change the card. Pick a model with tool support.",
+        "byokRate": "Your provider is rate-limiting requests. Wait a moment, then continue.",
+        "byokUnreachable": "Couldn't reach your API endpoint. Check its address and that it's running.",
+        "byokContext": "The request is longer than this model's context window. Start a fresh conversation or use a model with a bigger window.",
+        "continue": "Continue from where it stopped"
       },
       "turnEstimate_one": "From ~{{count}} mushie",
       "turnEstimate_other": "From ~{{count}} mushies",
@@ -1667,6 +1691,13 @@
         "save": "Saving the reference to this card"
       },
       "turnEstimateCold": "the first message in an hour costs more",
+      "rateRun": "Rate this reply",
+      "rateUp": "This helped",
+      "rateDown": "This didn't help",
+      "turnTypical": "Usually {{low}}–{{high}} mushies a run",
+      "turnTypicalHint": "Runs on this model in the last two weeks: half cost {{low}} or less, nine in ten {{high}} or less. One reply costs at least ~{{floor}}.",
+      "conversationSpend_one": "this chat {{count}} mushie",
+      "conversationSpend_other": "this chat {{count}} mushies",
       "turnCost_one": "This turn: {{count}} mushie",
       "turnCost_other": "This turn: {{count}} mushies",
       "generatingTool": "writing: {{tool}}",
@@ -1992,6 +2023,7 @@
       "askByKey": "About {{minutes}} min · on your own key",
       "startMessage": "Start",
       "ask": "About {{minutes}} min · {{mushies}} mushies",
+      "askRange": "About {{minutes}} min · roughly {{low}}–{{high}} mushies",
       "start": "Start",
       "explainFirst": "See the plan",
       "playingBanner": "The assistant is playing · {{label}}",
@@ -2276,7 +2308,15 @@
         "paper": "Paper",
         "night": "Night",
         "terminal": "Terminal",
-        "blossom": "Blossom"
+        "blossom": "Blossom",
+        "velvet": "Velvet",
+        "harbor": "Harbor",
+        "linen": "Linen",
+        "coolant": "Coolant",
+        "moss": "Moss",
+        "tape": "Tape",
+        "gilded": "Gilded",
+        "tavern": "Tavern"
       },
       "fontName": {
         "sans": "Sans",
@@ -2304,13 +2344,29 @@
         "portrait-scene": "Portrait scene",
         "adventure-hud": "Adventure HUD",
         "stat-panel": "Stat panel",
-        "character-sheet": "Character sheet"
+        "character-sheet": "Character sheet",
+        "chapter-portrait": "Chapter Portrait",
+        "masthead": "Masthead",
+        "margin-notes": "Margin Notes",
+        "status-strip": "Status Strip",
+        "night-card": "Night Card",
+        "cassette": "Cassette",
+        "art-split": "Art Split",
+        "guild-card": "Guild Card"
       },
       "presetHint": {
         "portrait-scene": "Portrait + two meters + a details page. For a card about one character.",
         "adventure-hud": "Where you are + day and time + two meters. For text adventure and exploration.",
         "stat-panel": "Four meters + gold + day. For raising, managing, surviving.",
-        "character-sheet": "The player's own name, role, location and story phase. For roleplay."
+        "character-sheet": "The player's own name, role, location and story phase. For roleplay.",
+        "chapter-portrait": "A chapter banner across the top. The right column has the portrait, a mood line and three meters.",
+        "masthead": "Card name, four meters and the cast in a band at the top, with the conversation below.",
+        "margin-notes": "Light background with three notes on the right: title and place, four meters, and the people you know.",
+        "status-strip": "A strip under the input box showing time, gold, place, stamina, energy and who is around.",
+        "night-card": "The current day in the top right, and a character card in the bottom right with mood, place, four meters and the people you know.",
+        "cassette": "A cassette under the input box with the card name on its label, next to the current chapter, place and mood.",
+        "art-split": "The portrait fills the right half, with the card name and two meters at the bottom.",
+        "guild-card": "A parchment card on the left with the player's name, class, rank, gold, stamina and energy."
       },
       "vars": {
         "portrait": "Portrait",
@@ -2328,13 +2384,17 @@
         "playerRole": "Role",
         "gender": "Gender",
         "age": "Age",
-        "phase": "Story Phase"
+        "phase": "Story Phase",
+        "mood": "Mood",
+        "rank": "Adventurer rank"
       },
       "varDefaults": {
         "timeOfDay": "Morning",
         "location": "Somewhere unnamed",
         "playerRole": "Traveller",
-        "phase": "Prologue"
+        "phase": "Prologue",
+        "mood": "Calm",
+        "rank": "Copper"
       },
       "s": {
         "common": {
@@ -2353,10 +2413,11 @@
           "actionWaitSays": "I don't answer, and wait for them to speak first.",
           "toolRewind": "Rewind",
           "toolRegenerate": "Regenerate",
-          "toolCopy": "Copy"
+          "toolCopy": "Copy",
+          "castLabel": "Cast"
         },
         "portrait-scene": {
-          "portraitEmpty": "Portrait goes here — add one in Card details, or swap it with the Portrait variable",
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
           "meterPrimary": "Affection",
           "meterSecondary": "Stamina"
         },
@@ -2381,6 +2442,65 @@
           "phaseLabel": "Story phase",
           "meterPrimary": "Affection",
           "meterSecondary": "Stamina"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy"
+        },
+        "masthead": {
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "goldFormat": "Gold {gold}",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy",
+          "meterThird": "Affinity",
+          "meterFourth": "Progress"
+        },
+        "margin-notes": {
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy",
+          "meterFourth": "Progress"
+        },
+        "status-strip": {
+          "whenLabel": "Time",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "Gold",
+          "placeLabel": "Location",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy"
+        },
+        "night-card": {
+          "clockFormat": "Day {day}",
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy",
+          "meterFourth": "Progress"
+        },
+        "cassette": {
+          "sideFormat": "Side A · Day {day}",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "Mood",
+          "meterPrimary": "Affinity"
+        },
+        "art-split": {
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina"
+        },
+        "guild-card": {
+          "guildTitle": "Adventurer",
+          "guildSubFormat": "Registered at {location}",
+          "nameLabel": "Name",
+          "roleLabel": "Class",
+          "rankLabel": "Rank",
+          "goldLabel": "Gold",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy"
         }
       }
     },
@@ -2556,7 +2676,9 @@
       "layoutOffDesktop": "Not shown on the computer",
       "layoutOffHere": "Not shown on the computer",
       "layoutFollowPhone": "Follow the phone again",
-      "nameLinked": "Renaming this renames the variable behind it ({{name}}) too — that is the name the AI reads."
+      "nameLinked": "Renaming this renames the variable behind it ({{name}}) too — that is the name the AI reads.",
+      "pickStartImage": "Choose an image",
+      "changeStartImage": "Change image"
     },
     "style": {
       "none": "None",
@@ -2724,6 +2846,7 @@
         "copy": "Copy",
         "paste": "Paste",
         "duplicate": "Duplicate",
+        "ungroup": "Ungroup",
         "delete": "Delete"
       }
     },
@@ -2886,7 +3009,7 @@
       "newPage": "New",
       "title": "New · pick a template",
       "tutorTip": "Here are 18 ready-made templates ✧ The top group is for openings (before the story starts); the rest are pages players open from the menu while playing. Click one to add it to your card, and it just works. Don't want one yet? Close this with the × — you can always come back with New.",
-      "sub": "22 ready-made templates (4 whole screens, 18 pages), already wired with variables, buttons and what the AI is told — add one and it plays. Colours, sizes and positions are still yours to change.",
+      "sub": "30 ready-made templates (12 whole screens, 18 pages), already wired with variables, buttons and what the AI is told — add one and it plays. Colours, sizes and positions are still yours to change.",
       "groupOpening": "Openings · before the story starts",
       "blank": "Blank page",
       "blankDesc": "Nothing on it. Arrange it yourself.",
@@ -4396,6 +4519,15 @@
     }
   },
   "blueprint": {
+    "folder": {
+      "fileIn": "Put in folder",
+      "new": "New folder",
+      "newName": "New folder",
+      "takeOut": "Take out of folder",
+      "rename": "Rename folder",
+      "dissolve": "Dissolve folder",
+      "dissolveHint": "Dissolve folder (its entries stay where they are)"
+    },
     "notes": {
       "fold": "Fold",
       "unstick": "Unstick",
@@ -4410,7 +4542,15 @@
       "byPattern": "Pattern",
       "byTag": "Tag <…>",
       "speakerBubbles": "A bubble per speaker (lines that open with a name)",
-      "title": "Reply processing"
+      "title": "Reply processing",
+      "opLabel": "How",
+      "op": {
+        "set": "Set to",
+        "append": "Add to the end",
+        "push": "Add to list",
+        "replace": "Replace (JSON)"
+      },
+      "badPattern": "This pattern is empty or not valid, so it catches nothing."
     },
     "aiCustom": {
       "randomChoice": "If it still fails, pick a random allowed option",
@@ -4449,7 +4589,8 @@
       "history": "Recent messages it reads",
       "addVariable": "+ a variable",
       "sees": "What it sees",
-      "title": "Answer format"
+      "title": "Answer format",
+      "piecesNeedVariable": "Add a variable first: a piece is added while a variable meets its condition."
     },
     "aiType": {
       "code": "Code-based",
@@ -4626,7 +4767,8 @@
       "writer": "Writer",
       "legendOwn": "Pink: only it, or it receives",
       "legendCond": "Gold: only in a scenario, or when mentioned",
-      "legendNo": "Grey: doesn't know"
+      "legendNo": "Grey: doesn't know",
+      "gated": "Knows once its condition holds"
     },
     "frame": {
       "collapse": "Collapse",
@@ -4654,7 +4796,8 @@
         "background": "Background"
       },
       "readiness": "{{done}}/{{total}} ready",
-      "readinessNext": "Next: {{label}}"
+      "readinessNext": "Next: {{label}}",
+      "showOpening": "Show this opening on the card"
     },
     "scene": {
       "none": "No scene of its own",
@@ -4763,7 +4906,7 @@
       "triggerConditionsHint": "These conditions decide when the writer runs: once, on the false→true edge, not every turn they stay true.",
       "model": "Model",
       "modelInherit": "Follow the player's choice",
-      "modelHint": "Falls back to the player's own model when they cannot run this one, so a card is never unplayable.",
+      "modelHint": "Players who can't run this model get a fallback: an AI that replies to them uses their own model, one behind the scenes uses the default model.",
       "inputs": "Wired in from elsewhere",
       "inputKind": {
         "memory": "A scenario's past runs",
@@ -4837,7 +4980,17 @@
       "quietSeconds": "Nobody speaks for",
       "quietSecondsUnit": "seconds",
       "triggerQuietHint": "While the game is open, this scenario is active and nothing has been said for this long, it decides whether to step in with a line, and may change values. If there is nothing worth saying it stays silent. Billed per call.",
-      "isQuietHint": "Woken after a quiet stretch; it decides whether to step in with a line or change values, and stays silent otherwise."
+      "isQuietHint": "Woken after a quiet stretch; it decides whether to step in with a line or change values, and stays silent otherwise.",
+      "modelAndParams": "Model & settings",
+      "modelDefault": "Default",
+      "modelHintNarrator": "Players who can't run this model get their own chat model instead, so the card always plays.",
+      "modelHintBackground": "Leave empty for the default background model. Players who can't run the model you name get that default too.",
+      "paramsNarrator": "It replies to the player, with the same settings as the story AI.",
+      "params": "Settings",
+      "paramsDefault": "Default: temperature {{temperature}} · up to {{tokens}} tokens",
+      "temperature": "Temperature ({{min}}–{{max}})",
+      "maxTokens": "Max tokens ({{min}}–{{max}})",
+      "maxTokensLabel": "Max tokens"
     },
     "addGreeting": "Opening",
     "emptyCta": "Write the first opening",
@@ -4997,11 +5150,6 @@
       "summaryFocusHint": "One line to the summariser about what cannot be lost — relationships, promises, debts, the clock.",
       "summaryFocusPlaceholder": "e.g. Keep every promise made, and who owes whom.",
       "summaryCost": "The summary updates in the background on a cheap model; a typical update costs the player well under 1 mushie. Players can read and edit it in the Memory panel.",
-      "pinnedNote": "Pinned note",
-      "pinnedNoteHint": "A line placed near the end of the history on every turn, where the AI's attention is strongest. Style reminders and standing rules live well here.",
-      "pinnedNotePlaceholder": "e.g. Stay in second person. End every reply on an open beat.",
-      "pinnedDepth": "Messages from the end",
-      "pinnedDepthHint": "0 = after the newest message, 1 = just before it.",
       "budget": "Context budget",
       "budgetValue": "About {{tokens}} tokens",
       "budgetAuthor": "this card's setting",
@@ -5020,7 +5168,7 @@
       "recursionDepth": "Cascading triggers",
       "recursionDepthHint": "An entry that comes in can trigger others, this many levels deep. 0 = off.",
       "variablesToAi": "Variables shown to the AI",
-      "variablesToAiHint": "All: every readable variable, every turn. Only changed: just the ones that moved off their default. None: no state block at all — the interface's business.",
+      "variablesToAiHint": "All: every readable variable's current value, every turn. Only changed: just the ones that moved off their default. None: no current values, but each variable's Behavior Rules are still sent. To hide a variable from the AI entirely, set its AI access to Engine only.",
       "variablesAll": "All",
       "variablesChanged": "Only changed",
       "variablesNone": "None",
@@ -5065,7 +5213,8 @@
       "varFieldWriter_behavior": "a behavior",
       "varFieldWriter_ai-call": "a custom AI call",
       "varFieldWriterAny": "not said",
-      "varFieldRemove": "Remove this field"
+      "varFieldRemove": "Remove this field",
+      "previewCode": "Plus {{count}} interface code calls that build their own context"
     },
     "addModule": "Scenario",
     "addVariable": "Variable",
@@ -5109,7 +5258,8 @@
       "value": "Value",
       "seedValue": "Starting value",
       "apply": "Apply",
-      "remove": "Remove"
+      "remove": "Remove",
+      "seedJsonFixed": "A list or object can't be seeded here: an opening only stores numbers, text and switches. Remove this wire and set it as the variable's default instead."
     },
     "ports": {
       "write": "write",
@@ -5166,7 +5316,9 @@
       "summaryRemoved": "{{count}} removed",
       "undo": "Undo this turn",
       "dismiss": "Got it",
-      "undoFailed": "Undo didn't go through — the card is unchanged."
+      "undoKeptYours_one": "Turn undone — the one thing you changed since stays as you left it",
+      "undoKeptYours": "Turn undone — {{count}} things you changed since stay as you left them",
+      "undoAllKept": "You've changed everything this turn touched, so your version stays"
     },
     "links": {
       "in": "{{count}} wire(s) in",
@@ -5395,9 +5547,9 @@
         "memoryCardAlone": "Remembers the whole conversation",
         "memoryCardHint": "This is the AI that plays unless a scenario takes over, and it remembers everything said.",
         "summaryOn": "earlier turns become a summary",
-        "pinnedRow": "Pinned: {{text}}",
         "continuityOn": "Smart tracking: on",
-        "continuityOff": "Smart tracking: off"
+        "continuityOff": "Smart tracking: off",
+        "codeContext": "Built by interface code · {{count}}"
       }
     },
     "turnCtx": {
@@ -5778,6 +5930,7 @@
       "whenFires": "When this behavior checks: every turn by default, or when the player says something, a variable changes or a button is pressed.",
       "onlyIf": "The effects below only happen when these are true. With several conditions, choose whether all must match or any one will do. Empty means it always runs.",
       "alwaysSend": "On: sent to the AI every turn. Off: only sent when a keyword comes up or its conditions match, which saves words and keeps the AI focused.",
+      "alwaysSendGated": "Variable conditions are wired in, so they decide when this reaches the AI. Remove them and this switch takes effect again.",
       "excludeRecursion": "If another entry's text happens to contain this entry's keywords, it won't pull this one in. Only the player and AI's chat can trigger it.",
       "preventRecursion": "Once this entry is sent, its own text won't trigger other entries' keywords.",
       "secondary": "A second set of words used with the keywords to narrow things down, like \"must also appear\" or \"must not appear\". Usually left empty.",
@@ -6046,6 +6199,20 @@
           "title": "Fired from the interface",
           "body": "api.executeAction(id)"
         }
+      },
+      "context": {
+        "messages": {
+          "title": "Your own messages",
+          "body": "api.ai.complete({ messages }) — the code decides what is sent"
+        },
+        "lore": {
+          "title": "Pick the lore",
+          "body": "includeLorebook, worldbookIds — only some entries, or one situation"
+        },
+        "session": {
+          "title": "Bring the save",
+          "body": "context: \"session\" — adds the player persona and presets"
+        }
       }
     },
     "custom": {
@@ -6057,7 +6224,97 @@
       "behaviorIntro": "Implemented by code.",
       "implementedBy": "Implemented in {{count}} places",
       "implementedCode": "Own code · {{count}} lines",
-      "firedFrom": "Fired from interface code · {{file}} line {{line}}"
+      "firedFrom": "Fired from interface code · {{file}} line {{line}}",
+      "contextIntro": "What the AI reads can also be decided by the interface code: it writes the messages and picks the lore and situation. These are the card's AI calls that do.",
+      "codeAt": "{{file}} line {{line}}"
+    },
+    "gateGroups": {
+      "preview": "Preview {{name}} =",
+      "hint": "Drag to see what the AI reads at each value",
+      "clear": "Stop preview",
+      "answer": "The AI reads {{count}} · about {{chars}} characters",
+      "answerMaybe": "The AI reads {{count}} · about {{chars}} characters, and {{maybe}} more depend on other conditions",
+      "one": "{{name}} {{value}}",
+      "range": "{{name}} {{from}}–{{to}}",
+      "list": "{{name}} {{values}}",
+      "always": "Every {{name}}",
+      "never": "No {{name}} sends these",
+      "other": "Other conditions",
+      "yes": "yes",
+      "no": "no"
+    },
+    "aiCalls": {
+      "view": "This card's AIs",
+      "title": "This card's AIs",
+      "count": "{{count}} in all",
+      "col": {
+        "name": "AI",
+        "when": "When it runs",
+        "payer": "Who pays",
+        "model": "Model",
+        "params": "Settings"
+      },
+      "kind": {
+        "story": "Story AI",
+        "narrator": "Replies to the player",
+        "behind": "Behind the scenes",
+        "quiet": "Speaks up in a silence",
+        "ui": "Called by a button",
+        "custom": "Custom",
+        "code": "Card's code"
+      },
+      "story": "Story AI",
+      "storyTakenOver": "Never: “{{name}}” always replies instead",
+      "whereCard": "Whole card",
+      "whereNone": "Not placed",
+      "off": "never runs",
+      "whenCustom": "When the card's code calls it",
+      "whenCode": "When the code reaches this line · {{kind}}",
+      "payerPlayer": "Player",
+      "followPlayer": "Player's settings",
+      "followDefault": "Default",
+      "authorCustom": "Set by author",
+      "authorSet": "Set by author",
+      "recommended": "Recommended: {{model}}",
+      "lengthPlayer": "Reply length stays the player's",
+      "narratorParams": "Same as the story AI",
+      "defaultModelNote": "The player's background model, or a low-cost default",
+      "restPlayer": "The rest follow the player",
+      "rawDefaults": "Defaults where the code sets nothing",
+      "computed": "Computed in code",
+      "temperature": "Temperature {{v}}",
+      "topP": "Top P {{v}}",
+      "maxTokens": "Up to {{n}} tokens",
+      "modelUnknown": {
+        "player": "Not in the model list: players get their own model",
+        "default": "Not in the model list: players get the default model",
+        "none": "Not in the model list: players may not be able to run it"
+      },
+      "modelShut": {
+        "player": "{{plans}} players get their own model",
+        "default": "{{plans}} players get the default model",
+        "none": "{{plans}} players can't run this model"
+      },
+      "openAi": "Edit",
+      "openCode": "Open code",
+      "footRules": "The story AI's model always follows the player; the author can only recommend one. When an AI on the card names a model a player can't run, it falls back to one they can.",
+      "footClamp": "Values the author sets are kept within safe ranges.",
+      "legendAuthor": "Pink: set by author"
+    },
+    "storyAi": {
+      "title": "Story AI's model & settings",
+      "hint": "Players choose and pay for the model. The settings (temperature, top P) follow the player too, unless you choose Set by author; then this card's are used.",
+      "recommendedModel": "Recommended model",
+      "recommendedModelHint": "Players see it marked “Author recommends” when they pick a model. It is never forced.",
+      "recommendedModelNone": "None",
+      "recommendedUnknown": "Not in Yumina's model list, so players won't see it marked.",
+      "sampling": "Settings",
+      "samplingHint": "With Set by author, the story AI uses this card's temperature and top P instead of the player's.",
+      "temperature": "Temperature",
+      "temperatureHint": "{{min}}–{{max}}; higher is looser",
+      "topP": "Top P",
+      "topPHint": "{{min}}–{{max}}",
+      "alwaysPlayer": "The model and reply length always follow the player, who pays for them."
     }
   },
   "modules": {

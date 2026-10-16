@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
 import { FieldError } from "@/components/ui/field-error";
+import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
 import { useRouter } from "@tanstack/react-router";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
@@ -72,6 +73,7 @@ import { UpdateNotifyDialog } from "./update-notify-dialog";
 import { ReviewStateControl } from "./review-state-control";
 import { GuestEditorReadOnly } from "./components/guest-editor-readonly";
 import { DebouncedInput, DebouncedTextarea, flushPendingEditorFields } from "./components/debounced-field";
+import { DescriptionField } from "./components/description-field";
 import { LANGUAGE_OPTIONS } from "@/lib/languages";
 import { prepareStudioEntry } from "./editor-entry";
 import { AssetPicker } from "./asset-picker";
@@ -937,6 +939,7 @@ function CoverSection() {
 
   return (
     <Card n={1} icon={Camera} title={t("simple.cover.title")} hint={t("simple.cover.hint")} accent="cyan" optional anchor="qc-cover">
+      <MediaGuidelinesNote className="mb-4" />
       <div className="flex items-center gap-5">
         <button
           onClick={() => inputRef.current?.click()}
@@ -1732,7 +1735,7 @@ function DescriptionSection({ archetype }: { archetype: "chat" | "world" }) {
       {isTemplateDescription(description) && (
         <span data-qc-blurb-template className="mb-1.5 inline-block rounded border border-dashed border-zinc-500/60 px-1.5 text-[11px] leading-[16px] text-zinc-300">{t("simple.description.stillTemplate")}</span>
       )}
-      <DebouncedTextarea
+      <DescriptionField
         value={description ?? ""}
         onCommit={(next) => setField("description", next)}
         rows={4}
@@ -1969,6 +1972,7 @@ function MoreDisclosure({ onOpenFullEditor }: { onOpenFullEditor: () => void }) 
             <h4 className="text-sm font-semibold">{t("simple.more.gallery.title")}</h4>
             <span className="text-[11px] text-muted-foreground/60">{t("simple.more.gallery.hint")}</span>
           </div>
+          <MediaGuidelinesNote className="mb-3" />
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
             {galleryImages.map((url, i) => (
               <div key={i} className="group relative aspect-video overflow-hidden rounded-lg border border-border bg-card">
@@ -2210,7 +2214,13 @@ function VisualLayerSection() {
 
   const handleUninstallBundle = (slug: string) => {
     if (!rootComponent) return;
-    updateRootComponent({ files: uninstallBundle(files, slug) });
+    // A bundle installed the usual way has a record of what it brought; going
+    // through it takes the variables and rules too. Only removing the files
+    // left an app's data and rules behind on the card.
+    const store = useEditorStore.getState();
+    const record = (store.worldDraft.installedBundles ?? []).find((b) => b.slug === slug);
+    if (record) store.removeInstalledBundle(record.installId);
+    else updateRootComponent({ files: uninstallBundle(files, slug) });
   };
 
   const [showAddFile, setShowAddFile] = useState(false);

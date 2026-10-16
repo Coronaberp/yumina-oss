@@ -1,6 +1,7 @@
 import { useTokenizerReady } from "@/hooks/use-tokenizer-ready";
-import { useState, useRef, useMemo, useCallback, useEffect, memo } from "react";
+import { Fragment, useState, useRef, useMemo, useCallback, useEffect, memo } from "react";
 import { useEditorFocus } from "@/features/studio/lib/use-editor-focus";
+import { CardContextForm } from "@/features/studio/panels/blueprint/context-forms";
 import { useTranslation } from "react-i18next";
 import {
   Plus,
@@ -10,8 +11,8 @@ import {
   ChevronDown,
   ChevronRight,
   Settings2,
-  GripVertical,
   MessageCircle,
+  GripVertical,
   FolderOpen,
   FolderClosed,
   Pencil,
@@ -87,6 +88,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { NumberInput } from "@/components/ui/number-input";
+import { StoryAiSettingsFields } from "../components/story-ai-settings-fields";
+import { historyModeSettings, historyWindowOf, type HistoryMode } from "../lib/history-mode";
 import {
   Dialog,
   DialogContent,
@@ -161,6 +164,11 @@ function entrySort(a: WorldEntry, b: WorldEntry): number {
   return aPos - bPos;
 }
 
+/** The conversation itself, as a row of the list: where the chat sits among
+ *  the keyword entries, and the door to how much of it the AI reads. Not an
+ *  entry, so it is a selection id no entry can have. */
+const CONTEXT_ROW_ID = "__conversation__";
+
 // ── Main component ──
 
 export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { compact?: boolean; mobileListMode?: boolean; scopeWorldbookId?: string | null } = {}) {
@@ -171,8 +179,20 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
    *  Instructions and CoT Bypass sitting in the same list as the three slots
    *  they were meant to fill, with nothing saying which was which. The canvas
    *  has folded them for a while; this is the same fold, on the same
-   *  predicate, so an entry the author edits leaves it on its own. */
-  const [scaffoldingOpen, setScaffoldingOpen] = useState(false);
+   *  predicate, so an entry the author edits leaves it on its own.
+   *
+   *  Open per section: the presets spread over several sections, each with
+   *  its own fold row, and one shared flag made every row open and close
+   *  together whichever one was tapped. */
+  const [openScaffoldingSections, setOpenScaffoldingSections] = useState<Set<string>>(() => new Set());
+  const toggleScaffoldingSection = (sectionId: string) => {
+    setOpenScaffoldingSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  };
 
   const SECTION_META = useMemo(() => SECTION_META_IDS.map((m) => ({
     id: m.id,
@@ -658,6 +678,8 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
   );
 
   const selected = worldDraft.entries.find((e) => e.id === selectedId);
+  // How much of the conversation the AI reads — the context row's caption.
+  const historyCount = historyWindowOf(worldDraft.settings).count;
   useEditorFocus("entry", selected?.id, worldDraft);
   const dragActiveRealId = dragActiveId?.replace(/^(entry|folder):/, "") ?? null;
   const dragActiveEntry = dragActiveRealId ? worldDraft.entries.find((e) => e.id === dragActiveRealId) : null;
@@ -693,12 +715,12 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
       for (const entry of unfolderedEntries) {
         // Folded scaffolding is not in the DOM, so it must not be in the
         // sortable list either — the same rule a collapsed folder follows.
-        if (!scaffoldingOpen && scaffoldingIds.has(entry.id)) continue;
+        if (!openScaffoldingSections.has(meta.id) && scaffoldingIds.has(entry.id)) continue;
         ids.push(`entry:${entry.id}`);
       }
     }
     return ids;
-  }, [SECTION_META, sectionEntries, sectionFolders, collapsedFolders, scaffoldingIds, scaffoldingOpen]);
+  }, [SECTION_META, sectionEntries, sectionFolders, collapsedFolders, scaffoldingIds, openScaffoldingSections]);
 
   return (
     <div ref={rootRef} className={cn("entries-section-root @container flex min-h-0 flex-1 flex-col", mobileListMode && "studio-mobile-list-mode")}>
@@ -982,6 +1004,9 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
               max={10}
             />
           </label>
+          <div className="col-span-2 min-w-0">
+            <StoryAiSettingsFields />
+          </div>
         </div>
       )}
 
@@ -1045,13 +1070,26 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-foreground">{t("entries.historyLimit")}</label>
                   <div className="flex items-center gap-2">
+                    {/* The studio's three choices, through the same reader and
+                        writer, so 「全部」 here cannot leave a summary on. */}
                     <select
-                      value={worldDraft.settings.historyLimit ? "latest" : "all"}
-                      onChange={(e) => setSettings("historyLimit", e.target.value === "latest" ? (worldDraft.settings.historyLimit ?? 20) : undefined)}
+                      value={historyWindowOf(worldDraft.settings).mode}
+                      onChange={(e) => {
+                        const write = historyModeSettings(worldDraft.settings, e.target.value as HistoryMode);
+                        const store = useEditorStore.getState();
+                        store.beginBatch();
+                        try {
+                          setSettings("historyLimit", write.historyLimit);
+                          setSettings("storySummary", write.storySummary);
+                        } finally {
+                          store.commitBatch();
+                        }
+                      }}
                       className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground"
                     >
                       <option value="all">{t("blueprint.insp.historyAll")}</option>
                       <option value="latest">{t("blueprint.insp.historyLatest")}</option>
+                      <option value="summary">{t("blueprint.insp.historySummaryShort")}</option>
                     </select>
                     {worldDraft.settings.historyLimit ? (
                       <NumberInput
@@ -1078,6 +1116,9 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                     </span>
                   </label>
                 </div>
+                {/* Beside the context lock: whose sampling the story AI uses,
+                    and the model the card recommends. */}
+                <StoryAiSettingsFields />
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-foreground">{t("entries.recursionDepth")}</label>
                   <NumberInput
@@ -1146,6 +1187,7 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                   // The author's own writing first; the template's untouched
                   // scaffolding behind one row underneath it.
                   const scaffolding = allUnfoldered.filter((e) => scaffoldingIds.has(e.id));
+                  const scaffoldingOpen = openScaffoldingSections.has(meta.id);
                   const unfolderedEntries = allUnfoldered.filter((e) => !scaffoldingIds.has(e.id));
                   const entriesByFolder = new Map<string, WorldEntry[]>();
                   for (const entry of entries) {
@@ -1158,7 +1200,43 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                   }
 
                   return (
-                    <div key={meta.id} className="mb-3">
+                    <Fragment key={meta.id}>
+                    {/* The conversation itself, at its own level: the list is
+                        ordered by where things sit in the prompt, and the chat
+                        starts after the examples; the keyword entries below go
+                        in among its messages at their depth, and "at the end"
+                        follows it. Drawn inside the keyword section it read as
+                        one more thing sent only when mentioned. It used to be a
+                        faint "...messages..." caption; it is the card's context
+                        row now, the same one the canvas draws, and opens the
+                        same settings. */}
+                    {/* A module's own list is not the card's conversation. */}
+                    {meta.id === "chat-history" && !scopeWorldbookId && (
+                      <button
+                        type="button"
+                        onClick={() => selectEntry(selectedId === CONTEXT_ROW_ID ? null : CONTEXT_ROW_ID)}
+                        aria-pressed={selectedId === CONTEXT_ROW_ID}
+                        title={t("blueprint.ctx.row.memoryCardHint")}
+                        className={cn(
+                          "mb-3 flex w-full min-w-0 items-center gap-1.5 rounded-lg border px-2 py-2 text-left transition-colors",
+                          selectedId === CONTEXT_ROW_ID
+                            ? "border-primary/30 bg-primary/[0.06]"
+                            : "border-dashed border-border/60 hover:bg-muted/50",
+                        )}
+                      >
+                        <MessageCircle className="h-3.5 w-3.5 shrink-0 text-teal-300" />
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-foreground">
+                          {t("blueprint.blocks.context")}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                          {historyCount === undefined
+                            ? t("blueprint.ctx.row.memoryCardAlone")
+                            : t("blueprint.turnCtx.historyLimitCard", { count: historyCount })}
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      </button>
+                    )}
+                    <div className="mb-3">
                       <DroppableSectionHeader
                         section={meta.id}
                         label={meta.label}
@@ -1170,14 +1248,6 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                         onAddEntry={() => handleAddEntryInSection(meta.id)}
                         onAddFolder={() => handleAddFolderInSection(meta.id)}
                       >
-
-                      {/* Chat History: message divider */}
-                      {meta.id === "chat-history" && !isCollapsed && (
-                        <div className="ml-5 flex items-center gap-2 px-2 py-1 text-[10px] text-muted-foreground/30 italic">
-                          <MessageCircle className="h-3 w-3" />
-                          {t("entries.messages")}
-                        </div>
-                      )}
 
                       {/* Section body */}
                       {!isCollapsed && (
@@ -1235,7 +1305,7 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                             <div className="rounded-lg border border-border/50 bg-white/[0.02]">
                               <button
                                 type="button"
-                                onClick={() => setScaffoldingOpen((v) => !v)}
+                                onClick={() => toggleScaffoldingSection(meta.id)}
                                 className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                               >
                                 <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", scaffoldingOpen && "rotate-90")} />
@@ -1266,6 +1336,7 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                       )}
                       </DroppableSectionHeader>
                     </div>
+                    </Fragment>
                   );
                 })}
               </SortableContext>
@@ -2023,6 +2094,23 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                 )}
 
                 <div className="pb-12" />
+              </div>
+            </div>
+          ) : selectedId === CONTEXT_ROW_ID ? (
+            <div className="p-8 lg:p-12">
+              <button
+                onClick={() => selectEntry(null)}
+                className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground @[640px]:hidden"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                {t("entries.back")}
+              </button>
+              <div className="mb-6 max-w-3xl">
+                <h2 className="text-xl font-bold text-foreground">{t("blueprint.blocks.context")}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{t("blueprint.blocks.contextHint")}</p>
+              </div>
+              <div className="max-w-3xl">
+                <CardContextForm />
               </div>
             </div>
           ) : filteredEntries.length > 0 ? (

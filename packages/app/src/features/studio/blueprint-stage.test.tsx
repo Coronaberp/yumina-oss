@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import React, { act, useEffect, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import ts from "typescript";
-import * as inspectorLayout from "./lib/stage-inspector-layout";
 
-test("the real stage keeps one mounted canvas, inspector and assistant across docked tools, overlays and frontend visits", async () => {
+test("the real stage keeps one mounted canvas and assistant across docked tools, overlays and frontend visits", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost/app/studio/card" });
   let workspaceWidth = 780;
   const observers = new Set<() => void>();
@@ -30,7 +28,6 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
   const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: workspaceWidth, height: 800, x: 0, y: 0, left: 0, top: 0, right: workspaceWidth, bottom: 800, toJSON: () => ({}) });
-  dom.window.localStorage.setItem("yumina-stage-inspector-width", "500");
 
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach(listener => listener());
@@ -43,15 +40,10 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
     { getState: () => state, subscribe: () => () => {} });
   }
   let canvasMounts = 0, aiMounts = 0, playtestMounts = 0;
-  let canvasProps!: { onInspectorChange: (open: boolean) => void; inspectorHost: HTMLDivElement | null; onDrillPanel: (id: string) => void; active: boolean };
+  let canvasProps!: { onDrillPanel: (id: string) => void; active: boolean };
   function Canvas(props: typeof canvasProps) {
     canvasProps = props;
     useEffect(() => { canvasMounts++; }, []);
-    useEffect(() => {
-      const clear = () => props.onInspectorChange(false);
-      window.addEventListener("yumina:studio-canvas-clear-selection", clear);
-      return () => window.removeEventListener("yumina:studio-canvas-clear-selection", clear);
-    }, [props.onInspectorChange]);
     useEffect(() => {
       const learn = (event: Event) => {
         const target = (event as CustomEvent<{canvasTarget:string}>).detail.canvasTarget;
@@ -60,7 +52,7 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
       window.addEventListener("yumina:studio-learn-canvas", learn);
       return () => window.removeEventListener("yumina:studio-learn-canvas", learn);
     }, [props.onDrillPanel]);
-    return <div data-canvas-sentinel>{props.inspectorHost && createPortal(<button data-inspector-close onClick={() => props.onInspectorChange(false)}>Close inspector</button>, props.inspectorHost)}</div>;
+    return <div data-canvas-sentinel />;
   }
   function Ai() { useEffect(() => { aiMounts++; }, []); return <textarea data-ai-composer />; }
   function Playtest() { useEffect(() => { playtestMounts++; }, []); return <div data-playtest />; }
@@ -95,7 +87,6 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
       ),
     },
     "./panels/code-view-panel": { setPendingCodeJump: () => {} }, "./stage-tree": { StageTree: () => null },
-    "./lib/stage-inspector-layout": inspectorLayout,
     // Where the assistant is working is drawn by its own layer and tested on its own.
     "./ai-presence": { AiPresenceLayer: () => null },
     "./lib/agent-presence": { useAgentPresence: () => {} },
@@ -109,8 +100,8 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
   const resize = async (width: number) => { workspaceWidth = width; await act(async () => observers.forEach(observer => observer())); };
   const companion = () => dom.window.document.querySelector<HTMLElement>("[data-studio-companion]")!;
   const click = async (element: Element) => { await act(async () => element.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))); };
-  // The assistant and the playtest are docked tabs beside the canvas now; the
-  // side column is the inspector's alone.
+  // The assistant is a docked tab beside the canvas; the side column is the
+  // playtest's alone. What is clicked on the board opens on the board.
   const dockTabs = () => [...dom.window.document.querySelectorAll(".dv-tab")].map(tab => tab.textContent?.trim());
   const parked = (el: Element | null) => !!el?.closest("[data-dock-parking]");
   const aiToggle = () => dom.window.document.querySelector('button[aria-pressed][title="studio.panels.aiAssistant"]')!;
@@ -128,34 +119,12 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
     assert.equal(dom.window.document.querySelector("[data-ai-composer]"), ai, "and keeps it mounted, draft and all");
     assert.equal(parked(ai), true);
 
-    await act(async () => canvasProps.onInspectorChange(true));
-    const inspector = dom.window.document.querySelector("[data-inspector-close]");
-    assert.equal(companion().dataset.studioCompanionLayout, "overlay");
-    assert.match(companion().className, /absolute/);
-    assert.equal(companion().style.width, "500px");
-    await resize(420);
-    assert.equal(companion().style.width, "352px");
-    assert.equal(localStorage.getItem("yumina-stage-inspector-width"), "500", "responsive constraints never overwrite the saved width");
-    await resize(1280);
-    assert.equal(companion().dataset.studioCompanionLayout, "column");
-    assert.equal(companion().style.width, "500px");
-    assert.equal(dom.window.document.querySelector("[data-inspector-close]"), inspector, "changing placement retains the single inspector portal");
-    const separator = companion().querySelector("[role=separator]")!;
-    await act(async () => separator.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
-    assert.equal(companion().style.width, "480px");
-    assert.equal(localStorage.getItem("yumina-stage-inspector-width"), "480");
-
-    await resize(780);
-    await act(async () => window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    assert.equal(companion().dataset.studioCompanionLayout, "closed");
-    await act(async () => canvasProps.onInspectorChange(true));
-    await click(dom.window.document.querySelector("[data-inspector-close]")!);
-    assert.equal(companion().dataset.studioCompanionLayout, "closed", "the inspector's existing close control also dismisses the temporary overlay");
-    await act(async () => canvasProps.onInspectorChange(true));
+    await click(aiToggle());
+    assert.ok(dockTabs().includes("studio.panels.aiAssistant"), "its button brings it back");
     // The page switch lives in the shell's top bar now; it writes the store.
     await act(async () => studio.setStagePage("frontend"));
     assert.ok(dom.window.document.querySelector("[data-frontend-page]"));
-    assert.equal(companion().dataset.studioCompanionLayout, "closed", "frontend uses its own inspector and receives no global selection column");
+    assert.equal(companion().dataset.studioCompanionLayout, "closed", "frontend uses its own inspector and receives no side column");
     // The player view takes the whole frame: the rail and the page tabs stand
     // down, and the page is handed the one control that has to exist inside a
     // mode you can be in.
@@ -173,7 +142,7 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
     assert.equal(stepped, true, "the player view claims the back step");
     assert.equal(dom.window.document.querySelector("[data-frontend-page]"), null, "the corner control leaves the player view");
     assert.ok(dom.window.document.querySelector('[data-onboarding="editors"]'), "and the frame comes back with it");
-    assert.equal(dockTabs().includes("studio.panels.aiAssistant"), false, "the restored inspector temporarily puts the assistant away");
+    assert.ok(dockTabs().includes("studio.panels.aiAssistant"), "coming back to the board never puts the assistant away");
 
     await act(async () => { studio.mode = "playtest"; emit(); });
     // A playtest is the player's screen across the whole frame, over the
@@ -194,17 +163,11 @@ test("the real stage keeps one mounted canvas, inspector and assistant across do
     assert.equal(dom.window.document.querySelector("[data-modules-panel]"), null);
     assert.equal(canvasProps.active, true, "opening lesson returns to the existing canvas");
     assert.equal(canvasMounts, 1, "learning never replaces the canvas");
-    // Finish inspecting before the canvas lesson; assistant lessons clear the
-    // selection themselves when they open the assistant.
-    await act(async () => canvasProps.onInspectorChange(false));
     await act(async () => { learning.step = "setting"; emit(); });
     assert.equal(companion().dataset.studioCompanionLayout, "closed", "the guide stands on the canvas beside its block; a lesson opens no column");
     assert.equal(dockTabs().includes("studio.panels.aiAssistant"), false, "the assistant stays out of the way of a lesson about the canvas");
     assert.equal(dom.window.document.querySelector("[data-ai-composer]"), ai, "while staying mounted");
-    await act(async () => canvasProps.onInspectorChange(true));
-    assert.equal(dom.window.document.querySelectorAll('[data-studio-companion]').length, 1, "node settings never create a second side column");
-    assert.equal(companion().dataset.studioCompanion, "inspector");
-    assert.equal(canvasProps.active, true, "inspecting a node leaves the blueprint visible during teaching");
+    assert.equal(canvasProps.active, true, "the blueprint stays visible during teaching");
     await act(async () => { learning.step = "assistant"; window.dispatchEvent(new CustomEvent("yumina:studio-learn-panel", { detail: { panelId: "ai-chat" } })); emit(); });
     assert.ok(dockTabs().includes("studio.panels.aiAssistant"));
     assert.equal(parked(ai), false);

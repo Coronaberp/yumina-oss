@@ -15,6 +15,7 @@ import {
   isContinuityEnabled,
   isSceneImageJudgeOn,
   reclaimCopiedSceneImages,
+  resolveEffectVariable,
   type AudioEffect,
   type ContinuityDecision,
   type ContinuityMemory,
@@ -48,6 +49,10 @@ export interface ContinuityTurnArgs {
    *  that key so the judge runs on it too (falls back to the platform key on
    *  any fast failure). Custom endpoints and local models leave it unset. */
   playerOpenRouterKey?: () => Promise<string | null>;
+  /** Every write the reply produced this turn (story model, reply rules,
+   *  missed-update repair). The ones aimed at judged variables are dropped from
+   *  the turn; the judge uses them only as a second opinion when it is unsure. */
+  storyEffects?: Effect[];
 }
 
 export interface ContinuityTurnOutcome {
@@ -95,6 +100,18 @@ function readMemory(stateManager: GameStateManager): ContinuityMemory {
   return raw && typeof raw === "object" ? (raw as ContinuityMemory) : {};
 }
 
+/** The last plain write to each variable, keyed by its id (effects may name a
+ *  variable by id or display name; dot-paths are left out). */
+function storyWrites(world: WorldDefinition, effects: Effect[] | undefined): Record<string, Effect> {
+  const out: Record<string, Effect> = {};
+  for (const e of effects ?? []) {
+    if (e.variableId.includes(".")) continue;
+    const v = resolveEffectVariable(world, e.variableId);
+    if (v) out[v.id] = e;
+  }
+  return out;
+}
+
 export async function runContinuityTurn(args: ContinuityTurnArgs): Promise<ContinuityTurnOutcome> {
   if (!continuityGloballyEnabled() || !isContinuityEnabled(args.world)) return { ...NOTHING, audit: { status: "disabled" } };
   const state = args.stateManager.getSnapshot();
@@ -134,7 +151,7 @@ export async function runContinuityTurn(args: ContinuityTurnArgs): Promise<Conti
       state: plan.state, questions: plan.questions, signal: args.signal, timeoutMs: env.CONTINUITY_TIMEOUT_MS,
       playerKey: playerKey ? { userId: args.userId, apiKey: playerKey } : null,
     });
-    const result = applyContinuityPlan(plan, res.answers, state.turnCount, memory);
+    const result = applyContinuityPlan(plan, res.answers, state.turnCount, memory, undefined, { story: storyWrites(args.world, args.storyEffects) });
     if (JSON.stringify(result.memory) !== JSON.stringify(memory)) args.stateManager.setMetadata(MEMORY_KEY, result.memory);
     const applied = result.decisions.filter((d) => d.applied).length;
     console.log(`[Continuity] ${args.path} turn=${state.turnCount} questions=${Object.keys(plan.questions).length} applied=${applied} ms=${res.ms} tokens=${res.usage.inputTokens} key=${res.keySource}${res.byokFallback ? ` byokFallback=${res.byokFallback}` : ""}`);

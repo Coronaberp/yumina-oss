@@ -96,13 +96,62 @@ test("foldClosedRuns replaces the run span with one memory block and keeps the r
   const rows = [row(1), row(12), row(15), row(20), row(35)];
   // run spanned minutes 10..30 (closed via PATCH at minute 30, after m20)
   const result = foldClosedRuns(rows, closedMemories(10, 30), [dungeon, plainBook], new Set());
-  assert.equal(result.foldedMessageCount, 3);
+  assert.equal(result.foldedMessageCount, 2);
   assert.equal(result.foldedRunCount, 1);
-  assert.equal(result.rows.length, 3); // m1, block, m35
+  assert.equal(result.rows.length, 4); // m1, block, m20 (the run's last scene), m35
   assert.equal(result.rows[0]!.content, "m1");
   assert.match(result.rows[1]!.content, /副本记忆 · 副本：幸福之家 · 第1次/);
   assert.match(result.rows[1]!.content, /记忆正在整理中/);
-  assert.equal(result.rows[2]!.content, "m35");
+  assert.match(result.rows[1]!.content, /不要重演/);
+  assert.equal(result.rows[2]!.content, "m20");
+  assert.equal(result.rows[3]!.content, "m35");
+});
+
+test("the newest closed run keeps its last exchange, so the narrator does not answer the line that walked in", () => {
+  // DanMachi 2026-10-13: "ready" → (the whole run, incl. the walk home and
+  // the status update) → "I'm off to eat". Folding all of it left "ready"
+  // as the last real line, and the party set out for the dungeon again.
+  const rows = [
+    row(1, "assistant", "good night"),
+    row(5, "user", "ready"),
+    row(10, "assistant", "set out"),
+    row(12, "user", "fight"),
+    row(13, "assistant", "fought"),
+    row(20, "user", "update please"),
+    row(21, "assistant", "loki reads"),
+    row(22, "assistant", "loki done"),
+    row(40, "user", "off to eat"),
+  ];
+  const result = foldClosedRuns(rows, closedMemories(10, 22), [dungeon], new Set());
+  const contents = result.rows.map((r) => r.content);
+  assert.equal(contents.length, 7);
+  assert.deepEqual([contents[0], contents[1]], ["good night", "ready"]);
+  assert.match(contents[2]!, /副本记忆/);
+  assert.deepEqual(contents.slice(3), ["update please", "loki reads", "loki done", "off to eat"]);
+  assert.equal(result.foldedMessageCount, 3);
+});
+
+test("the kept tail is capped and starts at the run's last player message", () => {
+  const rows = [row(10, "user"), row(11), row(12, "user"), row(13), row(14), row(15), row(16), row(17), row(40, "user")];
+  const result = foldClosedRuns(rows, closedMemories(10, 30), [dungeon], new Set());
+  assert.match(result.rows[0]!.content, /副本记忆/);
+  assert.deepEqual(result.rows.slice(1).map((r) => r.content), ["m14", "m15", "m16", "m17", "m40"]);
+});
+
+test("only the newest closed run keeps a tail; older runs fold whole", () => {
+  const memories: RunMemories = {
+    closed: [
+      { bookId: "wb-happy-home", runIndex: 1, fromAt: at(10), toAt: at(20), closedAt: at(20), summaryStatus: "pending" },
+      { bookId: "wb-happy-home", runIndex: 2, fromAt: at(30), toAt: at(40), closedAt: at(40), summaryStatus: "pending" },
+    ],
+  };
+  const rows = [row(10), row(15, "user"), row(16), row(25, "user"), row(30), row(35, "user"), row(36), row(50, "user")];
+  const result = foldClosedRuns(rows, memories, [dungeon], new Set());
+  const contents = result.rows.map((r) => r.content);
+  assert.match(contents[0]!, /第1次/);
+  assert.equal(contents[1], "m25");
+  assert.match(contents[2]!, /第2次/);
+  assert.deepEqual(contents.slice(3), ["m35", "m36", "m50"]);
 });
 
 test("a ready summary lands in the block verbatim", () => {
@@ -221,6 +270,15 @@ test("attachRunSummary matches by identity and flips status; missing record retu
 
   const gone = attachRunSummary({ closed: [] }, target, "x");
   assert.equal(gone, null);
+});
+
+test("a run whose summary failed keeps its transcript instead of folding into a stub", () => {
+  const memories = closedMemories(10, 30);
+  memories.closed![0]!.summaryStatus = "failed";
+  const rows = [row(1), row(12, "user"), row(15), row(35, "user")];
+  const result = foldClosedRuns(rows, memories, [dungeon], new Set());
+  assert.equal(result.foldedMessageCount, 0);
+  assert.deepEqual(result.rows.map((r) => r.content), ["m1", "m12", "m15", "m35"]);
 });
 
 test("formatRunMemoryBlock labels failed runs without a fake summary", () => {

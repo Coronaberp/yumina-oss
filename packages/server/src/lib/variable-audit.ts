@@ -2,6 +2,7 @@ import type { GameState } from "@yumina/engine";
 import type { ChangeTrace } from "./change-trace.js";
 import type { ContinuityTurnOutcome } from "./continuity/run.js";
 import type { MissedUpdateOutcome } from "./continuity/missed-updates.js";
+import { textPrefix } from "./text-prefix.js";
 import type { AuditValue, StoredVariableAudit, VariableAuditSegment } from "../db/variable-audit-types.js";
 export type { StoredVariableAudit, VariableAuditSegment } from "../db/variable-audit-types.js";
 
@@ -13,10 +14,10 @@ const MAX_SEGMENT_BYTES = 64 * 1024;
 const MAX_SEGMENTS = 8;
 
 function valueForAudit(value: unknown): AuditValue {
-  if (typeof value === "string" && value.length > 512) return { value: value.slice(0, 512), truncated: true, originalChars: value.length };
+  if (typeof value === "string" && value.length > 512) return { value: textPrefix(value, 512), truncated: true, originalChars: value.length };
   const encoded = JSON.stringify(value) ?? "null";
   return encoded.length > 512
-    ? { value: encoded.slice(0, 512), truncated: true, originalChars: encoded.length }
+    ? { value: textPrefix(encoded, 512), truncated: true, originalChars: encoded.length }
     : { value: JSON.parse(encoded) };
 }
 

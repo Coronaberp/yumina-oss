@@ -18,3 +18,17 @@ test("a count taken before the tokenizer loads is not kept once it has", async (
   const after = computeContextBudget(world).tokensByTrigger.always;
   assert.ok(after > before, `expected the exact count (${after}) to replace the pre-load estimate (${before})`);
 });
+
+test("an always-send entry gated by a variable condition is not an every-turn cost", () => {
+  const world = {
+    entries: [{
+      id: "e1", name: "夜里的事", content: "只有夜里才会说的事。", alwaysSend: true,
+      conditions: [{ variableId: "time", operator: "eq", value: "夜里" }],
+    }],
+    variables: [],
+  } as unknown as WorldDefinition;
+  const budget = computeContextBudget(world);
+  assert.equal(budget.tokensByTrigger.always, 0);
+  assert.ok(budget.tokensByTrigger.conditions > 0);
+  assert.equal(budget.rows.get("entry:e1")?.alwaysOn, false);
+});

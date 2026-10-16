@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, Check, Copy, FilePlus2, Gauge, Home, Image as ImageIcon, Link2, List, MousePointerClick, Pencil, Square, Trash2, Type, Unlink2 } from "lucide-react";
 import {
-  addElement, addMeterRow, addPage, addStackedRow, boundVariableOf, buttonActionsOf, canReflow, duplicateGroup,
+  addElement, addMeterRow, addPage, addStackedRow, boundVariableOf, followResized, buttonActionsOf, canReflow, duplicateGroup,
   coveredOn, findElementPage, groupOf, movePage, newElement, rebindVariable, removeGroup, removePage, renamePage, setEntryPage, updateElements,
   METER_ROW_H,
 } from "@yumina/engine";
@@ -635,6 +635,27 @@ export function ElementPanel({
           >
             {t(lead.src.kind === "asset" && lead.src.ref ? "studio.element.changeImage" : "studio.element.pickImage")}
           </button>}
+          {/* For an image bound to a variable, the picked picture becomes the
+              variable's default value. */}
+          {lead.src.kind === "variable" && lead.media !== "video" && (() => {
+            const variableId = lead.src.variableId;
+            const variable = variables.find((v) => v.id === variableId);
+            const filled = typeof variable?.defaultValue === "string" && variable.defaultValue.trim() !== "";
+            return (
+              <button
+                type="button"
+                data-testid="image-start-pick"
+                disabled={!worldId || !variable}
+                title={worldId ? undefined : t("studio.element.saveFirst")}
+                onClick={() => setPickingImageFor(lead.id)}
+                className={filled
+                  ? "w-full rounded-md border border-border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                  : "w-full rounded-md border border-dashed border-primary/60 bg-primary/10 px-2 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"}
+              >
+                {t(filled ? "studio.element.changeStartImage" : "studio.element.pickStartImage", { name: variable?.name ?? "" })}
+              </button>
+            );
+          })()}
           {lead.media === "video" && (
             <div className="mt-2 space-y-1.5" data-video-playback>
               <PlaybackChoice label={t("studio.element.videoPlay")}
@@ -654,6 +675,13 @@ export function ElementPanel({
               onSelect={(ref, type) => {
                 const target = pickingImageFor;
                 setPickingImageFor(null);
+                const picked = (doc.pages ?? []).find((p) => p.id === pageId)?.elements.find((el) => el.id === target);
+                if (picked?.type === "image" && picked.src.kind === "variable" && type !== "video") {
+                  const store = useEditorStore.getState();
+                  const index = store.worldDraft.variables.findIndex((v) => v.id === (picked.src as { variableId: string }).variableId);
+                  if (index >= 0) store.updateVariableAt(index, { defaultValue: ref });
+                  return;
+                }
                 edit(updateElements(doc, pageId, [target], (el) => {
                   if (el.type !== "image") return el;
                   // A picture drops the clip-only settings; a clip starts as a muted loop.
@@ -745,9 +773,13 @@ export function ElementPanel({
                     patchGroup((el) => {
                       const b = boxOn(el);
                       if (b === null) return el;
+                      // A meter's label and value ride its track's ends.
                       const moved = axis === "x" || axis === "y"
                         ? { ...b, [axis]: b[axis] + delta }
-                        : el.id === lead.id ? { ...b, [axis]: next } : b;
+                        : el.id === lead.id ? { ...b, [axis]: next }
+                          : lead.type === "meter" && lead.group && el.group === lead.group
+                            ? followResized(leadBox, { ...leadBox, [axis]: next }, b)
+                            : b;
                       return canvas === "desktop"
                         ? { ...el, desktop: moved }
                         : { ...el, x: moved.x, y: moved.y, w: moved.w, h: moved.h };

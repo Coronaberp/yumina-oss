@@ -161,7 +161,7 @@ describe("branchSession", () => {
     assert.strictEqual(newSession!.parentSessionId, testSessionId);
     assert.strictEqual(newSession!.branchedFromMessageId, messageIds[2]);
     assert.strictEqual((newSession!.state as any).variables.hp, 9);
-    assert.strictEqual(newSession!.summary, "parent summary");
+    assert.strictEqual(newSession!.summary, null, "legacy summary without coverage proof must not enter the branch");
     assert.strictEqual(newSession!.name, "main · 分支 1");
 
     const clonedMessages = await db.select().from(messages).where(eq(messages.sessionId, newSessionId)).orderBy(asc(messages.createdAt));
@@ -353,6 +353,27 @@ describe("branchSession", () => {
     assert.strictEqual(branchSnippets[0]!.sourceStartMessageId, clonedGreeting.id);
     assert.strictEqual(branchSnippets[0]!.sourceEndMessageId, clonedReply1.id);
     assert.notStrictEqual(branchSnippets[0]!.sourceStartMessageId, messageIds[0], "must not dangle on a parent id");
+  });
+
+  it("remaps retained manual summary coverage and preserves stale memory quarantine", async () => {
+    const staleAt = new Date("2026-10-01T00:00:00Z");
+    await db.update(playSessions).set({ summary: "facts before the branch", summaryCoversUntilMessageId: messageIds[2]!,
+      summaryTokenCount: 12, summaryUpdatedAt: staleAt, sessionMemory: memory(["old edited fact"]),
+      sessionMemoryProcessedMessageId: messageIds[2]!, sessionMemoryStaleAt: staleAt,
+    }).where(eq(playSessions.id, testSessionId));
+    const result = await branchSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[2]! });
+    assert.equal(result.status, 201);
+    const [child] = await db.select().from(playSessions).where(eq(playSessions.id, result.body.data!.sessionId));
+    const copied = await db.select().from(messages).where(eq(messages.sessionId, child!.id));
+    const pivot = copied.find(message => message.content === "reply 1")!;
+    assert.equal(child!.summary, "facts before the branch");
+    assert.equal(child!.summaryCoversUntilMessageId, pivot.id);
+    assert.notEqual(child!.summaryCoversUntilMessageId, messageIds[2]);
+    assert.equal(child!.summaryTokenCount, 12);
+    assert.equal(child!.summaryUpdatedAt?.toISOString(), staleAt.toISOString());
+    assert.equal(child!.sessionMemoryProcessedMessageId, pivot.id);
+    assert.equal(child!.sessionMemoryStaleAt?.toISOString(), staleAt.toISOString());
+    assert.ok(copied.every(message => !message.compacted), "manual coverage can cover uncompacted rows");
   });
 });
 

@@ -1,5 +1,5 @@
 // In-chat 「提示词」 surfaces (platform chat UI, not creator API):
-//   - the quick panel (bottom sheet) opened from the composer's "+" menu,
+//   - the centered quick dialog opened from the composer's "+" menu,
 //   - the refusal / provider-block bar under a refused or blocked turn,
 //   - RefusalHost: the same bar as an overlay for custom-UI cards that never
 //     render the platform transcript.
@@ -140,7 +140,7 @@ export function PromptsQuickSheet() {
 
   return (
     <SandboxPlatformOverlay>
-      <div className="fixed inset-0 z-[9998]" role="dialog" aria-modal="true" aria-label={t("promptsLabel")}>
+      <div className="fixed inset-0 z-[9998] flex items-center justify-center px-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)] pb-[calc(env(safe-area-inset-bottom,0px)+1rem)]" role="dialog" aria-modal="true" aria-label={t("promptsLabel")}>
         <button
           type="button"
           aria-label={t("close")}
@@ -149,11 +149,10 @@ export function PromptsQuickSheet() {
           style={{ animation: "ppFade 0.15s ease-out" }}
         />
         <div
-          className="absolute inset-x-0 bottom-0 mx-auto flex max-h-[85dvh] max-w-md flex-col rounded-t-3xl border-t border-border bg-popover/95 text-popover-foreground shadow-2xl backdrop-blur-xl"
-          style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))", animation: "ppUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)" }}
+          className="relative z-10 flex max-h-[calc(100dvh-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)-2rem)] w-full max-w-md flex-col overflow-y-auto overscroll-contain rounded-3xl border border-border bg-popover/95 pb-3 text-popover-foreground shadow-2xl backdrop-blur-xl"
+          style={{ animation: "ppUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)" }}
         >
-          <div className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-muted-foreground/25" aria-hidden="true" />
-          <div className="flex items-center gap-2 pb-1 pl-5 pr-3 pt-2">
+          <div className="flex shrink-0 items-center gap-2 pb-1 pl-5 pr-3 pt-3">
             <h2 className="min-w-0 flex-1 text-base font-semibold text-foreground">{t("promptsLabel")}</h2>
             <button
               type="button"
@@ -214,7 +213,7 @@ export function PromptsQuickSheet() {
             </section>
           </div>
 
-          <div className="flex gap-2 px-4 pt-3">
+          <div className="flex shrink-0 gap-2 px-4 pt-3">
             <button
               type="button"
               onClick={() => go(SETTINGS_PROMPTS)}

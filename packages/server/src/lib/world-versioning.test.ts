@@ -18,6 +18,8 @@ const { applyWorldCover, writeStudioWorldSchema, getPendingEdit, commitPendingEd
 const { checkpointWorld, readVersionState, assetIsVersioned } = await import("./world-version-store.js");
 const { WORLD_VERSION_SCHEMA_SQL, WORLDS_TABLE_SQL } = await import("../db/world-version-schema.js");
 const { lockWorldForSave } = await import("./world-save-transaction.js");
+const { captureAutomaticVersion, capturePublishVersion, latestLiveVersionId } = await import("./world-version-history.js");
+const { buildReviewDiffs } = await import("./review-diff.js");
 
 const schema = (content: string, name = "Card") => ({
   id: "card", name, version: "1.0.0",
@@ -45,7 +47,7 @@ before(async () => {
       group_key text NOT NULL, submitted_by text NOT NULL, submitted_at timestamp NOT NULL DEFAULT now(), decision text NOT NULL DEFAULT 'pending',
       decided_by text, decided_at timestamp, rejection_reason text, rejection_detail text, ignored_at timestamp, ignored_by text,
       submission_type text NOT NULL DEFAULT 'initial', snapshot_age_rating text, snapshot_is_nsfw boolean, snapshot_target_audience text,
-      snapshot_visibility text, snapshot_allow_edit boolean, snapshot_allow_reviews boolean)`,
+      snapshot_visibility text, snapshot_allow_edit boolean, snapshot_allow_reviews boolean, version_id text, base_version_id text)`,
   ].flatMap(ddl => ddl.split(";").map(part => part.trim()).filter(Boolean))) await db.execute(sql.raw(ddl));
   for (const statement of WORLD_VERSION_SCHEMA_SQL.split(";").filter(s => s.trim())) await db.execute(sql.raw(statement));
   await ensureWorldsSchemaDerived();
@@ -180,6 +182,25 @@ test("version asset retention includes schema references and gallery metadata", 
   assert.equal(await assetIsVersioned(db, "unused", "missing.png"), false);
 });
 
+test("version asset retention answers from the saved reference lists", async () => {
+  const id = "2ab61d99-2021-8b22-a6c7-1fa2ed1b6702";
+  const path = "users/creator/registered/786372bf861e85cd";
+  await db.update(worlds).set({ galleryImages: ["worlds/world/image/cover.png"],
+    schema: { ...schema("LIVE"), image: `@asset:${id}`, css: `url(/api/files/${path}?v=2)` } }).where(eq(worlds.id, worldId));
+  await db.transaction(tx => checkpointWorld(tx, worldId, "save"));
+  const [saved] = await db.select().from(worldVersions);
+  assert.ok(saved!.assetIds!.includes(id));
+  // Prove the lists alone answer: the content no longer mentions either asset.
+  await db.execute(sql`UPDATE world_versions SET schema = '{}'::jsonb, metadata = NULL`);
+  assert.equal(await assetIsVersioned(db, id, "users/creator/registered/other"), true);
+  assert.equal(await assetIsVersioned(db, "9f6c0f12-0000-4000-8000-000000000000", path), true);
+  assert.equal(await assetIsVersioned(db, "9f6c0f12-0000-4000-8000-000000000000", "worlds/world/image/cover.png"), true);
+  assert.equal(await assetIsVersioned(db, "9f6c0f12-0000-4000-8000-000000000000", "users/creator/registered/other"), false);
+  // Rows saved before the lists existed are still read in full.
+  await db.execute(sql`UPDATE world_versions SET asset_ids = NULL, asset_paths = NULL, schema = ${JSON.stringify({ image: path })}::jsonb`);
+  assert.equal(await assetIsVersioned(db, "9f6c0f12-0000-4000-8000-000000000000", path), true);
+});
+
 
 test("automatic publish refuses a superseded submission even if a newer material edit was submitted", async () => {
   await setWorkingCopy("NEW MATERIAL", "pending");
@@ -212,6 +233,41 @@ test("approval marks the submitted version live without creating another version
   assert.ok(releases.some(v => isDeepStrictEqual(v.schema, targetSchema) && v.metadata?.announcement === "Approved announcement"));
 });
 
+test("review diffs survive the decision and follow a card that comes back after unpublishing", async () => {
+  const contentOf = async () => (await buildReviewDiffs(worldId))[0]!;
+  const [live] = await db.select().from(worlds).where(eq(worlds.id, worldId));
+  const baseVersionId = await db.transaction(tx => captureAutomaticVersion(tx, live!, "live", live!));
+  const [hold] = await db.insert(worldPendingEdits).values({ worldId, createdBy: creatorId, groupKey: worldId, status: "pending",
+    schema: schema("EDITED"), ageRating: "all", reasons: ["entries"] }).returning();
+  const versionId = await db.transaction(tx => capturePublishVersion(tx, live!, hold!));
+  await db.insert(worldReviewSubmissions).values({ worldId, groupKey: worldId, submittedBy: creatorId, submissionType: "edit", versionId, baseVersionId });
+
+  const pending = await contentOf();
+  assert.equal(pending.kind, "edit");
+  assert.equal(pending.decision, "pending");
+  assert.deepEqual(pending.diff.changes.map(c => [c.kind, c.op, c.fields?.[0]?.before, c.fields?.[0]?.after]), [["entry", "modified", "LIVE", "EDITED"]]);
+
+  assert.equal((await commitPendingEditsForGroup(worldId, "admin")).handled, true);
+  const decided = await contentOf();
+  assert.equal(decided.decision, "approved");
+  assert.equal(decided.unavailable, undefined);
+  assert.deepEqual(decided.reasons, ["entries"]);
+  assert.deepEqual(decided.diff.changes.map(c => [c.op, c.fields?.[0]?.after]), [["modified", "EDITED"]]);
+
+  // Unpublished, edited, resubmitted: reviewed against what players last saw.
+  await db.update(worlds).set({ status: "pending_review", schema: schema("RETURNED") }).where(eq(worlds.id, worldId));
+  const lastLive = await db.transaction(tx => latestLiveVersionId(tx, worldId));
+  await db.insert(worldReviewSubmissions).values({ worldId, groupKey: worldId, submittedBy: creatorId, baseVersionId: lastLive, submittedAt: new Date(Date.now() + 1000) });
+  const returned = await contentOf();
+  assert.equal(returned.kind, "republish");
+  assert.deepEqual(returned.diff.changes.map(c => [c.fields?.[0]?.before, c.fields?.[0]?.after]), [["EDITED", "RETURNED"]]);
+});
+
+test("a submission whose snapshots were never recorded says so instead of showing no changes", async () => {
+  await db.insert(worldReviewSubmissions).values({ worldId, groupKey: worldId, submittedBy: creatorId, submissionType: "edit", decision: "approved" });
+  const [diff] = await buildReviewDiffs(worldId);
+  assert.equal(diff!.unavailable, "not_recorded");
+});
 
 test("a landscape cover replacement keeps the live portrait and held story intact", async () => {
   await setWorkingCopy("MY STORY");

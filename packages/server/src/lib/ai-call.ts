@@ -1,4 +1,6 @@
+import { stationSampling } from "./station-sampling.js";
 import { and, desc, eq } from "drizzle-orm";
+import { appendPendingContext } from "./pending-context.js";
 import {
   buildMessageAIEvent,
   checkConditions,
@@ -26,6 +28,7 @@ import { thinSnapshotForStorage } from "./snapshot.js";
 import { SESSION_NOT_FOUND, withSessionRowLock } from "./session-lock.js";
 import { liveSceneMessage, type LiveScene } from "./live-scene.js";
 import { stripStageNotes } from "./quiet-station.js";
+import { textPrefix } from "./text-prefix.js";
 
 /**
  * A card's own AI call, as data (the 自定义 AI).
@@ -87,7 +90,7 @@ export function buildAiCallPrompt(args: {
     .filter((e) => e.worldbookId === book.id && e.enabled !== false && e.role !== "greeting")
     .map((e) => e.content).filter(Boolean).join("\n\n").slice(0, 6000);
   const lore = (world.entries ?? [])
-    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, state.ruleState?.toggledEntries, world.loreUiBindings))
+    .filter((e) => !e.worldbookId && e.role !== "greeting" && sendsEveryTurn(e, state.ruleState?.toggledEntries, world.loreUiBindings, state))
     .map((e) => e.content).filter(Boolean).join("\n\n").slice(0, 4000);
   const vars = (station.sees?.variables ?? [])
     .map((id) => {
@@ -228,7 +231,7 @@ export async function runAiCall(args: {
   scene?: LiveScene | null;
 }): Promise<AiCallResult> {
   const { sessionId, userId, world } = args;
-  const input = (args.input ?? "").slice(0, 4000);
+  const input = textPrefix(args.input ?? "", 4000);
   const [session] = await db
     .select({ state: playSessions.state, summaryModel: playSessions.summaryModel })
     .from(playSessions)
@@ -285,7 +288,7 @@ export async function runAiCall(args: {
   for (let attempt = 0; attempt <= retries && !answer; attempt++) {
     const signal = AbortSignal.timeout(timeoutMs);
     const raw = await generateStorySummaryText({
-      signal, userId, sessionId, model, prompt: messagesForTry, endpoint: "module-worker", maxTokens: full.maxTokens ?? 800,
+      signal, userId, sessionId, model, prompt: messagesForTry, endpoint: "module-worker", ...stationSampling(full, 800),
     }).catch((err) => {
       console.error(`[AiCall] ${sessionId} ${book.id} try ${attempt + 1} failed:`, err instanceof Error ? err.message : err);
       return "";
@@ -336,7 +339,7 @@ export async function runAiCall(args: {
       ...changes.map((c) => ({ type: "state:changed" as const, variableId: c.variableId, oldValue: c.oldValue, newValue: c.newValue })),
     ];
     const rules = runReactionChain(reactionEvaluator, manager, events, world.reactions ?? [], world.rules ?? [], { worldbooks: world.worldbooks });
-    if (rules.contextMessages.length > 0) manager.setMetadata("pendingContext", rules.contextMessages);
+    appendPendingContext(manager, rules.contextMessages);
     const finalState = manager.getSnapshot();
     const allChanges = [...changes, ...rules.changes];
     const snapshot = thinSnapshotForStorage(finalState as unknown as Record<string, unknown>);

@@ -330,6 +330,19 @@ export function fatigueDiscount(stat: ExposureStat | undefined): number {
   return Math.round(FATIGUE_WEIGHT * (1 - fatigueKeep(stat.impressions14d + 1)) * 10) / 10;
 }
 
+/** Ignored sightings in 14 days after which a card rests from Discover
+ * (owner, 2026-10-10). Measured 2026-10-10 over 21 days of separate-visit
+ * sightings with no click: open rate 3.51% → 3.19% → 2.97% → 2.73% → 2.55% →
+ * 2.41% → 2.17% (7th) → 1.62% (8th+), while fresh cards at positions 80–159
+ * open at 2.2%. After six ignored sightings the next one converts below a
+ * fresh deep card, so the card rests until its 14-day window clears. A click
+ * or play always ends the rest. */
+export const FATIGUE_REST_SIGHTINGS = 6;
+
+export function isFatigueRested(stat: ExposureStat | undefined): boolean {
+  return Boolean(stat && stat.clicks14d === 0 && stat.impressions14d >= FATIGUE_REST_SIGHTINGS);
+}
+
 /** Exploration eligibility: young + under-exposed. Consumed by the
  * deep-slot injector in recommendations.ts (not an additive score — see
  * the note inside scoreEngagement). */
@@ -725,7 +738,10 @@ export function scoreEngagement(
   // Fatigue follows the measured decay of a card's click rate with repeated
   // unclicked showings (fatigueKeep); ctx.fatigue keeps the legacy threshold
   // map for the exposure_unclicked_impressions snapshot input only.
-  const fatiguePenalty = fatigueDiscount(ctx.exposure.get(candidate.id));
+  // When the learned model scored the card it already saw the exposure,
+  // session, craft, co-play and latent inputs (buildRankerFeatures); adding
+  // the heuristic terms on top would count them twice. Rotation jitter stays.
+  const fatiguePenalty = modelApplied ? 0 : fatigueDiscount(ctx.exposure.get(candidate.id));
 
   // Exploration moved OUT of the additive score (owner decision
   // 2026-08-19): an unproven card must never buy its way into premium top
@@ -744,7 +760,7 @@ export function scoreEngagement(
   // user tapped in the last ~45 minutes. This is the no-quiz cold start —
   // the second page already knows what the first page taught us.
   let session = 0;
-  if (ctx.sessionCentroid && candidate.embedding && candidate.embedding.length === ctx.sessionCentroid.length) {
+  if (!modelApplied && ctx.sessionCentroid && candidate.embedding && candidate.embedding.length === ctx.sessionCentroid.length) {
     const normalized = l2Normalize(candidate.embedding);
     if (normalized) {
       const cos = dot(ctx.sessionCentroid, normalized);
@@ -753,7 +769,7 @@ export function scoreEngagement(
       session += SESSION_VECTOR_WEIGHT * adjusted * adjusted;
     }
   }
-  if (ctx.sessionTags.size > 0 && Array.isArray(candidate.tags) && candidate.tags.length > 0) {
+  if (!modelApplied && ctx.sessionTags.size > 0 && Array.isArray(candidate.tags) && candidate.tags.length > 0) {
     let shared = 0;
     for (const tag of candidate.tags) {
       if (ctx.sessionTags.has(tag.trim().toLowerCase())) shared += 1;
@@ -766,7 +782,7 @@ export function scoreEngagement(
   // asked. Signed match: a minimalist's feed demotes heavy-UI cards just
   // as a craft-lover's feed lifts them.
   let craft = 0;
-  if (ctx.craft && ctx.craft.sampleSize >= CRAFT_MIN_SAMPLE) {
+  if (!modelApplied && ctx.craft && ctx.craft.sampleSize >= CRAFT_MIN_SAMPLE) {
     const itemTier = customUiTier(candidate.customUiLoc);
     craft += CRAFT_UI_WEIGHT * (1 - Math.abs(ctx.craft.uiTier - itemTier) / 3 - 0.5);
     craft += CRAFT_AUDIO_WEIGHT * (ctx.craft.audio - 0.5) * (candidate.hasAudio ? 1 : -1);
@@ -779,7 +795,7 @@ export function scoreEngagement(
 
   // ── Co-play affinity (v1 + v2): "players like you play this" — folded
   // into the grid ranking rather than shown as a labeled shelf.
-  const coPlay = candidate.candidateSource?.includes("co_played") ? CO_PLAY_BONUS : 0;
+  const coPlay = !modelApplied && candidate.candidateSource?.includes("co_played") ? CO_PLAY_BONUS : 0;
 
   // ── Behavioral latent affinity (v1 + v2): dot product of the user's and
   // the world's ALS latent vectors (both unit-normalized → cosine). This is
@@ -788,7 +804,7 @@ export function scoreEngagement(
   // creator, or content-embedding connection exists. New/low-play worlds
   // have no latent vector; the content vectorScore term handles those.
   let latent = 0;
-  if (ctx.userLatent) {
+  if (!modelApplied && ctx.userLatent) {
     const worldVec = ctx.worldLatent.get(candidate.id);
     if (worldVec && worldVec.length === ctx.userLatent.length) {
       const cos = dot(ctx.userLatent, worldVec); // both already unit-normalized
@@ -1069,6 +1085,7 @@ async function loadExposureMap(db: Database, userId: string): Promise<Map<string
   }
 
   const entries: Record<string, ExposureRow> = {};
+  let loaded = false;
   try {
     const result = await db.execute(sql`
       SELECT world_id,
@@ -1093,11 +1110,14 @@ async function loadExposureMap(db: Database, userId: string): Promise<Map<string
       entries[String(r.world_id)] = [Number(r.imp7 ?? 0), Number(r.imp14 ?? 0), Number(r.imp30 ?? 0),
         Number(r.clk14 ?? 0), Number(r.clk30 ?? 0), ms(r.last_imp), ms(r.last_clk)];
     }
+    loaded = true;
   } catch (err) {
     warnOnce("feed_events(exposure)", err);
   }
 
-  if (redis) {
+  // A failed read is not "no history": caching it would switch off fatigue and
+  // the rest rule for this reader for the whole TTL. Only cache real results.
+  if (redis && loaded) {
     redis.set(cacheKey, JSON.stringify(entries), "EX", EXPOSURE_CACHE_TTL_SEC).catch(() => {});
   }
   return new Map(Object.entries(entries).map(([id, row]) => [id, exposureFromRow(row)]));
@@ -1123,18 +1143,21 @@ async function loadDismissedWorldIds(db: Database, userId: string): Promise<Set<
   }
 
   let ids: string[] = [];
+  let loaded = false;
   try {
     const result = await db.execute(sql`
       SELECT world_id FROM world_dismissals WHERE user_id = ${userId}
     `);
     const raw = (result as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
     ids = raw.map((r) => String(r.world_id));
+    loaded = true;
   } catch (err) {
     warnOnce("world_dismissals", err);
     ids = [];
   }
 
-  if (redis) {
+  // Never cache an outage as "nothing dismissed": hidden stories would return.
+  if (redis && loaded) {
     redis.set(cacheKey, JSON.stringify(ids), "EX", DISMISS_CACHE_TTL_SEC).catch(() => {});
   }
   return new Set(ids);

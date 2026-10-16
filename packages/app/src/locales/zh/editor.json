@@ -47,6 +47,7 @@
     "visualIntroBody": "左上角这个开关打开后，整张卡会铺成一张画布：开场白、设定、数值、行为和玩家界面都在同一张板上，点哪改哪，创作助手也直接在板上干活。随时可以关掉切回完整编辑器。",
     "visualIntroTry": "打开画布试试",
     "visualIntroLater": "先不用",
+    "desktopCanvasNote": "在电脑上打开这张卡，可以用画布编辑（Beta）。",
     "recoverDraftMerged": "这张卡之后在别处改过——已保留你恢复的版本"
   },
   "sections": {
@@ -218,7 +219,6 @@
     "recursionDepth": "递归深度",
     "recursionDepthHint": "级联词条触发的最大深度。0 = 禁用。",
     "addOfficialPresets": "添加官方预设 (缺少 {{count}} 个)",
-    "messages": "...消息...",
     "name": "名称",
     "portrait": "立绘",
     "sendAs": "发送方式",
@@ -615,11 +615,15 @@
     "blurb": "玩家从聊天旁边的停靠栏打开的小 App：消息、角色关系、广场、时间……每个 App 的数据放在一个变量里，由 AI 跟着剧情填写。每张卡片上方就是这个 App 的真实样子，你什么都不用写。",
     "add": "加进这张卡",
     "added": "已加入停靠栏",
-    "footnote": "App 里的文字跟着卡的语言走（中文、英文或西班牙语）。在 Bundles 页移除后，按钮、数据和规则会一起删掉。",
+    "footnote": "App 里的文字跟着卡的语言走（中文、英文或西班牙语）。移除 App 时，停靠栏按钮、数据和规则会一起删掉。",
     "sets": "推荐组合——这类卡大多在追踪这些",
     "addSet": "四个一起加",
     "setAdded": "已全部加入",
-    "installed": "已装「{{name}}」"
+    "installed": "已装「{{name}}」",
+    "remove": "移除",
+    "removeSet": "四个一起移除",
+    "removed": "已移除「{{name}}」",
+    "varDeleteHint": "这个变量是「{{name}}」App 的数据。删除它会把整个 App 一起移除，停靠栏按钮也会消失。"
   },
   "audio": {
     "title": "音频",
@@ -751,6 +755,14 @@
     "announcement": "公告",
     "announcementPlaceholder": "撰写公告...",
     "markdownSupported": "支持 Markdown",
+    "descriptionInsertImage": "添加图片",
+    "descriptionImageUploading": "上传中…",
+    "descriptionImageNeedsSave": "先保存一次卡片，再插入图片。",
+    "descriptionImageTooLong": "简介字数已满，放不下更多图片了。",
+    "descriptionImageFromAssets": "从素材库选",
+    "descriptionImageFromComputer": "从电脑上传",
+    "descriptionImageRemove": "移除这张图",
+    "descriptionImageLabel": "图片",
     "descriptionTitle": "描述",
     "descriptionDesc": "显示在发现页的卡片和详情页上。用于设定、玩法说明或致谢。",
     "descriptionPlaceholder": "撰写描述...",
@@ -1484,6 +1496,8 @@
         "stillGenerating": "还在画",
         "stillGeneratingDetail": "等得比平时久，图画好后会出现在素材库里。"
       },
+      "imageBlind": "{{model}} 看不到图片，附的图会被略过。",
+      "imageBlindSwitch": "换 {{model}}",
       "creditPause": {
         "retryStep": "重试下一步",
         "paused": "额度不足，进度已保存",
@@ -1512,6 +1526,8 @@
         "shortfall": "还差 {{amount}} 蘑菇币",
         "errorStale": "内容已修改，请发起新请求，避免覆盖你的改动。",
         "restartHere": "从这里重新开始",
+        "cheaperModel": "换 {{model}} 继续",
+        "cheaperModelNote": "{{model}} 每一步约 {{amount}} 蘑菇币，余额够用，会从停下的地方接着做。",
         "restartMessage": "从刚才停下的地方继续，以卡片现在的内容为准。",
         "errorActive": "该任务正在运行，请等待状态更新。",
         "errorFailed": "未能恢复任务，已保存的进度仍在，请重试。",
@@ -1633,14 +1649,22 @@
       "proposalRejectedReply": "好的，告诉我你想怎么继续。",
       "agentError": {
         "generic": "助手出错了，请重试。",
-        "stalled": "助手 3 分钟没有响应，任务已结束，请重试。",
+        "stalled": "助手好几分钟没有响应，任务已结束。已经改好的部分都保存了。",
         "timedOut": "任务运行超过 30 分钟已结束，试试拆成更小的步骤。",
         "outputBudget": "模型多次在完成修改前用完了输出空间，请拆小步骤或换个模型。",
         "provider": "AI 模型服务返回了错误，请重试或换个模型。",
-        "serverRestart": "任务进行中服务器重启了，请重试。",
+        "serverRestart": "任务进行中服务器重启了。助手已经改好的部分都保存了。",
         "superseded": "这个任务已被新的请求替代。",
         "stopped": "已停止。",
-        "noCredits": "蘑菇不够继续了，充值后再重试。"
+        "noCredits": "蘑菇不够继续了，充值后再重试。",
+        "byokAuth": "你的 API key 被拒绝了（无效、过期，或没有这个模型的权限）。请到 AI 设置里检查 key。",
+        "byokBalance": "你的 API 服务商提示余额或额度用完了。去那边充值，或者换成官方模型。",
+        "byokModel": "你的服务商找不到这个模型。请到 AI 设置里核对模型名，或换一个模型。",
+        "byokNoTools": "这个模型不支持工具调用，助手改卡需要它。请换一个支持工具调用的模型。",
+        "byokRate": "你的服务商在限流。稍等一会儿再继续。",
+        "byokUnreachable": "连不上你的 API 地址。请检查地址是否正确、服务是否在运行。",
+        "byokContext": "这次请求超出了模型的上下文长度。开一个新对话，或换上下文更长的模型。",
+        "continue": "从停下的地方继续"
       },
       "digest": {
         "read": "通读「{{source}}」· 已读 {{done}}/{{total}} 段",
@@ -1648,8 +1672,14 @@
         "check": "对着原文核对 · {{done}}/{{total}}",
         "save": "把资料库存进这张卡"
       },
-      "turnEstimate": "约 {{count}} 蘑菇币",
+      "turnEstimate": "至少约 {{count}} 蘑菇币",
       "turnEstimateCold": "一小时内第一条会贵一些",
+      "rateRun": "评价这次回复",
+      "rateUp": "有帮助",
+      "rateDown": "没帮上",
+      "turnTypical": "通常每次 {{low}}–{{high}} 蘑菇币",
+      "turnTypicalHint": "最近两周用这个模型的运行：一半不超过 {{low}}，九成不超过 {{high}}。一次回复至少约 {{floor}}。",
+      "conversationSpend": "本对话已用 {{count}}",
       "turnCost": "本轮 {{count}} 蘑菇币",
       "generatingTool": "正在写：{{tool}}",
       "mode": {
@@ -1971,6 +2001,7 @@
       "askByKey": "大约 {{minutes}} 分钟 · 用你自己的 key",
       "startMessage": "开始",
       "ask": "大约 {{minutes}} 分钟 · {{mushies}} 蘑菇币",
+      "askRange": "大约 {{minutes}} 分钟 · 约 {{low}}–{{high}} 蘑菇币",
       "start": "开始",
       "explainFirst": "看看计划",
       "playingBanner": "助手在试玩 · {{label}}",
@@ -2254,7 +2285,15 @@
         "paper": "素纸",
         "night": "夜航",
         "terminal": "终端",
-        "blossom": "绯樱"
+        "blossom": "绯樱",
+        "velvet": "绯页",
+        "harbor": "港湾",
+        "linen": "亚麻",
+        "coolant": "冷屏",
+        "moss": "苔夜",
+        "tape": "磁带",
+        "gilded": "鎏金",
+        "tavern": "酒馆"
       },
       "fontName": {
         "sans": "黑体",
@@ -2281,13 +2320,29 @@
         "portrait-scene": "立绘对话",
         "adventure-hud": "冒险状态",
         "stat-panel": "养成面板",
-        "character-sheet": "角色卡"
+        "character-sheet": "角色卡",
+        "chapter-portrait": "章节立绘",
+        "masthead": "报头",
+        "margin-notes": "页边札记",
+        "status-strip": "底栏终端",
+        "night-card": "夜读卡片",
+        "cassette": "磁带",
+        "art-split": "半屏立绘",
+        "guild-card": "冒险者登记"
       },
       "presetHint": {
         "portrait-scene": "立绘 + 两条状态 + 详情页。讲一个角色的卡用这套。",
         "adventure-hud": "当前位置 + 天数时段 + 两条状态。文字冒险、探索类用这套。",
         "stat-panel": "四条状态 + 金币 + 天数。养成、经营、生存类用这套。",
-        "character-sheet": "玩家自己的名字、身份、位置和剧情阶段。角色扮演用这套。"
+        "character-sheet": "玩家自己的名字、身份、位置和剧情阶段。角色扮演用这套。",
+        "chapter-portrait": "顶部一条章节横幅，右边一栏是立绘、心情和三条状态。",
+        "masthead": "卡名、四条数值和登场人物排在顶部，对话在下面。",
+        "margin-notes": "浅色背景，右边三张便签，分别放标题和地点、四条状态、认识的人。",
+        "status-strip": "输入框下面一条数据栏，显示时间、金币、地点、体力精力和在场的人。",
+        "night-card": "右上角显示第几天，右下角是一张人物卡，放心情、地点、四条状态和认识的人。",
+        "cassette": "输入框下面放一盘磁带，标签上写卡名，旁边是当前章节、地点和心情。",
+        "art-split": "右半边是立绘，卡名和两条状态显示在立绘底部。",
+        "guild-card": "左边一张羊皮纸登记卡，写着玩家的名字、职业、等级、金币和体力精力。"
       },
       "vars": {
         "portrait": "立绘",
@@ -2305,13 +2360,17 @@
         "playerRole": "玩家身份",
         "gender": "性别",
         "age": "玩家年龄",
-        "phase": "剧情阶段"
+        "phase": "剧情阶段",
+        "mood": "心情",
+        "rank": "冒险者等级"
       },
       "varDefaults": {
         "timeOfDay": "清晨",
         "location": "未知之地",
         "playerRole": "旅人",
-        "phase": "序章"
+        "phase": "序章",
+        "mood": "平静",
+        "rank": "铜牌"
       },
       "s": {
         "common": {
@@ -2330,10 +2389,11 @@
           "actionWaitSays": "我没有接话，等对方先开口。",
           "toolRewind": "撤回一轮",
           "toolRegenerate": "重新生成",
-          "toolCopy": "复制"
+          "toolCopy": "复制",
+          "castLabel": "登场"
         },
         "portrait-scene": {
-          "portraitEmpty": "这里放立绘 — 在「卡片信息」里传一张，或用「立绘」变量换人",
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
         },
@@ -2358,6 +2418,65 @@
           "phaseLabel": "剧情阶段",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力"
+        },
+        "masthead": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "goldFormat": "金币 {gold}",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力",
+          "meterThird": "好感度",
+          "meterFourth": "进度"
+        },
+        "margin-notes": {
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力",
+          "meterFourth": "进度"
+        },
+        "status-strip": {
+          "whenLabel": "时间",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "金币",
+          "placeLabel": "位置",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力"
+        },
+        "night-card": {
+          "clockFormat": "第 {day} 天",
+          "whenFormat": "第 {day} 天 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "精力",
+          "meterFourth": "进度"
+        },
+        "cassette": {
+          "sideFormat": "A 面 · 第 {day} 天",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "心情",
+          "meterPrimary": "好感度"
+        },
+        "art-split": {
+          "portraitEmpty": "放一张立绘\n选中这块，在右边选图",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力"
+        },
+        "guild-card": {
+          "guildTitle": "冒险者",
+          "guildSubFormat": "登记于 {location}",
+          "nameLabel": "姓名",
+          "roleLabel": "职业",
+          "rankLabel": "等级",
+          "goldLabel": "金币",
+          "meterPrimary": "体力",
+          "meterSecondary": "精力"
         }
       }
     },
@@ -2533,7 +2652,9 @@
       "layoutOffDesktop": "电脑上不显示",
       "layoutOffHere": "电脑上不显示",
       "layoutFollowPhone": "改回跟手机一样",
-      "nameLinked": "改这里的名字，后面接的变量（{{name}}）也一起改，AI 看到的就是这个名字。"
+      "nameLinked": "改这里的名字，后面接的变量（{{name}}）也一起改，AI 看到的就是这个名字。",
+      "pickStartImage": "选一张图放进来",
+      "changeStartImage": "换一张图"
     },
     "style": {
       "none": "无",
@@ -2701,6 +2822,7 @@
         "copy": "复制",
         "paste": "粘贴",
         "duplicate": "创建副本",
+        "ungroup": "取消编组",
         "delete": "删除"
       }
     },
@@ -2863,7 +2985,7 @@
       "newPage": "新建",
       "title": "新建 · 选一个模板",
       "tutorTip": "这里是 18 个做好的模板 ✧ 上面是开局页（玩家进故事之前），下面是玩的时候从菜单打开的页面。点一个就加进卡里，每个都能直接玩。现在不想选也没关系，右上角关掉就好，以后随时点「新建」再来。",
-      "sub": "22 个做好的模板（4 个整个界面、18 个单页），都已经接好变量、按钮和给 AI 的说明，加上就能玩。颜色、大小、位置照样可以拖、可以改。",
+      "sub": "30 个做好的模板（12 个整个界面、18 个单页），都已经接好变量、按钮和给 AI 的说明，加上就能玩。颜色、大小、位置照样可以拖、可以改。",
       "groupOpening": "开局 · 玩家进故事之前",
       "blank": "空白页",
       "blankDesc": "什么都没有，自己摆。",
@@ -4368,6 +4490,15 @@
     }
   },
   "blueprint": {
+    "folder": {
+      "fileIn": "放进文件夹",
+      "new": "新建文件夹",
+      "newName": "新文件夹",
+      "takeOut": "移出文件夹",
+      "rename": "重命名文件夹",
+      "dissolve": "解散文件夹",
+      "dissolveHint": "解散文件夹（里面的词条保留）"
+    },
     "notes": {
       "fold": "折起来",
       "unstick": "取下来",
@@ -4382,7 +4513,15 @@
       "byPattern": "规则",
       "byTag": "标签 <…>",
       "speakerBubbles": "按说话人分成多个气泡（以名字开头的行）",
-      "title": "回复处理"
+      "title": "回复处理",
+      "opLabel": "怎么写进去",
+      "op": {
+        "set": "设为",
+        "append": "接在后面",
+        "push": "追加进列表",
+        "replace": "整个替换（JSON）"
+      },
+      "badPattern": "这条规则是空的或写法有误，什么也抓不到。"
     },
     "aiCustom": {
       "randomChoice": "还是失败就从选项里随机挑一个",
@@ -4421,7 +4560,8 @@
       "history": "读最近几条对话",
       "addVariable": "＋ 一个变量",
       "sees": "它看得到",
-      "title": "回答格式"
+      "title": "回答格式",
+      "piecesNeedVariable": "先建一个变量：片段要等变量满足条件才加进去。"
     },
     "aiType": {
       "code": "代码型",
@@ -4598,7 +4738,8 @@
       "writer": "写的人",
       "legendOwn": "粉色：只有它、它收到",
       "legendCond": "金色：在某个情境里时，或说到才知道",
-      "legendNo": "灰色：不知道"
+      "legendNo": "灰色：不知道",
+      "gated": "条件满足才知道"
     },
     "frame": {
       "collapse": "收起",
@@ -4625,7 +4766,8 @@
         "background": "后台"
       },
       "readiness": "就绪 {{done}}/{{total}}",
-      "readinessNext": "下一步：{{label}}"
+      "readinessNext": "下一步：{{label}}",
+      "showOpening": "在卡片上显示这段开场"
     },
     "scene": {
       "none": "没有专属界面",
@@ -4734,7 +4876,7 @@
       "triggerConditionsHint": "这些条件决定写手什么时候跑：只在「不成立→成立」的那一刻跑一次，一直成立不会反复跑。",
       "model": "模型",
       "modelInherit": "跟随玩家选的",
-      "modelHint": "玩家用不了这个模型时会自动回落到他自己选的，不会把卡卡死。",
+      "modelHint": "玩家用不了这个模型时会自动换：回复玩家的 AI 改用玩家自己的模型，幕后的 AI 改用默认模型。",
       "inputs": "从别处接进来的",
       "inputKind": {
         "memory": "某情境的经历",
@@ -4808,7 +4950,17 @@
       "quietSeconds": "没人说话",
       "quietSecondsUnit": "秒后",
       "triggerQuietHint": "玩家开着游戏、这个情境在生效、而且这么久没人说话时，它会判断要不要插一句，可以改数值；没什么可说就不出声。按调用计费。",
-      "isQuietHint": "没人说话一阵子后被叫醒，自己判断要不要插一句、改数值；没什么可说就不出声。"
+      "isQuietHint": "没人说话一阵子后被叫醒，自己判断要不要插一句、改数值；没什么可说就不出声。",
+      "modelAndParams": "模型和参数",
+      "modelDefault": "跟随默认",
+      "modelHintNarrator": "玩家用不了这个模型时，改用玩家自己的聊天模型，卡不会因此玩不了。",
+      "modelHintBackground": "留空用默认后台模型。玩家用不了这里填的模型时，也改用默认后台模型。",
+      "paramsNarrator": "它回复玩家，参数和故事 AI 一样。",
+      "params": "参数",
+      "paramsDefault": "默认：温度 {{temperature}} · 最长 {{tokens}} tokens",
+      "temperature": "温度（{{min}}–{{max}}）",
+      "maxTokens": "最长 tokens（{{min}}–{{max}}）",
+      "maxTokensLabel": "最长 tokens"
     },
     "addGreeting": "开场白",
     "emptyCta": "写下第一条开场白",
@@ -4967,11 +5119,6 @@
       "summaryFocusHint": "给写摘要的 AI 一句话，说什么不能丢：人物关系、承诺、欠的债、时间线。",
       "summaryFocusPlaceholder": "比如：记住每一个承诺，以及谁欠谁什么。",
       "summaryCost": "摘要在后台用便宜模型更新，玩家每次通常花不到 1 蘑菇币；玩家可以在「游玩记忆」面板里看和改这段摘要。",
-      "pinnedNote": "置顶提醒",
-      "pinnedNoteHint": "每回合都贴在历史末尾附近的一句话，AI 在那里最听话。文风提醒、长期规则放这里最合适。",
-      "pinnedNotePlaceholder": "比如：保持第二人称。每段回复停在一个悬念上。",
-      "pinnedDepth": "倒数第几条前",
-      "pinnedDepthHint": "0 = 放在最新一条之后，1 = 放在它之前。",
       "budget": "上下文预算",
       "budgetValue": "约 {{tokens}} token",
       "budgetAuthor": "按本卡设置",
@@ -4990,7 +5137,7 @@
       "recursionDepth": "级联触发深度",
       "recursionDepthHint": "进来的词条还能再触发别的词条，最多连几层。0 = 关。",
       "variablesToAi": "变量给 AI 的方式",
-      "variablesToAiHint": "全部：每回合给所有可读变量。只给有变化的：只给离开默认值的。不给：完全不发状态块，变量只归界面用。",
+      "variablesToAiHint": "全部：每回合给所有可读变量的当前值。只给有变化的：只给离开默认值的。不给：不发当前值，但变量写了的「行为规则」照样发给 AI。想让 AI 完全看不到某个变量，把它的 AI 权限设为「仅引擎」。",
       "variablesAll": "全部",
       "variablesChanged": "只给有变化的",
       "variablesNone": "不给",
@@ -5035,7 +5182,8 @@
       "varFieldWriter_behavior": "行为",
       "varFieldWriter_ai-call": "自定义 AI 调用",
       "varFieldWriterAny": "未说明",
-      "varFieldRemove": "删掉这个字段"
+      "varFieldRemove": "删掉这个字段",
+      "previewCode": "另有 {{count}} 处界面代码自己拼上下文"
     },
     "addModule": "情境",
     "addVariable": "变量",
@@ -5079,7 +5227,8 @@
       "value": "值",
       "seedValue": "初始值",
       "apply": "应用",
-      "remove": "删除"
+      "remove": "删除",
+      "seedJsonFixed": "列表/对象类变量的开场初始值不能在这里改：开场白只存数字、文字和开关。可以删掉这根线，改在变量的默认值里。"
     },
     "ports": {
       "write": "写入",
@@ -5136,7 +5285,8 @@
       "summaryRemoved": "删除 {{count}}",
       "undo": "撤销这一回合",
       "dismiss": "知道了",
-      "undoFailed": "撤销没成功，卡片没有改动。"
+      "undoKeptYours": "已撤销助手这一回合；你之后改过的 {{count}} 处保留了你的版本",
+      "undoAllKept": "这一回合改过的地方你之后都动过了，保留了你的版本"
     },
     "links": {
       "in": "{{count}} 条进线",
@@ -5358,9 +5508,9 @@
         "memoryCardAlone": "记得整段对话",
         "memoryCardHint": "没有情境接管时，跑的就是这个 AI；说过的话它全都记得。",
         "summaryOn": "更早的回合写成摘要",
-        "pinnedRow": "置顶：{{text}}",
         "continuityOn": "智能追踪：开",
-        "continuityOff": "智能追踪：关"
+        "continuityOff": "智能追踪：关",
+        "codeContext": "界面代码自己拼 · {{count}} 处"
       }
     },
     "turnCtx": {
@@ -5738,6 +5888,7 @@
       "whenFires": "这条行为什么时候检查一次：默认每回合；也可以是玩家说了某句话、某个变量变了、某个按钮被点了。",
       "onlyIf": "这些条件满足了，才会执行下面的效果。条件多的时候，可以选「全部满足」或「满足一个就行」。空着就是每次都执行。",
       "alwaysSend": "打开：每回合都发给 AI。关掉：只有出现触发关键词、或者满足条件时才发，省字数，AI 也更专注。",
+      "alwaysSendGated": "接了变量条件，什么时候发给 AI 由条件决定。去掉这些条件后，这个开关才重新起作用。",
       "excludeRecursion": "别的设定的正文里碰巧有这里的关键词时，不会顺带把这一条也带出来。只有玩家和 AI 的对话能触发它。",
       "preventRecursion": "这条设定发出去以后，它的正文不会再去触发别的设定的关键词。",
       "secondary": "和触发关键词搭配用的第二组词，用来加限制，比如「还必须同时出现」或「不能出现」。一般不用填。",
@@ -6006,6 +6157,20 @@
           "title": "从界面触发",
           "body": "api.executeAction(id)"
         }
+      },
+      "context": {
+        "messages": {
+          "title": "自己写消息",
+          "body": "api.ai.complete({ messages })，发什么由代码定"
+        },
+        "lore": {
+          "title": "挑资料",
+          "body": "includeLorebook、worldbookIds，只带某些词条或某个情境"
+        },
+        "session": {
+          "title": "带上存档",
+          "body": "context: \"session\"，加上玩家人设和预设"
+        }
       }
     },
     "custom": {
@@ -6017,7 +6182,97 @@
       "behaviorIntro": "由代码实现。",
       "implementedBy": "实现在 {{count}} 处",
       "implementedCode": "自己的代码 · {{count}} 行",
-      "firedFrom": "界面代码触发 · {{file}} 第 {{line}} 行"
+      "firedFrom": "界面代码触发 · {{file}} 第 {{line}} 行",
+      "contextIntro": "AI 读什么，也可以由界面代码自己定：消息自己写，词条和情境自己挑。下面是卡里这样做的 AI 调用。",
+      "codeAt": "{{file}} 第 {{line}} 行"
+    },
+    "gateGroups": {
+      "preview": "预览 {{name}} =",
+      "hint": "拖一下，看看这一档 AI 会读到哪些",
+      "clear": "不预览",
+      "answer": "AI 会读到 {{count}} 条 · 约 {{chars}} 字",
+      "answerMaybe": "AI 会读到 {{count}} 条 · 约 {{chars}} 字，另有 {{maybe}} 条还要看别的条件",
+      "one": "{{name}} {{value}}",
+      "range": "{{name}} {{from}}–{{to}}",
+      "list": "{{name}} {{values}}",
+      "always": "任何{{name}}都发",
+      "never": "{{name}} 哪一档都不发",
+      "other": "看别的条件",
+      "yes": "是",
+      "no": "否"
+    },
+    "aiCalls": {
+      "view": "这张卡的 AI",
+      "title": "这张卡的 AI",
+      "count": "共 {{count}} 个",
+      "col": {
+        "name": "AI",
+        "when": "什么时候跑",
+        "payer": "谁付",
+        "model": "模型",
+        "params": "参数"
+      },
+      "kind": {
+        "story": "故事 AI",
+        "narrator": "回复玩家",
+        "behind": "幕后",
+        "quiet": "冷场时说话",
+        "ui": "界面按钮叫它",
+        "custom": "自定义",
+        "code": "卡里的代码"
+      },
+      "story": "故事 AI",
+      "storyTakenOver": "不跑：「{{name}}」一直替它回复",
+      "whereCard": "整张卡",
+      "whereNone": "没放",
+      "off": "不会运行",
+      "whenCustom": "界面代码叫它时",
+      "whenCode": "代码运行到这里时 · {{kind}}",
+      "payerPlayer": "玩家",
+      "followPlayer": "跟随玩家设置",
+      "followDefault": "跟随默认",
+      "authorCustom": "作者自定义",
+      "authorSet": "作者自定义",
+      "recommended": "推荐：{{model}}",
+      "lengthPlayer": "回复长度跟随玩家",
+      "narratorParams": "和故事 AI 一样",
+      "defaultModelNote": "玩家设的后台模型，没设就用默认的便宜模型",
+      "restPlayer": "没写的跟随玩家",
+      "rawDefaults": "代码没写的用默认值",
+      "computed": "代码里计算",
+      "temperature": "温度 {{v}}",
+      "topP": "Top P {{v}}",
+      "maxTokens": "最长 {{n}} tokens",
+      "modelUnknown": {
+        "player": "不在模型列表里：玩家会改用自己的模型",
+        "default": "不在模型列表里：玩家会改用默认模型",
+        "none": "不在模型列表里：玩家可能用不了"
+      },
+      "modelShut": {
+        "player": "{{plans}} 玩家会改用自己的模型",
+        "default": "{{plans}} 玩家会改用默认模型",
+        "none": "{{plans}} 玩家用不了这个模型"
+      },
+      "openAi": "去改",
+      "openCode": "打开代码",
+      "footRules": "故事 AI 的模型永远跟随玩家，作者只能推荐。卡里的 AI 指定了模型而玩家用不了时，会自动换回玩家能用的。",
+      "footClamp": "作者设的数值会被限制在安全范围内。",
+      "legendAuthor": "粉色：作者自定义"
+    },
+    "storyAi": {
+      "title": "故事 AI 的模型和参数",
+      "hint": "模型由玩家自己选、自己付。参数（温度、Top P）默认也跟随玩家；选「作者自定义」后用这张卡的。",
+      "recommendedModel": "推荐模型",
+      "recommendedModelHint": "玩家选模型时会看到「作者推荐」，不会强制。",
+      "recommendedModelNone": "不推荐",
+      "recommendedUnknown": "不在 Yumina 的模型列表里，玩家那边不会标出来。",
+      "sampling": "参数",
+      "samplingHint": "选「作者自定义」后，故事 AI 用这张卡的温度和 Top P，不用玩家的。",
+      "temperature": "温度",
+      "temperatureHint": "{{min}}–{{max}}，越高越放得开",
+      "topP": "Top P",
+      "topPHint": "{{min}}–{{max}}",
+      "alwaysPlayer": "模型和回复长度始终跟随玩家，由玩家付费。"
     }
   },
   "modules": {

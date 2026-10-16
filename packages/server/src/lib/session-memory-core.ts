@@ -502,10 +502,7 @@ export function selectLaggedRebuildWindow(rows: MemoryTranscriptRow[]): LaggedRe
 export function formatSessionMemoryForPrompt(
   memory: unknown,
   opts?: {
-    /** The player edited/deleted a message this memory may still describe
-     *  (see playSessions.sessionMemoryStaleAt). The standing soft caveat below
-     *  was not enough to stop a model from re-asserting an edited-away fact,
-     *  so a stale memory gets a targeted, imperative warning instead. */
+    /** Hide derived facts until the edited transcript has been rebuilt. */
     staleSinceEdit?: boolean;
     /** Player-pinned notes (playSessions.sessionMemoryPinned). Listed FIRST
      *  and marked authoritative so they win over auto-written facts; injected
@@ -515,7 +512,7 @@ export function formatSessionMemoryForPrompt(
 ): string | null {
   const normalized = normalizeSessionMemory(memory);
   const memoryText =
-    !normalized.text || isDegenerateSessionMemoryText(normalized.text) ? "" : normalized.text;
+    opts?.staleSinceEdit || !normalized.text || isDegenerateSessionMemoryText(normalized.text) ? "" : normalized.text;
   const pinned = normalizePinnedMemory(opts?.pinned);
   if (!memoryText && !pinned) return null;
 
@@ -530,11 +527,6 @@ export function formatSessionMemoryForPrompt(
     lines.push(
       "The following is editable continuity memory for this play session. Treat it as durable context, but prefer the recent visible chat if there is a direct contradiction.",
     );
-    if (opts?.staleSinceEdit) {
-      lines.push(
-        "IMPORTANT: The player has EDITED or REMOVED earlier messages since this memory was written. Any detail below that the current transcript no longer supports (locations, events, wording) is obsolete — follow the transcript, never this memory, wherever they disagree.",
-      );
-    }
     lines.push(memoryText);
   }
   return lines.join("\n");

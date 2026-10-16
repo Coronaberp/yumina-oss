@@ -3,7 +3,8 @@ import { RETIRED_PLAY_MODEL_IDS } from "@yumina/shared";
 import { db } from "../db/index.js";
 import { playSessions, user, worlds } from "../db/schema.js";
 import { acquireConcurrency, checkSideCallRateLimit, releaseConcurrency, SIDE_CALL_MAX_CONCURRENT } from "../middleware/rate-limit.js";
-import { calculateCost, checkBalance, estimateTokensFromChars, validateModelAccess } from "./credit-service.js";
+import { calculateCost, checkBalance, CONSERVATIVE_CHARS_PER_TOKEN, estimateTokensFromChars, validateModelAccess } from "./credit-service.js";
+import { fitPromptToChars } from "./prompt-fit.js";
 import { imagePromptChars } from "./chat-images.js";
 import type { ChatMessage } from "./llm/types.js";
 import { PLANS } from "./plan-config.js";
@@ -36,16 +37,20 @@ export async function beginModuleGeneration(args: {
   });
   if (!resolved) throw new Error(forceOfficial ? "PROTECTED_WORLD" : "NO_API_KEY");
 
+  let prompt = args.prompt;
   if (!resolved.isByok) {
     if (access.isSuspended) throw new Error("SUSPENDED");
     if (RETIRED_PLAY_MODEL_IDS.has(args.model)) throw new Error("MODEL_UNAVAILABLE");
     const balance = await checkBalance(args.userId);
     const modelAccess = await validateModelAccess(balance.wallet.plan, args.model);
     if (!modelAccess.allowed) throw new Error("MODEL_NOT_ALLOWED");
+    // The plan's memory cap holds for background AIs as it does for the story.
+    const cap = balance.wallet.memoryCap;
+    if (cap) prompt = fitPromptToChars(prompt, Math.max(0, cap - args.maxTokens) * CONSERVATIVE_CHARS_PER_TOKEN);
     if (!(PLANS[balance.wallet.plan] ?? PLANS.free).unlimited) {
       // Budget for the bounded answer too. A tiny positive wallet must not
       // admit an expensive call that fails billing only after inference.
-      const cost = await calculateCost(args.model, estimateTokensFromChars(imagePromptChars(args.prompt)), args.maxTokens);
+      const cost = await calculateCost(args.model, estimateTokensFromChars(imagePromptChars(prompt)), args.maxTokens);
       if (!balance.ok || cost > balance.balance) throw new Error("NO_CREDITS");
     }
   }
@@ -59,6 +64,7 @@ export async function beginModuleGeneration(args: {
   let released = false;
   return {
     resolved,
+    prompt,
     release: async () => {
       if (released) return;
       released = true;

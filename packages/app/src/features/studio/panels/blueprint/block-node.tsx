@@ -60,6 +60,8 @@ import {
 } from "@yumina/engine";
 import { cn } from "@/lib/utils";
 import { DebouncedInput, DebouncedTextarea } from "@/features/editor/components/debounced-field";
+import { stripMarkdownForPreview } from "@/lib/markdown";
+import { DescriptionField } from "@/features/editor/components/description-field";
 import { KIND_STYLE, ROW_TONE } from "./style";
 import { FrontendFilesStrip } from "./frontend-files-strip";
 import type { FrontendFileFacts } from "@yumina/engine";
@@ -521,9 +523,6 @@ export type BlockNodeData = {
   onToggleExpand: () => void;
   onExpandRows: () => void;
   onAdd?: (anchor?: DOMRect) => void;
-  /** Fills the assistant's composer with a request scoped to this block.
-   *  Absent on blocks the assistant has no tool for. */
-  onAsk?: () => void;
   /** State blocks: commit a variable's starting value edited on its row. */
   onCommitVariableValue?: (variableId: string, raw: string | boolean) => void;
   /** Open the big centred editor on this object's text — writing a scene into
@@ -1041,6 +1040,7 @@ function AisBody({ data }: { data: BlockNodeData }) {
           <div key={row.key}>
           <div
             data-place-ai={row.key}
+            data-ai-open={isOpen ? "" : undefined}
             role="button"
             tabIndex={0}
             // An AI can be carried to another scenario or the card; the
@@ -1713,9 +1713,10 @@ function CardBody({ data }: { data: BlockNodeData }) {
         {data.glance ? (
           <div className="flex-1" />
         ) : data.readOnly || card.locked ? (
-          <span className="line-clamp-4 text-[10.5px] leading-[1.5] text-muted-foreground/75">{card.description}</span>
+          <span className="line-clamp-4 text-[10.5px] leading-[1.5] text-muted-foreground/75">{stripMarkdownForPreview(card.description)}</span>
         ) : (
-          <DebouncedTextarea
+          <DescriptionField
+            compact
             value={card.description}
             syncKey="board-card-description"
             onCommit={card.onCommitDescription}
@@ -2486,6 +2487,8 @@ export type GateNodeData = {
   title: string;
   tint: string;
   activationLabel?: string;
+  /** Put the opening this situation is entered from on show on the card. */
+  onShowOpening?: () => void;
   /** The module's sticky note (便签). */
   note?: string;
   live?: { active?: boolean };
@@ -2631,7 +2634,7 @@ function FrameName({ title, tint }: { title: string; tint: string }) {
 
 export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
   const { t } = useTranslation("editor");
-  const { g, frame, title, tint, activationLabel, note, live, turn, recent, dimmed, context, ai, onReceiveHover, placeGives, aiLit } = data;
+  const { g, frame, title, tint, activationLabel, onShowOpening, note, live, turn, recent, dimmed, context, ai, onReceiveHover, placeGives, aiLit } = data;
   const enabled = !g || g.data.enabled !== false;
   // A place, as opposed to an AI: its border is drawn dashed.
   const place = !!g && !ai;
@@ -2749,7 +2752,19 @@ export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
                   readiness meter were numbers nobody acted on. */}
               {ai
                 ? <span className="truncate text-[11px] font-medium text-muted-foreground/80" title={ai.line}>{ai.line}</span>
-                : activationLabel && <span className="shrink-0 text-[11px] font-medium text-muted-foreground/75">{activationLabel}</span>}
+                : activationLabel && (onShowOpening
+                  ? (
+                    <button
+                      type="button"
+                      data-show-opening=""
+                      title={t("blueprint.frame.showOpening")}
+                      onClick={(e) => { e.stopPropagation(); onShowOpening(); }}
+                      className="nodrag shrink-0 rounded text-[11px] font-medium text-muted-foreground/75 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
+                    >
+                      {activationLabel}
+                    </button>
+                  )
+                  : <span className="shrink-0 text-[11px] font-medium text-muted-foreground/75">{activationLabel}</span>)}
               {placeGives && <span className="truncate text-[11px] text-muted-foreground/70">· {placeGives}</span>}
               {context && <ContextMarks context={context} open={frame.open} />}
               {context?.plain && frame.open && (

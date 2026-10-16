@@ -36,6 +36,24 @@ export function splitTurnImages(text: string): SplitTurnImages {
   return embeds.length ? { text: stripped.trimEnd(), embeds } : { text, embeds };
 }
 
+/**
+ * The reply with one picture taken out (the "Remove picture" menu item), the
+ * rest of the text and any other pictures untouched. `embed` is one of
+ * splitTurnImages(...).embeds. Only the first identical embed goes, so a
+ * picture that somehow appears twice loses one copy per removal. Returns the
+ * text unchanged when the embed isn't there (an edit/swipe moved under the
+ * menu) so the caller can skip the save.
+ */
+export function removeTurnImage(text: string, embed: string): string {
+  let removed = false;
+  const next = text.replace(EMBED_RE, (match, b64: string) => {
+    if (removed || match.trim() !== embed || !isTurnImageKey(b64)) return match;
+    removed = true;
+    return "";
+  });
+  return removed ? next.trimEnd() : text;
+}
+
 // A reply's short film rides the same way, a `[video:/cdn/key/<…/turn-videos/….mp4>|sound]` per
 // shot (server: lib/realtime-video/turn-clip.ts). The chat peels them off and shows nothing: the
 // film window plays them (src/features/chat/realtime-video/controller.ts).

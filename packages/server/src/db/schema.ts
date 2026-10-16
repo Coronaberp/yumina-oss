@@ -339,6 +339,20 @@ export const deletedAccountTombstones = pgTable("deleted_account_tombstones", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// One row per completed account deletion, with no identity at all (no user ID,
+// email or hash). It keeps what platform totals need once the user row is gone:
+// the deletion itself (admin "deleted accounts") and the lifetime playtime
+// counter that all-time game time sums. `source = 'tombstone_backfill'` rows
+// were reconstructed from deleted_account_tombstones for deletions before this
+// table existed; they carry no playtime.
+export const accountDeletions = pgTable("account_deletions", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  deletedAt: timestamp("deleted_at").notNull().defaultNow(),
+  accountCreatedAt: timestamp("account_created_at"),
+  lifetimePlaytimeSeconds: bigint("lifetime_playtime_seconds", { mode: "number" }).notNull().default(0),
+  source: text("source").notNull().default("deletion"),
+}, (t) => [index("account_deletions_deleted_at_idx").on(t.deletedAt)]);
+
 // Durable outbox for external cleanup that cannot participate in the user
 // deletion transaction (S3, Redis, Stripe). Rows are removed after every
 // idempotent cleanup step succeeds.
@@ -1969,6 +1983,10 @@ export const worldVersions = pgTable("world_versions", {
   thumbnailUrl: text("thumbnail_url"),
   // Null identifies legacy schema-only snapshots; restore keeps the current cover/rating.
   ageRating: text("age_rating"),
+  // What the content references, for asset deletion (world-version-asset-refs.ts).
+  // Null on rows saved before these columns existed.
+  assetIds: text("asset_ids").array(),
+  assetPaths: text("asset_paths").array(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("world_versions_world_id_idx").on(t.worldId),
@@ -2410,9 +2428,13 @@ export const modelPrices = pgTable("model_prices", {
 
 // ─── Usage Tracking ─────────────────────────────────────────────────
 
+// usage_logs, analytics_play_intervals and analytics_activity deliberately have
+// no user FK: account deletion re-keys their rows to an anonymous
+// `deleted:<uuid>` actor instead of cascading, so platform totals (model calls,
+// tokens, playtime, active people) never shrink when someone leaves.
 export const analyticsPlayIntervals = pgTable('analytics_play_intervals', {
   id:text('id').primaryKey(),
-  userId:text('user_id').notNull().references(()=>user.id,{onDelete:'cascade'}),
+  userId:text('user_id').notNull(),
   worldId:text('world_id').notNull(),
   startedAt:timestamp('started_at',{withTimezone:true}).notNull(),
   endedAt:timestamp('ended_at',{withTimezone:true}).notNull(),
@@ -2427,7 +2449,7 @@ export const analyticsPlayIntervals = pgTable('analytics_play_intervals', {
 ]);
 export const analyticsActivity = pgTable('analytics_activity', {
   id:text('id').primaryKey(),
-  userId:text('user_id').notNull().references(()=>user.id,{onDelete:'cascade'}),
+  userId:text('user_id').notNull(),
   worldId:text('world_id').notNull().default(''),
   occurredAt:timestamp('occurred_at',{withTimezone:true}).notNull().defaultNow(),
   surface:text('surface').notNull(),action:text('action').notNull(),
@@ -2444,9 +2466,9 @@ export const usageLogs = pgTable("usage_logs", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
+  // No user FK: account deletion re-keys rows to `deleted:<uuid>` (see
+  // analyticsPlayIntervals) so usage totals survive the account.
+  userId: text("user_id").notNull(),
   sessionId: text("session_id").references(() => playSessions.id, { onDelete: "set null" }),
   model: text("model").notNull(),
   promptTokens: integer("prompt_tokens").notNull().default(0),
@@ -2460,6 +2482,9 @@ export const usageLogs = pgTable("usage_logs", {
   // Preserve attribution when a session is deleted; no session/world join needed.
   analyticsWorldId: text("analytics_world_id"),
   tokenMeasurement: text("token_measurement"), // provider | estimated; legacy unknown
+  // Prompt-cache traffic as the provider reported it (null when not reported).
+  cacheReadTokens: integer("cache_read_tokens"),
+  cacheWriteTokens: integer("cache_write_tokens"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("usage_logs_user_id_idx").on(t.userId),
@@ -3582,6 +3607,48 @@ export const featuredCollections = pgTable("featured_collections", {
   check("featured_collections_slots_check", sql`jsonb_typeof(${t.slots}) = 'array' AND jsonb_array_length(${t.slots}) <= 8`),
 ]);
 
+/**
+ * The update log's web layer (lib/changelog-store.ts). A row with the same id
+ * as a changelog/ file overrides it (content columns set) and/or hides it;
+ * a row with no file is a web-only entry. Content columns are all set or all
+ * null (a hide-only row). Installed by scripts/add-changelog-entries.sql.
+ */
+export const changelogEntries = pgTable("changelog_entries", {
+  id: text("id").primaryKey(),
+  date: text("date"),
+  audience: text("audience"),
+  areas: jsonb("areas").$type<string[]>(),
+  titles: jsonb("titles").$type<Record<string, string>>(),
+  bodies: jsonb("bodies").$type<Record<string, string>>(),
+  highlight: boolean("highlight").notNull().default(false),
+  kind: text("kind"),
+  cover: text("cover"),
+  coverAlts: jsonb("cover_alts").$type<Record<string, string>>(),
+  hidden: boolean("hidden").notNull().default(false),
+  createdBy: text("created_by"),
+  updatedBy: text("updated_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, t => [
+  check("changelog_entries_id_check", sql`${t.id} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(-[a-z0-9]+)*$'`),
+  check("changelog_entries_audience_check", sql`${t.audience} IS NULL OR ${t.audience} IN ('public','internal')`),
+  check("changelog_entries_kind_check", sql`${t.kind} IS NULL OR ${t.kind} IN ('standard','roundup')`),
+  check("changelog_entries_content_check", sql`(${t.titles} IS NULL) = (${t.bodies} IS NULL) AND (${t.titles} IS NULL) = (${t.date} IS NULL) AND (${t.titles} IS NULL) = (${t.audience} IS NULL) AND (${t.titles} IS NULL) = (${t.areas} IS NULL)`),
+]);
+
+/** Every web change to the update log, with the entry as it stood after the change. */
+export const changelogEntryRevisions = pgTable("changelog_entry_revisions", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  entryId: text("entry_id").notNull(),
+  action: text("action").notNull(),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [
+  index("changelog_entry_revisions_entry_idx").on(t.entryId, t.createdAt),
+  check("changelog_entry_revisions_action_check", sql`${t.action} IN ('create','edit','hide','unhide','restore','delete')`),
+]);
+
 /** Published-content representations. Installed explicitly by discovery-personalization.sql. */
 export const worldRecommendationProfiles = pgTable("world_recommendation_profiles", {
   worldId: text("world_id").primaryKey().references(() => worlds.id, { onDelete: "cascade" }),
@@ -3760,6 +3827,13 @@ export const worldReviewSubmissions = pgTable(
     snapshotVisibility: text("snapshot_visibility"),
     snapshotAllowEdit: boolean("snapshot_allow_edit"),
     snapshotAllowReviews: boolean("snapshot_allow_reviews"),
+    // world_versions rows for what was submitted and what was live just before,
+    // so "what changed" can be rebuilt after the decision (the held edit is gone
+    // by then). Plain ids, no FK: automatic version retention may prune them,
+    // and the admin diff then reports the snapshot as no longer kept. A null
+    // base means nothing of this world had been live — a genuinely new card.
+    versionId: text("version_id"),
+    baseVersionId: text("base_version_id"),
   },
   (t) => [
     index("world_review_submissions_decision_idx").on(t.decision, t.submittedAt),

@@ -13,7 +13,7 @@
  */
 
 import type { RootComponent, UiDoc, UiElement, UiPage, WorldDefinition, Variable } from "@yumina/engine";
-import { compileUiDoc, uiDocSchema, validateUiDoc, buildUiTheme, getUiThemePreset, UI_THEMES, UI_CHAT_STARTED, PromptBuilder, syncMessageRulesEntry, UI_RULES_ENTRY_ID, UI_LOOKS, applyUiLook, currentUiLook, getUiLook, uiLookPartOf, fitTextBox, pushBelowGrown, textStyleAffectsHeight, readableThemeTokens, USER_ROOT_PATH, COMPOSED_MARKER, BUNDLE_NS_RE, generateComposedIndex, syncGreetingActions } from "@yumina/engine";
+import { compileUiDoc, uiDocDrawsChat, uiDocSchema, validateUiDoc, buildUiTheme, getUiThemePreset, UI_THEMES, UI_CHAT_STARTED, PromptBuilder, syncMessageRulesEntry, UI_RULES_ENTRY_ID, UI_LOOKS, applyUiLook, currentUiLook, getUiLook, uiLookPartOf, fitTextBox, pushBelowGrown, textStyleAffectsHeight, readableThemeTokens, USER_ROOT_PATH, COMPOSED_MARKER, BUNDLE_NS_RE, generateComposedIndex, syncGreetingActions } from "@yumina/engine";
 import crypto from "crypto";
 import { validateTsx, formatTsxIssue } from "./tsx-validate.js";
 import { assertNoInlineDataUris } from "../asset-validation.js";
@@ -655,6 +655,15 @@ export function applyUiDocOps(draft: WorldDefinition, rawOps: unknown): UiDocEdi
     } catch (e) {
       return { ok: false, error: `${label}: ${e instanceof Error ? e.message : String(e)}` };
     }
+  }
+
+  // A document that now draws its own chat no longer sits over the platform
+  // one — the same step the editor takes when it builds a chat page. Left in
+  // place, both rendered (2026-10-15, "The Potter Project": this tool created
+  // the doc with surface: chat, then add_part placed a chat on the Story page).
+  if (doc.surface === "chat" && uiDocDrawsChat(doc)) {
+    delete doc.surface;
+    notes.push("the document now draws its own chat, so the platform chat underneath (surface: chat) was removed");
   }
 
   // Schema: only errors this call introduced (a doc the editor saved with an

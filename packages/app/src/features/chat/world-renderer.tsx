@@ -24,6 +24,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import posthog from "posthog-js";
 import { useSandbox } from "../sandbox/use-sandbox";
+import { createCodeDiagnostic } from "@/lib/tsx/diagnostics";
 import { GameRoomConnection } from "./game-room-connection";
 import { VoiceChat } from "@/lib/voice-chat";
 import { useWorldVoice } from "./use-world-voice";
@@ -63,6 +64,7 @@ import { buildSideCompletionRequest, type SideCompletionParams } from "./side-co
 import { requestSideDecision } from "./side-decision-request";
 import { handlePlayerPromptsBridgeCall, usePlayerPromptsChannel } from "@/features/chat/player-prompts-channel";
 import { ModelBrowser } from "./model-browser";
+import { sessionRecommendedModel } from "./recommended-model";
 import { fetchApiKeyModelProfiles, resolveOfficialSelectedModel, resolvePrivateSelectedModel } from "@/lib/provider-model-selection";
 import {
   setComposerDraft,
@@ -217,6 +219,7 @@ export function WorldRenderer({
     }
     return null;
   });
+  const recommendedModel = useChatStore((s) => (s.session?.id === sessionId ? sessionRecommendedModel(s.session) : undefined));
   useEffect(() => { setModelPickerOpen(false); }, [sessionId, isActive]);
   const modelFallback = useChatStore((s) => s.modelFallback?.sessionId === sessionId ? s.modelFallback : null);
   // Machine code for the current error (e.g. CONTENT_FILTER on a blocked
@@ -967,7 +970,10 @@ export function WorldRenderer({
             const msgs = store.messages;
             const lastMsg = msgs[msgs.length - 1];
             const secondToLast = msgs[msgs.length - 2];
-            if (lastMsg?.role === "assistant" && secondToLast?.id === messageId) {
+            // Only a rewritten player line owes a new answer. Editing an AI
+            // reply (e.g. removing its scene picture) must never re-roll the
+            // reply after it.
+            if (lastMsg?.role === "assistant" && secondToLast?.id === messageId && secondToLast.role === "user") {
               store.regenerateMessage(lastMsg.id);
             } else if (lastMsg?.id === messageId && lastMsg.role === "user") {
               store.continueLastMessage();
@@ -1365,6 +1371,14 @@ export function WorldRenderer({
           return request
             .then(async (res) => {
               const json = await res.json().catch(() => ({} as any));
+              // The server's plan refusal is English; say it in the player's language.
+              if (!res.ok && json?.code === "MODEL_NOT_ALLOWED" && typeof json.requiredPlan === "string") {
+                throw new Error(i18n.t("chat:memoryModelNeedsPlan", {
+                  model: json.model ?? "",
+                  plan: i18n.t(`common:planName.${json.requiredPlan}`, { defaultValue: json.requiredPlan }),
+                  defaultValue: json.error,
+                }));
+              }
               if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
               if (!json.data) throw new Error("Malformed memory response");
               return json.data;
@@ -2131,11 +2145,11 @@ export function WorldRenderer({
         if (fileKeys.length <= 1) {
           const { transformTSX } = await import("@/lib/tsx/tsx-compiler");
           const single = files[entryFile] ?? files[fileKeys[0] ?? ""] ?? "";
-          const transformed = transformTSX(single);
+          const transformed = transformTSX(single, files[entryFile] !== undefined ? entryFile : fileKeys[0]);
           if (transformed.code) {
             installRoot(entryFile, files, transformed.code, undefined, mode);
           } else {
-            installRoot(entryFile, files, undefined, transformed.error ?? "Compile failed", mode);
+            installRoot(entryFile, files, undefined, transformed.error ?? "Compile failed", mode, transformed.diagnostic);
           }
         } else {
           const { bundleTSX } = await import("@/lib/tsx/tsx-bundler");
@@ -2143,12 +2157,12 @@ export function WorldRenderer({
           if (bundled.code) {
             installRoot(entryFile, files, bundled.code, undefined, mode);
           } else {
-            installRoot(entryFile, files, undefined, bundled.error ?? "Bundle failed", mode);
+            installRoot(entryFile, files, undefined, bundled.error ?? "Bundle failed", mode, bundled.diagnostic);
           }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Pre-compile failed";
-        installRoot(entryFile, files, undefined, msg, mode);
+        installRoot(entryFile, files, undefined, msg, mode, createCodeDiagnostic(e, { phase: "compile", files }));
       }
     })();
     // Reset the install guard on teardown so a remount re-installs onto the
@@ -2421,6 +2435,7 @@ export function WorldRenderer({
           allowChatTrial={modelPickerChatTrial}
           selectedModel={selectedModel}
           contextTokens={contextTokens}
+          recommendedModel={recommendedModel}
           onClose={() => setModelPickerOpen(false)}
           onSelect={(modelId) => useConfigStore.getState().setConfig("selectedModel", modelId)}
         />

@@ -3147,7 +3147,15 @@
         "paper": "素紙",
         "night": "夜航",
         "terminal": "ターミナル",
-        "blossom": "緋桜"
+        "blossom": "緋桜",
+        "velvet": "ベルベット",
+        "harbor": "ハーバー",
+        "linen": "リネン",
+        "coolant": "クーラント",
+        "moss": "モス",
+        "tape": "テープ",
+        "gilded": "ギルデッド",
+        "tavern": "タバーン"
       },
       "fontName": {
         "sans": "ゴシック",
@@ -3174,13 +3182,29 @@
         "portrait-scene": "立ち絵シーン",
         "adventure-hud": "冒険HUD",
         "stat-panel": "ステータス盤",
-        "character-sheet": "キャラシート"
+        "character-sheet": "キャラシート",
+        "chapter-portrait": "章扉ポートレート",
+        "masthead": "マストヘッド",
+        "margin-notes": "余白のメモ",
+        "status-strip": "ステータスバー",
+        "night-card": "夜のカード",
+        "cassette": "カセット",
+        "art-split": "半画面イラスト",
+        "guild-card": "ギルドカード"
       },
       "presetHint": {
         "portrait-scene": "立ち絵 + ゲージ二本 + 詳細ページ。一人のキャラを描くカードに。",
         "adventure-hud": "現在地 + 日数と時間帯 + ゲージ二本。テキストアドベンチャーや探索に。",
         "stat-panel": "ゲージ四本 + 所持金 + 日数。育成・経営・サバイバルに。",
-        "character-sheet": "プレイヤー自身の名前・立場・現在地・章。ロールプレイに。"
+        "character-sheet": "プレイヤー自身の名前・立場・現在地・章。ロールプレイに。",
+        "chapter-portrait": "上に章のバナー。右の列に立ち絵、気分、ゲージ3本。",
+        "masthead": "カード名、ゲージ4本、登場人物を上部にまとめ、その下に会話。",
+        "margin-notes": "明るい背景。右にメモが3枚あり、タイトルと場所、ゲージ4本、知り合いを表示します。",
+        "status-strip": "入力欄の下にバーがあり、時刻、所持金、場所、体力と気力、その場にいる人を表示します。",
+        "night-card": "右上に何日目か、右下に人物カード（気分、場所、ゲージ4本、知り合い）。",
+        "cassette": "入力欄の下にカセットテープ。ラベルにカード名、横に今の章、場所、気分。",
+        "art-split": "右半分が立ち絵で、カード名とゲージ2本は立ち絵の下部に表示されます。",
+        "guild-card": "左に羊皮紙の登録カード。プレイヤーの名前、職業、ランク、所持金、体力と気力を表示します。"
       },
       "vars": {
         "portrait": "立ち絵",
@@ -3198,13 +3222,17 @@
         "playerRole": "立場",
         "gender": "性別",
         "age": "年齢",
-        "phase": "章"
+        "phase": "章",
+        "mood": "気分",
+        "rank": "冒険者ランク"
       },
       "varDefaults": {
         "timeOfDay": "朝",
         "location": "どこともしれない場所",
         "playerRole": "旅人",
-        "phase": "序章"
+        "phase": "序章",
+        "mood": "穏やか",
+        "rank": "銅級"
       },
       "s": {
         "common": {
@@ -3223,10 +3251,11 @@
           "actionWaitSays": "何も言わず、相手が先に口を開くのを待つ。",
           "toolRewind": "一手戻す",
           "toolRegenerate": "再生成",
-          "toolCopy": "コピー"
+          "toolCopy": "コピー",
+          "castLabel": "登場"
         },
         "portrait-scene": {
-          "portraitEmpty": "ここに立ち絵 —「カード情報」で追加するか、「立ち絵」変数で差し替え",
+          "portraitEmpty": "立ち絵を置く\nここを選んで、右側で画像を選択",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
         },
@@ -3251,6 +3280,65 @@
           "phaseLabel": "章",
           "meterPrimary": "好感度",
           "meterSecondary": "体力"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "立ち絵を置く\nここを選んで、右側で画像を選択",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "気力"
+        },
+        "masthead": {
+          "whenFormat": "{day}日目 · {timeOfDay}",
+          "goldFormat": "所持金 {gold}",
+          "meterPrimary": "体力",
+          "meterSecondary": "気力",
+          "meterThird": "好感度",
+          "meterFourth": "進行度"
+        },
+        "margin-notes": {
+          "whenFormat": "{day}日目 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "気力",
+          "meterFourth": "進行度"
+        },
+        "status-strip": {
+          "whenLabel": "時刻",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "所持金",
+          "placeLabel": "場所",
+          "meterPrimary": "体力",
+          "meterSecondary": "気力"
+        },
+        "night-card": {
+          "clockFormat": "{day}日目",
+          "whenFormat": "{day}日目 · {timeOfDay}",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力",
+          "meterThird": "気力",
+          "meterFourth": "進行度"
+        },
+        "cassette": {
+          "sideFormat": "A面 · {day}日目",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "気分",
+          "meterPrimary": "好感度"
+        },
+        "art-split": {
+          "portraitEmpty": "立ち絵を置く\nここを選んで、右側で画像を選択",
+          "meterPrimary": "好感度",
+          "meterSecondary": "体力"
+        },
+        "guild-card": {
+          "guildTitle": "冒険者",
+          "guildSubFormat": "{location}にて登録",
+          "nameLabel": "名前",
+          "roleLabel": "職業",
+          "rankLabel": "ランク",
+          "goldLabel": "所持金",
+          "meterPrimary": "体力",
+          "meterSecondary": "気力"
         }
       }
     },
@@ -3382,7 +3470,9 @@
       "randomMax": "最大",
       "randomFromPlaceholder": "一行に一つ。押すとランダムに一つ選ばれます",
       "randomFromHint": "押すと上の行からランダムに一つ選び、この変数に書き込みます。決めるのはカードで、AI ではありません。",
-      "randomNumberHint": "押すとこの範囲の整数をランダムに選び、この変数に書き込みます。"
+      "randomNumberHint": "押すとこの範囲の整数をランダムに選び、この変数に書き込みます。",
+      "pickStartImage": "画像を選ぶ",
+      "changeStartImage": "画像を変える"
     },
     "style": {
       "none": "なし",
@@ -3701,7 +3791,7 @@
       "newPage": "新規",
       "title": "新規 · テンプレートを選ぶ",
       "tutorTip": "できあがったテンプレートが 18 種類あります ✧ 上は物語が始まる前の導入、下はプレイ中にメニューから開くページです。クリックするとカードに追加され、そのまま遊べます。今は選ばなくても大丈夫。右上の × で閉じて、いつでも「新規」から戻れます。",
-      "sub": "できあがったテンプレートが 22 種（画面全体 4、ページ 18）。変数・ボタン・AI への説明までつながっていて、追加すればすぐ遊べます。色・大きさ・位置はいつも通り変えられます。",
+      "sub": "できあがったテンプレートが 30 種（画面全体 12、ページ 18）。変数・ボタン・AI への説明までつながっていて、追加すればすぐ遊べます。色・大きさ・位置はいつも通り変えられます。",
       "groupOpening": "オープニング · 物語が始まる前",
       "blank": "白紙のページ",
       "blankDesc": "何もありません。自分で並べます。",
@@ -4994,10 +5084,14 @@
     "blurb": "チャット横のドックからプレイヤーが開く小さなアプリです：メッセージ、関係、タイムライン、時計……データは変数ひとつに入り、物語に合わせて AI が書き込みます。各カード上部のプレビューが実際のアプリです。作る必要はありません。",
     "add": "このカードに追加",
     "added": "ドックに追加しました",
-    "footnote": "アプリ内の文言はカードの言語（中国語・英語・スペイン語）に合わせます。Bundles ページで外すと、ボタン・データ・ルールもまとめて消えます。",
+    "footnote": "アプリ内の文言はカードの言語（中国語・英語・スペイン語）に合わせます。アプリを削除すると、ドックのボタン・データ・ルールもまとめて消えます。",
     "sets": "おすすめセット——このタイプのカードがよく追跡するもの",
     "addSet": "4つまとめて追加",
-    "setAdded": "すべて追加済み"
+    "setAdded": "すべて追加済み",
+    "remove": "削除",
+    "removeSet": "4つまとめて削除",
+    "removed": "「{{name}}」を削除しました",
+    "varDeleteHint": "この変数は「{{name}}」アプリのデータです。削除するとアプリごと消え、ドックのボタンもなくなります。"
   },
   "worldChanges": {
     "title": "「{{name}}」を更新しますか？",

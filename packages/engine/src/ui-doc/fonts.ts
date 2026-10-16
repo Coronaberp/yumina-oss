@@ -57,6 +57,9 @@ const FONT_ROWS: FontRow[] = [
   { family: "Playfair Display", stack: `"Playfair Display", serif`, google: g("Playfair Display", "400;700;900"), script: "latin", mood: "display" },
   { family: "Cinzel", stack: `"Cinzel", serif`, google: g("Cinzel", "400;700;900"), script: "latin", mood: "display" },
   { family: "Cormorant Garamond", stack: `"Cormorant Garamond", serif`, google: g("Cormorant Garamond", "400;600;700"), script: "latin", mood: "display" },
+  { family: "Anton", stack: `"Anton", sans-serif`, google: g("Anton", "400"), script: "latin", mood: "display" },
+  { family: "Spectral", stack: `"Spectral", serif`, google: g("Spectral", "400;600;700"), script: "latin", mood: "body" },
+  { family: "Special Elite", stack: `"Special Elite", monospace`, google: g("Special Elite", "400"), script: "latin", mood: "mono" },
   { family: "Bebas Neue", stack: `"Bebas Neue", sans-serif`, google: g("Bebas Neue", "400"), script: "latin", mood: "display" },
   { family: "Orbitron", stack: `"Orbitron", sans-serif`, google: g("Orbitron", "400;700;900"), script: "latin", mood: "display" },
   { family: "Quicksand", stack: `"Quicksand", sans-serif`, google: g("Quicksand", "400;600;700"), script: "latin", mood: "body" },
@@ -130,9 +133,13 @@ function familiesOf(el: UiElement): Array<string | undefined> {
  */
 export function webFontsHref(doc: UiDoc): string | null {
   const used = new Map<string, UiWebFont>();
+  // Load every curated family in the stack, so "Cinzel", "Noto Serif SC"
+  // loads both.
   const note = (stack: string | undefined) => {
-    const font = webFontOf(stack);
-    if (font) used.set(font.family, font);
+    for (const family of (stack ?? "").split(",")) {
+      const font = webFontOf(family);
+      if (font) used.set(font.family, font);
+    }
   };
   for (const page of doc.pages ?? []) {
     for (const el of page?.elements ?? []) if (el) familiesOf(el).forEach(note);

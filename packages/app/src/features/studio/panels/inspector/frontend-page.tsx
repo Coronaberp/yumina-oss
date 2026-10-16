@@ -4,8 +4,8 @@ import { createPortal } from "react-dom";
 import type { IDockviewPanelProps } from "dockview-react";
 import { ChevronRight, ChevronUp, LayoutTemplate, MessageSquare, Monitor, MousePointerSquareDashed, PanelRight, Play, Plus, Smartphone, X } from "lucide-react";
 import {
-  addPage, boxOn, copyElements, findElementPage, fitTextOnPage, groupOf, nudgeElements, pasteElements, PromptBuilder,
-  removeGroup, reorderElements, snapMove, snapResize, unitsOf, updateElements,
+  addPage, boxOn, copyElements, findElementPage, fitTextOnPage, followResized, groupOf, nudgeElements, pasteElements, PromptBuilder,
+  removeGroup, reorderElements, snapMove, snapResize, ungroupElements, unitsOf, updateElements,
   UI_CANVAS_W, UI_DESKTOP_H, UI_DESKTOP_W,
 } from "@yumina/engine";
 import type { UiDoc, UiElement, UiGuide, WorldDefinition } from "@yumina/engine";
@@ -54,7 +54,8 @@ import { phoneFitFor } from "./phone-fit";
 const VIEWPORTS = { desktop: null, phone: 390 } as const;
 /** 「适应」 stops shrinking here and lets the stage scroll. */
 const MIN_FIT_ZOOM = 0.6;
-const ZOOM_STEPS = [0.25, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2] as const;
+// Up to 300%: people kept pressing ＋ at 200% to read small type in a card.
+const ZOOM_STEPS = [0.25, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3] as const;
 function stepZoom(current: number, dir: 1 | -1): number {
   const list = dir > 0 ? ZOOM_STEPS : [...ZOOM_STEPS].reverse();
   return list.find((z) => (dir > 0 ? z > current + 0.001 : z < current - 0.001)) ?? current;
@@ -515,14 +516,26 @@ export function FrontendPage({
       const w = Math.min(from.w + delta.dw - (x - (from.x + delta.dx)), pageW - x);
       delta = { ...delta, dx: x - from.x, dw: w - from.w, dy: Math.max(delta.dy, -from.y), dh: delta.dh - Math.max(0, -(from.y + delta.dy)) };
     }
+    const leadFrom = lead ? origin.boxes[lead] : undefined;
+    const leadTo = leadFrom
+      ? { x: leadFrom.x + delta.dx, y: leadFrom.y + delta.dy, w: Math.max(1, leadFrom.w + delta.dw), h: Math.max(1, leadFrom.h + delta.dh) }
+      : null;
+    // A meter's label and value are laid out around its track: resizing the
+    // track carries them (see followResized), so the value stays at its end.
+    const page = uiDoc.pages.find((p) => p.id === origin.pageId);
+    const leadEl = lead ? page?.elements.find((e) => e.id === lead) : undefined;
+    const resizing = delta.dw !== 0 || delta.dh !== 0;
+    const around = resizing && leadEl?.type === "meter" && leadEl.group ? leadEl.group : null;
     setUiDoc(updateElements(uiDoc, origin.pageId, origin.ids, (el) => {
       const from = origin.boxes[el.id];
       if (!from) return el;
       // The group travels together; only the part that was gripped resizes, so
       // a label does not stretch into a track.
-      const next = el.id === lead
-        ? { x: from.x + delta.dx, y: from.y + delta.dy, w: Math.max(1, from.w + delta.dw), h: Math.max(1, from.h + delta.dh) }
-        : { ...from, x: from.x + delta.dx, y: from.y + delta.dy };
+      const next = el.id === lead && leadTo
+        ? leadTo
+        : around && el.group === around && leadFrom && leadTo
+          ? followResized(leadFrom, leadTo, from)
+          : { ...from, x: from.x + delta.dx, y: from.y + delta.dy };
       return canvas === "desktop"
         ? { ...el, desktop: next }
         : { ...el, x: next.x, y: next.y, w: next.w, h: next.h };
@@ -1015,6 +1028,10 @@ export function FrontendPage({
   // Every item is the keyboard command of the same name, so the two can
   // never do different things.
   const [partMenu, setPartMenu] = useState<{ x: number; y: number } | null>(null);
+  const selectedGrouped = useMemo(() => {
+    const page = uiDoc && currentPageId ? uiDoc.pages.find((p) => p.id === currentPageId) : undefined;
+    return !!page?.elements.some((el) => selectionIds.includes(el.id) && !!el.group);
+  }, [uiDoc, currentPageId, selectionIds]);
   const runCommand = (key: string, opts: { code?: string; shift?: boolean; mod?: boolean } = {}) => {
     handleCanvasKeyRef.current?.({
       key, code: opts.code ?? "", shiftKey: !!opts.shift, ctrlKey: opts.mod !== false, metaKey: false,
@@ -1041,6 +1058,7 @@ export function FrontendPage({
       return !!el && (el.type === "chat" || el.type === "messages" || el.type === "composer");
     };
     const movable = ids.filter((id) => !loadBearing(id));
+    const grouped = page.elements.some((el) => ids.includes(el.id) && !!el.group);
     const key = event.key;
 
     const arrow = key === "ArrowLeft" ? [-1, 0] : key === "ArrowRight" ? [1, 0] : key === "ArrowUp" ? [0, -1] : key === "ArrowDown" ? [0, 1] : null;
@@ -1102,6 +1120,14 @@ export function FrontendPage({
       // canvas — they are listed (「只在手机」/「只在电脑」) and they go with a
       // delete, copy or cut. Aligning and nudging move only what is drawn here.
       selectIds(selectAllOnPage(page, canvas));
+      return true;
+    }
+    // Ctrl+Shift+G, as in Slides and Figma: the parts of a group become
+    // separate parts. The lead stays picked, now on its own.
+    if (lower === "g" && event.shiftKey && grouped) {
+      event.preventDefault();
+      setUiDoc(ungroupElements(uiDoc, pageId, ids));
+      setExtraIds([]);
       return true;
     }
     if ((event.code === "BracketRight" || event.code === "BracketLeft") && ids.length > 0) {
@@ -1378,14 +1404,18 @@ export function FrontendPage({
           ))}
           <div className="mx-1 h-4 w-px bg-border/60" />
           <div className="flex items-center" data-zoom-controls="">
+            {/* At either end the button goes dim: it used to look live and do
+                nothing, and got clicked over and over (PostHog rage clicks). */}
             <button type="button" onClick={() => setZoom(stepZoom(zoomScale ?? fitScale, -1))} title={t("studio.inspect.zoomOut")} aria-label={t("studio.inspect.zoomOut")}
-              className="rounded-md px-1.5 py-1 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground">−</button>
+              disabled={stepZoom(zoomScale ?? fitScale, -1) === (zoomScale ?? fitScale)}
+              className="rounded-md px-1.5 py-1 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30">−</button>
             <button type="button" onClick={() => setZoom(zoom === "fit" ? 1 : "fit")} title={t(zoom === "fit" ? "studio.inspect.zoomActual" : "studio.inspect.zoomFit")}
               className={cn("min-w-[48px] rounded-md px-1.5 py-1 text-center text-[11px] tabular-nums hover:bg-accent", zoom === "fit" ? "text-muted-foreground" : "text-foreground")}>
               {zoom === "fit" ? t("studio.inspect.zoomFitShort", { pct: shownZoom }) : `${shownZoom}%`}
             </button>
             <button type="button" onClick={() => setZoom(stepZoom(zoomScale ?? fitScale, 1))} title={t("studio.inspect.zoomIn")} aria-label={t("studio.inspect.zoomIn")}
-              className="rounded-md px-1.5 py-1 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground">＋</button>
+              disabled={stepZoom(zoomScale ?? fitScale, 1) === (zoomScale ?? fitScale)}
+              className="rounded-md px-1.5 py-1 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30">＋</button>
           </div>
           {!immersive && <div className="flex-1" />}
           {selected && !immersive && (
@@ -1667,6 +1697,7 @@ export function FrontendPage({
                   ...(partClipboard.items?.length ? [{ label: t("studio.canvasEdit.menu.paste"), hint: "Ctrl+V", run: () => runCommand("v") }] : []),
                   ...(selectionIds.length ? [
                     { label: t("studio.canvasEdit.menu.duplicate"), hint: "Ctrl+D", run: () => runCommand("d") },
+                    ...(selectedGrouped ? [{ label: t("studio.canvasEdit.menu.ungroup"), hint: "Ctrl+Shift+G", run: () => runCommand("g", { shift: true }) }] : []),
                     { label: "-" },
                     { label: t("studio.canvasEdit.order.front"), hint: "Ctrl+Shift+]", run: () => runCommand("]", { code: "BracketRight", shift: true }) },
                     { label: t("studio.canvasEdit.order.forward"), hint: "Ctrl+]", run: () => runCommand("]", { code: "BracketRight" }) },

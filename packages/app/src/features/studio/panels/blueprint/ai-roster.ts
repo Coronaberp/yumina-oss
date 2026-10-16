@@ -1,4 +1,4 @@
-import { ANY_MODULE, UNPLACED_WORLDBOOK_ID, blockId, resolveStation, type ModuleStation, type WorldDefinition, type Worldbook } from "@yumina/engine";
+import { ANY_MODULE, UNPLACED_WORLDBOOK_ID, blockId, isAlwaysSendEntry, isVariableBoundEntry, resolveStation, type ModuleStation, type WorldDefinition, type Worldbook } from "@yumina/engine";
 import { lensAis, type LensKind } from "./ai-lens";
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
@@ -35,6 +35,23 @@ export const voiceOf = (station: Pick<ModuleStation, "kind" | "trigger">): AiVoi
   station.kind === "narrator" ? "reply" : station.trigger?.on === "quiet" ? "quiet" : "behind";
 
 export const stationName = (book: Worldbook): string => book.station?.name?.trim() || book.name;
+
+/**
+ * Renaming an AI renames the name it is shown and called by — `stationName`,
+ * the one `api.callAi(name)` and the title read. The canvas used to rename
+ * only `book.name`, so an AI with a name on its station went on being called
+ * the old one. An AI that lives in a place (`host`) is all its frame is: both
+ * names are its name and move together. A situation that is its own AI and
+ * carries a voice name of its own has two: the place keeps its name, the
+ * voice changes.
+ */
+export function renameAiPatch(book: Worldbook, next: string): Partial<Worldbook> | null {
+  const name = next.trim();
+  if (!name || name === stationName(book)) return null;
+  const voice = book.station?.name?.trim();
+  if (voice && book.host === undefined && voice !== book.name) return { station: { ...book.station!, name } };
+  return voice ? { name, station: { ...book.station!, name } } : { name };
+}
 
 /** The AIs that read what this worker writes. Only one that talks to the
  *  player on its turn reads its wires: one that speaks when it goes quiet
@@ -142,7 +159,7 @@ export function aiReceives(world: WorldDefinition, book: Worldbook, t: Translate
   const voice = voiceOf(book.station);
   const books = (world.worldbooks ?? []).filter((b) => b.id !== UNPLACED_WORLDBOOK_ID);
   const entries = (world.entries ?? []).filter((e) => e.enabled !== false && e.role !== "greeting" && !e.presetId && !e.worldbookId);
-  const lore = voice === "quiet" ? entries.filter((e) => e.alwaysSend).length : entries.length;
+  const lore = voice === "quiet" ? entries.filter((e) => isAlwaysSendEntry(e) || isVariableBoundEntry(e)).length : entries.length;
   const vars = (world.variables ?? []).filter((v) => !v.internal && v.aiAccess !== "none" && !v.worldbookId).length;
   const chips: ReceiveChip[] = [];
   if (voice !== "behind" && (lore || vars)) {

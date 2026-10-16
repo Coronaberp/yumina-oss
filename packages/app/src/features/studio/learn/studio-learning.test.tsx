@@ -23,11 +23,13 @@ test("one tutorial: three required lessons stage the canvas a block at a time, t
       load(id) { if (id === "\0learning-posthog") return 'export default { capture(name, props) { if (name === "creator_learning") window.__learningEvents.push(props); } };'; } }],
     server: { middlewareMode: true, watch: null }, esbuild: { jsx: "automatic" },
     resolve: { alias: { "@": `${appRoot}/src`, "@yumina/engine": `${appRoot}/../engine/src/index.ts` } } });
+  let stopEditorAutosave: (() => void) | undefined;
   const root = createRoot(document.getElementById("root")!);
   try {
     const { default: i18n } = await vite.ssrLoadModule("/src/lib/i18n.ts");
     await i18n.changeLanguage("en"); await i18n.loadNamespaces(["learning", "common"]);
     const { useEditorStore: store } = await vite.ssrLoadModule("/src/stores/editor.ts") as typeof import("@/stores/editor");
+    stopEditorAutosave = () => store.getState().stopAutosave();
     const { useUserProfileStore: profile } = await vite.ssrLoadModule("/src/stores/user-profile.ts") as typeof import("@/stores/user-profile");
     const { StudioLearningCenter } = await vite.ssrLoadModule("/src/features/studio/learn/studio-learning.tsx");
     const { readLearningProgress, writeLearningProgress } = await vite.ssrLoadModule("/src/features/studio/learn/learning-catalog.ts");
@@ -57,7 +59,12 @@ test("one tutorial: three required lessons stage the canvas a block at a time, t
     const state = (id: string) => lessonCard(id)?.getAttribute("data-learning-state");
     const catalogOpen = () => Boolean(document.querySelector('[data-learning="list"], [data-learning="start"]'));
     const listOpen = () => Boolean(document.querySelector('[data-learning="list"]'));
-    const start = async () => act(async () => (document.querySelector('[data-learning="start"]') as HTMLButtonElement).click());
+    // 下一课 ignores clicks for a moment after the end card appears (a run of
+    // clicks on 完成 used to fall through into it); a learner reads it first.
+    const start = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      await act(async () => (document.querySelector('[data-learning="start"]') as HTMLButtonElement).click());
+    };
 
     // ── A first visit goes straight into lesson 1, with no list of what is locked ──
     assert.equal(catalogOpen(), false, "no catalog before the first three");
@@ -263,6 +270,9 @@ test("one tutorial: three required lessons stage the canvas a block at a time, t
     assert.ok(!JSON.stringify(captured).includes("mushroom"), "story contents never enter the analytics payload");
   } finally {
     await act(async () => root.unmount());
+    // The real editor route stops persistence on unmount. This harness mounts
+    // only the guide, so its sample edits otherwise leave autosave retries alive.
+    stopEditorAutosave?.();
     // Radix restores focus on the next task. Drain that cleanup while DOM
     // globals still belong to this window, before restoring Node's Event.
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });

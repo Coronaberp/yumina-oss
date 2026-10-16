@@ -43,17 +43,20 @@ function trimFixed(n: number, digits: number): string {
 
 // ── Strip directives (inlined from @/lib/strip-directives) ─────────
 // Strips state-change directives from streaming text so they never show.
+// Keep in step with src/lib/strip-directives.ts: ids may carry a middle dot
+// (艾丝·华伦斯坦) and spaces after a dot (relations.Riveria Ljos Alf), and a
+// bare-scalar merge ([relations.X: merge 20]) is hidden too.
 
 const DIR_STANDARD =
-  /\[([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
+  /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|merge|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
 const DIR_AUDIO =
   /\[audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\]/gu;
 const DIR_JSON =
-  /\[([\w\p{L}\p{N}.$-]+):\s*(set|merge|push|delete)\s+(\{[\s\S]*?\}|\[[\s\S]*?\])\]/gu;
+  /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|merge|push|delete)\s+(\{[\s\S]*?\}|\[[\s\S]*?\])\]/gu;
 const DIR_UPDATE_VAR = /<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi;
 const DIR_STRUCTURAL_XML =
   /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim;
-const DIR_TRAILING = /\[[\w\p{L}\p{N}.$-]+:[^\]]*$/u;
+const DIR_TRAILING = /\[[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*:[^\]]*$/u;
 
 function stripDirectives(text: string): string {
   return text
@@ -77,6 +80,11 @@ interface MessageBubbleProps {
   swipeControls?: React.ReactNode;
   rendererComponent?: React.ComponentType<Record<string, unknown>> | null;
   variables?: Record<string, unknown>;
+  /** Moves when the card's `renderBubble` closure is replaced, i.e. when the
+   *  card's own component state changed. Given only to the bubbles a card can
+   *  still act on (the opening, the newest message), so a button there that
+   *  toggles card state redraws without redrawing the whole transcript. */
+  rendererEpoch?: number;
   messageIndex?: number;
   showRoleLabel?: boolean;
   /** This is the session's opening. Handed to the message renderer, which may
@@ -104,6 +112,8 @@ const FAILURE_TEXT_KEYS: Record<ChatErrorCode, ChatStringKey> = {
   NO_API_KEY: "errNoApiKey",
   MODEL_UNAVAILABLE: "errModelUnavailable",
   NO_CREDITS: "errNoCredits",
+  PRIVATE_API_BALANCE: "errPrivateApiBalance",
+  UPSTREAM_BALANCE: "errUpstreamBalance",
   RATE_LIMITED: "errRateLimited",
   CONTEXT_TOO_LONG: "errContextTooLong",
   UPSTREAM_BUSY: "upstreamBusy",
@@ -154,9 +164,13 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   // While the tag itself is still arriving (`[spea`) show nothing yet: the
   // label would otherwise flash "Narrator" for a token before the face lands.
   const holdingSpeakerTag = isStreaming && isPartialLeadingSpeakerTag(rawContent);
+  // Stored content went through the engine parser, which already removed every
+  // directive it recognised; stripping it again only drops tags an older parser
+  // missed (e.g. [relations.艾丝·华伦斯坦: +20] stored before keys could hold
+  // a middle dot), so old chats stop showing them.
   const displayContent = isStreaming
     ? holdingSpeakerTag ? "" : stripDirectives(stripLeadingSpeakerTag(rawContent))
-    : rawContent;
+    : stripDirectives(rawContent);
   // A card's own renderer gets the reply without per-turn pictures; the host
   // draws them under its bubble (see turn-image-embeds.ts).
   const rendererText = useMemo(() => {
@@ -702,7 +716,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
  * This is critical for performance: during streaming, only the active
  * streaming bubble re-renders, not the 500 completed messages above it.
  */
-export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
+export function messageBubblePropsEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
   // Return true = skip re-render (props are equal)
   if (prev.message.id !== next.message.id) return false;
   if (prev.message.content !== next.message.content) return false;
@@ -714,6 +728,14 @@ export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
   if (prev.isEditing !== next.isEditing) return false;
   if (prev.editContent !== next.editContent) return false;
   if (prev.rendererComponent !== next.rendererComponent) return false;
+  // A card's renderer reads both: game state through `variables`, its own
+  // component state through the closure behind `rendererEpoch`. Without them a
+  // played card's "show the input" button flipped its state and the bubble
+  // never drew it (the editor preview draws the opening another way, so it
+  // worked there).
+  // `variables` is the store's object, replaced once per state change.
+  if (prev.variables !== next.variables) return false;
+  if (prev.rendererEpoch !== next.rendererEpoch) return false;
   if (prev.messageIndex !== next.messageIndex) return false;
   if (prev.isGreeting !== next.isGreeting) return false;
   // Swipe: check by active swipe index (content changes on swipe)
@@ -725,5 +747,7 @@ export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
   // children/swipeControls elements, which this comparator can't diff.
   if (prev.actionsKey !== next.actionsKey) return false;
   return true;
-});
+}
+
+export const MessageBubble = React.memo(MessageBubbleInner, messageBubblePropsEqual);
 import { ModelFallbackBadge } from "./model-fallback-card";

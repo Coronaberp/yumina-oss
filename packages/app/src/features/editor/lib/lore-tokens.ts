@@ -1,4 +1,4 @@
-import { estimateTokens, isTokenizerReady, type WorldEntry } from "@yumina/engine";
+import { estimateTokens, isAlwaysSendEntry, isTokenizerReady, type WorldEntry } from "@yumina/engine";
 
 // PERF: cache token estimates keyed by the entry OBJECT. updateEntry replaces
 // only the edited entry's object (others keep identity), so on each keystroke
@@ -57,7 +57,8 @@ export function summarizeLoreTokens(entries: readonly WorldEntry[]): LoreTokenSu
     total += tk;
     if (e.enabled === false) { s.disabled += tk; continue; }
     if (e.role === "greeting") { s.greeting += tk; greetingCount++; continue; }
-    if (e.alwaysSend) { s.alwaysSent += tk; continue; }
+    // Variable conditions gate an always-send entry; it is not a fixed cost.
+    if (isAlwaysSendEntry(e)) { s.alwaysSent += tk; continue; }
     if ((e.keywords?.length ?? 0) > 0 || (e.conditions?.length ?? 0) > 0) s.keywordTriggered += tk;
     else s.dormant += tk;
   }

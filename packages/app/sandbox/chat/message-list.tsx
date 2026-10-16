@@ -82,6 +82,8 @@ function isHistoryViewportUnderfilled(
 
 interface MessageListProps {
   rendererComponent: React.ComponentType<Record<string, unknown>> | null;
+  /** See MessageBubble's `rendererEpoch`; handed only to the opening and the newest message. */
+  rendererEpoch?: number;
   /**
    * A message style and 特殊写法 rules from the card's interface document,
    * drawn by the platform (designed-message.tsx). Ignored when the card brings
@@ -95,7 +97,7 @@ interface MessageListProps {
 const INITIAL_MESSAGE_WINDOW = 50;
 const AT_BOTTOM_THRESHOLD_PX = 80;
 
-export function MessageList({ rendererComponent: ownRenderer, design, fontMap }: MessageListProps) {
+export function MessageList({ rendererComponent: ownRenderer, rendererEpoch, design, fontMap }: MessageListProps) {
   const api = useYumina();
   const designRenderer = useDesignRenderer(ownRenderer ? null : design, fontMap, {
     sendMessage: (text) => api.sendMessage(text),
@@ -752,6 +754,7 @@ export function MessageList({ rendererComponent: ownRenderer, design, fontMap }:
                 createdAt: new Date().toISOString(),
               }}
               rendererComponent={rendererComponent}
+              rendererEpoch={rendererEpoch}
               variables={gameState as Record<string, unknown>}
               messageIndex={0}
               isGreeting
@@ -836,6 +839,7 @@ export function MessageList({ rendererComponent: ownRenderer, design, fontMap }:
               <MessageBubble
                 message={message}
                 rendererComponent={rendererComponent}
+                rendererEpoch={isLastMessage || message.id === greetingId ? rendererEpoch : undefined}
                 variables={messageVars as Record<string, unknown>}
                 messageIndex={idx}
                 showRoleLabel={showRoleLabel}
@@ -895,6 +899,7 @@ export function MessageList({ rendererComponent: ownRenderer, design, fontMap }:
             streamingContent={streamingContent}
             streamingReasoning={streamingReasoning}
             rendererComponent={rendererComponent}
+            rendererEpoch={rendererEpoch}
             variables={gameState as Record<string, unknown>}
             messageIndex={activeMessages.length}
           />

@@ -256,6 +256,7 @@ export {
   sendsEveryTurn,
   isUiBoundEntry,
   isVariableBoundEntry,
+  isAlwaysSendEntry,
 } from "./lorebook/entry-triggers.js";
 export type { EntryTriggerCategory } from "./lorebook/entry-triggers.js";
 export { checkConditions, evaluateCondition } from "./state/condition-evaluator.js";
@@ -282,6 +283,7 @@ export {
   applyContinuityPlan,
   CONTINUITY_THRESHOLDS,
   CONTINUITY_KEEP,
+  CONTINUITY_EMPTY,
   CONTINUITY_NONE,
   CONTINUITY_PLAYLIST,
 } from "./continuity/index.js";
@@ -344,7 +346,7 @@ export {
 
 // Parser
 export { ResponseParser } from "./parser/response-parser.js";
-export { applyReplyRules, readPairs } from "./parser/reply-rules.js";
+export { applyReplyRules, readPairs, replyRouteOps } from "./parser/reply-rules.js";
 export type { ReplyRule, ReplyRuleRoute, ReplyRulesResult } from "./parser/reply-rules.js";
 export type { ParseResult } from "./parser/response-parser.js";
 export { StructuredResponseParser } from "./parser/structured-response-parser.js";
@@ -407,6 +409,8 @@ export {
 } from "./world/background.js";
 export type { ResolvedBackground } from "./world/background.js";
 export { mergeWorldDefinition, deepEqual } from "./world/merge.js";
+export { revertTurn } from "./world/revert-turn.js";
+export type { TurnRevertResult } from "./world/revert-turn.js";
 export type { WorldMergeResult, WorldMergeConflict } from "./world/merge.js";
 
 // Material-change detection (edit re-review gate for published worlds)
@@ -480,14 +484,19 @@ export type {
 export { SystemRegistry, BUILT_IN_SYSTEMS } from "./systems/registry.js";
 
 // ── Card graph (canvas projection of the world definition) ──
-export { toGraph, applyGraphEdit, WORLD_LOGIC_KEYS } from "./graph/compiler.js";
+export { toGraph, applyGraphEdit, seedKeyOf, WORLD_LOGIC_KEYS } from "./graph/compiler.js";
 export type { ToGraphOptions } from "./graph/compiler.js";
 export { extractVariableReadsFromFiles } from "./graph/variable-read-scan.js";
 export { uiDocVariableRefs, pageVariableRefs, pageBehaviorRefs, remapUiVariable, remapPageVariable, remapDocVariable } from "./ui-doc/variable-refs.js";
-export { diffGraphs } from "./graph/graph-diff.js";
-export type { GraphDiff } from "./graph/graph-diff.js";
+export { contentChangedNodeIds, diffGraphs } from "./graph/graph-diff.js";
+export type { GraphDiff, GraphDiffContent } from "./graph/graph-diff.js";
 export type { VariableReadScan } from "./graph/variable-read-scan.js";
 export { extractAiCallsFromFiles } from "./graph/ai-call-scan.js";
+export {
+  AUTHOR_SAMPLING_LIMITS, STATION_DEFAULT_TEMPERATURE, STATION_TEMPERATURE_LIMITS, STATION_MAX_TOKENS_LIMITS,
+  clampAuthorSampling, clampToRange, resolveStorySampling,
+} from "./ai/sampling-policy.js";
+export type { SamplingKey, SamplingParams } from "./ai/sampling-policy.js";
 export type { FrontendAiCall, FrontendAiCallKind } from "./graph/ai-call-scan.js";
 export { frontendManifest, frontendFileFacts } from "./graph/frontend-manifest.js";
 export type { FrontendManifest, FrontendFileFacts, FrontendApiFamily } from "./graph/frontend-manifest.js";
@@ -602,7 +611,7 @@ export type {
   UiMessageMatch,
   UiMessageShow,
 } from "./ui-doc/types.js";
-export { compileUiDoc, uiDocEditCss, uiDocInk, UI_THEME_TOKENS } from "./ui-doc/compile.js";
+export { compileUiDoc, uiDocEditCss, uiDocInk, UI_THEME_TOKENS, uiDocDrawsChat } from "./ui-doc/compile.js";
 export type { InkPlan, ElementInk } from "./ui-doc/ink.js";
 export {
   layoutMessage,
@@ -630,12 +639,12 @@ export type { UiThemeChoice, UiThemeFont, UiThemePreset, UiThemeRadius } from ".
 export { readableThemeTokens, contrastRatio, parseCssColor, readableOn, resolveCssColor, MIN_TEXT_CONTRAST } from "./ui-doc/contrast.js";
 export { UI_TEMPLATES, getUiTemplate, detectUiTemplate, fillTemplateMacros } from "./ui-doc/templates.js";
 export {
-  METER_ROW_H, METER_TRACK_FILLS, addMeterRow, addStackedRow, boundVariableOf, boxOn, canReflow, duplicateGroup,
+  METER_ROW_H, METER_TRACK_FILLS, ungroupElements, addMeterRow, addStackedRow, boundVariableOf, boxOn, canReflow, duplicateGroup,
   fillColorOf, findElementPage, groupOf, meterFillsFor, rebindVariable, reflow,
   removeGroup, updateElements, withFillColor,
   addElement, addPage, duplicatePage, newElement, removePage, renamePage, elementActions, mapElementActions, syncGreetingActions,
   freeSpotOn, coveredOn, isOnCanvas, presenceOf, setEntryPage, movePage, withAutoVariable, withoutAutoVariables, nameFromQuestion,
-  fitTextBox, fitTextOnPage, pushBelowGrown, textHeightNeeded, textWidthNeeded, textStyleAffectsHeight,
+  fitTextBox, fitTextOnPage, fitTextsOnPage, followResized, pushBelowGrown, textHeightNeeded, textWidthNeeded, textStyleAffectsHeight,
   THEME_TEXT,
 } from "./ui-doc/edit.js";
 export type { NewElementInput, NewMeterRow, UiAddableType, UiCanvas, UiEditTarget } from "./ui-doc/edit.js";

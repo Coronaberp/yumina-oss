@@ -129,6 +129,11 @@ const STATIC_META: Record<string, PageMeta> = {
       publisher: { "@type": "Organization", name: "Yumina", url: SITE_URL },
     },
   },
+  "/app/updates": {
+    title: "Updates",
+    description: "What's new in Yumina: features, improvements and fixes, newest first.",
+    url: `${SITE_URL}/app/updates`,
+  },
   "/login": {
     title: "Sign in",
     description: "Welcome back to Yumina - hope to make you happy today.",

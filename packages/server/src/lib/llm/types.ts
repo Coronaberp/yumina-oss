@@ -78,6 +78,9 @@ export interface GenerateParams {
   disableReasoning?: boolean;
   /** Message indices for explicit cache breakpoints (provider-specific optimization) */
   cacheBreakpoints?: number[];
+  /** Claude cache lifetime for those message breakpoints (default "1h"). Must
+   *  not exceed the TTL of any cache_control block before them. */
+  cacheTtl?: "5m" | "1h";
   /** Ordered model IDs the provider may retry with for provider-specific policy failures. */
   fallbackModels?: string[];
   /**
@@ -109,6 +112,9 @@ export interface StreamChunk {
     totalTokens: number;
     /** Completion tokens spent on hidden reasoning, when reported upstream. */
     reasoningTokens?: number;
+    /** Prompt tokens read from / written to the provider's prompt cache. */
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
     /** Actual USD-denominated account charge when reported by the provider. */
     providerCostUsd?: number;
     providerRequestId?: string;
@@ -135,6 +141,8 @@ export interface StreamChunk {
   failedProviderSlug?: string;
   /** The selected model cannot serve this turn. No different paid model was called. */
   fallbackReason?: import("@yumina/shared").ModelFallbackReason;
+  /** On a 429 error chunk: the provider's Retry-After, in milliseconds. */
+  retryAfterMs?: number;
   /** On done chunks: routing slug of the upstream provider that actually served
    *  this response. A turn can finish with HTTP 200 and still be useless (no
    *  visible text), which never produces an error chunk — this is how the retry

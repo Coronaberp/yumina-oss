@@ -3245,7 +3245,15 @@
         "paper": "Paper",
         "night": "Night",
         "terminal": "Terminal",
-        "blossom": "Blossom"
+        "blossom": "Blossom",
+        "velvet": "Velvet",
+        "harbor": "Harbor",
+        "linen": "Linen",
+        "coolant": "Coolant",
+        "moss": "Moss",
+        "tape": "Tape",
+        "gilded": "Gilded",
+        "tavern": "Tavern"
       },
       "fontName": {
         "sans": "Sans",
@@ -3273,13 +3281,29 @@
         "portrait-scene": "Portrait scene",
         "adventure-hud": "Adventure HUD",
         "stat-panel": "Stat panel",
-        "character-sheet": "Character sheet"
+        "character-sheet": "Character sheet",
+        "chapter-portrait": "Chapter Portrait",
+        "masthead": "Masthead",
+        "margin-notes": "Margin Notes",
+        "status-strip": "Status Strip",
+        "night-card": "Night Card",
+        "cassette": "Cassette",
+        "art-split": "Art Split",
+        "guild-card": "Guild Card"
       },
       "presetHint": {
         "portrait-scene": "Portrait + two meters + a details page. For a card about one character.",
         "adventure-hud": "Where you are + day and time + two meters. For text adventure and exploration.",
         "stat-panel": "Four meters + gold + day. For raising, managing, surviving.",
-        "character-sheet": "The player's own name, role, location and story phase. For roleplay."
+        "character-sheet": "The player's own name, role, location and story phase. For roleplay.",
+        "chapter-portrait": "A chapter banner across the top. The right column has the portrait, a mood line and three meters.",
+        "masthead": "Card name, four meters and the cast in a band at the top, with the conversation below.",
+        "margin-notes": "Light background with three notes on the right: title and place, four meters, and the people you know.",
+        "status-strip": "A strip under the input box showing time, gold, place, stamina, energy and who is around.",
+        "night-card": "The current day in the top right, and a character card in the bottom right with mood, place, four meters and the people you know.",
+        "cassette": "A cassette under the input box with the card name on its label, next to the current chapter, place and mood.",
+        "art-split": "The portrait fills the right half, with the card name and two meters at the bottom.",
+        "guild-card": "A parchment card on the left with the player's name, class, rank, gold, stamina and energy."
       },
       "vars": {
         "portrait": "Portrait",
@@ -3297,13 +3321,17 @@
         "playerRole": "Role",
         "gender": "Gender",
         "age": "Age",
-        "phase": "Story Phase"
+        "phase": "Story Phase",
+        "mood": "Mood",
+        "rank": "Adventurer rank"
       },
       "varDefaults": {
         "timeOfDay": "Morning",
         "location": "Somewhere unnamed",
         "playerRole": "Traveller",
-        "phase": "Prologue"
+        "phase": "Prologue",
+        "mood": "Calm",
+        "rank": "Copper"
       },
       "s": {
         "common": {
@@ -3322,10 +3350,11 @@
           "actionWaitSays": "I don't answer, and wait for them to speak first.",
           "toolRewind": "Rewind",
           "toolRegenerate": "Regenerate",
-          "toolCopy": "Copy"
+          "toolCopy": "Copy",
+          "castLabel": "Cast"
         },
         "portrait-scene": {
-          "portraitEmpty": "Portrait goes here — add one in Card details, or swap it with the Portrait variable",
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
           "meterPrimary": "Affection",
           "meterSecondary": "Stamina"
         },
@@ -3350,6 +3379,65 @@
           "phaseLabel": "Story phase",
           "meterPrimary": "Affection",
           "meterSecondary": "Stamina"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy"
+        },
+        "masthead": {
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "goldFormat": "Gold {gold}",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy",
+          "meterThird": "Affinity",
+          "meterFourth": "Progress"
+        },
+        "margin-notes": {
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy",
+          "meterFourth": "Progress"
+        },
+        "status-strip": {
+          "whenLabel": "Time",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "Gold",
+          "placeLabel": "Location",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy"
+        },
+        "night-card": {
+          "clockFormat": "Day {day}",
+          "whenFormat": "Day {day} · {timeOfDay}",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina",
+          "meterThird": "Energy",
+          "meterFourth": "Progress"
+        },
+        "cassette": {
+          "sideFormat": "Side A · Day {day}",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "Mood",
+          "meterPrimary": "Affinity"
+        },
+        "art-split": {
+          "portraitEmpty": "Add a portrait\nSelect this, then pick an image on the right",
+          "meterPrimary": "Affinity",
+          "meterSecondary": "Stamina"
+        },
+        "guild-card": {
+          "guildTitle": "Adventurer",
+          "guildSubFormat": "Registered at {location}",
+          "nameLabel": "Name",
+          "roleLabel": "Class",
+          "rankLabel": "Rank",
+          "goldLabel": "Gold",
+          "meterPrimary": "Stamina",
+          "meterSecondary": "Energy"
         }
       }
     },
@@ -3481,7 +3569,9 @@
       "randomMax": "Max",
       "randomFromPlaceholder": "One per line; one is picked at random",
       "randomFromHint": "When pressed, one line above is picked at random and written to this variable. The card decides, not the AI.",
-      "randomNumberHint": "When pressed, a whole number in this range is picked at random and written to this variable."
+      "randomNumberHint": "When pressed, a whole number in this range is picked at random and written to this variable.",
+      "pickStartImage": "Choose an image",
+      "changeStartImage": "Change image"
     },
     "style": {
       "none": "None",
@@ -3800,7 +3890,7 @@
       "newPage": "New",
       "title": "New · pick a template",
       "tutorTip": "Here are 18 ready-made templates ✧ The top group is for openings (before the story starts); the rest are pages players open from the menu while playing. Click one to add it to your card, and it just works. Don't want one yet? Close this with the × — you can always come back with New.",
-      "sub": "22 ready-made templates (4 whole screens, 18 pages), already wired with variables, buttons and what the AI is told — add one and it plays. Colours, sizes and positions are still yours to change.",
+      "sub": "30 ready-made templates (12 whole screens, 18 pages), already wired with variables, buttons and what the AI is told — add one and it plays. Colours, sizes and positions are still yours to change.",
       "groupOpening": "Openings · before the story starts",
       "blank": "Blank page",
       "blankDesc": "Nothing on it. Arrange it yourself.",
@@ -5076,10 +5166,14 @@
     "blurb": "Apps the player opens from a dock beside the chat: messages, relationships, a feed, the clock… Each one keeps its data in one variable and the AI fills it in as the story goes — the preview above each card is the real app. You don't build anything.",
     "add": "Add app",
     "added": "Added — in the dock",
-    "footnote": "The app's words follow the card's language (Chinese, English or Spanish). Remove it from the Bundles page and its button, data and rules go with it.",
+    "footnote": "The app's words follow the card's language (Chinese, English or Spanish). Removing an app takes its dock button, data and rules with it.",
     "sets": "Starter sets — what most cards of each kind track",
     "addSet": "Add all four",
-    "setAdded": "All added"
+    "setAdded": "All added",
+    "remove": "Remove",
+    "removeSet": "Remove all four",
+    "removed": "Removed {{name}}",
+    "varDeleteHint": "This variable is the {{name}} app's data. Deleting it removes the whole app, dock button included."
   },
   "worldChanges": {
     "title": "Update “{{name}}”?",

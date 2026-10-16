@@ -66,3 +66,15 @@ test("large variable values are bounded, omissions explicit, and negative decisi
   assert.equal(audit.changes[0]!.oldValue.truncated, true);
   assert.equal(audit.repair.audit!.checked.aff, 0.1);
 });
+
+test("a truncated audit value never keeps half an emoji", () => {
+  // Prod 2026-10-15: the 🧙 icon of an MMO map variable straddled the 512 cut;
+  // the lone \ud83d made Postgres reject the swipe and every map turn failed.
+  const map = { cells: [{ desc: "x".repeat(482), icon: "🧙‍♂️" }] };
+  assert.match(JSON.stringify(map).slice(511, 513), /^[\ud800-\udbff][\udc00-\udfff]$/);
+  const args = { ...fixture(), state: { variables: { map, note: "y".repeat(511) + "😀" + "z" }, turnCount: 2 },
+    changes: [{ variableId: "map", oldValue: map, newValue: map }, { variableId: "note", oldValue: "", newValue: "y".repeat(511) + "😀z" }] };
+  const encoded = JSON.stringify(buildVariableAudit(args));
+  // JSON.stringify escapes only a lone surrogate; a whole emoji stays raw.
+  assert.ok(!encoded.includes("\\ud"), "half an emoji would reach jsonb");
+});

@@ -208,7 +208,7 @@ test("session side completions share narrative context without changing gameplay
     assert.doesNotMatch(text((await request({ context: "session" })).params), /\[User Persona\]|STORY/);
   });
   await t.test("explicit call settings win, session settings forward sampling and remain capped", async () => {
-    const overrides = { maxTokens: 12000, temperature: 0.5, topP: 0.6, frequencyPenalty: 0.2, presencePenalty: -0.3, topK: 40, minP: 0.1, reasoningEffort: "high", streaming: false };
+    const overrides = { maxTokens: 12000, temperature: 0.5, topP: 0.6, frequencyPenalty: 0.2, presencePenalty: 0.3, topK: 40, minP: 0.1, reasoningEffort: "high", streaming: false };
     const inherited = (await request({ context: "session", overrides })).params;
     assert.equal(inherited.maxTokens, 8192); assert.equal(inherited.temperature, 0.5);
     for (const key of ["topP", "frequencyPenalty", "presencePenalty", "topK", "minP", "reasoningEffort"] as const) assert.equal(inherited[key], overrides[key]);

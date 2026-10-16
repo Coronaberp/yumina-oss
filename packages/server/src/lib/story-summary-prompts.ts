@@ -1,3 +1,4 @@
+import { NARRATIVE_EVIDENCE_RULES } from "./narrative-evidence.js";
 import type { ChatMessage } from "./llm/types.js";
 import { buildSummaryLanguageInstruction, type SessionSummaryLanguage } from "./summary-language.js";
 import { StorySummaryTruncatedError } from "./summary-episode-recovery.js";
@@ -50,6 +51,7 @@ export function buildEpisodeSummaryPrompt(args: {
       role: "system",
       content: [
         "You summarize one contiguous chunk of an interactive-fiction roleplay transcript.",
+        NARRATIVE_EVIDENCE_RULES,
         "Your summary will be used later to compact a long-running play session.",
         "Preserve concrete continuity facts with names, places, causes, outcomes, and current status. Do not invent details. Return only valid JSON.",
         "Keep the JSON response concise, including all keys and values. Token, sentence, and list sizes below are writing targets, not strict quotas. Use more space when needed to preserve essential continuity and finish the complete JSON object.",

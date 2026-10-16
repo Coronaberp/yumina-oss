@@ -67,6 +67,13 @@ function hasPath(eff: unknown): eff is { path: string } {
   return typeof (eff as { path?: unknown } | null)?.path === "string";
 }
 
+/** The variable a path lives in: `inv[0].n` and `inv.weapons` are both `inv`.
+ *  Every read, write and wire of the projection takes the root this one way —
+ *  a write path cut at the first dot only kept `inv[0]`, which is no
+ *  variable, so the behaviour's wire vanished and the variable was reported
+ *  as read by the interface but never written. */
+const pathRoot = (path: string): string => path.split(/[.[]/, 1)[0]!;
+
 function port(id: string, type: GraphPort["type"], direction: GraphPort["direction"], label?: string): GraphPort {
   return label ? { id, type, direction, label } : { id, type, direction };
 }
@@ -143,7 +150,7 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
   /** Events emitted by reaction effects — the sources of reaction chains. */
   const emits: Array<{ rid: string; idx: number; event: GameEvent }> = [];
   for (const r of reactionList) {
-    (r.then ?? []).forEach((eff, idx) => {
+    (r.custom ? [] : r.then ?? []).forEach((eff, idx) => {
       if (!eff) return;
       if (eff.type === "emit") {
         emits.push({ rid: r.id, idx, event: eff.event });
@@ -188,10 +195,10 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
     if (id) writtenVarIds.add(id);
   }
   for (const r of reactionList) {
-    for (const eff of r.then ?? []) {
+    for (const eff of r.custom ? [] : r.then ?? []) {
       if (!hasPath(eff)) continue;
       if (eff.path.startsWith("@")) continue; // system effects, not value writes
-      const rootId = eff.path.split(".")[0]!;
+      const rootId = pathRoot(eff.path);
       if (varIds.has(rootId)) writtenVarIds.add(rootId);
     }
   }
@@ -607,11 +614,11 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
     const readEdges = (list: readonly Condition[] | undefined, toPort: "condition" | "stop") => {
       (list ?? []).forEach((c, i) => {
         if (!c || typeof c.variableId !== "string") return;
-        const vid = c.variableId.split(/[.[]/, 1)[0]!;
+        const vid = pathRoot(c.variableId);
         if (varIds.has(vid)) {
           edges.push({ id: `e:var:${vid}->reaction:${r.id}:${toPort}:${i}`, from: `var:${vid}`, fromPort: "read", to: `reaction:${r.id}`, toPort });
         }
-        const ref = typeof c.valueRef === "string" ? c.valueRef.split(/[.[]/, 1)[0]! : "";
+        const ref = typeof c.valueRef === "string" ? pathRoot(c.valueRef) : "";
         if (ref && varIds.has(ref) && ref !== vid) {
           edges.push({ id: `e:var:${ref}->reaction:${r.id}:${toPort}:${i}:ref`, from: `var:${ref}`, fromPort: "read", to: `reaction:${r.id}`, toPort });
         }
@@ -622,7 +629,7 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
 
     // THEN: variable writes, entry toggles, audio plays. Emits surface as the
     // chain edges above; the remaining @ system effects have no node target.
-    (r.then ?? []).forEach((eff, i) => {
+    (r.custom ? [] : r.then ?? []).forEach((eff, i) => {
       if (!hasPath(eff)) return;
       if (eff.path.startsWith("@prompt.entry.")) {
         const eid = eff.path.slice("@prompt.entry.".length);
@@ -668,7 +675,7 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
       }
       const path = eff.path.startsWith("@vars.enabled.") ? eff.path.slice("@vars.enabled.".length) : eff.path;
       if (eff.path.startsWith("@") && path === eff.path) return; // other @ system effects: no node target
-      const rootId = path.split(".")[0]!;
+      const rootId = pathRoot(path);
       if (!varIds.has(rootId)) return;
       const label = eff.path.startsWith("@vars.enabled.") ? "toggle" : (eff.operation ?? "set");
       edges.push({
@@ -738,7 +745,7 @@ const idOf = (nodeId: string) => nodeId.slice(nodeId.indexOf(":") + 1);
 
 /** The initialVariables key an opening uses for a variable — the variable id,
  *  or its NAME on legacy cards. Null when the opening has no seed for it. */
-function seedKeyOf(world: WorldLogic, greetingEntryId: string, variableId: string): string | null {
+export function seedKeyOf(world: Pick<WorldLogic, "entries" | "variables">, greetingEntryId: string, variableId: string): string | null {
   const iv = (world.entries ?? []).find((e) => e.id === greetingEntryId)?.initialVariables;
   if (!iv) return null;
   if (variableId in iv) return variableId;
@@ -864,7 +871,10 @@ export function applyGraphEdit(world: WorldDefinition, patch: GraphPatch): World
           ),
         };
       }
-      // var:X → entry:E — gate the entry on a condition
+      // var:X → entry:E — gate the entry on a condition. Only the condition
+      // is written: the conditions are what gate the entry (isVariableBoundEntry),
+      // and every display reads them ahead of `alwaysSend`, so the flag stays as
+      // the creator set it and pulling the wire hands the entry back unchanged.
       if (from.startsWith("var:") && to.startsWith("entry:")) {
         const eid = idOf(to);
         return {
@@ -916,7 +926,7 @@ export function applyGraphEdit(world: WorldDefinition, patch: GraphPatch): World
             const eff = r.then[idx];
             if (!eff || eff.type !== "set") return r;
             const p = eff.path.startsWith("@vars.enabled.") ? eff.path.slice("@vars.enabled.".length) : eff.path;
-            if (p.split(".")[0] !== vid) return r;
+            if (pathRoot(p) !== vid) return r;
             return { ...r, then: r.then.filter((_, i) => i !== idx) };
           }),
         };
@@ -1004,7 +1014,15 @@ export function applyGraphEdit(world: WorldDefinition, patch: GraphPatch): World
             if (e.id !== eid) return e;
             const c = (e.conditions ?? [])[idx];
             if (!c || c.variableId !== vid) return e;
-            return { ...e, conditions: e.conditions.filter((_, i) => i !== idx) };
+            const conditions = e.conditions.filter((_, i) => i !== idx);
+            // The last condition gone, the classic editor's "bound to variables"
+            // flag goes with it (as its own condition list does): left set, it
+            // gates the entry on nothing and the entry is never sent — with no
+            // wire left on the board to say why. `alwaysSend` is untouched, so
+            // an entry that was every-turn before the wire is every-turn again.
+            return conditions.length === 0 && e.variableBound
+              ? { ...e, conditions, variableBound: false }
+              : { ...e, conditions };
           }),
         };
       }

@@ -112,28 +112,111 @@ export type SmartImageResolution = typeof SMART_IMAGE_RESOLUTIONS[number];
  *  a run start that the wallet cannot cover.
  *
  *  `aspectRatios` / `resolutions` mirror OpenRouter's per-model
- *  `supported_parameters`, read from /api/v1/images/models on 2026-09-19.
- *  smart-image-capabilities.test.ts re-checks them against that endpoint. */
+ *  `supported_parameters`, read from /api/v1/images/models (2026-09-19, the
+ *  2026-10-08 additions on that day), and for the models only Comfy Router
+ *  serves, each provider's own schema. Every entry drew a real picture through
+ *  our client before it was listed. smart-image-capabilities.test.mjs re-checks
+ *  the OpenRouter ones against that endpoint. */
 export const SMART_IMAGE_4K_COST_FACTOR = 1.5;
 
 export const SMART_IMAGE_MODELS = [
-  { id: SMART_IMAGE_MODEL, key: "seedreamLite", name: "Seedream 5.0 Lite", estimatedCostUsd: 0.035, resolution: "2K", quality: undefined, supportsSeed: true,
-    resolutions: ["2K", "4K"],
-    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2"] },
-  { id: "bytedance-seed/seedream-5-0-pro", key: "seedreamPro", name: "Seedream 5.0 Pro", estimatedCostUsd: 0.093, resolution: "2K", quality: undefined, supportsSeed: true,
+  // ── Seedream (ByteDance) ──
+  { id: "bytedance-seed/seedream-5-0-flash", key: "seedreamFlash", family: "seedream", name: "Seedream 5.0 Flash", estimatedCostUsd: 0.018, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
     resolutions: ["1K", "2K"],
     aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2"] },
-  { id: "google/gemini-3.1-flash-image", key: "nanoBanana2", name: "Nano Banana 2", estimatedCostUsd: 0.14, resolution: "2K", quality: undefined, supportsSeed: false,
+  { id: SMART_IMAGE_MODEL, key: "seedreamLite", family: "seedream", name: "Seedream 5.0 Lite", estimatedCostUsd: 0.035, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: ["2K", "4K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2"] },
+  { id: "bytedance-seed/seedream-5-0-pro", key: "seedreamPro", family: "seedream", name: "Seedream 5.0 Pro", estimatedCostUsd: 0.093, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2"] },
+  // ── Nano Banana (Google). 2.1 succeeded 2 on 2026-10-06; 2 stays for its 512 tier until Google retires it. ──
+  { id: "google/gemini-nano-banana-2.1", key: "nanoBanana21", family: "nanoBanana", name: "Nano Banana 2.1", estimatedCostUsd: 0.07, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: ["1K", "2K", "4K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "4:1", "1:4", "8:1", "1:8"] },
+  { id: "google/gemini-3.1-flash-image", key: "nanoBanana2", family: "nanoBanana", name: "Nano Banana 2", estimatedCostUsd: 0.14, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: true,
     resolutions: ["512", "1K", "2K", "4K"],
     aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "4:1", "1:4", "8:1", "1:8"] },
-  { id: "google/gemini-3-pro-image", key: "nanoBananaPro", name: "Nano Banana Pro", estimatedCostUsd: 0.24, resolution: "2K", quality: undefined, supportsSeed: false,
+  { id: "google/gemini-3-pro-image", key: "nanoBananaPro", family: "nanoBanana", name: "Nano Banana Pro", estimatedCostUsd: 0.24, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: true,
     resolutions: ["1K", "2K", "4K"],
     aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9"] },
-  { id: "openai/gpt-image-2", key: "gptImage2", name: "GPT Image 2", estimatedCostUsd: 0.45, resolution: undefined, quality: "high", supportsSeed: false,
-    // No resolution knob at all — this one is sized by `quality`, which we pin high.
+  // ── GPT Image (OpenAI). No resolution knob: these are sized by `quality`.
+  //    2.5's tiers sit one step below 2's, so Flare runs xhigh and Sunburst max. ──
+  { id: "openai/gpt-image-2.5-flare", key: "gptImage25Flare", family: "gptImage", name: "GPT Image 2.5 Flare", estimatedCostUsd: 0.075, resolution: undefined, quality: "xhigh", supportsSeed: false, supportsReference: true,
     resolutions: [],
     aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  { id: "openai/gpt-image-2.5-sunburst", key: "gptImage25Sunburst", family: "gptImage", name: "GPT Image 2.5 Sunburst", estimatedCostUsd: 0.17, resolution: undefined, quality: "max", supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  { id: "openai/gpt-image-2", key: "gptImage2", family: "gptImage", name: "GPT Image 2", estimatedCostUsd: 0.45, resolution: undefined, quality: "high", supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  // ── FLUX (Black Forest Labs). FLUX 3 at 4K is $0.61 an image, so it stops at 2K. ──
+  { id: "black-forest-labs/flux.2-pro", key: "flux2Pro", family: "flux", name: "FLUX.2 Pro", estimatedCostUsd: 0.045, resolution: undefined, quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  { id: "black-forest-labs/flux.2-max", key: "flux2Max", family: "flux", name: "FLUX.2 Max", estimatedCostUsd: 0.1, resolution: undefined, quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  { id: "black-forest-labs/flux-3-image", key: "flux3", family: "flux", name: "FLUX 3", estimatedCostUsd: 0.1, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2"] },
+  // ── Qwen Image (Alibaba) ──
+  { id: "qwen/qwen-image-3", key: "qwenImage3", family: "qwenImage", name: "Qwen Image 3", estimatedCostUsd: 0.03, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "2:1", "1:2", "4:1", "1:4"] },
+  { id: "qwen/qwen-image-3-pro", key: "qwenImage3Pro", family: "qwenImage", name: "Qwen Image 3 Pro", estimatedCostUsd: 0.075, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "2:1", "1:2", "4:1", "1:4"] },
+  // ── Grok Imagine (xAI). The plain model is served by Comfy Router only. ──
+  { id: "xai/grok-imagine-image", key: "grokImagine", family: "grokImagine", name: "Grok Imagine", estimatedCostUsd: 0.02, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: false,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "2:1", "1:2"] },
+  { id: "x-ai/grok-imagine-image-quality", key: "grokImagineQuality", family: "grokImagine", name: "Grok Imagine Quality", estimatedCostUsd: 0.07, resolution: "2K", quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "2:1", "1:2"] },
+  { id: "x-ai/grok-imagine-image-2.0", key: "grokImagine2", family: "grokImagine", name: "Grok Imagine 2.0", estimatedCostUsd: 0.08, resolution: "2K", quality: "medium", supportsSeed: false, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "2:1", "1:2"] },
+  // ── Served by Comfy Router only: Kling, Luma, Ideogram, Wan ──
+  { id: "kling/kling-image-o1", key: "klingO1", family: "kling", name: "Kling Image O1", estimatedCostUsd: 0.028, resolution: undefined, quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"] },
+  { id: "luma_2/uni-1", key: "lumaUni1", family: "luma", name: "Luma Uni-1", estimatedCostUsd: 0.043, resolution: undefined, quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "2:1", "1:2"] },
+  { id: "luma_2/uni-1-max", key: "lumaUni1Max", family: "luma", name: "Luma Uni-1 Max", estimatedCostUsd: 0.103, resolution: undefined, quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "2:1", "1:2"] },
+  { id: "ideogram/ideogram-4-5", key: "ideogram45", family: "ideogram", name: "Ideogram 4.5", estimatedCostUsd: 0.086, resolution: undefined, quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "2:1", "1:2"] },
+  { id: "wan/wan2.5-t2i-preview", key: "wan25", family: "wan", name: "Wan 2.5", estimatedCostUsd: 0.03, resolution: undefined, quality: undefined, supportsSeed: true, supportsReference: false,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "21:9", "9:21", "2:1", "1:2", "4:1", "1:4"] },
+  // ── Recraft, Krea, Microsoft MAI, Tencent Hunyuan ──
+  { id: "recraft/recraft-v4.1", key: "recraft41", family: "recraft", name: "Recraft V4.1", estimatedCostUsd: 0.035, resolution: undefined, quality: undefined, supportsSeed: false, supportsReference: false,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16"] },
+  { id: "krea/krea-2-medium-turbo", key: "krea2Turbo", family: "krea", name: "Krea 2 Turbo", estimatedCostUsd: 0.015, resolution: "1K", quality: undefined, supportsSeed: true, supportsReference: false,
+    resolutions: ["1K"],
+    aspectRatios: ["1:1", "4:3", "3:2", "2:3", "16:9", "9:16", "4:5"] },
+  { id: "krea/krea-2-medium", key: "krea2Medium", family: "krea", name: "Krea 2 Medium", estimatedCostUsd: 0.03, resolution: "1K", quality: undefined, supportsSeed: true, supportsReference: false,
+    resolutions: ["1K"],
+    aspectRatios: ["1:1", "4:3", "3:2", "2:3", "16:9", "9:16", "4:5"] },
+  { id: "krea/krea-2-large", key: "krea2Large", family: "krea", name: "Krea 2 Large", estimatedCostUsd: 0.06, resolution: "1K", quality: undefined, supportsSeed: true, supportsReference: false,
+    resolutions: ["1K"],
+    aspectRatios: ["1:1", "4:3", "3:2", "2:3", "16:9", "9:16", "4:5"] },
+  { id: "microsoft/mai-image-2.6", key: "maiImage26", family: "mai", name: "MAI-Image 2.6", estimatedCostUsd: 0.035, resolution: undefined, quality: undefined, supportsSeed: false, supportsReference: true,
+    resolutions: [],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"] },
+  { id: "tencent/hy-image-v3.5-preview", key: "hunyuan35", family: "hunyuan", name: "HunyuanImage 3.5", estimatedCostUsd: 0.025, resolution: "2K", quality: undefined, supportsSeed: true, supportsReference: true,
+    resolutions: ["1K", "2K"],
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "4:5", "5:4", "2:1", "1:2", "4:1", "1:4"] },
 ] as const;
+export type SmartImageFamily = typeof SMART_IMAGE_MODELS[number]["family"];
+/** Families in picker order; each family's versions follow in SMART_IMAGE_MODELS order, cheapest first. */
+export const SMART_IMAGE_FAMILIES = [...new Set(SMART_IMAGE_MODELS.map(model => model.family))] as SmartImageFamily[];
 export type SmartImageModelId = typeof SMART_IMAGE_MODELS[number]["id"];
 export const SMART_IMAGE_MODEL_IDS = SMART_IMAGE_MODELS.map(model => model.id) as [SmartImageModelId, ...SmartImageModelId[]];
 export function getSmartImageModel(id: string = SMART_IMAGE_MODEL) {
@@ -147,7 +230,7 @@ export function getSmartImageCapabilities(id: string = SMART_IMAGE_MODEL): {
   aspectRatios: SmartImageAspect[];
   resolutions: SmartImageResolution[];
 } {
-  const model = getSmartImageModel(id) ?? SMART_IMAGE_MODELS[0];
+  const model = getSmartImageModel(id) ?? getSmartImageModel(SMART_IMAGE_MODEL)!;
   return {
     aspectRatios: SMART_IMAGE_ASPECTS.filter(ratio => (model.aspectRatios as readonly string[]).includes(ratio)),
     resolutions: SMART_IMAGE_RESOLUTIONS.filter(size => (model.resolutions as readonly string[]).includes(size)),
@@ -158,7 +241,7 @@ export function getSmartImageCapabilities(id: string = SMART_IMAGE_MODEL): {
  *  request names one this model cannot do — a stored recipe, an older draft, or
  *  a model switch that left a 512 selection behind on a model without it. */
 export function resolveSmartImageResolution(id: string | undefined, requested: string | undefined): string | undefined {
-  const model = getSmartImageModel(id) ?? SMART_IMAGE_MODELS[0];
+  const model = getSmartImageModel(id) ?? getSmartImageModel(SMART_IMAGE_MODEL)!;
   if (requested && (model.resolutions as readonly string[]).includes(requested)) return requested;
   return model.resolution;
 }
@@ -196,6 +279,7 @@ export const IMAGE_SAMPLERS = [
   "dpmpp_2m",
   "dpmpp_2m_sde",
   "dpmpp_sde",
+  "er_sde",
 ] as const;
 export type ImageSampler = (typeof IMAGE_SAMPLERS)[number];
 
@@ -294,13 +378,14 @@ export function computeImagePrice(opts: {
 // build (and imported by the shared pool from `sourceUri` when it overflows
 // there). A style with a `family` is a second base model under that
 // family's card (动漫 · 经典 / 新番): same card, a variant switch.
-export type PlatformStyleArch = "sdxl" | "zimage";
+export type PlatformStyleArch = "sdxl" | "zimage" | "anima";
 
 export interface PlatformStyleInfo {
   slug: string;
   /** Worker-side model filename: a checkpoint (sdxl) or a diffusion model (zimage). */
   checkpointFilename: string;
-  /** "zimage" = Z-Image Turbo: its own text encoder and VAE, no SDXL LoRAs. */
+  /** "zimage" = Z-Image Turbo, "anima" = Anima: each with its own text
+   *  encoder and VAE, no SDXL LoRAs. */
   arch?: PlatformStyleArch;
   /** Variant of another style's card (that style's slug). */
   family?: string;
@@ -320,6 +405,9 @@ export interface PlatformStyleInfo {
    *  ships in a newer deployment build than the one serving traffic. */
   optIn?: boolean;
 }
+
+// Anima's model card negative, plus the sheets and panels it falls into on a lone "1girl, solo".
+const ANIMA_NEGATIVE = "worst quality, low quality, artist name, blurry, jpeg artifacts, chromatic aberration, multiple views, character sheet, reference sheet, split screen, comic";
 
 export const PLATFORM_STYLES: PlatformStyleInfo[] = [
   {
@@ -361,6 +449,22 @@ export const PLATFORM_STYLES: PlatformStyleInfo[] = [
     optIn: true,
   },
   {
+    // 动漫 · Anima: CircleStone's anime DiT (commercial use through Comfy's
+    // agreement with its creator). Tags and sentences both; groups, actions
+    // and scenery as written (bench 2026-10-10).
+    slug: "anime-anima",
+    family: "anime",
+    checkpointFilename: "anima-aesthetic-v1.1.safetensors",
+    arch: "anima",
+    dialect: "danbooru",
+    surchargeMushies: 10,
+    defaultNegative: ANIMA_NEGATIVE,
+    promptPrefix: "masterpiece, best quality, newest",
+    recommended: { steps: 30, cfg: 4, sampler: "er_sde", scheduler: "simple" },
+    sourceUri: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+    optIn: true,
+  },
+  {
     slug: "nsfw-anime",
     checkpointFilename: "plat_nsfw_anime.safetensors",
     dialect: "danbooru",
@@ -369,6 +473,20 @@ export const PLATFORM_STYLES: PlatformStyleInfo[] = [
     recommended: { steps: 28, cfg: 6, sampler: "euler_ancestral" },
     sourceUri: "https://civitai.com/api/download/models/2883731",
     civitaiModelId: 827184, // WAI-NSFW-illustrious-SDXL
+  },
+  {
+    // NSFW 动漫 · Anima: the same model with its "nsfw" safety tag up front.
+    slug: "nsfw-anima",
+    family: "nsfw-anime",
+    checkpointFilename: "anima-aesthetic-v1.1.safetensors",
+    arch: "anima",
+    dialect: "danbooru",
+    surchargeMushies: 10,
+    defaultNegative: ANIMA_NEGATIVE,
+    promptPrefix: "masterpiece, best quality, newest, nsfw",
+    recommended: { steps: 30, cfg: 4, sampler: "er_sde", scheduler: "simple" },
+    sourceUri: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+    optIn: true,
   },
   {
     slug: "realistic",

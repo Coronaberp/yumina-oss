@@ -5,6 +5,7 @@ import { MAX_AUTO_VERSIONS_PER_WORLD } from "@yumina/shared";
 import type { db } from "../db/index.js";
 import { user, worlds, worldPendingEdits, worldReviewSubmissions, worldVersions } from "../db/schema.js";
 import { estimateWorldCopyTokens } from "./world-copy-material.js";
+import { versionAssetRefs } from "./world-version-asset-refs.js";
 
 export type VersionExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
 export type VersionWorld = typeof worlds.$inferSelect;
@@ -42,6 +43,25 @@ export function versionMatchesLiveSql() {
     AND COALESCE(${worldVersions.ageRating}, 'all') = COALESCE(${worlds.ageRating}, 'all'))`;
 }
 
+/** The newest publish/live version holding exactly this content, if one was kept. */
+export async function findMaterialVersion(tx: VersionExecutor, worldId: string, material: VersionMaterial) {
+  const [existing] = await tx.select({ id: worldVersions.id, source: worldVersions.source, publishedAt: worldVersions.publishedAt }).from(worldVersions).where(and(
+    eq(worldVersions.worldId, worldId), inArray(worldVersions.source, ["publish", "live"]),
+    sql`(${worldVersions.schema} - 'name') = (${JSON.stringify(material.schema)}::jsonb - 'name')`,
+    sql`${worldVersions.thumbnailUrl} IS NOT DISTINCT FROM ${material.thumbnailUrl}`,
+    sql`COALESCE(${worldVersions.ageRating}, 'all') = ${material.ageRating ?? "all"}`,
+  )).orderBy(desc(worldVersions.createdAt), desc(worldVersions.id)).limit(1);
+  return existing ?? null;
+}
+
+/** What players last saw of this world, even if it has since been unpublished. */
+export async function latestLiveVersionId(tx: VersionExecutor, worldId: string) {
+  const [row] = await tx.select({ id: worldVersions.id }).from(worldVersions)
+    .where(and(eq(worldVersions.worldId, worldId), eq(worldVersions.source, "live")))
+    .orderBy(sql`${worldVersions.publishedAt} DESC NULLS LAST`, desc(worldVersions.createdAt)).limit(1);
+  return row?.id ?? null;
+}
+
 /** Caller holds the world lock. Automatic retention never consumes named save slots. */
 export async function captureAutomaticVersion(
   tx: VersionExecutor,
@@ -54,12 +74,7 @@ export async function captureAutomaticVersion(
   // Reuse saved content across Update, submission and approval. Only an actual
   // publication can promote it to live; matching named saves remain independent.
   if (source === "publish" || source === "live") {
-    const [existing] = await tx.select({ id: worldVersions.id, source: worldVersions.source, publishedAt: worldVersions.publishedAt }).from(worldVersions).where(and(
-      eq(worldVersions.worldId, world.id), inArray(worldVersions.source, ["publish", "live"]),
-      sql`(${worldVersions.schema} - 'name') = (${JSON.stringify(material.schema)}::jsonb - 'name')`,
-      sql`${worldVersions.thumbnailUrl} IS NOT DISTINCT FROM ${material.thumbnailUrl}`,
-      sql`COALESCE(${worldVersions.ageRating}, 'all') = ${material.ageRating ?? "all"}`,
-    )).orderBy(desc(worldVersions.createdAt), desc(worldVersions.id)).limit(1);
+    const existing = await findMaterialVersion(tx, world.id, material);
     if (existing) {
       if (source === "live" && (existing.source !== "live"
         || !existing.publishedAt
@@ -72,11 +87,12 @@ export async function captureAutomaticVersion(
   }
   const now = new Date();
   const labels = { publish: "Saved version", live: "Saved version", backup: "Backup before restore", incoming: "Backup before applying changes" };
+  const schema = { ...material.schema, name: world.name };
   const [inserted] = await tx.insert(worldVersions).values({
     worldId: world.id, createdBy: world.creatorId,
     name: `${labels[source]} · ${now.toISOString().slice(0, 16).replace("T", " ")} UTC`,
     note: opts.note ?? null,
-    source, publishedAt: source === "live" ? now : null, schema: { ...material.schema, name: world.name },
+    source, publishedAt: source === "live" ? now : null, schema, ...versionAssetRefs(schema),
     thumbnailUrl: material.thumbnailUrl, ageRating: material.ageRating ?? "all", createdAt: now,
   }).returning();
   if (!inserted) throw new Error("Version could not be saved");

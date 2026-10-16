@@ -64,6 +64,17 @@ export function selectWorldArtwork(world: WorldArtwork, shape: "portrait" | "lan
   };
 }
 
+/** Profile cards are 4:3, 16:9 and 2:1. A dedicated landscape crop was
+ * authored in the 16:9 "Gallery preview" frame, so tag it with that aspect:
+ * on the other two shapes the renderer then keeps the authored region in
+ * view instead of re-reading x/y/zoom against the card. Legacy gallery crops
+ * have no known frame and render exactly as before. */
+export function selectProfileWorldArtwork(world: WorldArtwork) {
+  const artwork = selectWorldArtwork(world, "landscape");
+  if (!artwork.dedicated) return artwork;
+  return { ...artwork, crop: { ...artwork.crop, aspect: DISCOVER_COVER_ASPECTS.gallery } };
+}
+
 /** Discover artwork fills its frame, including legacy single-cover worlds.
  * Preserve authored position/zoom without inheriting detail-view letterboxing. */
 export function resolveDiscoveryCoverCrop(

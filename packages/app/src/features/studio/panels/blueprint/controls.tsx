@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { InfoTip } from "@/components/ui/info-tip";
@@ -63,21 +63,111 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
     </div>
   );
 }
-/** − n + : a number that is stepped more often than typed. */
-export function Stepper({ value, onChange, min = 0, label }: { value: number; onChange: (v: number) => void; min?: number; label: string }) {
+/**
+ * A field that holds what is being typed until it is let go of.
+ *
+ * Read on every keystroke, a field can only ever hold a finished value: a
+ * number clamped to its minimum turns "1" on the way to "15" into the minimum,
+ * "0." into "0", and a cleared box into whatever empty is read as. So the text
+ * is the field's own while it is being written, and it is committed on blur,
+ * on Enter, or when the field goes away without either — the floating card
+ * closes on Escape, and a value typed there would otherwise be lost.
+ */
+export function DraftInput({ value, onCommit, onKeyDown, ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur"> & {
+  value: string;
+  onCommit: (raw: string) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const pending = useRef<string | null>(null);
+  const latest = useRef(onCommit);
+  latest.current = onCommit;
+  const flush = () => {
+    const raw = pending.current;
+    if (raw === null) return;
+    pending.current = null;
+    setText(null);
+    latest.current(raw);
+  };
+  // Unmounted mid-edit (Escape, the selection moved): still keep the words.
+  useEffect(() => () => {
+    const raw = pending.current;
+    pending.current = null;
+    if (raw !== null) latest.current(raw);
+  }, []);
+  return (
+    <input
+      {...rest}
+      value={text ?? value}
+      onChange={(e) => { pending.current = e.target.value; setText(e.target.value); }}
+      onBlur={flush}
+      onKeyDown={(e) => { if (e.key === "Enter") flush(); onKeyDown?.(e); }}
+    />
+  );
+}
+
+/** Read a typed number the way a field's limits say. `undefined` is a draft
+ *  that is not a number at all; `null` is a cleared box. */
+export function readTypedNumber(raw: string, { min, max, integer }: { min?: number; max?: number; integer?: boolean } = {}): number | null | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  let n = Number(trimmed);
+  if (!Number.isFinite(n)) return undefined;
+  if (integer) n = Math.round(n);
+  if (min !== undefined) n = Math.max(min, n);
+  if (max !== undefined) n = Math.min(max, n);
+  return n;
+}
+
+/**
+ * A number typed freely and settled when it is let go of: clamped to its
+ * limits then, never while it is being written. A cleared box is `undefined`
+ * where the field allows it (`allowEmpty`) and the stored value back again
+ * where it does not; so is anything that is not a number.
+ */
+export function NumberInput({ value, onCommit, min, max, integer, allowEmpty, ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur" | "min" | "max"> & {
+  value: number | undefined;
+  onCommit: (next: number | undefined) => void;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  allowEmpty?: boolean;
+}) {
+  return (
+    <DraftInput
+      type="number"
+      inputMode={integer ? "numeric" : "decimal"}
+      min={min}
+      max={max}
+      {...rest}
+      value={value === undefined ? "" : String(value)}
+      onCommit={(raw) => {
+        const n = readTypedNumber(raw, { min, max, integer });
+        if (n === undefined || (n === null && !allowEmpty)) return;
+        const next = n ?? undefined;
+        if (next !== value) onCommit(next);
+      }}
+    />
+  );
+}
+
+/** − n + : a number that is stepped more often than typed. The buttons step
+ *  at once; the box in the middle is typed like any other number field. */
+export function Stepper({ value, onChange, min = 0, max, label }: { value: number | undefined; onChange: (v: number) => void; min?: number; max?: number; label: string }) {
   const btn = "flex h-[26px] w-6 items-center justify-center text-foreground/55 transition-colors hover:text-foreground";
+  const clamp = (n: number) => Math.max(min, max === undefined ? n : Math.min(max, n));
   return (
     <span className="studio-control inline-flex items-center overflow-hidden rounded-lg border">
-      <button type="button" aria-label={`${label} −`} onClick={() => onChange(Math.max(min, value - 1))} className={btn}>−</button>
-      <input
-        type="number"
+      <button type="button" aria-label={`${label} −`} onClick={() => onChange(clamp((value ?? min) - 1))} className={btn}>−</button>
+      <NumberInput
         aria-label={label}
         value={value}
         min={min}
-        onChange={(e) => onChange(Math.max(min, Math.floor(Number(e.target.value) || 0)))}
+        max={max}
+        integer
+        onCommit={(v) => { if (v !== undefined) onChange(v); }}
         className="h-[26px] w-11 border-x border-white/[0.08] bg-transparent text-center text-xs tabular-nums text-foreground focus:outline-none"
       />
-      <button type="button" aria-label={`${label} +`} onClick={() => onChange(value + 1)} className={btn}>+</button>
+      <button type="button" aria-label={`${label} +`} onClick={() => onChange(clamp(value === undefined ? min : value + 1))} className={btn}>+</button>
     </span>
   );
 }
@@ -137,7 +227,7 @@ export function Group({ title, hint, right, children }: { title: string; hint?: 
  * is not arbitrary: the fields above are the ones that decide what the object
  * DOES, the ones in here tune how it does it.
  */
-export function More({ children, label, defaultOpen = false }: { children: ReactNode; label?: string; defaultOpen?: boolean }) {
+export function More({ children, label, defaultOpen = false }: { children: ReactNode; label?: ReactNode; defaultOpen?: boolean }) {
   const { t } = useTranslation("editor");
   const [open, setOpen] = useState(defaultOpen);
   // A fold is a line, not a box: a box read as one more input.
@@ -164,17 +254,19 @@ export function Check({
   hint,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   // A setting is a row like any other: what it is on the left, a switch on
   // the right, the explanation behind ⓘ.
   return (
     <Row label={label} hint={hint}>
-      <Switch checked={checked} onChange={onChange} label={label} />
+      <Switch checked={checked} onChange={onChange} label={label} disabled={disabled} />
     </Row>
   );
 }

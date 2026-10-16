@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { env } from "../env.js";
-import { buildTurnWorkflow, turnRoute } from "./illustrate.js";
+import { adultCaption, animaText, buildTurnWorkflow, tidyExplicitPrompt, turnRoute } from "./illustrate.js";
 
 type Node = { class_type: string; inputs: Record<string, unknown> };
 const nodes = (g: Record<string, unknown>, type: string) => Object.values(g as Record<string, Node>).filter((n) => n.class_type === type);
@@ -49,7 +49,7 @@ test("two people share one prompt instead of each getting half the frame", () =>
 
 // ── Routes (PER_TURN_IMAGE_EDIT_MODEL / _STORY_MODEL / _EXPLICIT_CHECKPOINT) ──
 
-function withEnv(values: Partial<Record<"PER_TURN_IMAGE_EDIT_MODEL" | "PER_TURN_IMAGE_EDIT_EXPLICIT" | "PER_TURN_IMAGE_STORY_MODEL" | "PER_TURN_IMAGE_EXPLICIT_CHECKPOINT", string>>, run: () => void) {
+function withEnv(values: Partial<Record<"PER_TURN_IMAGE_EDIT_MODEL" | "PER_TURN_IMAGE_EDIT_EXPLICIT" | "PER_TURN_IMAGE_STORY_MODEL" | "PER_TURN_IMAGE_EXPLICIT_CHECKPOINT" | "PER_TURN_IMAGE_ANIMA_MODEL" | "PER_TURN_IMAGE_ANIMA_SAMPLING", string>>, run: () => void) {
   const saved = Object.fromEntries(Object.keys(values).map((k) => [k, env[k as keyof typeof env]]));
   Object.assign(env, values);
   try { run(); } finally { Object.assign(env, saved); }
@@ -110,4 +110,62 @@ test("an explicit moment can use its own SDXL checkpoint; a host recipe keeps it
     const plain = buildTurnWorkflow({ scene: "1girl", bodies: [] }, 1, "bad") as Record<string, Node>;
     assert.equal(plain.ckpt!.inputs.ckpt_name, env.PER_TURN_IMAGE_CHECKPOINT);
   });
+});
+
+test("an explicit prompt weights only the act and drops camera angles that fight a pov", () => {
+  const tidy = tidyExplicitPrompt("masterpiece, nsfw, (sex, missionary, penis, nipples, blush, sweat, purple glow:1.25), 1girl, pov, from above, bedroom");
+  assert.equal(tidy, "masterpiece, nsfw, (sex, missionary, penis, nipples:1.25), blush, sweat, purple glow, 1girl, pov, bedroom");
+  // Without a pov the angle is the shot itself and stays.
+  assert.match(tidyExplicitPrompt("nsfw, (lying:1.25), 1girl, from above"), /from above/);
+  // A short act group is left as it is.
+  assert.equal(tidyExplicitPrompt("(kiss, hug:1.25), 2girls, pov, from behind"), "(kiss, hug:1.25), 2girls, pov, from behind");
+});
+
+// ── Anima (PER_TURN_IMAGE_ANIMA_MODEL) ──
+
+const ANIMA = "anima-turbo-v1.1.safetensors";
+
+test("with Anima set it draws everything the edit model doesn't: plain, explicit, sex acts, empty scenes", () => {
+  const portraits = [{ name: "a.jpg", jpeg, slot: 0 }];
+  withEnv({ PER_TURN_IMAGE_EDIT_MODEL: EDIT, PER_TURN_IMAGE_STORY_MODEL: STORY, PER_TURN_IMAGE_ANIMA_MODEL: ANIMA }, () => {
+    assert.equal(turnRoute({ scene: "1girl, kitchen", bodies: [], caption: "x" }), "anima");
+    assert.equal(turnRoute({ scene: "no humans, scenery", bodies: [] }), "anima");
+    assert.equal(turnRoute({ scene: "nsfw, explicit, (sex, missionary:1.25), 1girl", bodies: [], explicit: true }), "anima");
+    // Portraits: the edit model keeps a plain or suggestive moment; nudity and sex acts leave it.
+    assert.equal(turnRoute({ scene: "1girl, cafe", bodies: [], caption: "x", portraits }), "edit");
+    assert.equal(turnRoute({ scene: "1girl, lingerie, cleavage", bodies: [], caption: "x", explicit: true, portraits }), "edit");
+    assert.equal(turnRoute({ scene: "nsfw, explicit, 1girl, nude, onsen", bodies: [], caption: "x", explicit: true, portraits }), "anima");
+    assert.equal(turnRoute({ scene: "(sex, cowgirl position:1.25), 1girl", bodies: [], explicit: true, portraits }), "anima");
+  });
+});
+
+test("Anima's graph: its loaders and the turbo schedule; a fine redraw takes more steps", () => {
+  withEnv({ PER_TURN_IMAGE_ANIMA_MODEL: ANIMA, PER_TURN_IMAGE_ANIMA_SAMPLING: "" }, () => {
+    const g = buildTurnWorkflow({ scene: "1girl, kitchen", bodies: [], caption: "A woman kneads dough." }, 9, "bad") as Record<string, Node>;
+    assert.equal(g.unet!.inputs.unet_name, ANIMA);
+    assert.deepEqual([g.clip!.inputs.clip_name, g.clip!.inputs.type], ["qwen_3_06b_base.safetensors", "stable_diffusion"]);
+    assert.deepEqual([g.ks!.inputs.steps, g.ks!.inputs.cfg, g.ks!.inputs.sampler_name, g.ks!.inputs.seed], [10, 1, "euler", 9]);
+    const fine = buildTurnWorkflow({ scene: "1girl", bodies: [], fine: true }, 9, "bad") as Record<string, Node>;
+    assert.deepEqual([fine.ks!.inputs.steps, fine.ks!.inputs.sampler_name], [12, "er_sde"]);
+  });
+  withEnv({ PER_TURN_IMAGE_ANIMA_MODEL: "anima-aesthetic-v1.1.safetensors", PER_TURN_IMAGE_ANIMA_SAMPLING: "" }, () => {
+    const g = buildTurnWorkflow({ scene: "1girl", bodies: [] }, 9, "bad, 2girls") as Record<string, Node>;
+    assert.deepEqual([g.ks!.inputs.steps, g.ks!.inputs.cfg, g.ks!.inputs.sampler_name], [30, 4, "er_sde"]);
+    assert.match(g.neg!.inputs.text as string, /^worst quality, low quality, artist name.*bad, 2girls$/);
+  });
+});
+
+test("Anima's prompt: its own quality and safety tags, no SDXL weights, then the caption, adults said in words", () => {
+  const text = animaText({ scene: "masterpiece, best quality, nsfw, explicit, (sex, missionary:1.25), 1girl, 1boy, pov, bedroom",
+    bodies: ["1girl, adult, silver hair"], caption: "A young girl lies on the bed.", explicit: true });
+  assert.equal(text, "masterpiece, best quality, newest, explicit, sex, missionary, 1girl, 1boy, pov, bedroom, adult, silver hair. A woman lies on the bed. All characters are adults.");
+  assert.match(animaText({ scene: "1girl, lingerie", bodies: [], explicit: true }), /^masterpiece, best quality, newest, sensitive, 1girl, lingerie\./);
+  assert.match(animaText({ scene: "1girl, cafe", bodies: [] }), /, safe, 1girl, cafe\./);
+});
+
+test("captions read as adults: girls, boys, kids and petite become women, men, adults and slim", () => {
+  assert.equal(adultCaption("A little girl and two boys watch a petite schoolgirl and her girlfriend."),
+    "A woman and two men watch a slim adult and her girlfriend.");
+  assert.equal(adultCaption("as a young black-haired girl kneads his shoulders, a young man waits"), "as a black-haired woman kneads his shoulders, a man waits");
+  assert.equal(adultCaption("Two young girls; a child; teenagers; the teen."), "Two women; an adult; adults; the adult.");
 });

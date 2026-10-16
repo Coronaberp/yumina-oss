@@ -459,6 +459,24 @@ export function removeGroup(doc: UiDoc, pageId: string, elementIds: readonly str
 }
 
 /**
+ * Break the groups these parts belong to, so each part is picked and dragged
+ * on its own — a meter's value moved off the end of its track, say. Parts
+ * outside a group are left as they are.
+ */
+export function ungroupElements(doc: UiDoc, pageId: string, elementIds: readonly string[]): UiDoc {
+  const page = pageOf(doc, pageId);
+  if (!page) return doc;
+  const ids = new Set(elementIds);
+  const groups = new Set(page.elements.filter((el) => ids.has(el.id) && el.group).map((el) => el.group!));
+  if (groups.size === 0) return doc;
+  return mapPage(doc, pageId, (elements) => elements.map((el) => {
+    if (!el.group || !groups.has(el.group)) return el;
+    const { group: _group, ...rest } = el;
+    return rest as UiElement;
+  }));
+}
+
+/**
  * Copy a group, offset so the copy is visibly a copy rather than a thing that
  * appears to have done nothing.
  *
@@ -488,6 +506,27 @@ export function duplicateGroup(
     return b ? withBox(copy, canvas, { ...b, x: b.x + OFFSET, y: b.y + OFFSET }) : copy;
   });
   return mapPage(doc, pageId, (elements) => [...elements, ...copies]);
+}
+
+/**
+ * Where a part of a group goes when the part it is laid out around is
+ * resized from `from` to `to`: each of its edges keeps its distance from the
+ * nearer edge of that part. A meter's value sits at the track's right end and
+ * rides it; its label starts at the left end and stretches with the track.
+ * Without this the value stayed where the row was first laid out — hundreds of
+ * px past a track narrowed to a third — and the row could not be dragged right,
+ * because the value it carried was already at the edge of the page.
+ */
+export function followResized(from: Box, to: Box, part: Box): Box {
+  const midX = from.x + from.w / 2;
+  const dl = to.x - from.x;
+  const dr = to.x + to.w - (from.x + from.w);
+  const left = part.x + (part.x < midX ? dl : dr);
+  const right = part.x + part.w + (part.x + part.w <= midX ? dl : dr);
+  const dt = to.y - from.y;
+  const db = to.y + to.h - (from.y + from.h);
+  const dy = part.y >= from.y + from.h - 2 ? db : dt;
+  return { x: Math.round(left), y: Math.round(part.y + dy), w: Math.max(1, Math.round(right - left)), h: part.h };
 }
 
 /** Which variable an element reads, for the panel to show and rebind. */
@@ -1055,11 +1094,14 @@ export function nameFromQuestion(question: string): string {
 
 /** Rough advance of one character, as a share of the font size. Generous on
  *  purpose — a box a few px too tall is invisible, one too short clips. */
-function charAdvance(ch: string): number {
+function isWideChar(ch: string): boolean {
   const c = ch.codePointAt(0) ?? 0;
-  if ((c >= 0x1100 && c <= 0x11ff) || (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xac00 && c <= 0xd7af)
+  return (c >= 0x1100 && c <= 0x11ff) || (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xac00 && c <= 0xd7af)
     || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xffef)
-    || (c >= 0x20000 && c <= 0x3134f) || (c >= 0x1f300 && c <= 0x1faff)) return 1;
+    || (c >= 0x20000 && c <= 0x3134f) || (c >= 0x1f300 && c <= 0x1faff);
+}
+function charAdvance(ch: string): number {
+  if (isWideChar(ch)) return 1;
   if (ch === " ") return 0.3;
   if (/[A-Z0-9@#%&MWmw]/.test(ch)) return 0.7;
   return 0.56;
@@ -1082,13 +1124,31 @@ export function textHeightNeeded(el: UiElement, canvas: UiCanvas): number | null
   let lines = 0;
   for (const paragraph of style.nowrap ? [text.replace(/\n/g, " ")] : text.split("\n")) {
     if (style.nowrap) { lines += 1; continue; }
+    // The line breaks where the browser breaks it: at a space, or between
+    // two CJK characters. A Latin word is never split (a text part sets no
+    // overflow-wrap), so a word wider than the box runs past its edge on ONE
+    // line — counting it as wrapping char by char made a meter's 38px value
+    // box ("{{hp}}") two to four lines tall the moment its spacing changed.
     let line = 0;
     let count = 1;
+    let word = 0;
+    const place = (w: number) => {
+      if (line > 0 && line + w > width) { count++; line = 0; }
+      line += w;
+    };
     for (const ch of paragraph) {
       const adv = charAdvance(ch) * size * weight + spacing;
-      if (line > 0 && line + adv > width) { count++; line = 0; }
-      line += adv;
+      if (ch === " " || ch === "\t") {
+        if (word) { place(word); word = 0; }
+        line += adv;
+      } else if (isWideChar(ch)) {
+        if (word) { place(word); word = 0; }
+        place(adv);
+      } else {
+        word += adv;
+      }
     }
+    if (word) place(word);
     lines += count;
   }
   return Math.ceil(Math.max(1, lines) * size * lineHeight + 2);
@@ -1232,13 +1292,23 @@ const STRETCHY = new Set<UiElement["type"]>(["messages", "chat", "choice", "list
  * push the parts that sit directly under it down by the growth, on each canvas
  * separately. "Under" means starting at or below its old bottom edge and
  * sharing some of its width; whatever sits under a pushed part is pushed too,
- * and a group moves as one. A part pinned to the page's bottom edge (the
- * composer) stays; what would run into it or off the canvas gives up height
- * if it can (a transcript, the opening cards) and otherwise moves only as far
- * as there is room. Returns the same page when nothing needed to move.
+ * and a group moves as one — except the grown part's OWN group: a meter's
+ * label growing moves its track down, not the value beside the label, which
+ * would then push the track again and the label after it. A part pinned to
+ * the page's bottom edge (the composer) stays; what would run into it or off
+ * the canvas gives up height if it can (a transcript, the opening cards) and
+ * otherwise moves only as far as there is room. Returns the same page when
+ * nothing needed to move.
+ *
+ * `after` stands in for the grown part when it is not one element on the page
+ * (a whole group, measured as one box); `skip` parts never move.
  */
-export function pushBelowGrown(page: UiPage, before: UiElement): UiPage {
-  const after = page.elements.find((el) => el.id === before.id);
+export function pushBelowGrown(
+  page: UiPage,
+  before: UiElement,
+  opts: { after?: UiElement; skip?: ReadonlySet<string> } = {},
+): UiPage {
+  const after = opts.after ?? page.elements.find((el) => el.id === before.id);
   if (!after) return page;
   let elements = page.elements;
   const byId = () => new Map(elements.map((el) => [el.id, el]));
@@ -1255,7 +1325,7 @@ export function pushBelowGrown(page: UiPage, before: UiElement): UiPage {
     const canvasH = canvas === "desktop" ? (page.desktopHeight ?? UI_DESKTOP_H) : page.height;
     const current = byId();
     const candidates = elements.filter((el) => {
-      if (el.id === after.id || el.type === "popup") return false;
+      if (el.id === after.id || el.type === "popup" || opts.skip?.has(el.id)) return false;
       if (canvas === "desktop" && el.desktop === undefined && sharedGrow) return false;
       const b = boxOn(el, canvas);
       return !!b && b.w > 0 && b.h > 0;
@@ -1274,7 +1344,7 @@ export function pushBelowGrown(page: UiPage, before: UiElement): UiPage {
         const b = boxOf(el);
         if (b.y < above.y + above.h - 2 || !overlapX(b, above === ob ? { ...ob, x: Math.min(ob.x, nb.x), w: Math.max(ob.x + ob.w, nb.x + nb.w) - Math.min(ob.x, nb.x) } : above)) continue;
         if (pinned(b)) { floors.push(b); continue; }
-        const members = el.group ? candidates.filter((m) => m.group === el.group) : [el];
+        const members = el.group && el.group !== after.group ? candidates.filter((m) => m.group === el.group) : [el];
         for (const m of members) {
           if (pushed.has(m.id) || pinned(boxOf(m))) continue;
           pushed.add(m.id);
@@ -1320,9 +1390,98 @@ export function pushBelowGrown(page: UiPage, before: UiElement): UiPage {
 export function fitTextOnPage(page: UiPage, id: string, before?: UiElement, opts: { hug?: boolean } = {}): UiPage {
   const el = page.elements.find((e) => e.id === id);
   if (!el || el.type !== "text") return page;
-  const fitted = fitTextBox(el, page, opts);
-  const withFit = fitted === el ? page : { ...page, elements: page.elements.map((e) => (e.id === id ? fitted : e)) };
-  return pushBelowGrown(withFit, before ?? el);
+  const was = before ? { ...page, elements: page.elements.map((e) => (e.id === id ? before : e)) } : page;
+  return fitTextsOnPage(page, [id], was, opts);
+}
+
+/**
+ * Autofit several text parts changed by one edit — the style panel acting on
+ * a whole selection — against the page as it was before that edit.
+ *
+ * Parts that share a group are settled together: a meter row is its label and
+ * its value side by side over the track, and the track sits under the TALLER
+ * of the two, by the gap it had. Fitting them one by one pushed the track once
+ * for the label and again for the value, and since the group moved as one
+ * each push carried the other text down too: a row spread further with every
+ * step of the line-height slider. Inside a group a part also comes back up
+ * when the words above it shrink, so dragging a slider back restores the row.
+ * What is outside the group is pushed by however much the group's bottom grew.
+ */
+export function fitTextsOnPage(page: UiPage, ids: readonly string[], before: UiPage, opts: { hug?: boolean } = {}): UiPage {
+  let next = page;
+  const fitted: UiElement[] = [];
+  for (const id of ids) {
+    const el = next.elements.find((e) => e.id === id);
+    if (!el || el.type !== "text") continue;
+    const fit = fitTextBox(el, next, opts);
+    if (fit !== el) next = { ...next, elements: next.elements.map((e) => (e.id === id ? fit : e)) };
+    fitted.push(fit);
+  }
+  const was = new Map(before.elements.map((e) => [e.id, e]));
+  const groups = new Set<string>();
+  for (const el of fitted) {
+    if (el.group) groups.add(el.group);
+    else next = pushBelowGrown(next, was.get(el.id) ?? el);
+  }
+  for (const group of groups) next = settleGroup(next, group, was);
+  return next;
+}
+
+/** One group after some of its texts were refitted: each part moves by as much
+ *  as the lowest of the parts above it moved (up or down), then the group's
+ *  outline pushes what is under it. */
+function settleGroup(page: UiPage, group: string, was: ReadonlyMap<string, UiElement>): UiPage {
+  const ids = new Set(page.elements.filter((el) => el.group === group).map((el) => el.id));
+  const prior = (el: UiElement) => was.get(el.id) ?? el;
+  let elements = page.elements;
+  for (const canvas of ["phone", "desktop"] as const) {
+    // On the wide canvas a part without a box of its own follows its phone box.
+    const members = elements.filter((el) => ids.has(el.id) && (canvas === "phone" || el.desktop));
+    const old = new Map(members.map((el) => [el.id, boxOn(prior(el), canvas)]));
+    const order = [...members].sort((a, b) => (old.get(a.id)?.y ?? 0) - (old.get(b.id)?.y ?? 0));
+    const settled = new Map<string, Box>();
+    for (const el of order) {
+      const ob = old.get(el.id);
+      const cur = boxOn(el, canvas);
+      if (!ob || !cur) continue;
+      // It keeps its gap to the LOWEST part above it, before and after.
+      let wasFloor = -Infinity;
+      let nowFloor = -Infinity;
+      for (const [id, above] of settled) {
+        const ab = old.get(id)!;
+        if (ab.y + ab.h > ob.y + 2) continue;
+        if (Math.min(ab.x + ab.w, ob.x + ob.w) - Math.max(ab.x, ob.x) <= 0) continue;
+        wasFloor = Math.max(wasFloor, ab.y + ab.h);
+        nowFloor = Math.max(nowFloor, above.y + above.h);
+      }
+      const shift = Number.isFinite(wasFloor) ? nowFloor - wasFloor : 0;
+      const box = shift ? { ...cur, y: Math.round(ob.y + shift) } : cur;
+      settled.set(el.id, box);
+      if (box !== cur) elements = elements.map((e) => (e.id === el.id ? withBox(e, canvas, box) : e));
+    }
+  }
+  const settled = elements === page.elements ? page : { ...page, elements };
+  const from = outline(page.elements.filter((el) => ids.has(el.id)).map(prior), group);
+  const to = outline(settled.elements.filter((el) => ids.has(el.id)), group);
+  if (!from || !to) return settled;
+  return pushBelowGrown(settled, from, { after: to, skip: ids });
+}
+
+/** A group as one element, its box the union of its parts' on each canvas. */
+function outline(els: readonly UiElement[], group: string): UiElement | null {
+  const lead = els[0];
+  if (!lead) return null;
+  const union = (canvas: UiCanvas): Box | null => {
+    const boxes = els.map((el) => boxOn(el, canvas)).filter((b): b is Box => b !== null);
+    if (!boxes.length) return null;
+    const x = Math.min(...boxes.map((b) => b.x));
+    const y = Math.min(...boxes.map((b) => b.y));
+    return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
+  };
+  const phone = union("phone");
+  if (!phone) return null;
+  const desktop = els.every((el) => el.desktop === undefined) ? undefined : union("desktop");
+  return { ...lead, id: `group:${group}`, group, ...phone, desktop } as UiElement;
 }
 
 /**

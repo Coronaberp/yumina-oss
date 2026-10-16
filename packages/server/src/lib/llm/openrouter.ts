@@ -707,7 +707,7 @@ export class OpenRouterProvider implements LLMProvider {
 
     // Apply explicit cache breakpoints for supported providers
     if (params.cacheBreakpoints?.length) {
-      applyCacheBreakpoints(serialized, params.model, params.cacheBreakpoints);
+      applyCacheBreakpoints(serialized, params.model, params.cacheBreakpoints, params.cacheTtl);
     }
 
     // 60-second timeout for the initial connection only.
@@ -820,6 +820,7 @@ export class OpenRouterProvider implements LLMProvider {
         content: formatOpenRouterError(response.status, error),
         fallbackReason: modelFallbackReason(response.status, error),
         failedProviderSlug: failedProviderFromPayload(errorPayload, params.model, "http"),
+        ...(response.status === 429 && { retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")) }),
       };
       return;
     }
@@ -1025,6 +1026,8 @@ export class OpenRouterProvider implements LLMProvider {
                   completionTokens: parsed.usage.completion_tokens,
                   totalTokens: parsed.usage.total_tokens,
                   reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens,
+                  cacheReadTokens: details?.cached_tokens,
+                  cacheWriteTokens: details?.cache_write_tokens,
                   providerCostUsd: normalizeProviderCostUsd(parsed.usage.cost),
                   providerRequestId: observedRequestId,
                 },
@@ -1062,7 +1065,7 @@ export class OpenRouterProvider implements LLMProvider {
       params.model,
     );
     if (params.cacheBreakpoints?.length) {
-      applyCacheBreakpoints(serialized, params.model, params.cacheBreakpoints);
+      applyCacheBreakpoints(serialized, params.model, params.cacheBreakpoints, params.cacheTtl);
     }
 
     const existingRouting = providerRoutingFor(
@@ -1308,6 +1311,8 @@ export class OpenRouterProvider implements LLMProvider {
           completionTokens: usage.completion_tokens ?? 0,
           totalTokens: usage.total_tokens ?? 0,
           reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens,
+          cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens,
           providerCostUsd: normalizeProviderCostUsd(usage.cost),
           providerRequestId: typeof parsed.id === "string" ? parsed.id : undefined,
         },
@@ -1505,7 +1510,8 @@ function serializeMessage(m: ChatMessage): Record<string, unknown> {
 function applyCacheBreakpoints(
   messages: Record<string, unknown>[],
   model: string,
-  breakpoints: number[]
+  breakpoints: number[],
+  ttl: "5m" | "1h" = "1h",
 ): void {
   // Legacy Claude 3 (haiku/opus/sonnet) only routes via Bedrock/Vertex AI on
   // OpenRouter, neither of which accepts cache_control for these SKUs — skip
@@ -1516,7 +1522,7 @@ function applyCacheBreakpoints(
   // than by withholding the annotation — that lost cache hits on every
   // non-Claude upstream that DOES honor it.
   const cacheControl = isClaudeModel(model)
-    ? { type: "ephemeral", ttl: "1h" }
+    ? { type: "ephemeral", ttl }
     : { type: "ephemeral" };
 
   for (const idx of breakpoints) {
@@ -1539,6 +1545,15 @@ function applyCacheBreakpoints(
       }
     }
   }
+}
+
+/** Retry-After as seconds or an HTTP date, in ms; undefined when absent or unreadable. */
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const at = Date.parse(header);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
 }
 
 /** Add extra fields to the last element of an array (shallow copy). Used to annotate the last tool with cache_control. */

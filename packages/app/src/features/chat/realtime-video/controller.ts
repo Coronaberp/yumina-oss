@@ -203,9 +203,11 @@ function enginesOffered(): VideoEngine[] {
   const profile = useUserProfileStore.getState().profile;
   return [...(profile?.filmFalOffered === true ? ["fal" as const] : []), "shorts"];
 }
-/** fal looks pinned with keyframes (falFrame/pinLook): admin-only until tested on prod. */
+/** fal looks pinned with keyframes (falFrame/pinLook). On for everyone after a local A/B on the
+ *  Poison card (2026-10-09): unpinned, the stream drifted into a shadowy creature behind the girl
+ *  within a minute; pinned, her uniform, hair and the forest held. */
 function lookPins(): boolean {
-  return useUserProfileStore.getState().profile?.role === "admin";
+  return true;
 }
 function engineAllowed(e: unknown): e is VideoEngine {
   return (enginesOffered() as unknown[]).includes(e);
@@ -820,8 +822,7 @@ export class RealtimeVideoController {
       this.addCredits((await post<{ credits?: number }>("fal-meter", { sessionId: this.sessionId, run: this.falRun, tick: 0 })).credits);
       const fal = createFalClient({ proxyUrl: `${apiBase}/api/realtime-video/fal-proxy` });
       this.fal = fal;
-      // First frame: an uploaded image (sent to fal storage), or the cover when publicly reachable,
-      // else (looks pinned) the opening shot drawn from its scene plate with the portraits' faces.
+      // First frame: an uploaded image (sent to fal storage), or the cover when publicly reachable.
       let anchor: string | null = null;
       if (uploaded) {
         const blob = await (await fetch(uploaded)).blob();
@@ -829,11 +830,12 @@ export class RealtimeVideoController {
       } else if (this.opts.firstFrame === "cover" && op.coverUrl && /^https:\/\//.test(op.coverUrl)) {
         anchor = op.coverUrl;
       } else if (lookPins()) {
+        // Otherwise the stream opens at once and the looks are pinned as soon as the opening
+        // shot's frame is drawn (~40 s): waiting for it held the stream back over a minute.
         const first = saved?.shot ? { shot: saved.shot, scene: saved.currentScene ?? undefined } : op.beats[0];
         if (first?.shot) {
-          this.addStep({ kind: "info", text: "按定场图画第一帧，定住角色形象…" });
-          anchor = await this.falFrame(first.shot, first.scene ?? null);
-          if ((this.state.status as VideoState["status"]) !== "starting") return { error: "stopped" };
+          this.addStep({ kind: "info", text: "按定场图画开场的角色形象帧…" });
+          void this.falFrame(first.shot, first.scene ?? null).then((url) => { if (url) this.pinLook(url, first.scene ?? null); });
         }
       }
       this.falSession = (fal.realtime.open(wma("minimax/h3-max/director"), {
@@ -976,10 +978,15 @@ export class RealtimeVideoController {
   }
 
   /** Steer the stream onto a pinned frame: the current shot again, ending exactly on `url`. A wait
-   *  on the shot it replaces carries over to it. */
-  private pinLook(url: string) {
+   *  on the shot it replaces carries over to it. Skipped once the film has cut to another scene
+   *  (the frame would pull it back). */
+  private pinLook(url: string, scene: string | null) {
     const session = this.falSession;
     if (!this.running || !session || !this.prevShot) return;
+    if (scene && this.state.currentScene && scene !== this.state.currentScene) {
+      this.addStep({ kind: "info", text: "角色形象帧画好时已切到别的场景，跳过这次校正" });
+      return;
+    }
     const v = ++this.version;
     this.sentAt.set(v, performance.now());
     const waiter = this.onScreenWaiters.get(v - 1);
@@ -1857,7 +1864,7 @@ export class RealtimeVideoController {
         if (this.state.engine === "fal" && lookPins()) {
           const no = this.turnNo;
           const b = beats[0];
-          void this.falFrame(b.shot, b.scene ?? null).then((url) => { if (url && this.turnNo === no) this.pinLook(url); });
+          void this.falFrame(b.shot, b.scene ?? null).then((url) => { if (url && this.turnNo === no) this.pinLook(url, b.scene ?? null); });
         }
         // The early shot plays out first: 6 s after its picture is on screen.
         if (early && this.state.engine === "fal") this.afterOnScreen(early.v, () => 6000, 30_000, go);

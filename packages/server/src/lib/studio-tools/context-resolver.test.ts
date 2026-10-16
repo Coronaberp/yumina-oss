@@ -240,3 +240,11 @@ test("buildInventory names a custom behaviour and what fires it", () => {
   inv = buildInventory(world, []);
   assert.match(inv, /implemented by interface code at index\.tsx:2/);
 });
+
+test("extractKeywords survives a pasted multi-megabyte document", () => {
+  const huge = "dragon castle 城堡巨龙 ".repeat(200_000);
+  const keywords = extractKeywords(huge);
+  assert.ok(keywords.length > 0 && keywords.length <= 300);
+  assert.equal(new Set(keywords).size, keywords.length);
+  assert.ok(keywords.includes("dragon") && keywords.includes("城堡"));
+});

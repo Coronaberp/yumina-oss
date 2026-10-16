@@ -67,10 +67,10 @@ async function ordinarySession(preferredProvider: "official" | "private", balanc
   app.use("*", async (c, next) => { c.set("user", account as AppEnv["Variables"]["user"]); await next(); });
   const route = "/sessions/:sessionId/completions";
   for (const { handler } of completionRoutes.routes.filter(item => item.method === "POST" && item.path === route)) app.post(route, handler);
-  const request = async (model: string) => {
+  const request = async (model: string, extra: Record<string, unknown> = {}) => {
     const response = await app.request(`/sessions/${session!.id}/completions`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, context: "session", includeLorebook: "matched", maxTokens: 2400, responseFormat: { type: "json_object" }, messages: [{ role: "user", content: "Observe the clearing and answer with a valid direction." }] }),
+      body: JSON.stringify({ ...extra, model, context: "session", includeLorebook: "matched", maxTokens: 2400, responseFormat: { type: "json_object" }, messages: [{ role: "user", content: "Observe the clearing and answer with a valid direction." }] }),
     });
     return { status: response.status, body: await response.text() };
   };
@@ -135,6 +135,15 @@ test("ordinary noncreator side completions enforce official access and keep priv
     assert.equal(observed.at(-1)!.model, FREE_MODEL);
     assert.equal((await f.currentWallet()).balance, 100);
     assert.deepEqual(await f.transactions(), []);
+  });
+
+  await t.test("a premium model the card's code named falls back to one the plan allows", async () => {
+    const f = await ordinarySession("official", 100);
+    const count = observed.length;
+    const result = await f.request(PREMIUM_MODEL, { modelSource: "card" });
+    assert.equal(result.status, 200, result.body);
+    assert.equal(observed.length, count + 1);
+    assert.equal(observed.at(-1)!.model, BUDGET_MODEL, "the premium model must never reach the provider");
   });
 
   await t.test("an empty official wallet rejects even a zero-priced model before inference", async () => {

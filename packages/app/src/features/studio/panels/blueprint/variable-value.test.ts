@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { parseVariableValue } from './variable-value';
+import { parseEditedValue, parseVariableValue } from './variable-value';
 
 test('invalid numeric drafts never become zero or Infinity', () => {
  for(const raw of ['', ' ', 'oops', 'Infinity', '1e999']) assert.equal(parseVariableValue('number',raw).ok,false);
@@ -16,4 +16,10 @@ test('text remains literal and boolean parsing does not silently coerce typos', 
  assert.deepEqual(parseVariableValue('string','  12  '),{ok:true,value:'  12  '});
  assert.equal(parseVariableValue('boolean','tru').ok,false);
  assert.deepEqual(parseVariableValue('boolean','false'),{ok:true,value:false});
+});
+test('a condition value is read as its variable keeps it', () => {
+ assert.equal(parseEditedValue('1','string'),'1');
+ assert.equal(parseEditedValue('0.5','number'),0.5);
+ assert.equal(parseEditedValue('true','boolean'),true);
+ assert.equal(parseEditedValue('7'),7);
 });

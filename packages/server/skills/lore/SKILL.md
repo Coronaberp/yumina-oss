@@ -61,7 +61,7 @@ A module is a folder by default: its entries and variables join whichever AI is 
 ```
 write_worldbook { id: "wb-dungeon-1", station: {
   kind: "narrator",            // its AI answers the player while this module is active
-  model: "…",                  // optional; falls back to the player's own model
+  model: "…",                  // usually omit (follows the player); an exact catalog id, see below
   onClose: "archive",          // DEFAULT — see below
   archivePrompt: "务必记录死因、拿到的道具、欠下的人情",
   inputs: [ … ]                // what context flows in
@@ -69,6 +69,12 @@ write_worldbook { id: "wb-dungeon-1", station: {
 ```
 
 **A module IS a run.** A narrator station's activation span is one attempt. The moment it deactivates (its conditions stop matching — `active-dungeon-id` changes), that span leaves the AI's context forever and is replaced by ONE auto-generated summary (【副本记忆 · 模块名 · 第N次】…), while the player's visible transcript keeps every word. Re-activation starts attempt #2 clean. This is the infinite-flow wipe (无限流), and it is the DEFAULT for a narrator — `onClose: "keep"` opts out. There is no separate 副本模式 switch any more.
+
+**Whose settings an AI uses.** Every AI call in a card follows the player's own Yumina settings unless the author deliberately sets a value, and set values are clamped to safe ranges. Default to following the player:
+- `model` — omit it. A narrator then uses the player's own model; a background AI (worker / quiet / ui) uses the session's summary model. Set one only when the job truly needs it, and only as an exact id from Yumina's model catalog (an unknown id is rejected — never guess or invent one). It is a request, never forced: a player whose plan cannot run it falls back instead of failing — a narrator to the player's own model, a background AI to the default summary model. The write result tells you when the model is above the free plan; pass that on to the creator.
+- `temperature` / `maxTokens` — background AIs only (worker / quiet / ui). Absent: temperature 0.2 (steady) and the kind's default length (800–900). Leave them out for bookkeeping, judging, summaries and briefings: a deterministic judge or scorekeeper is exactly what 0.2 is for. Raise `temperature` (0.7–1.0) only for an AI whose job is varied prose (a quiet narrator's ambient lines, an NPC's chatter); raise `maxTokens` (≤4000) only when its answers get cut off. Out-of-range values are rejected.
+- A **narrator** never takes `temperature` / `maxTokens`: it answers the player with the player's own sampling and reply length. Passing them is ignored with a note.
+- Never set these just to "tune" a card. The card-wide story sampling is `update_settings` (`samplingPolicy`), and it too stays on "player" unless the creator asks for a fixed style (even then the story AI's model and reply length stay the player's). If the creator wants players to know which model the card was written for, set `update_settings { recommendedModel }` — an exact catalog id, shown as a suggestion, never forced.
 
 **Several AIs, one game.** Two dungeons with a narrator station each means dungeon 1's AI never sees dungeon 2's context, because activation already gates that and now the model and the context recipe are per-module too. At most one narrator is active at a time (ties break by `order`), so a player never receives two replies to one message.
 

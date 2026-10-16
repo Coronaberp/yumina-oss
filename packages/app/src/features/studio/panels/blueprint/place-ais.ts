@@ -112,7 +112,7 @@ function linkOf(book: Worldbook, books: readonly Worldbook[], t: Translate): str
   return from.length ? String(t("blueprint.placeAis.linkReceives", { names: join(t, [...new Set(from)]) })) : undefined;
 }
 
-function jobOf(book: Worldbook, t: Translate): string {
+export function jobOf(book: Worldbook, t: Translate): string {
   const station = resolveStation(book);
   if (!station) return "";
   const voice = voiceOf(station);
@@ -184,7 +184,18 @@ export function codeCallRows(world: WorldDefinition, place: string | undefined, 
   if (!files) return [];
   const books = world.worldbooks ?? [];
   const rows: PlaceAiRow[] = [];
+  // Calls already met on each file:line. A compiled bundle is one line, so
+  // file:line gave all its calls one key (React's duplicate keys, every row
+  // lit at once). The first call on a line keeps the bare key — the one a
+  // sticky note on a hand-written card is already stuck to — and the ones
+  // after it are numbered in source order. Counted before any call is
+  // filtered out, so a call has the same key on the card and in a situation.
+  const onLine = new Map<string, number>();
   for (const call of extractAiCallsFromFiles(files)) {
+    const at = `${call.file}:${call.line}`;
+    const nth = (onLine.get(at) ?? 0) + 1;
+    onLine.set(at, nth);
+    const key = nth === 1 ? `code:${at}` : `code:${at}#${nth}`;
     const targets = codeCallTargets(call, books);
     // A call that implements a declared custom AI is that AI's row, not a
     // second row beside it.
@@ -197,7 +208,7 @@ export function codeCallRows(world: WorldDefinition, place: string | undefined, 
       : call.includeLorebook === "matched" || call.sessionContext ? String(t("blueprint.placeAis.memLoreMatched"))
       : String(t("blueprint.placeAis.memLoreNone"));
     rows.push({
-      key: `code:${call.file}:${call.line}`,
+      key,
       name: names.length ? names.join(" · ") : String(t("blueprint.placeAis.codeCallName", { file: call.file })),
       type: "code",
       job: String(t(place === undefined ? "blueprint.placeAis.jobFromCode" : "blueprint.placeAis.jobFromCodeHere", { file: call.file, line: call.line })),

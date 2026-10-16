@@ -84,6 +84,19 @@ test("an AI call written in the interface code is a row: on the card every call,
   assert.equal(placeAis(coded, "cat", t).rows.some((r) => r.code), false);
 });
 
+test("calls on one line of a compiled bundle get keys of their own, the same on the card and in a situation", () => {
+  const coded = {
+    ...world,
+    rootComponent: {
+      id: "r", name: "Stage", entryFile: "index.js", updatedAt: "",
+      files: { "index.js": "a.ai.complete({messages});b.ai.decide({questions});c.ai.complete({worldbookIds:['attic']});" },
+    },
+  } as unknown as WorldDefinition;
+  const keys = placeAis(coded, undefined, t).rows.filter((r) => r.code).map((r) => r.key);
+  assert.deepEqual(keys, ["code:index.js:1", "code:index.js:1#2", "code:index.js:1#3"]);
+  assert.deepEqual(placeAis(coded, "attic", t).rows.filter((r) => r.code).map((r) => r.key), ["code:index.js:1#3"]);
+});
+
 test("a custom AI is a declared slot: implemented by the code call that reads it, or not yet", () => {
   const coded = {
     ...world,

@@ -68,6 +68,7 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
   };
   const updateVariableAt = useEditorStore(s => s.updateVariableAt);
   const removeVariableAt = useEditorStore(s => s.removeVariableAt);
+  const removeInstalledBundle = useEditorStore(s => s.removeInstalledBundle);
 
   const typeOptions = useMemo(
     () =>
@@ -147,6 +148,18 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
 
   const selectedRaw = clampedIdx !== null ? worldDraft.variables[clampedIdx] ?? null : null;
   const selected = selectedRaw?.internal ? null : selectedRaw; // never open a hidden engine var
+  // An in-story app (a bundle with its own screen and one variable) is that
+  // variable's whole reason to exist. Deleting just the variable left the
+  // app's dock button behind with nothing in it, and a creator deleted var
+  // after var trying to get rid of a starter set; so the delete takes the app.
+  const owningApp = useMemo(() => {
+    if (!selected) return null;
+    const files = worldDraft.rootComponent?.files ?? {};
+    const record = (worldDraft.installedBundles ?? []).find((b) =>
+      b.variableIds.length === 1 && b.variableIds[0] === selected.id
+      && !!b.slug && Object.keys(files).some((path) => path.startsWith(`_bundles/${b.slug}/`)));
+    return record ?? null;
+  }, [selected, worldDraft.installedBundles, worldDraft.rootComponent]);
   const preciseOwned = selected ? isContinuityOwned(worldDraft, selected) : false;
   useEditorFocus("variable", selected?.id, worldDraft);
 
@@ -325,7 +338,8 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                 <h2 className="text-xl font-bold text-foreground">{t("variables.editVariable")}</h2>
                 <TwoTapDeleteButton
                   onConfirm={() => {
-                    removeVariableAt(clampedIdx);
+                    if (owningApp) removeInstalledBundle(owningApp.installId);
+                    else removeVariableAt(clampedIdx);
                     const vars =
                       useEditorStore.getState().worldDraft.variables;
                     selectVariable(vars.length > 0 ? 0 : null);
@@ -336,6 +350,14 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                   <Trash2 className="h-4 w-4" /> {t("variables.delete")}
                 </TwoTapDeleteButton>
               </div>
+              {owningApp && (
+                <p className="-mt-3 mb-5 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+                  {t("appPacks.varDeleteHint", {
+                    defaultValue: "This variable is the {{name}} app's data. Deleting it removes the whole app, dock button included.",
+                    name: owningApp.name.replace(/^App\s*·\s*/, ""),
+                  })}
+                </p>
+              )}
 
               <div className={cn("max-w-3xl space-y-8", expandedJsonId === selected.id && selected.type === "json" && "[&>div:not([data-json-default])]:hidden")} data-tour="vars-form">
                 {/* Name */}

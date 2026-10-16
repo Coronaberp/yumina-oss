@@ -1,3 +1,4 @@
+import { DeletionPreflightNotice, useDeletionPreflight, deletionErrorMessage, type DeleteAccountResponse } from "./account-deletion-preflight";
 import {
   useState,
   useEffect,
@@ -461,7 +462,7 @@ const SINGLE_USER_HIDDEN_ACCOUNT_ITEMS: ReadonlySet<string> = new Set([
 ]);
 
 function parseSectionHash(hash: string): SectionId | null {
-  const normalized = hash.replace(/^#/, "");
+  const normalized = hash.replace(/^#/, "").split("/")[0];
   if (!normalized) return null;
   return SECTIONS.some((section) => section.id === normalized)
     ? (normalized as SectionId)
@@ -644,6 +645,9 @@ export function SettingsPage() {
       if (hashSection) {
         setActiveSection(hashSection);
         setMobileShowNav(false);
+        if (window.location.hash === "#content-safety/blur-sensitive") {
+          setPendingTargetId("settings-target-blur-sensitive");
+        }
       }
     };
 
@@ -1657,12 +1661,7 @@ function AccountSection({
   );
 }
 
-type DeleteAccountResponse = {
-  success?: boolean;
-  message?: string;
-  error?: string;
-  code?: string;
-};
+
 
 function DeleteAccountCard({ email, username }: { email: string; username: string }) {
   const { t, i18n } = useTranslation("settings");
@@ -1673,11 +1672,13 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
   const [emailSent, setEmailSent] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
+  const preflight = useDeletionPreflight(open);
   const confirmationTarget = username.trim() || email.trim();
   const canRequest = !!confirmationTarget
     && confirmation.trim() === confirmationTarget
     && acknowledged
-    && !requesting;
+    && !requesting
+    && preflight.report?.canSendEmail === true;
 
   const resetDialog = () => {
     setConfirmation("");
@@ -1692,33 +1693,7 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
     if (!nextOpen) resetDialog();
   };
 
-  const getErrorMessage = (code?: string) => {
-    switch (code) {
-      case "CONFIRMATION_MISMATCH":
-        return t("account.deleteAccount.errors.confirmationMismatch");
-      case "PENDING_CREATOR_EARNINGS":
-        return t("account.deleteAccount.errors.pendingEarnings");
-      case "BILLING_CLEANUP_UNAVAILABLE":
-      case "SUBSCRIPTION_CANCELLATION_FAILED":
-        return t("account.deleteAccount.errors.billing");
-      case "CREATOR_ACCOUNT_CLOSURE_FAILED":
-        return t("account.deleteAccount.errors.creatorAccount");
-      case "ACCOUNT_DELETION_NOT_READY":
-        return t("account.deleteAccount.errors.notReady");
-      case "ACCOUNT_DELETION_COOLDOWN":
-        return t("account.deleteAccount.errors.cooldown");
-      case "LAST_ADMIN_ACCOUNT":
-        return t("account.deleteAccount.errors.lastAdmin");
-      case "REFERRAL_HISTORY_REQUIRES_SUPPORT":
-        return t("account.deleteAccount.errors.referral");
-      case "ACCOUNT_RESTRICTION_REQUIRES_SUPPORT":
-        return t("account.deleteAccount.errors.protectedHistory");
-      case "DELETE_CONFIRMATION_EMAIL_FAILED":
-        return t("account.deleteAccount.errors.email");
-      default:
-        return t("account.deleteAccount.errors.generic");
-    }
-  };
+  const getErrorMessage = (code?: string, blockedUntil?: string) => deletionErrorMessage(t, code, blockedUntil);
 
   const handleRequestDeletion = async () => {
     if (!canRequest) return;
@@ -1736,9 +1711,11 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
       });
       const payload = await response.json().catch(() => ({})) as DeleteAccountResponse;
 
+      if (payload.preflight) preflight.setReport(payload.preflight);
       if (!response.ok || !payload.success) {
+        if (payload.issues?.length) preflight.setReport({ issues: payload.issues, canSendEmail: !payload.issues.some(issue => issue.blocksEmail), canDelete: false });
         // R4: the dialog stays open, so the reason belongs inside it.
-        setRequestError(getErrorMessage(payload.code));
+        setRequestError(getErrorMessage(payload.code, payload.blockedUntil));
         return;
       }
 
@@ -1781,7 +1758,7 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
       </div>
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto border-red-500/20 bg-[#18181b] text-main sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] gap-3 overflow-y-auto border-red-500/20 bg-[#18181b] text-main sm:max-w-lg">
           {emailSent ? (
             <div className="py-4 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
@@ -1795,6 +1772,7 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
                   {t("account.deleteAccount.emailSentDescription", { email })}
                 </DialogDescription>
               </DialogHeader>
+              <div className="mt-4"><DeletionPreflightNotice {...preflight} /></div>
               <button
                 type="button"
                 onClick={() => handleOpenChange(false)}
@@ -1805,8 +1783,8 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
             </div>
           ) : (
             <>
-              <DialogHeader>
-                <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/15 text-red-400">
+              <DialogHeader className="relative pr-8 sm:min-h-11 sm:pl-15">
+                <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/15 text-red-400 sm:absolute sm:left-0 sm:top-0 sm:mb-0">
                   <TriangleAlert className="h-6 w-6" />
                 </div>
                 <DialogTitle className="text-red-200">
@@ -1817,25 +1795,18 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="rounded-xl border border-red-500/25 bg-red-950/25 p-4">
+              <div className="min-w-0 rounded-xl border border-red-500/25 bg-red-950/25 p-4">
                 <div className="text-sm font-bold text-red-200">
                   {t("account.deleteAccount.warningTitle")}
                 </div>
                 <ul className="mt-3 list-disc space-y-2 pl-5 text-xs leading-relaxed text-red-100/70">
-                  <li>{t("account.deleteAccount.warnings.identity")}</li>
-                  <li>{t("account.deleteAccount.warnings.deletionCooldown")}</li>
-                  <li>{t("account.deleteAccount.warnings.content")}</li>
-                  <li>{t("account.deleteAccount.warnings.community")}</li>
-                  <li>{t("account.deleteAccount.warnings.billing")}</li>
-                  <li>{t("account.deleteAccount.warnings.records")}</li>
-                  <li>{t("account.deleteAccount.warnings.antiAbuse")}</li>
-                  <li>{t("account.deleteAccount.warnings.cache")}</li>
+                  <li>{t("account.deleteAccount.summaryWarnings.data")}</li>
+                  <li>{t("account.deleteAccount.summaryWarnings.billing")}</li>
+                  <li>{t("account.deleteAccount.summaryWarnings.deletionCooldown")}</li>
                 </ul>
               </div>
 
-              <p className="text-xs leading-relaxed text-amber-200/70">
-                {t("account.deleteAccount.pendingEarnings")}
-              </p>
+              <DeletionPreflightNotice {...preflight} />
 
               <div className="space-y-2">
                 <label htmlFor="delete-account-confirmation" className="text-xs font-semibold text-main">
@@ -3655,7 +3626,7 @@ function ToggleRow({
         <div className="font-semibold text-main">{title}</div>
         <div className="mt-1 text-xs text-sub">{description}</div>
       </div>
-      <ToggleSwitch checked={checked} onChange={onChange} />
+      <ToggleSwitch checked={checked} onChange={onChange} label={title} />
     </div>
   );
 }

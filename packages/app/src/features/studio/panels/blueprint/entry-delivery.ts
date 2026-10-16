@@ -39,3 +39,34 @@ export function getEntryDeliverySummary(
     secondaryKeywords: (mode === "keywords" || mode === "keywords-and-conditions") && (entry.secondaryKeywords?.length ?? 0) > 0,
   };
 }
+
+/**
+ * The card's entries, counted the way the Context preview lists them: what
+ * is sent every turn, the example dialogue (sent every turn too, but on its
+ * own line), and what waits for a keyword, a variable condition or the
+ * interface. Each line is read off the same delivery summary the entry's own
+ * form shows, so an entry gated on a variable is never counted as always-on
+ * (`isVariableBoundEntry`), an always-on one wired to an interface slot waits
+ * for the slot (the engine leaves it out until the player opens it), and a
+ * switched-off or unplaced entry is on no line at all — it reaches nobody.
+ * Openings are not part of a turn.
+ */
+export function contextPreviewCounts(
+  entries: WorldEntry[],
+  context: { worldbooks?: Worldbook[]; loreUiBindings?: LoreUiBinding[] } = {},
+): { alwaysIds: string[]; exampleCount: number; waitingCount: number } {
+  const alwaysIds: string[] = [];
+  let exampleCount = 0;
+  let waitingCount = 0;
+  for (const entry of entries) {
+    if (entry.role === "greeting") continue;
+    const { mode, frontendScoped } = getEntryDeliverySummary(entry, context);
+    if (mode === "always" && !frontendScoped) {
+      if (entry.role === "example") exampleCount++;
+      else alwaysIds.push(entry.id);
+    } else if (mode === "always" || mode === "keywords" || mode === "conditions" || mode === "keywords-and-conditions" || mode === "frontend") {
+      waitingCount++;
+    }
+  }
+  return { alwaysIds, exampleCount, waitingCount };
+}

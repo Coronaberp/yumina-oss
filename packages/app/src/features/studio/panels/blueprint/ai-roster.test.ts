@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { blockId, type WorldDefinition, type Worldbook } from "@yumina/engine";
-import { aiFrameLine, aiReceives, aiRoster, cardTakenOverBy, placeGivesTo, shadowedBy, workerReaders } from "./ai-roster";
+import { aiFrameLine, aiReceives, aiRoster, cardTakenOverBy, placeGivesTo, renameAiPatch, shadowedBy, stationName, workerReaders } from "./ai-roster";
 import { aiTableSections } from "./ai-table";
 
 const t = (key: string, opts?: Record<string, unknown>) => {
@@ -121,4 +121,23 @@ test("the AI table leaves unplaced things out and shows a value behind the scene
   const row = (id: string) => vars.rows.find((r) => r.id === `var:${id}`)!.cells.map((c) => c.tone);
   assert.deepEqual(row("trust"), ["yes", "yes", "yes"], "the recorder is wired to the card's values");
   assert.deepEqual(row("mood"), ["yes", "yes", "no"], "a frame behind the scenes that is always in shows its values to whoever talks");
+});
+
+test("renaming an AI renames the name it is shown and called by", () => {
+  // A situation that is its own AI, with a voice name of its own: the voice
+  // changes, the place keeps its name.
+  const named = book("yard", "后院", { kind: "narrator", name: "老板娘" });
+  const patch = renameAiPatch(named, " 掌柜 ")!;
+  assert.deepEqual(patch, { station: { kind: "narrator", name: "掌柜" } });
+  assert.equal(stationName({ ...named, ...patch }), "掌柜");
+  // An AI living in a place is all its frame is: both names move together.
+  const hosted = { ...book("ai", "店员", { kind: "narrator", name: "店员" }), host: "card" } as Worldbook;
+  assert.deepEqual(renameAiPatch(hosted, "伙计"), { name: "伙计", station: { kind: "narrator", name: "伙计" } });
+  // Wearing its frame's name: that is the name to change.
+  const plain = book("notes", "记录员", { kind: "worker", trigger: { on: "turns", every: 3 } });
+  assert.deepEqual(renameAiPatch(plain, "书记"), { name: "书记" });
+  assert.equal(renameAiPatch(plain, "  "), null, "an AI is never left nameless");
+  assert.equal(renameAiPatch(named, "老板娘"), null);
+  // Its row on the canvas reads the same name as its title.
+  assert.equal(aiRoster(world([named]), t).find((ai) => ai.bookId === "yard")?.name, "老板娘");
 });

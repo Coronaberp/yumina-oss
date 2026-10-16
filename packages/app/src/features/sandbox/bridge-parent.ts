@@ -63,7 +63,7 @@ export class SandboxBridge {
   private onApiCall: ApiHandler;
   private onStreamCall: StreamHandler;
   private onResize: (height: number) => void;
-  private onError: (message: string) => void;
+  private onError: (message: string, diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic) => void;
   private onRendered: () => void;
   private onDiag: (event: string, data: Record<string, string | number | boolean>) => void;
   private onComposerDraft: (text: string) => void;
@@ -81,7 +81,7 @@ export class SandboxBridge {
     onApiCall: ApiHandler;
     onStreamCall?: StreamHandler;
     onResize?: (height: number) => void;
-    onError?: (message: string) => void;
+    onError?: (message: string, diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic) => void;
     /** Fired when the sandbox reports the world has painted its first frame. */
     onRendered?: () => void;
     /** Sandbox self-diagnostics (e.g. scroll-clamp corrections) for analytics. */
@@ -144,9 +144,10 @@ export class SandboxBridge {
     compiledCode?: string,
     compileError?: string,
     mode?: SandboxMode,
+    diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic,
   ): void {
     this.voiceMode = mode ?? "session";
-    this.send({ type: "install-root", entryFile, files, compiledCode, compileError, mode });
+    this.send({ type: "install-root", entryFile, files, compiledCode, compileError, mode, diagnostic });
   }
 
   /** Push a single state channel update */
@@ -364,7 +365,7 @@ export class SandboxBridge {
         break;
 
       case "component-error":
-        this.onError(msg.message);
+        this.onError(msg.message, msg.diagnostic);
         break;
 
       case "diag":

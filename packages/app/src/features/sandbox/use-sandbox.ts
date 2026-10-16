@@ -27,7 +27,7 @@ export function useSandbox(opts: {
   active?: boolean;
   onApiCall: ApiHandler;
   onStreamCall?: StreamHandler;
-  onError?: (message: string) => void;
+  onError?: (message: string, diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic) => void;
   onResize?: (height: number) => void;
   /** Sandbox self-diagnostics (e.g. scroll-clamp corrections) for analytics. */
   onDiag?: (event: string, data: Record<string, string | number | boolean>) => void;
@@ -76,7 +76,7 @@ export function useSandbox(opts: {
     const bridge = new SandboxBridge({
       onApiCall: (method, args) => onApiCallRef.current(method, args),
       onStreamCall: (method, args, cbs) => onStreamCallRef.current?.(method, args, cbs),
-      onError: (message) => onErrorRef.current?.(message),
+      onError: (message, diagnostic) => onErrorRef.current?.(message, diagnostic),
       onResize: (height) => onResizeRef.current?.(height),
       onDiag: (event, data) => onDiagRef.current?.(event, data),
       onComposerDraft: (text) => onComposerDraftRef.current?.(text),
@@ -145,9 +145,10 @@ export function useSandbox(opts: {
       compiledCode?: string,
       compileError?: string,
       mode?: SandboxMode,
+      diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic,
     ) => {
       bootTimingRef.current?.mark("install_requested");
-      bridgeRef.current?.installRoot(entryFile, files, compiledCode, compileError, mode);
+      bridgeRef.current?.installRoot(entryFile, files, compiledCode, compileError, mode, diagnostic);
     },
     [],
   );

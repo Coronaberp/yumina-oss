@@ -86,3 +86,35 @@ describe("diffGraphs", () => {
     expect(d.total).toBe(4);
   });
 });
+
+describe("diffGraphs — content the graph does not carry", () => {
+  it("counts an entry whose text was rewritten and a variable whose default moved", () => {
+    const before = g([n("entry:e1", { kind: "entry" }), n("greeting:g1", { kind: "greeting" }), n("var:hp"), n("var:inv")]);
+    const after = g([n("entry:e1", { kind: "entry" }), n("greeting:g1", { kind: "greeting" }), n("var:hp"), n("var:inv")]);
+    expect(diffGraphs(before, after).isEmpty).toBe(true);
+    const d = diffGraphs(before, after, {
+      before: {
+        entries: [{ id: "e1", content: "old" }, { id: "g1", role: "greeting", content: "hi" }],
+        variables: [{ id: "hp", defaultValue: 100 }, { id: "inv", defaultValue: { a: 1, b: [1] } }],
+      },
+      after: {
+        entries: [{ id: "e1", content: "new" }, { id: "g1", role: "greeting", content: "hi" }],
+        // same json, keys in another order: not a change
+        variables: [{ id: "hp", defaultValue: 50 }, { id: "inv", defaultValue: { b: [1], a: 1 } }],
+      },
+    });
+    expect(d.changedNodes).toEqual(["entry:e1", "var:hp"]);
+    expect(d.total).toBe(2);
+    expect(d.isEmpty).toBe(false);
+  });
+
+  it("does not count a content change twice, or on a node that is not drawn", () => {
+    const before = g([n("entry:e1", { kind: "entry", title: "A" })]);
+    const after = g([n("entry:e1", { kind: "entry", title: "B" })]);
+    const d = diffGraphs(before, after, {
+      before: { entries: [{ id: "e1", content: "x" }, { id: "folded", content: "x" }] },
+      after: { entries: [{ id: "e1", content: "y" }, { id: "folded", content: "y" }] },
+    });
+    expect(d.changedNodes).toEqual(["entry:e1"]);
+  });
+});

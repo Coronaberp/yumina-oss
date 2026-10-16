@@ -419,6 +419,8 @@
     "deleteBundleFailed": "No se pudo eliminar el paquete",
     "downloadBundleFailed": "No se pudo descargar el paquete",
     "deleteAssetFailed": "No se pudo eliminar el archivo",
+
+    "deleteAssetInUse": "Esta imagen sigue siendo la portada de «{{name}}». Cambia esa portada primero.",
     "renameAssetFailed": "No se pudo renombrar el archivo",
     "moveAssetFailed": "No se pudo mover el archivo",
     "createFolderFailed": "No se pudo crear la carpeta",
@@ -707,7 +709,8 @@
         "variant": "Clásica"
       },
       "nsfw-anime": {
-        "name": "Anime NSFW"
+        "name": "Anime sin límites",
+        "variant": "Clásica"
       },
       "realistic": {
         "name": "Realista"
@@ -716,7 +719,7 @@
         "name": "2.5D"
       },
       "guofeng": {
-        "name": "Guofeng"
+        "name": "Tinta china"
       },
       "western": {
         "name": "Occidental"
@@ -730,6 +733,14 @@
       "anime-story": {
         "name": "Anime · Historia",
         "variant": "Historia"
+      },
+      "anime-anima": {
+        "name": "Anime · Anima",
+        "variant": "Anima"
+      },
+      "nsfw-anima": {
+        "name": "Anime sin límites · Anima",
+        "variant": "Anima"
       }
     },
     "videoStyleFromReference": "El vídeo conserva el estilo artístico de la imagen de referencia.",
@@ -785,6 +796,8 @@
       "VIDEO_NO_LAST_FRAME": "Este modelo no admite último fotograma.",
       "VIDEO_ONE_FRAME_ONLY": "Este modelo admite el primer o el último fotograma, no los dos.",
       "VIDEO_TOO_MANY_REFERENCES": "Demasiadas referencias de personaje para este modelo.",
+      "VIDEO_FRAMES_OR_REFERENCES": "Este modelo admite fotogramas o referencias de personaje, no ambos.",
+      "VIDEO_LAST_NEEDS_FIRST": "Este modelo necesita un primer fotograma antes del último.",
       "VIDEO_NEEDS_FRAME": "Este modelo necesita una imagen de referencia.",
       "VIDEO_NO_SOUND": "Este modelo no genera sonido.",
       "VIDEO_NO_TUNING": "Este modelo no ofrece estos ajustes.",
@@ -795,7 +808,9 @@
       "VIDEO_BAD_STYLE": "Ese estilo no está disponible para este vídeo. Elige otro.",
       "VIDEO_NO_STYLE": "Ese estilo no está disponible para este vídeo. Elige otro.",
       "VIDEO_STYLE_WITH_FRAME": "Ese estilo no está disponible para este vídeo. Elige otro.",
-      "QUALITY_BATCH": "4K genera una imagen cada vez. Pon la cantidad en 1 y vuelve a intentarlo."
+      "QUALITY_BATCH": "4K genera una imagen cada vez. Pon la cantidad en 1 y vuelve a intentarlo.",
+      "MODEL_UNAVAILABLE": "Este modelo no está disponible ahora. Elige otro modelo.",
+      "REFERENCE_UNSUPPORTED": "Este modelo no admite imagen de referencia. Quita la imagen o elige otro modelo."
     },
     "queue": {
       "waiting": "Esperando en la cola…",
@@ -828,12 +843,40 @@
       "fewer": "Una menos",
       "more": "Una más",
       "tier": {
+        "seedreamFlash": "La más barata",
         "seedreamLite": "Rápido",
         "seedreamPro": "Equilibrado",
-        "nanoBanana2": "Buen editor",
+        "nanoBanana21": "La más nueva · buena editando",
+        "nanoBanana2": "Tiene 512",
         "nanoBananaPro": "Alta calidad",
-        "gptImage2": "El mejor · lento"
-      }
+        "gptImage25Flare": "Pulido · rápido",
+        "gptImage25Sunburst": "El mejor · lento",
+        "gptImage2": "Anterior · lento",
+        "flux2Pro": "Buen precio",
+        "flux2Max": "Más detalle",
+        "flux3": "El más nuevo · escenas ricas",
+        "qwenImage3": "Barato · lento",
+        "qwenImage3Pro": "Más detalle · lento",
+        "grokImagine": "El más barato · rápido",
+        "grokImagineQuality": "Rápido",
+        "grokImagine2": "Más detalle · muy lento",
+        "klingO1": "Anime limpio",
+        "lumaUni1": "4 MP · lento",
+        "lumaUni1Max": "4 MP, más detalle · lento",
+        "ideogram45": "Texto y letras",
+        "wan25": "Pictórico · preview",
+        "recraft41": "Diseño · plano",
+        "krea2Turbo": "El más barato",
+        "krea2Medium": "Estilizado",
+        "krea2Large": "Estilizado · lento",
+        "maiImage26": "Limpio · rápido",
+        "hunyuan35": "Barato · 2K"
+      },
+      "version": "Versión",
+      "noReference": "{{model}} no admite imagen de referencia. Quita la imagen o elige otro modelo.",
+      "fromPerImage": "desde {{count}} / imagen",
+      "moreModels": "{{count}} modelos más",
+      "fewerModels": "Ver menos"
     },
     "loading": "Cargando…",
     "loadTemplatesError": "No se pudieron cargar las opciones. Tu borrador sigue guardado.",
@@ -951,6 +994,17 @@
       "saving": "Guardando"
     },
     "video": {
+      "modeLabel": "Modo de vídeo",
+      "mode": {
+        "partner": {
+          "name": "Describe y crea",
+          "desc": "Seedance, Kling, Veo y más"
+        },
+        "custom": {
+          "name": "Generación personalizada",
+          "desc": "Nuestras GPU · LoRA y todos los ajustes"
+        }
+      },
       "describe": "Describe la escena",
       "enhance": "Pulir con IA",
       "enhanceHint": "La IA reescribe la descripción para el modelo de vídeo antes de generar",
@@ -967,25 +1021,32 @@
         "last": "El vídeo termina en esta imagen"
       },
       "slotRefHint": "Mantiene el aspecto, la escena puede ser nueva · hasta {{count}}, +{{price}} cada una",
+      "slotRefHintFree": "Mantiene el aspecto, la escena puede ser nueva · hasta {{count}}",
       "notSupported": "{{model}} no lo admite",
       "oneFrameOnly": "{{model}} admite el primer o el último fotograma, no los dos. Elige otro modelo para usar ambos.",
+      "aspectFromFrame": "Con un fotograma, el clip toma su forma.",
+      "framesOrReferences": "{{model}} no admite estas imágenes juntas: con referencias de personaje, como mucho un primer fotograma. Quita alguna para continuar.",
+      "lastNeedsFirst": "{{model}} necesita un primer fotograma junto al último.",
+      "needsFrame": "{{model}} anima una imagen: añade un primer fotograma arriba.",
       "remove": "Quitar",
       "closePicker": "Cerrar",
       "modelSpec": "Modelo y tamaño",
       "model": "Modelo",
-      "models": {
-        "h3-max": "El más rápido, muy buena imagen",
-        "h3": "El más nítido, puede llevar sonido",
-        "wan-2.2": "Servidores propios, todos los ajustes"
-      },
       "tag": {
         "text": "Texto",
         "image": "Imagen",
         "sound": "Sonido",
-        "selfHosted": "Sin límites"
+        "selfHosted": "Sin límites",
+        "firstLast": "Primer y último fotograma",
+        "refs": "Hasta {{count}} referencias",
+        "firstLastShort": "Inicio+fin",
+        "refsShort": "Referencias",
+        "fast": "Rápido",
+        "needsImage": "Necesita imagen"
       },
       "priceFrom_one": "Desde {{count}} / {{seconds}} s",
       "priceFrom": "Desde {{count}} / {{seconds}} s",
+      "priceFor": "{{count}} / {{seconds}} s",
       "aspect": "Proporción",
       "resolution": "Resolución",
       "duration": "Duración",
@@ -996,6 +1057,7 @@
       "etaMinutes_one": "~{{count}} min",
       "etaMinutes": "~{{count}} min",
       "sound": "Generar ambiente y diálogo a la vez",
+      "soundAlways": "Este modelo siempre genera sonido con la imagen.",
       "more": "Más ajustes",
       "fast": "Modo rápido de 4 pasos",
       "fastHint": "Varias veces más rápido y mucho más barato; desactívalo para ajustar pasos y CFG",
@@ -1067,6 +1129,30 @@
       },
       "redo": "Versión 4K · {{count}} mushies",
       "redoNote": "Cada imagen terminada a la derecha tiene un botón para rehacerla en 4K."
+    },
+    "badge": {
+      "limitless": "Sin límites",
+      "textOnly": "Solo texto"
+    },
+    "trait": {
+      "style": {
+        "realistic": "Sobre todo realista",
+        "anime": "Anime",
+        "2.5d": "2.5D",
+        "3d": "Anime en 3D",
+        "versatile": "Anime fuerte"
+      },
+      "strength": {
+        "anime": "Anime de calidad",
+        "photoreal": "Personas realistas",
+        "text": "Texto preciso",
+        "design": "Carteles y diseño",
+        "detail": "Mucho detalle",
+        "fast": "Rápido",
+        "motion": "Acción grande",
+        "camera": "Movimientos de cámara",
+        "dialogue": "Diálogo con labios"
+      }
     }
   },
   "media": {

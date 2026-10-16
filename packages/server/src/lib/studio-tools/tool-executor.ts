@@ -20,7 +20,8 @@ import type {
   LoreUiBinding,
 } from "@yumina/engine";
 import type { EventPattern, EventMatchCondition, VariableActivation } from "@yumina/engine";
-import { deriveSectionDefaults, deriveSectionDefaultsForEntry, isVariableBoundEntry, estimateTokens, moduleStationSchema, uiKnobGroupsSchema, withPreciseTrackingDefault, worldDefinitionSchema } from "@yumina/engine";
+import { AUTHOR_SAMPLING_LIMITS, STATION_MAX_TOKENS_LIMITS, STATION_TEMPERATURE_LIMITS, deriveSectionDefaults, deriveSectionDefaultsForEntry, isVariableBoundEntry, estimateTokens, moduleStationSchema, uiKnobGroupsSchema, withPreciseTrackingDefault, worldDefinitionSchema } from "@yumina/engine";
+import { BACKGROUND_FALLBACK_MODEL, catalogModelError, lookupCatalogModel, planDisplayName } from "./model-catalog.js";
 import { isValidTtsVoice } from "@yumina/shared";
 import crypto from "crypto";
 import { posix } from "node:path";
@@ -252,10 +253,43 @@ export function executeReadEntities(
 
     // Special IDs
     if (id === "settings") { results[id] = { ...world.settings, _type: "settings" }; continue; }
-    results[id] = null;
+
+    // Models often ask by the name they saw ("酒馆老板") rather than the id. A bare
+    // null sent them into re-reading the same thing; resolve a unique name, and
+    // otherwise name the closest entities.
+    const named = namedEntities(world);
+    const key = looseKey(id);
+    const byName = named.filter((n) => looseKey(n.name) === key || looseKey(n.id) === key);
+    if (byName.length === 1 && byName[0]!.id !== id) {
+      const resolved = executeReadEntities(world, [byName[0]!.id], params).results[byName[0]!.id];
+      results[id] = resolved && typeof resolved === "object"
+        ? { ...resolved as Record<string, unknown>, _matchedBy: `name — its id is "${byName[0]!.id}"` }
+        : resolved;
+      continue;
+    }
+    const near = (byName.length > 1 ? byName : named.filter((n) => key.length >= 2
+      && (looseKey(n.name).includes(key) || looseKey(n.id).includes(key) || (looseKey(n.name).length >= 2 && key.includes(looseKey(n.name)))))).slice(0, 5);
+    results[id] = near.length > 0
+      ? { _type: "notFound", error: `No entity has the id "${id}". Did you mean: ${near.map((n) => `"${n.id}" (${n.type} "${n.name}")`).join(", ")}?` }
+      : null;
   }
 
   return { results };
+}
+
+/** Case, spacing and -_ insensitive, for matching what a model typed. */
+function looseKey(text: string): string {
+  return text.toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function namedEntities(world: WorldDefinition): Array<{ id: string; name: string; type: string }> {
+  return [
+    ...world.entries.map((e) => ({ id: e.id, name: e.name, type: "entry" })),
+    ...world.variables.map((v) => ({ id: v.id, name: v.name, type: "variable" })),
+    ...(world.reactions ?? []).map((r) => ({ id: r.id, name: r.name, type: "behavior" })),
+    ...(world.worldbooks ?? []).map((w) => ({ id: w.id, name: w.name, type: "worldbook" })),
+    ...(world.audioTracks ?? []).map((a) => ({ id: a.id, name: a.name, type: "audio" })),
+  ].filter((n) => typeof n.name === "string" && n.name.length > 0);
 }
 
 // ── Grep World (unified cross-entity search) ──
@@ -509,6 +543,11 @@ function isSystemPath(path: string): boolean {
 export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx?: boolean }): ValidateWorldResult {
   const issues: ValidationIssue[] = [];
   const variableIds = new Set(world.variables.map((v) => v.id));
+  // Conditions read dot-paths into json variables ("player.hp", "bag[0].qty");
+  // the engine resolves them with getByPath, so only the root must exist. Checking
+  // the whole path raised 641 false errors in ten days and taught the assistant
+  // that a failing check can be shrugged off.
+  const conditionVarExists = (path: string) => variableIds.has(path) || variableIds.has(path.split(/[.[]/)[0]!);
   const entryIds = world.entries.map((e) => e.id);
   const behaviorIds = (world.reactions ?? []).map((r) => r.id);
   const ruleIds = world.rules.map((r) => r.id);
@@ -597,7 +636,7 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
   for (const e of world.entries) {
     const conditions = ((e as { conditions?: Array<{ variableId?: string }> }).conditions) ?? [];
     for (const c of conditions) {
-      if (c.variableId && !variableIds.has(c.variableId)) {
+      if (c.variableId && !conditionVarExists(c.variableId)) {
         issues.push({
           severity: "error",
           code: "entry-undefined-condition-ref",
@@ -629,7 +668,7 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
     // Conditions
     const conditions = ((r as { conditions?: Array<{ variableId?: string }> }).conditions) ?? [];
     for (const c of conditions) {
-      if (c.variableId && !variableIds.has(c.variableId)) {
+      if (c.variableId && !conditionVarExists(c.variableId)) {
         issues.push({
           severity: "error",
           code: "behavior-undefined-condition-ref",
@@ -1802,10 +1841,24 @@ function applyEditCustomUI(draft: WorldDefinition, id: string, data: Record<stri
   }
   const rc = draft.rootComponent;
 
+  // An entry, variable or behavior id is not an interface file. Sent here, it
+  // used to land on the entry file and fail as "old_code not found" (a third of
+  // this tool's misses), and the model then rewrote the whole thing. An entry
+  // gets the search-replace it asked for; the rest are told which tool to use.
+  const isFilename = id.includes(".");
+  if (!isFilename && !(id in rc.files)) {
+    const entry = draft.entries.find((e) => e.id === id);
+    if (entry) return applyEditEntryText(entry, oldCode, newCode, index);
+    const other = draft.variables.some((v) => v.id === id) ? "variable (write_variable)"
+      : (draft.reactions ?? []).some((b) => b.id === id) ? "behavior (write_behavior)"
+        : (draft.worldbooks ?? []).some((w) => w.id === id) ? "situation (write_worldbook)" : null;
+    if (other) {
+      return { ...base, status: "error", error: `"${id}" is a ${other}, not an interface file — edit_custom_ui only edits files in rootComponent.files [${Object.keys(rc.files).join(", ")}]. Use the tool in parentheses.` };
+    }
+  }
   // Resolve target file: if id is an existing filename use it directly; if it
   // ends with .tsx but doesn't exist yet, create it; non-filename IDs address
   // the entry file (so "root-component" or a UUID resolves sensibly).
-  const isFilename = id.includes(".");
   const targetFile = (isFilename && id in rc.files)
     ? id
     : isFilename && id.endsWith(".tsx")
@@ -1857,6 +1910,31 @@ function applyEditCustomUI(draft: WorldDefinition, id: string, data: Record<stri
   rc.files[targetFile] = result;
   rc.updatedAt = new Date().toISOString();
   return { ...base, id: targetFile, status: "success", note: `Edited ${targetFile}: replaced ${oldCode.length} chars → ${newCode.length} chars` + rootUiConnectionNote(rc, targetFile) };
+}
+
+/** edit_custom_ui on a lorebook entry id: the same unique-match search-replace,
+ *  applied to the entry's text. */
+function applyEditEntryText(entry: WorldDefinition["entries"][number], oldCode: string, newCode: string, index: number): ChangeResult {
+  const base = { index, action: "update", entityType: "entry", id: entry.id };
+  const text = entry.content ?? "";
+  const exactCount = countOccurrences(text, oldCode);
+  if (exactCount > 1) {
+    return { ...base, status: "error", error: `old_code appears ${exactCount} times in entry "${entry.name}" — include more surrounding text for a unique match.` };
+  }
+  const match = resolveUniqueMatch(text, oldCode);
+  if (!match.ok) {
+    const hint = match.reason === "ambiguous" ? null : nearestRegion(text, oldCode);
+    return {
+      ...base,
+      status: "error",
+      error: match.reason === "ambiguous"
+        ? `old_code matches several places in entry "${entry.name}" — include more surrounding text.`
+        : `old_code not found in entry "${entry.name}" (id ${entry.id}).` + (hint ? `\nClosest passage now in the entry:\n${hint}\n` : "")
+          + ` Copy old_code verbatim from read_entities, or send the whole text with write_entry.`,
+    };
+  }
+  entry.content = text.slice(0, match.span.start) + newCode + text.slice(match.span.end);
+  return { ...base, status: "success", note: `Edited the text of entry "${entry.name}": replaced ${oldCode.length} chars → ${newCode.length} chars. (This id is a lorebook entry, not an interface file.)` };
 }
 
 /** Count non-overlapping occurrences of a substring */
@@ -2184,22 +2262,38 @@ function applyUiDocChange(draft: WorldDefinition, data: Record<string, unknown>,
   return { ...base, status: "success", ...(outcome.note ? { note: outcome.note } : {}) };
 }
 
-/** Numeric settings update_settings may write, with the ranges of
- *  worldSettingsSchema (packages/engine/src/world/schema.ts). Keep in sync:
- *  a value outside them fails the schema on the next load of the card. */
+/** Numeric settings update_settings may write. Each range sits inside
+ *  worldSettingsSchema (packages/engine/src/world/schema.ts), so a clamped
+ *  value always loads; most are tighter, because the assistant should never
+ *  write a value no author would choose on purpose. */
 const NUMERIC_SETTINGS: Record<string, { min: number; max: number; int?: boolean }> = {
-  maxTokens: { min: 1, max: Number.MAX_SAFE_INTEGER, int: true },
-  temperature: { min: 0, max: 2 },
-  topP: { min: 0, max: 1 },
-  frequencyPenalty: { min: -2, max: 2 },
-  presencePenalty: { min: -2, max: 2 },
-  topK: { min: 0, max: Number.MAX_SAFE_INTEGER, int: true },
-  minP: { min: 0, max: 1 },
-  lorebookScanDepth: { min: 1, max: Number.MAX_SAFE_INTEGER, int: true },
+  // The card's reply-length default. The player's own reply length always
+  // wins on a send; this only fills in for a client that sends none.
+  maxTokens: { min: 256, max: 32768, int: true },
+  // The story AI's sampling: only read with samplingPolicy "author", and
+  // clamped there to the same ranges (engine AUTHOR_SAMPLING_LIMITS).
+  temperature: AUTHOR_SAMPLING_LIMITS.temperature,
+  topP: AUTHOR_SAMPLING_LIMITS.topP,
+  frequencyPenalty: AUTHOR_SAMPLING_LIMITS.frequencyPenalty,
+  presencePenalty: AUTHOR_SAMPLING_LIMITS.presencePenalty,
+  topK: { ...AUTHOR_SAMPLING_LIMITS.topK, int: true },
+  minP: AUTHOR_SAMPLING_LIMITS.minP,
+  // Messages scanned for keyword triggers each turn (engine default 2; the
+  // shipped demo cards use 4). Every turn rescans that many messages and any
+  // keyword in them fires its entry, so a large depth keeps old lore firing
+  // long after the story moved on (100000 = the whole history, every turn).
+  // 20 is ten exchanges back — more than any card we have needs.
+  lorebookScanDepth: { min: 1, max: 20, int: true },
   lorebookRecursionDepth: { min: 0, max: 10, int: true },
-  lorebookBudgetCap: { min: 0, max: Number.MAX_SAFE_INTEGER, int: true },
-  lorebookBudgetPercent: { min: 0, max: 100 },
+  lorebookBudgetCap: { min: 0, max: 1_000_000, int: true },
+  // Percent of the window triggered lore may use (100 = all of it, the
+  // default). 0 makes the budget 0 tokens and drops EVERY keyword entry
+  // (shared resolveLorebookBudget), so the floor is 5.
+  lorebookBudgetPercent: { min: 5, max: 100 },
 };
+
+/** The story-AI sampling keys: inert unless samplingPolicy is "author". */
+const SAMPLING_SETTING_KEYS = Object.keys(AUTHOR_SAMPLING_LIMITS);
 
 /** A finite number, or a string that is exactly one ("0.8"); anything else is null. */
 function coerceSettingNumber(value: unknown): number | null {
@@ -2231,6 +2325,24 @@ function applySettingsChange(draft: WorldDefinition, data: Record<string, unknow
   if (data.playerName !== undefined) {
     if (typeof data.playerName !== "string" || !data.playerName.trim()) invalid.push(`playerName must be a non-empty string`);
     else updates.playerName = data.playerName;
+  }
+  // Whose sampling the story AI uses. "player" (default) is stored as absent.
+  if (data.samplingPolicy !== undefined) {
+    if (data.samplingPolicy === "author") updates.samplingPolicy = "author";
+    else if (data.samplingPolicy === "player" || data.samplingPolicy === null || data.samplingPolicy === "") updates.samplingPolicy = undefined;
+    else invalid.push(`samplingPolicy must be "player" or "author"`);
+  }
+  // A suggestion shown to players, so it must be a model they can run here.
+  // "" or null removes it.
+  if (data.recommendedModel !== undefined) {
+    const raw = typeof data.recommendedModel === "string" ? data.recommendedModel.trim() : data.recommendedModel;
+    if (raw === "" || raw === null) updates.recommendedModel = undefined;
+    else if (typeof raw !== "string") invalid.push(`recommendedModel must be a model id string`);
+    else {
+      const lookup = lookupCatalogModel(raw);
+      if (lookup.kind === "found") updates.recommendedModel = lookup.model.id;
+      else invalid.push(catalogModelError("recommendedModel", raw, lookup));
+    }
   }
   // The card's own name and blurb live on the definition, not in settings.
   // Without them a card the assistant wrote end to end still carried its
@@ -2275,7 +2387,22 @@ function applySettingsChange(draft: WorldDefinition, data: Record<string, unknow
   if (card.description !== undefined) draft.description = card.description;
 
   if (!draft.settings) draft.settings = {} as WorldDefinition["settings"];
-  Object.assign(draft.settings as Record<string, unknown>, updates);
+  const settings = draft.settings as Record<string, unknown>;
+  Object.assign(settings, updates);
+  for (const key of ["samplingPolicy", "recommendedModel"]) {
+    if (key in updates && updates[key] === undefined) delete settings[key];
+  }
+  // Card sampling written while the card follows the player is stored but
+  // never read on a send: say so, so nobody thinks the card was "tuned".
+  const notes: string[] = [];
+  if (adjusted.length > 0) notes.push(`adjusted to the allowed range: ${adjusted.join(", ")}`);
+  const samplingWritten = SAMPLING_SETTING_KEYS.filter((k) => k in updates);
+  if (samplingWritten.length > 0 && settings.samplingPolicy !== "author") {
+    notes.push(`${samplingWritten.join(", ")} saved but inactive: this card follows the player's own sampling settings (samplingPolicy "player"). They only apply with samplingPolicy "author"`);
+  }
+  if ("maxTokens" in updates) {
+    notes.push(`maxTokens is only a default: the player's own reply length always wins`);
+  }
   // Smart tracking switches (the editor's 「智能追踪」).
   if (data.continuity && typeof data.continuity === "object" && !Array.isArray(data.continuity)) {
     const c = data.continuity as Record<string, unknown>;
@@ -2294,13 +2421,76 @@ function applySettingsChange(draft: WorldDefinition, data: Record<string, unknow
     draft.continuity = next;
   }
 
-  return {
-    ...base, status: "success",
-    ...(adjusted.length > 0 ? { note: `adjusted to the allowed range: ${adjusted.join(", ")}` } : {}),
-  };
+  return { ...base, status: "success", ...(notes.length > 0 ? { note: notes.join("; ") } : {}) };
 }
 
 // ── Worldbook CRUD ──
+
+/**
+ * A station's model / temperature / maxTokens, checked before anything is
+ * written. Every AI call in a card either follows the player or uses the
+ * author's value inside safe ranges, so:
+ * - model must be a catalog model (a typo used to ship and silently fall
+ *   back at play time); one above the free plan carries a note naming what
+ *   players below that plan run instead.
+ * - temperature 0–1.5 and maxTokens 50–4000 (engine STATION_* limits); an
+ *   out-of-range value is an error, never the silent drop it used to be.
+ * - a narrator answers with the player's own settings, so temperature and
+ *   maxTokens on one are dropped with a note saying so.
+ */
+function checkStationAiSettings(raw: unknown): { errors: string[]; notes: string[] } {
+  const errors: string[] = [];
+  const notes: string[] = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { errors, notes };
+  const r = raw as Record<string, unknown>;
+  const kind = r.kind;
+  const given = (v: unknown) => v !== undefined && v !== null && v !== "";
+
+  // A custom station runs through api.callAi (server lib/ai-call.ts), which
+  // reads its model, temperature and maxTokens like a worker's.
+  if (given(r.model)) {
+    if (typeof r.model !== "string") errors.push(`station.model must be a model id string`);
+    else {
+      const id = r.model.trim();
+      const lookup = lookupCatalogModel(id);
+      if (lookup.kind !== "found") errors.push(catalogModelError("station.model", id, lookup));
+      else if (lookup.model.minPlan !== "free") {
+        const plan = planDisplayName(lookup.model.minPlan);
+        const fallback = kind === "narrator" ? "their own chosen model" : BACKGROUND_FALLBACK_MODEL;
+        notes.push(`${lookup.model.id} needs the ${plan} plan: free players (and any plan below ${plan}) will run ${fallback} instead`);
+      }
+    }
+  }
+
+  const ranged = [
+    ["temperature", STATION_TEMPERATURE_LIMITS, false],
+    ["maxTokens", STATION_MAX_TOKENS_LIMITS, true],
+  ] as const;
+  for (const [key, range, int] of ranged) {
+    if (!given(r[key])) continue;
+    if (kind === "narrator") {
+      notes.push(`station.${key} ignored: a narrator answers the player with the player's own ${key === "temperature" ? "sampling" : "reply length"} settings`);
+      continue;
+    }
+    const n = coerceSettingNumber(r[key]);
+    if (n === null || n < range.min || n > range.max || (int && !Number.isInteger(n))) {
+      errors.push(`station.${key} must be ${int ? "a whole number" : "a number"} from ${range.min} to ${range.max} (got ${JSON.stringify(r[key])})${key === "temperature" ? "; omit it for the steady default 0.2" : ""}`);
+    }
+  }
+  return { errors, notes };
+}
+
+/** A station's temperature / maxTokens as stored: only on AIs that read them
+ *  (never a narrator), and only once checkStationAiSettings passed them. */
+function stationSamplingParts(r: Record<string, unknown>, kind: "narrator" | "worker"): { temperature?: number; maxTokens?: number } {
+  if (kind === "narrator") return {};
+  const out: { temperature?: number; maxTokens?: number } = {};
+  const t = r.temperature === null || r.temperature === "" ? null : coerceSettingNumber(r.temperature);
+  if (t !== null && t >= STATION_TEMPERATURE_LIMITS.min && t <= STATION_TEMPERATURE_LIMITS.max) out.temperature = t;
+  const m = r.maxTokens === null || r.maxTokens === "" ? null : coerceSettingNumber(r.maxTokens);
+  if (m !== null && Number.isInteger(m) && m >= STATION_MAX_TOKENS_LIMITS.min && m <= STATION_MAX_TOKENS_LIMITS.max) out.maxTokens = m;
+  return out;
+}
 
 /** Normalize the AI-provided 模块总控. Structural cleanup only — an unknown
  *  source id is left in place, because in a batched create the source module
@@ -2310,8 +2500,17 @@ function applySettingsChange(draft: WorldDefinition, data: Record<string, unknow
 function normalizeStation(raw: unknown, selfId: string): Worldbook["station"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const r = raw as Record<string, unknown>;
-  // A custom station is a declared slot: nothing to normalize but its name.
-  if (r.kind === "custom") return { kind: "custom", ...(typeof r.name === "string" && r.name.trim() ? { name: r.name.trim().slice(0, 80) } : {}) };
+  // A custom station is a declared slot the card's code calls (api.callAi):
+  // its name, plus the model and sampling that call runs with.
+  if (r.kind === "custom") {
+    return {
+      kind: "custom",
+      ...(typeof r.name === "string" && r.name.trim() ? { name: r.name.trim().slice(0, 80) } : {}),
+      ...(typeof r.model === "string" && r.model.trim() ? { model: r.model.trim().slice(0, 200) } : {}),
+      // Checked by checkStationAiSettings before this runs.
+      ...stationSamplingParts(r, "worker"),
+    };
+  }
   const kind = r.kind === "worker" ? "worker" : r.kind === "narrator" ? "narrator" : null;
   if (!kind) return undefined;
 
@@ -2375,6 +2574,8 @@ function normalizeStation(raw: unknown, selfId: string): Worldbook["station"] {
     ...(typeof r.name === "string" && r.name.trim() ? { name: r.name.trim().slice(0, 60) } : {}),
     // 自定义: kept only when each part is the shape the engine reads.
     ...customStationParts(r),
+    // Checked by checkStationAiSettings before this runs.
+    ...stationSamplingParts(r, kind),
   };
 }
 
@@ -2383,7 +2584,7 @@ function normalizeStation(raw: unknown, selfId: string): Worldbook["station"] {
 function customStationParts(r: Record<string, unknown>): Partial<NonNullable<Worldbook["station"]>> {
   const shape = moduleStationSchema.shape;
   const out: Record<string, unknown> = {};
-  for (const key of ["sees", "pieces", "output", "say", "onError", "cooldownSec", "maxTokens"] as const) {
+  for (const key of ["sees", "pieces", "output", "say", "onError", "cooldownSec"] as const) {
     if (r[key] === undefined) continue;
     const parsed = shape[key].safeParse(r[key]);
     if (parsed.success && parsed.data !== undefined) out[key] = parsed.data;
@@ -2441,12 +2642,19 @@ function normalizeWorldbookActivation(raw: unknown): Worldbook["activation"] {
 function applyWorldbookChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
   const base = { index, action, entityType: "worldbook", id };
   if (!draft.worldbooks) draft.worldbooks = [];
+  // The station's AI settings: an invalid one fails the write (and says why);
+  // a dropped or downgraded one is reported in the note.
+  const stationCheck = action !== "delete" && data.station !== undefined ? checkStationAiSettings(data.station) : { errors: [], notes: [] };
+  if (stationCheck.errors.length > 0) {
+    return { ...base, status: "error", error: `write_worldbook rejected, nothing was changed: ${stationCheck.errors.join("; ")}.` };
+  }
+  const ok = { ...base, status: "success" as const, ...(stationCheck.notes.length > 0 ? { note: stationCheck.notes.join("; ") } : {}) };
 
   if (action === "create") {
     const existing = draft.worldbooks.find((w) => w.id === id);
     if (existing) {
       applyWorldbookUpdates(existing, data);
-      return { ...base, status: "success" };
+      return ok;
     }
     const maxOrder = draft.worldbooks.reduce((m, w) => Math.max(m, w.order ?? -1), -1);
     const newBook: Worldbook = {
@@ -2464,14 +2672,14 @@ function applyWorldbookChange(draft: WorldDefinition, action: string, id: string
       color: data.color as string | undefined,
     };
     draft.worldbooks.push(newBook);
-    return { ...base, status: "success" };
+    return ok;
   }
 
   if (action === "update") {
     const book = draft.worldbooks.find((w) => w.id === id);
     if (!book) return { ...base, status: "error", error: `Worldbook not found: "${id}".${suggestSimilarIds(id, draft.worldbooks.map((w) => w.id))}` };
     applyWorldbookUpdates(book, data);
-    return { ...base, status: "success" };
+    return ok;
   }
 
   if (action === "delete") {

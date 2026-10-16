@@ -15,7 +15,7 @@ test("build offers validate concise scope and identify the exact saved brief", (
   assert.equal(createBuildProposal("x".repeat(6001), "summary", ["Opening"]), null);
   assert.equal(createBuildProposal("story", "summary", [null]), null);
   assert.deepEqual(advisorTools(STUDIO_TOOLS).map(t => t.function.name).sort(),
-    ["grep_world", "read_entities", "read_source", "read_ui_doc", "save_brief", "search_source"]);
+    ["grep_world", "read_entities", "read_source", "read_ui_doc", "save_brief", "search_source", "simulate_behaviors"]);
 });
 
 test("every ready-made page the engine has is named for the advisor", () => {

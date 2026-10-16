@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
-import type { AiOutputField, AiPromptPiece, Condition, ModuleStation } from "@yumina/engine";
+import type { AiOutputField, AiPromptPiece, Condition, ModuleStation, Variable } from "@yumina/engine";
 import { useEditorStore } from "@/stores/editor";
 import { cn } from "@/lib/utils";
-import { Group, More, Row } from "./controls";
+import { DraftInput, Group, More, NumberInput, Row } from "./controls";
+import { parseEditedValue } from "./variable-value";
 
 /**
  * 自定义: what a card's hand-written AI calls do, as settings on the AI.
@@ -19,6 +20,11 @@ const small = "rounded-md border border-white/10 bg-background px-1.5 py-1 text-
 const OPS: Condition["operator"][] = ["gte", "gt", "eq", "neq", "lt", "lte", "contains"];
 const OP_SIGN: Record<Condition["operator"], string> = { gte: "≥", gt: ">", eq: "=", neq: "≠", lt: "<", lte: "≤", contains: "∋" };
 
+/** A condition's value as the box shows it. */
+const valueText = (value: unknown) => (typeof value === "string" ? value : value === undefined || value === null ? "" : JSON.stringify(value));
+/** What a new piece's condition starts at, for the variable it reads. */
+const startValue = (v: Variable): Condition["value"] => (v.type === "number" ? 0 : v.type === "boolean" ? true : "");
+
 function lines(text: string): string[] {
   return text.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
 }
@@ -32,6 +38,7 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
   if (!book || !station) return null;
   const patch = (next: Partial<ModuleStation>) => updateWorldbook(worldbookId, { station: { ...station, ...next } });
   const varName = (id: string) => variables.find((v) => v.id === id)?.name ?? id;
+  const firstVariable = variables[0];
 
   const sees = station.sees ?? {};
   const pieces = station.pieces ?? [];
@@ -67,28 +74,48 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
           </select>
         </div>
         <Row label={t("blueprint.aiCustom.history")}>
-          <input type="number" min={0} max={60} value={sees.history ?? 0} onChange={(e) => patch({ sees: { ...sees, history: Math.max(0, Math.min(60, Number(e.target.value) || 0)) } })} className={cn(small, "w-16 text-right")} />
+          <NumberInput aria-label={t("blueprint.aiCustom.history")} min={0} max={60} integer value={sees.history ?? 0} onCommit={(history) => patch({ sees: { ...sees, history: history ?? 0 } })} className={cn(small, "w-16 text-right")} />
         </Row>
         <Row label={t("blueprint.aiCustom.ownThread")}>
           <input type="checkbox" checked={!!sees.ownThread} onChange={(e) => patch({ sees: { ...sees, ownThread: e.target.checked || undefined } })} />
         </Row>
       </Group>
 
-      <Group title={t("blueprint.aiCustom.pieces")} right={<button type="button" data-ai-piece-add="" onClick={() => patch({ pieces: [...pieces, { conditions: [{ variableId: variables[0]?.id ?? "", operator: "gte", value: 0 }], text: "" }] })} className="text-muted-foreground hover:text-foreground"><Plus className="h-3.5 w-3.5" /></button>}>
+      {/* A piece holds while a variable says so: with no variable on the card
+          there is nothing for it to hang on, and one added anyway was saved
+          pointing at no variable at all, a condition that never holds. */}
+      <Group title={t("blueprint.aiCustom.pieces")} right={<button type="button" data-ai-piece-add="" disabled={!firstVariable} title={firstVariable ? undefined : t("blueprint.aiCustom.piecesNeedVariable")} onClick={() => firstVariable && patch({ pieces: [...pieces, { conditions: [{ variableId: firstVariable.id, operator: firstVariable.type === "number" ? "gte" : "eq", value: startValue(firstVariable) }], text: "" }] })} className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button>}>
+        {!firstVariable && pieces.length === 0 && <p className="text-[11px] text-muted-foreground">{t("blueprint.aiCustom.piecesNeedVariable")}</p>}
         {pieces.map((piece, i) => {
           const c = piece.conditions[0] ?? { variableId: "", operator: "gte" as const, value: "" };
           const setCond = (next: Partial<Condition>) => setPiece(i, { conditions: [{ ...c, ...next }, ...piece.conditions.slice(1)] });
+          const condType = variables.find((v) => v.id === c.variableId)?.type;
           return (
             <div key={i} className="space-y-1 rounded-md border border-white/[0.06] p-2">
               <div className="flex items-center gap-1">
                 <span className="text-[11px] text-muted-foreground">{t("blueprint.aiCustom.when")}</span>
-                <select value={c.variableId} onChange={(e) => setCond({ variableId: e.target.value })} className={cn(small, "min-w-0 flex-1")}>
+                <select
+                  value={c.variableId}
+                  onChange={(e) => {
+                    // The value is read as the new variable keeps it: a text
+                    // "1" left behind as the number 1 would never match.
+                    const nextType = variables.find((v) => v.id === e.target.value)?.type;
+                    setCond({ variableId: e.target.value, value: parseEditedValue(valueText(c.value), nextType) as Condition["value"] });
+                  }}
+                  className={cn(small, "min-w-0 flex-1")}
+                >
+                  {!variables.some((v) => v.id === c.variableId) && <option value={c.variableId}>{c.variableId || "—"}</option>}
                   {variables.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
                 <select value={c.operator} onChange={(e) => setCond({ operator: e.target.value as Condition["operator"] })} className={small}>
                   {OPS.map((op) => <option key={op} value={op}>{OP_SIGN[op]}</option>)}
                 </select>
-                <input value={String(c.value ?? "")} onChange={(e) => setCond({ value: e.target.value !== "" && !Number.isNaN(Number(e.target.value)) ? Number(e.target.value) : e.target.value })} className={cn(small, "w-16")} />
+                <DraftInput
+                  aria-label={t("blueprint.inspector.value")}
+                  value={valueText(c.value)}
+                  onCommit={(raw) => setCond({ value: parseEditedValue(raw, condType) as Condition["value"] })}
+                  className={cn(small, "w-16")}
+                />
                 <button type="button" aria-label={t("blueprint.insp.delete")} onClick={() => patch({ pieces: pieces.filter((_, j) => j !== i) })} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
               </div>
               <textarea rows={2} value={piece.text} placeholder={t("blueprint.aiCustom.piecePlaceholder")} onChange={(e) => setPiece(i, { text: e.target.value })} className={cn(input, "resize-y")} />
@@ -130,9 +157,9 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
               )}
               {f.type === "number" && (
                 <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <input type="number" value={f.min ?? ""} placeholder="min" onChange={(e) => setField(i, { min: e.target.value === "" ? undefined : Number(e.target.value) })} className={cn(small, "w-16")} />
+                  <NumberInput aria-label="min" allowEmpty value={f.min} placeholder="min" onCommit={(min) => setField(i, { min })} className={cn(small, "w-16")} />
                   –
-                  <input type="number" value={f.max ?? ""} placeholder="max" onChange={(e) => setField(i, { max: e.target.value === "" ? undefined : Number(e.target.value) })} className={cn(small, "w-16")} />
+                  <NumberInput aria-label="max" allowEmpty value={f.max} placeholder="max" onCommit={(max) => setField(i, { max })} className={cn(small, "w-16")} />
                 </div>
               )}
               {to?.kind === "variable" && (
@@ -164,10 +191,10 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
 
       <Group title={t("blueprint.aiCustom.onError")}>
         <Row label={t("blueprint.aiCustom.timeout")}>
-          <input type="number" min={5} max={120} value={onError.timeoutSec ?? 25} onChange={(e) => patch({ onError: { ...onError, timeoutSec: Math.max(5, Math.min(120, Number(e.target.value) || 25)) } })} className={cn(small, "w-16 text-right")} />
+          <NumberInput aria-label={t("blueprint.aiCustom.timeout")} min={5} max={120} integer value={onError.timeoutSec ?? 25} onCommit={(timeoutSec) => patch({ onError: { ...onError, timeoutSec } })} className={cn(small, "w-16 text-right")} />
         </Row>
         <Row label={t("blueprint.aiCustom.retries")}>
-          <input type="number" min={0} max={3} value={onError.retries ?? 1} onChange={(e) => patch({ onError: { ...onError, retries: Math.max(0, Math.min(3, Number(e.target.value) || 0)) } })} className={cn(small, "w-16 text-right")} />
+          <NumberInput aria-label={t("blueprint.aiCustom.retries")} min={0} max={3} integer value={onError.retries ?? 1} onCommit={(retries) => patch({ onError: { ...onError, retries } })} className={cn(small, "w-16 text-right")} />
         </Row>
         <textarea rows={2} value={(onError.fallback ?? []).join("\n")} placeholder={t("blueprint.aiCustom.fallbackPlaceholder")} onChange={(e) => patch({ onError: { ...onError, fallback: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) } })} className={cn(input, "resize-y")} />
         {output.some((f) => f.type === "choice") && (
@@ -176,7 +203,7 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
           </Row>
         )}
         <Row label={t("blueprint.aiCustom.cooldown")}>
-          <input type="number" min={0} max={3600} value={station.cooldownSec ?? 0} onChange={(e) => patch({ cooldownSec: Math.max(0, Math.min(3600, Number(e.target.value) || 0)) || undefined })} className={cn(small, "w-16 text-right")} />
+          <NumberInput aria-label={t("blueprint.aiCustom.cooldown")} min={0} max={3600} integer value={station.cooldownSec ?? 0} onCommit={(cooldownSec) => patch({ cooldownSec: cooldownSec || undefined })} className={cn(small, "w-16 text-right")} />
         </Row>
       </Group>
 

@@ -5,17 +5,21 @@
 import { isPartialLeadingSpeakerTag, parseLeadingSpeakerTag } from "@yumina/engine";
 
 // [variableId: operation value]
-const STANDARD = /\[([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
+// Ids may carry a middle dot (艾丝·华伦斯坦), and spaces after a dot
+// (relations.Riveria Ljos Alf), as the engine parser accepts. `merge`
+// with a bare scalar (`[relations.X: merge 20]`) is not a write the engine
+// applies, but it is still a directive the player must not see.
+const STANDARD = /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|merge|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
 // [audio: trackId action ...]
 const AUDIO = /\[audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\]/gu;
 // [variableId: op {json}] or [variableId: op [json]]
-const JSON_DIR = /\[([\w\p{L}\p{N}.$-]+):\s*(set|merge|push|delete)\s+(\{[\s\S]*?\}|\[[\s\S]*?\])\]/gu;
+const JSON_DIR = /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|merge|push|delete)\s+(\{[\s\S]*?\}|\[[\s\S]*?\])\]/gu;
 // <UpdateVariable>...<JSONPatch>...</JSONPatch>...</UpdateVariable>
 const UPDATE_VAR = /<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi;
 // Standalone structural XML tags
 const STRUCTURAL_XML = /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim;
 // Trailing incomplete directive at end of streaming text: [word: ...
-const TRAILING_INCOMPLETE = /\[[\w\p{L}\p{N}.$-]+:[^\]]*$/u;
+const TRAILING_INCOMPLETE = /\[[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*:[^\]]*$/u;
 
 export function stripDirectives(text: string): string {
   return text

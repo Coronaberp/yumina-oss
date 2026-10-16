@@ -67,25 +67,23 @@ export function rowFacts(g: Pick<GraphNode, "id" | "kind">, draft: RowFactsDraft
 
 /** The card's own memory block: the AI that runs when no module has taken
  *  over remembers the whole conversation; then how much of it the author
- *  lets through each turn, whether the rest becomes a summary, and whether a
- *  note is pinned. Each is a setting, and the panel makes every row a way to
+ *  lets through each turn, and whether the rest becomes a summary. Each is a setting, and the panel makes every row a way to
  *  it. The judge (智能追踪) is the AI's own business and lives on its row. */
 export interface CardMemoryRow {
-  key: "memory" | "history" | "summary" | "pinned";
+  key: "memory" | "history" | "summary";
   icon: "memory" | "in";
   text: string;
   title: string;
 }
 
-export function cardMemoryRows(state: { historyLimit: number; summary?: boolean; pinned?: string }, t: Translate, opts: { folded?: boolean } = {}): CardMemoryRow[] {
-  const pinned = (state.pinned ?? "").trim();
+export function cardMemoryRows(state: { historyLimit: number; summary?: boolean }, t: Translate, opts: { folded?: boolean } = {}): CardMemoryRow[] {
   // Nothing changed from the defaults: one line, not four. Any setting moved
   // off its default brings its own row, so what is different is where it
   // can be seen.
   const rows: CardMemoryRow[] = [
     { key: "memory", icon: "memory", text: t("blueprint.ctx.row.memoryCardAlone"), title: t("blueprint.ctx.row.memoryCardHint") },
   ];
-  if (opts.folded && !state.historyLimit && !state.summary && !pinned) return rows;
+  if (opts.folded && !state.historyLimit && !state.summary) return rows;
   rows.push({
     key: "history",
     icon: "in",
@@ -93,6 +91,5 @@ export function cardMemoryRows(state: { historyLimit: number; summary?: boolean;
     title: t(state.historyLimit ? "entries.historyLimitHint" : "entries.historyLimitHintAll"),
   });
   if (state.summary) rows.push({ key: "summary", icon: "in", text: t("blueprint.ctx.row.summaryOn"), title: t("blueprint.insp.historySummaryHint") });
-  if (pinned) rows.push({ key: "pinned", icon: "in", text: t("blueprint.ctx.row.pinnedRow", { text: pinned.length > 40 ? `${pinned.slice(0, 40)}…` : pinned }), title: pinned });
   return rows;
 }

@@ -109,7 +109,9 @@ for (const lang of LANGS) {
           if (!words) continue;
           for (const canvas of ["phone", "desktop"] as const) {
             const box = boxOn(el, canvas);
-            if (!box) continue;
+            // Match the compiler's rectOn: a zero-sized box is deliberately
+            // absent on this canvas (for example the desktop portrait art).
+            if (!box || box.w <= 0 || box.h <= 0) continue;
             const size = (canvas === "desktop" ? words.desktopSize : undefined) ?? words.size;
             const usable = Math.max(1, box.w - words.pad);
             const lines = Math.max(1, Math.ceil(estimateWidth(words.text, size) / usable));

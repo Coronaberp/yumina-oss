@@ -17,6 +17,7 @@ function harness(t: TestContext, onApiCall: ApiHandler, onStreamCall?: StreamHan
   const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   const host = new EventTarget();
   const responses: ParentMessage[] = [];
+  const errorReports: Array<{ message: string; diagnostic?: import("@/lib/tsx/diagnostics").CodeDiagnostic }> = [];
   const child = {
     postMessage(data: unknown) {
       const message = unwrapMessage<ParentMessage>(data)!;
@@ -44,7 +45,7 @@ function harness(t: TestContext, onApiCall: ApiHandler, onStreamCall?: StreamHan
   });
   Object.defineProperty(globalThis, "window", { configurable: true, value: fakeWindow });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
-  const bridge = new SandboxBridge({ onApiCall, onStreamCall, onResize() {}, onError() {} });
+  const bridge = new SandboxBridge({ onApiCall, onStreamCall, onResize() {}, onError(message, diagnostic) { errorReports.push({ message, diagnostic }); } });
   bridge.attach({ contentWindow: child } as unknown as HTMLIFrameElement);
   if (ready) emit({ type: "ready", protocolVersion: 2 });
   t.after(() => {
@@ -59,8 +60,20 @@ function harness(t: TestContext, onApiCall: ApiHandler, onStreamCall?: StreamHan
     sessionId: "s1", messages: [], mode: "session",
   } as unknown as Parameters<typeof buildAPI>[0]);
   const request = (callId: string, method = "test") => emit({ type: "api-call", callId, method, args: [] });
-  return { api, responses, request, emit, fakeWindow, bridge };
+  return { api, responses, request, emit, fakeWindow, bridge, errorReports };
 }
+
+test("code diagnostics cross the bridge without dropping source evidence or breaking legacy messages", t => {
+  const h = harness(t, () => {});
+  const diagnostic = { phase: "compile" as const, name: "SyntaxError", message: "Unexpected token", file: "Card.tsx", line: 4, column: 2, excerpt: "> 4 | broken", stack: "SyntaxError: Unexpected token", revision: "fixture" };
+  h.bridge.installRoot("Card.tsx", { "Card.tsx": "broken" }, undefined, diagnostic.message, "session", diagnostic);
+  const install = h.responses.find(m => m.type === "install-root");
+  assert.ok(install?.type === "install-root");
+  assert.deepEqual(install.diagnostic, diagnostic);
+  h.emit({ type: "component-error", message: diagnostic.message, diagnostic });
+  h.emit({ type: "component-error", message: "legacy" });
+  assert.deepEqual(h.errorReports, [{ message: diagnostic.message, diagnostic }, { message: "legacy", diagnostic: undefined }]);
+});
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 

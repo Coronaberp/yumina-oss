@@ -285,6 +285,7 @@
     "popular": "Popular",
     "allModels": "Todos los modelos",
     "modelsFound": "{{count}} modelo encontrado",
+    "versions": "Versiones de {{name}}",
     "modelsFound_other": "{{count}} modelos encontrados",
     "pinToQuickSelect": "Fijar a selección rápida",
     "unpinFromQuickSelect": "Desfijar de selección rápida",
@@ -347,7 +348,8 @@
     "popularityInfoTitle": "Cómo se ordenan los modelos",
     "popularityInfoBody": "50 % de la cuota de tokens en entretenimiento de OpenRouter + 50 % de la cuota en Yumina, entre los modelos de chat disponibles. Yumina cuenta respuestas oficiales; excluye API privadas, tareas en segundo plano y respuestas vacías. Sin datos, esa fuente no aporta puntuación.",
     "popularityWindow": "Yumina, últimos 30 días: {{start}}–{{end}}. Informe mensual de OpenRouter: {{externalDate}} ({{count}} apps, datos públicos). Actualizado el {{date}}. Las horas de corte pueden diferir.",
-    "compactCostUnit": "Mushies aprox. / respuesta"
+    "compactCostUnit": "Mushies aprox. / respuesta",
+    "authorRecommended": "Recomendado por el autor"
   },
   "readOnly": {
     "worldUnavailable": "Este mundo ya no está disponible",
@@ -394,6 +396,8 @@
   "errors": {
     "PROTECTED_WORLD": "El creador de este mundo lo ha protegido contra la extracción de prompts. Solo están disponibles los modelos oficiales de la API de Yumina — no se pueden usar claves API privadas.",
     "NO_CREDITS": "¡Te has quedado sin mushies! Completa las misiones diarias para conseguir mushies gratis, o actualiza tu plan.",
+    "PRIVATE_API_BALANCE": "Tu API privada no tiene saldo suficiente. Revisa tu cuenta con el proveedor.",
+    "UPSTREAM_BALANCE": "El proveedor del modelo indica que no tiene saldo suficiente. Prueba otro modelo o contacta con soporte.",
     "NO_CREDITS_MSG_TOO_EXPENSIVE": "Esta conversación es demasiado larga para tus {{balance}} mushies restantes. Cambia a un modelo más barato o acorta el chat, y vuelve a intentarlo.",
     "MODEL_NOT_ALLOWED": "Este modelo requiere un plan superior. Cambia a un modelo gratuito o actualiza tu plan.",
     "MODEL_SWITCHED_FALLBACK": "Ese modelo no está incluido en tu plan — cambiamos a {{model}} y reenviamos tu mensaje.",
@@ -540,5 +544,6 @@
     "shortPaused": "En pausa. Los cortos que se están filmando se terminan y quedan con su respuesta; pulsa filmar para verlos.",
     "shortPause": "Pausar (los cortos en curso se terminan)",
     "shortClose": "Apagar los cortos (los que se están filmando se terminan)"
-  }
+  },
+  "memoryModelNeedsPlan": "{{model}} requiere el plan {{plan}}. Elige otro modelo para la memoria o mejora tu plan."
 }

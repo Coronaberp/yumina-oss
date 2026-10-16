@@ -5,11 +5,13 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Bot, Check as CheckIcon, ChevronRight, Copy, FolderOpen, History, Images, Maximize2, MoreHorizontal, Trash2, Upload, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Check, Field, Group, More, OpenToolButton, Row, Segmented, Stepper, Switch, inputClass, labelClass, rowControl } from "./controls";
-import { CONTEXT_BLOCK_ID, CardContextForm, CardNarratorForm } from "./context-forms";
+import { Check, Field, Group, More, NumberInput, OpenToolButton, Row, Segmented, Stepper, Switch, inputClass, labelClass, rowControl } from "./controls";
+import { parseEditedValue } from "./variable-value";
+import { CONTEXT_BLOCK_ID, CardContextForm, CardNarratorForm, HistoryWindowControl } from "./context-forms";
+import { StoryAiSettings } from "./story-ai-settings";
 import { resolveImageUrl } from "@/lib/asset-url";
 import { feedback } from "@/lib/feedback";
-import { ANY_MODULE, UNPLACED_WORLDBOOK_ID, deriveSectionDefaultsForEntry, sceneImageEmbed, type WorkerTrigger } from "@yumina/engine";
+import { ANY_MODULE, UNPLACED_WORLDBOOK_ID, deriveSectionDefaultsForEntry, isAlwaysSendEntry, isVariableBoundEntry, sceneImageEmbed, seedKeyOf, type WorkerTrigger } from "@yumina/engine";
 import type { CardGraph, Condition, GraphNode, GraphPatch, ModuleContextInput, SceneImage, Variable, WorldDefinition, WorldEntry } from "@yumina/engine";
 import { AssetPicker } from "@/features/editor/asset-picker";
 import { uploadSceneImageFiles } from "@/features/editor/sections/scene-image-upload";
@@ -31,11 +33,13 @@ import { VariableIdEditor, VariableNameReferenceHint } from "@/features/editor/c
 import { OptionsEditor, suggestedDelta } from "@/features/editor/components/precise-tracking";
 import { CONTINUITY_MAX_OPTIONS } from "@yumina/engine";
 import { getEntryDeliverySummary } from "./entry-delivery";
-import { ModuleConsole, ModuleMemorySettings } from "@/features/editor/components/module/module-console";
-import { aiRoster, hasSeveralAis, placeGivesTo, voiceOf, type AiVoice } from "./ai-roster";
+import { ModuleConsole, ModuleMemorySettings, StationModelFields, type FoldRender } from "@/features/editor/components/module/module-console";
+import { stationParamsCustom } from "@/features/editor/lib/ai-call-settings";
+import { aiRoster, hasSeveralAis, placeGivesTo, renameAiPatch, stationName, voiceOf, type AiVoice } from "./ai-roster";
 import { aiTypeOf } from "./place-ais";
 import { AiCustomForm } from "./ai-custom-form";
 import { ReplyRulesForm } from "./reply-rules-form";
+import { LiveCanonGroup, useLiveCanonAllowed } from "./live-canon";
 import type { AiType } from "./add-ai";
 import { ModuleActivationEditor } from "@/features/editor/components/module-activation-editor";
 import { ModuleContents } from "@/features/editor/components/module-contents";
@@ -76,7 +80,6 @@ const SECTION_OPTIONS = [
   { value: "post-history", labelKey: "entries.sections.postHistory" },
 ] as const satisfies ReadonlyArray<{ value: WorldEntry["section"]; labelKey: string }>;
 
-const apiBase = import.meta.env.VITE_API_URL || "";
 /** An entry's body, when the column is where it is written. Settings fields
  *  are 12px because they are labels with values; prose is not, and this is the
  *  same size and leading the board's own editor sets it in. */
@@ -505,7 +508,7 @@ export function EntryForm({ entryId }: { entryId: string }) {
         <div data-learn="entry-delivery"><More
           key={entryId}
           label={t("blueprint.entry.adjustDelivery", { defaultValue: "调整生效方式" })}
-          defaultOpen={!entry.alwaysSend || entry.enabled === false}
+          defaultOpen={!isAlwaysSendEntry(entry) || entry.enabled === false}
         >
           <Group title={t("blueprint.insp.reachesPrompt")} hint={t("blueprint.tips.reaches")}>
             <Row label={t("blueprint.rowEdit.sectionLabel")} hint={t("blueprint.tips.section")}>
@@ -523,7 +526,21 @@ export function EntryForm({ entryId }: { entryId: string }) {
                 ))}
               </select>
             </Row>
-            <Check label={t("entries.alwaysSend")} hint={t("blueprint.tips.alwaysSend")} checked={Boolean(entry.alwaysSend)} onChange={(alwaysSend) => updateEntry(entryId, { alwaysSend })} />
+            {/* Variable conditions gate the entry whatever this flag says (a
+                wire from a variable only adds a condition and leaves the flag
+                alone, so pulling the wire gives the entry back as it was). A
+                lit switch here claimed "every turn" for an entry the AI only
+                sees when its conditions hold, so the switch shows what the
+                runtime does and stands aside while conditions decide. A bare
+                `variableBound` left over with no condition gates on nothing
+                and sends nothing; flipping the switch clears it. */}
+            <Check
+              label={t("entries.alwaysSend")}
+              hint={(entry.conditions?.length ?? 0) > 0 ? t("blueprint.tips.alwaysSendGated") : t("blueprint.tips.alwaysSend")}
+              checked={isAlwaysSendEntry(entry)}
+              disabled={(entry.conditions?.length ?? 0) > 0}
+              onChange={(alwaysSend) => updateEntry(entryId, isVariableBoundEntry(entry) ? { alwaysSend, variableBound: false } : { alwaysSend })}
+            />
             <Field label={t("blueprint.insp.keywords")} hint={t("blueprint.tips.keywords")}>
               <DebouncedInput
                 aria-label={t("blueprint.insp.keywords")}
@@ -585,12 +602,13 @@ export function EntryForm({ entryId }: { entryId: string }) {
             <Check label={t("entries.preventRecursion")} hint={t("blueprint.tips.preventRecursion")} checked={Boolean(entry.preventRecursion)} onChange={(preventRecursion) => updateEntry(entryId, { preventRecursion })} />
             <Check label={t("entries.excludeRecursion")} hint={t("blueprint.tips.excludeRecursion")} checked={Boolean(entry.excludeRecursion)} onChange={(excludeRecursion) => updateEntry(entryId, { excludeRecursion })} />
             <Row label={t("entries.depth")} hint={t("entries.depthHint")}>
-              <input
-                type="number"
+              <NumberInput
+                aria-label={t("entries.depth")}
                 min={0}
                 max={100}
+                integer
                 value={entry.depth ?? 0}
-                onChange={(e) => updateEntry(entryId, { depth: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                onCommit={(depth) => updateEntry(entryId, { depth: depth ?? 0 })}
                 className={cn(rowControl, "w-20")}
               />
             </Row>
@@ -661,6 +679,29 @@ export function EntryForm({ entryId }: { entryId: string }) {
   );
 }
 
+/**
+ * What a type change takes with it: the settings only the old type had, that
+ * the form stops showing and that would otherwise keep working out of sight.
+ * A formula is a number's: left behind the engine kept recomputing it
+ * whatever the type, and the AI could no longer write the value. The per-turn
+ * window is a number's too. Precise tracking stays only where the new type
+ * shows its switch (a number, a switch, a text with a value list); hidden but
+ * on, it came back the moment the type or the list allowed it again. Plain
+ * bounds and a text's value list stay — harmless, and there if the type
+ * comes back.
+ */
+export function settingsLeftBehind(variable: Variable, type: Variable["type"]): Partial<Variable> {
+  const out: Partial<Variable> = {};
+  if (type !== "number") {
+    if (variable.formula !== undefined) out.formula = undefined;
+    if (variable.deltaDown !== undefined) out.deltaDown = undefined;
+    if (variable.deltaUp !== undefined) out.deltaUp = undefined;
+  }
+  const preciseShown = type === "number" || type === "boolean" || (type === "string" && (variable.options?.length ?? 0) > 0);
+  if (!preciseShown && variable.precise !== undefined) out.precise = undefined;
+  return out;
+}
+
 export function VariableForm({ variableId }: { variableId: string }) {
   const { t } = useTranslation("editor");
   const worldDraft = useEditorStore((s) => s.worldDraft);
@@ -703,11 +744,11 @@ export function VariableForm({ variableId }: { variableId: string }) {
     else preciseFact = { text: t("variables.preciseRange", { down, up }), warn: false };
   }
   const numberField = (value: number | undefined, onCommit: (next: number | undefined) => void, label: string) => (
-    <input
-      type="number"
+    <NumberInput
       aria-label={label}
-      value={value ?? ""}
-      onChange={(e) => onCommit(e.target.value === "" ? undefined : Number(e.target.value))}
+      allowEmpty
+      value={value}
+      onCommit={onCommit}
       className={cn(rowControl, "w-[72px] text-center tabular-nums")}
     />
   );
@@ -724,7 +765,7 @@ export function VariableForm({ variableId }: { variableId: string }) {
             label={t("blueprint.insp.type")}
             onChange={(type) => {
               const defaultValue = type === "number" ? 0 : type === "boolean" ? false : type === "json" ? {} : "";
-              commit({ type, defaultValue });
+              commit({ type, defaultValue, ...settingsLeftBehind(variable, type) });
             }}
           />
         </Row>
@@ -781,7 +822,13 @@ export function VariableForm({ variableId }: { variableId: string }) {
           <OptionsEditor
             key={variable.id}
             values={variable.options ?? []}
-            onChange={(options) => commit({ options: options.length > 0 ? options : undefined })}
+            onChange={(options) => commit({
+              options: options.length > 0 ? options : undefined,
+              // A text's precise tracking picks from its list: with the list
+              // gone the switch is hidden, and left on it would quietly come
+              // back the moment a value was added again.
+              ...(options.length === 0 && variable.precise !== undefined ? { precise: undefined } : {}),
+            })}
             addLabel={t("variables.optionsAdd")}
             placeholder={t("variables.optionsPlaceholder")}
           />
@@ -1010,17 +1057,11 @@ export function BehaviorForm({ reactionId }: { reactionId: string }) {
           />
         </Field>
         <Row label={t("behaviors.chance")} hint={t("behaviors.chanceHint")}>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            aria-label={t("behaviors.chance")}
-            value={reaction.chance ?? 100}
-            onChange={(e) => {
-              const n = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-              updateReaction(reactionId, { chance: n >= 100 ? undefined : n });
-            }}
-            className={cn(rowControl, "w-16 text-right tabular-nums")}
+          <ChanceInput
+            key={reactionId}
+            label={t("behaviors.chance")}
+            value={reaction.chance}
+            onCommit={(chance) => updateReaction(reactionId, { chance })}
           />
         </Row>
       </More>
@@ -1059,11 +1100,11 @@ function WorldForm({ onDrill }: { onDrill: (panel: string) => void }) {
           settings only; the author had no say in how much of the past the
           AI carries. */}
       <Group title={t("blueprint.insp.contextTitle")}>
-        <HistoryLimitRow
-          value={settings.historyLimit}
-          onChange={(v) => setSettings("historyLimit", v)}
-          hint={t("blueprint.insp.historyLimitHint")}
-        />
+        {/* The same control the Context block shows: 「全部」 here used to
+            clear the window and leave the summary running. */}
+        <Field label={t("blueprint.insp.historyLimit")} hint={t("blueprint.insp.historyLimitHint")}>
+          <HistoryWindowControl />
+        </Field>
         <Check
           label={t("blueprint.insp.contextLock")}
           hint={t("blueprint.insp.contextLockHint", { tokens: settings.maxContext ?? 200000 })}
@@ -1072,174 +1113,16 @@ function WorldForm({ onDrill }: { onDrill: (panel: string) => void }) {
         />
       </Group>
 
+      {/* Beside the context lock, the same question for the model and its
+          sampling: the player's, or this card's. */}
+      <StoryAiSettings showAll />
+
       <ReplyRulesForm />
 
       <LiveCanonGroup />
     </div>
   );
 }
-
-/** The card-level Lore Shift switches. They are columns on the world row,
- *  not part of the draft, so they read and write through the worlds API the
- *  way the publish dialog does — the same two flags, one source of truth.
- *  Until now the only way to turn them on was to leave the blueprint for the
- *  publish dialog, while the per-entry and per-variable switches sat right
- *  here doing nothing without them. */
-/** Whether this card lets players edit their run (Lore Shift), shared so a
- *  setting only offers its own switch once the card does. */
-const liveCanonAllowed = new Map<string, boolean>();
-const LIVE_CANON_EVENT = "yumina:live-canon-flags";
-function useLiveCanonAllowed(worldId: string | null): boolean {
-  const [allowed, setAllowed] = useState(() => (worldId ? liveCanonAllowed.get(worldId) ?? false : false));
-  useEffect(() => {
-    if (!worldId) return;
-    const sync = () => setAllowed(liveCanonAllowed.get(worldId) ?? false);
-    sync();
-    if (!liveCanonAllowed.has(worldId)) {
-      fetch(`${apiBase}/api/worlds/${worldId}?forEdit=1`, { credentials: "include" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((body: { data?: { allowLiveCanon?: boolean } } | null) => {
-          if (!body) return;
-          liveCanonAllowed.set(worldId, Boolean(body.data?.allowLiveCanon));
-          window.dispatchEvent(new Event(LIVE_CANON_EVENT));
-        })
-        .catch(() => {});
-    }
-    window.addEventListener(LIVE_CANON_EVENT, sync);
-    return () => window.removeEventListener(LIVE_CANON_EVENT, sync);
-  }, [worldId]);
-  return allowed;
-}
-
-function LiveCanonGroup() {
-  const { t } = useTranslation("editor");
-  const worldId = useEditorStore((s) => s.serverWorldId);
-  const readOnly = useEditorStore((s) => s.readOnlyInspect || s.guestMode);
-  const [flags, setFlags] = useState<{ allow: boolean; additions: boolean } | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    if (!worldId) return;
-    let cancelled = false;
-    setFailed(false);
-    fetch(`${apiBase}/api/worlds/${worldId}?forEdit=1`, { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((body: { data?: { allowLiveCanon?: boolean; allowLiveCanonAdditions?: boolean } }) => {
-        if (cancelled) return;
-        setFlags({
-          allow: Boolean(body.data?.allowLiveCanon),
-          additions: Boolean(body.data?.allowLiveCanonAdditions),
-        });
-        liveCanonAllowed.set(worldId, Boolean(body.data?.allowLiveCanon));
-        window.dispatchEvent(new Event(LIVE_CANON_EVENT));
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [worldId, attempt]);
-  if (!worldId || readOnly) return null;
-  // A read that failed used to leave this null for good, so the group simply
-  // never appeared and nothing said why. Say so, and offer the read again.
-  if (!flags) {
-    if (!failed) return null;
-    return (
-      <Group title={t("blueprint.insp.liveCanon")} hint={t("blueprint.tips.liveCanon")}>
-        <p className="text-[10px] leading-relaxed text-destructive">
-          {t("blueprint.insp.liveCanonLoadFailed", { defaultValue: "Could not load the Lore Shift settings." })}
-        </p>
-        <button
-          type="button"
-          onClick={() => setAttempt((n) => n + 1)}
-          className="self-start rounded-md px-1.5 py-0.5 text-[11px] text-foreground/70 transition-colors hover:bg-white/[0.07] hover:text-foreground"
-        >
-          {t("versionHistory.retry")}
-        </button>
-      </Group>
-    );
-  }
-
-  const save = async (next: { allow: boolean; additions: boolean }) => {
-    const previous = flags;
-    // Turning the master switch off takes additions with it — the server
-    // enforces the same rule, so the panel never shows a state it cannot hold.
-    const settled = next.allow ? next : { allow: false, additions: false };
-    setFlags(settled);
-    if (worldId) { liveCanonAllowed.set(worldId, settled.allow); window.dispatchEvent(new Event(LIVE_CANON_EVENT)); }
-    setFailed(false);
-    try {
-      const res = await fetch(`${apiBase}/api/worlds/${worldId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ allowLiveCanon: settled.allow, allowLiveCanonAdditions: settled.additions }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-    } catch {
-      setFlags(previous);
-      setFailed(true);
-    }
-  };
-
-  return (
-    <Group title={t("blueprint.insp.liveCanon")} hint={t("blueprint.tips.liveCanon")}>
-      <Check
-        label={t("blueprint.insp.allowLiveCanon")}
-        hint={t("blueprint.insp.allowLiveCanonHint")}
-        checked={flags.allow}
-        onChange={(allow) => void save({ allow, additions: flags.additions })}
-      />
-      {flags.allow && (
-        <Check
-          label={t("blueprint.insp.allowLiveCanonAdditions")}
-          hint={t("blueprint.insp.allowLiveCanonAdditionsHint")}
-          checked={flags.additions}
-          onChange={(additions) => void save({ allow: true, additions })}
-        />
-      )}
-      {failed && (
-        <p className="text-[10px] leading-relaxed text-destructive">{t("blueprint.insp.liveCanonSaveFailed")}</p>
-      )}
-    </Group>
-  );
-}
-
-/** "All" or "the latest N messages" — one row, shaped like the other settings. */
-function HistoryLimitRow({ value, onChange, hint }: { value: number | undefined; onChange: (v: number | undefined) => void; hint?: string }) {
-  const { t } = useTranslation("editor");
-  const limited = typeof value === "number" && value > 0;
-  return (
-    <Row label={t("blueprint.insp.historyLimit")} hint={hint}>
-      <div className="flex w-full items-center justify-end gap-1.5">
-        <select
-          value={limited ? "latest" : "all"}
-          onChange={(e) => onChange(e.target.value === "latest" ? (limited ? value : 20) : undefined)}
-          className={cn(inputClass, "w-auto min-w-0 flex-1")}
-        >
-          <option value="all">{t("blueprint.insp.historyAll")}</option>
-          <option value="latest">{t("blueprint.insp.historyLatest")}</option>
-        </select>
-        {limited && (
-          <input
-            type="number"
-            min={1}
-            max={500}
-            value={value}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isFinite(n) && n >= 1) onChange(Math.min(500, Math.floor(n)));
-            }}
-            aria-label={t("blueprint.insp.historyLatestCount")}
-            className={cn(inputClass, "w-16 shrink-0 text-right tabular-nums")}
-          />
-        )}
-      </div>
-    </Row>
-  );
-}
-
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -1256,6 +1139,11 @@ function ModuleForm({ worldbookId, onOpenObject }: { worldbookId: string; onOpen
     : <PlaceForm worldbookId={worldbookId} onOpenObject={onOpenObject} />;
 }
 
+/** The console's folds (model, activity) drawn as the column's own. */
+const columnFold: FoldRender = ({ id, label, defaultOpen, children }) => (
+  <More key={id} label={label} defaultOpen={defaultOpen}>{children}</More>
+);
+
 /** The note and the share button: the same under both. */
 function FrameAdvanced({ worldbookId }: { worldbookId: string }) {
   const { t } = useTranslation("editor");
@@ -1264,9 +1152,9 @@ function FrameAdvanced({ worldbookId }: { worldbookId: string }) {
   if (!book) return null;
   return (
     <More key={`advanced:${worldbookId}`} label={t("blueprint.insp.situationAdvanced")} defaultOpen={Boolean(book.note?.trim())}>
-      <details open={Boolean(book.note?.trim())} className="rounded-lg border border-white/[0.06] px-2.5 py-2">
-        <summary className="cursor-pointer text-xs font-medium text-foreground/60 hover:text-foreground">{t("blueprint.insp.note")}</summary>
-        <div className="pt-2">
+      {/* Already inside a fold: the note is a field here, not a second box
+          that folds again. */}
+      <Field label={t("blueprint.insp.note")}>
         <DebouncedTextarea
           value={book.note ?? ""}
           onCommit={(note) => updateWorldbook(worldbookId, { note: note.trim() ? note : undefined })}
@@ -1274,8 +1162,7 @@ function FrameAdvanced({ worldbookId }: { worldbookId: string }) {
           placeholder={t("blueprint.insp.notePlaceholder")}
           className={cn(inputClass, "min-h-[72px] resize-y")}
         />
-        </div>
-      </details>
+      </Field>
       <ShareModuleButton book={book} />
     </More>
   );
@@ -1394,6 +1281,13 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
         </div>
       </Field>
       {type === "custom" && <CustomAiPanel worldbookId={worldbookId} />}
+      {/* Called by name from the card's screen (api.callAi), it runs on its
+          own model and settings like any AI behind the scenes. */}
+      {type === "custom" && (
+        <More label={t("blueprint.station.modelAndParams")} defaultOpen={Boolean(station.model) || stationParamsCustom(station)}>
+          <StationModelFields book={book} onChange={(patch) => updateWorldbook(worldbookId, patch)} />
+        </More>
+      )}
       {type !== "custom" && (<>
       {RUNS[type].length > 0 ? (
         <Field label={t("blueprint.aiForm.runWhen")}>
@@ -1428,7 +1322,9 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
       {book.host !== undefined ? (
         <Field label={t("blueprint.aiForm.where")}>
           <select
-            value={book.host}
+            // A place that no longer exists is no place: show 「没放」, which
+            // is what the runtime does with it, not the first option.
+            value={book.host === "card" || (allBooks ?? []).some((b) => b.id === book.host) ? book.host : UNPLACED_WORLDBOOK_ID}
             onChange={(e) => updateWorldbook(worldbookId, { host: e.target.value })}
             data-ai-where=""
             className="w-full rounded-md border border-white/10 bg-background px-2 py-1.5 text-xs outline-none focus:border-pink-400/60"
@@ -1448,11 +1344,13 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
           />
         </Field>
       )}
+      {/* Every fold on the AI's form is the column's own (a line and a
+          chevron): 回答格式 was one, while 只有它知道, 模型 and the activity
+          log were boxed ▶ disclosures, two ways of folding in one form. */}
       <AiCustomForm worldbookId={worldbookId} />
-      <details className="rounded-lg border border-white/[0.06] px-2.5 py-2">
-        <summary className="cursor-pointer text-xs font-medium text-foreground/60 hover:text-foreground">{t("blueprint.aiForm.self")}</summary>
-        <div className="pt-2"><ModuleContents book={book} editVia="studio" ownOnly onOpenObject={onOpenObject} /></div>
-      </details>
+      <More label={t("blueprint.aiForm.self")}>
+        <ModuleContents book={book} editVia="studio" ownOnly onOpenObject={onOpenObject} />
+      </More>
       <ModuleConsole
         book={book}
         otherBooks={(allBooks ?? []).filter((b) => b.id !== worldbookId)}
@@ -1460,6 +1358,7 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
         kindControl={false}
         triggerPicker={false}
         summary={false}
+        fold={columnFold}
       />
       <div className="border-t border-white/[0.06] pt-2">
         <Check label={t("blueprint.insp.enabled")} hint={t("blueprint.tips.situationEnabled")} checked={book.enabled !== false} onChange={(enabled) => updateWorldbook(worldbookId, { enabled })} />
@@ -1529,22 +1428,34 @@ function resolveEdgePayload(world: WorldDefinition, edgeId: string): EdgePayload
     return { kind: "plain" };
   }
   if ((m = /^e:greeting:(.+?)->var:(.+?)$/.exec(edgeId))) {
-    const g = (world.entries ?? []).find((e) => e.id === m![1]);
-    const value = g?.initialVariables?.[m[2]!];
+    // Older cards key an opening's seeds by the variable's NAME; the
+    // compiler draws and edits those wires (seedKeyOf), so the form reads
+    // them the same way rather than showing a bare wire with no value.
+    const key = seedKeyOf(world, m[1]!, m[2]!);
+    const value = key === null ? undefined : (world.entries ?? []).find((e) => e.id === m![1])?.initialVariables?.[key];
     if (value !== undefined) return { kind: "seed", value };
     return { kind: "plain" };
   }
   return { kind: "plain" };
 }
 
-/** Parse the inspector's free-text value into a sensible JSON value. */
-function parseEditedValue(raw: string): unknown {
-  const t = raw.trim();
-  if (t === "") return "";
-  if (t === "true") return true;
-  if (t === "false") return false;
-  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
-  try { return JSON.parse(t); } catch { return t; }
+/** A behaviour's chance, 0–100, typed like every number on the panel. Empty
+ *  is "always", as the hint says — never 0%, which would never fire. */
+function ChanceInput({ label, value, onCommit }: { label: string; value: number | undefined; onCommit: (chance: number | undefined) => void }) {
+  return (
+    <NumberInput
+      aria-label={label}
+      min={0}
+      max={100}
+      allowEmpty
+      value={value ?? 100}
+      onCommit={(n) => {
+        const next = n === undefined || n >= 100 ? undefined : n;
+        if (next !== value) onCommit(next);
+      }}
+      className={cn(rowControl, "w-16 text-right tabular-nums")}
+    />
+  );
 }
 
 function EdgeForm({ edgeId, world, readOnly, onPatch, describe }: {
@@ -1556,6 +1467,11 @@ function EdgeForm({ edgeId, world, readOnly, onPatch, describe }: {
 }) {
   const { t } = useTranslation("editor");
   const payload = useMemo(() => resolveEdgePayload(world, edgeId), [world, edgeId]);
+  /** The variable at one end of the wire, whose type the value is read as. */
+  const varType = useMemo(() => {
+    const m = /^e:var:(.+?)->/.exec(edgeId) ?? /->var:(.+?)$/.exec(edgeId);
+    return m ? world.variables.find((v) => v.id === m[1])?.type : undefined;
+  }, [world.variables, edgeId]);
   const [operator, setOperator] = useState(payload.kind === "condition" ? payload.operator : "eq");
   const [value, setValue] = useState(() =>
     payload.kind === "plain" ? "" : typeof payload.value === "string" ? payload.value : JSON.stringify(payload.value),
@@ -1575,14 +1491,19 @@ function EdgeForm({ edgeId, world, readOnly, onPatch, describe }: {
 
   const chain = isChainEdge(edgeId);
   const derived = isDerivedEdge(edgeId);
-  const editable = !readOnly && !derived && payload.kind !== "plain";
+  // An opening seeds numbers, text and switches only (the schema holds no
+  // more), and the compiler drops a list or object written here. A list
+  // variable's seed is shown as it is, with where to change it instead of
+  // a box whose edits vanish.
+  const seedFixed = payload.kind === "seed" && varType === "json";
+  const editable = !readOnly && !derived && payload.kind !== "plain" && !seedFixed;
 
   // Auto-commit like every other drawer form: operator changes apply at once,
   // value edits apply on blur / Enter. Unchanged commits are skipped so a
   // stray blur never dirties the draft.
   const commit = (op: string, raw: string) => {
     if (!editable) return;
-    const parsed = parseEditedValue(raw);
+    const parsed = parseEditedValue(raw, varType);
     if (payload.kind === "condition") {
       if (op === payload.operator && JSON.stringify(parsed) === JSON.stringify(payload.value)) return;
       onPatch({ op: "update-edge", edgeId, data: { operator: op as Condition["operator"], value: parsed } });
@@ -1615,6 +1536,12 @@ function EdgeForm({ edgeId, world, readOnly, onPatch, describe }: {
               <option key={op} value={op}>{op}</option>
             ))}
           </select>
+        </Field>
+      )}
+      {seedFixed && (
+        <Field label={t("blueprint.inspector.seedValue")}>
+          <code className="studio-control block truncate rounded-lg border px-2 py-1.5 font-mono text-[11px] text-foreground/80">{value}</code>
+          <p className="text-[11px] leading-relaxed text-foreground/45">{t("blueprint.inspector.seedJsonFixed")}</p>
         </Field>
       )}
       {editable && (
@@ -1723,7 +1650,7 @@ function BlockListForm({ rows, onOpenObject }: { rows: Array<{ id: string; title
   );
 }
 
-export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, onClose, onExpand, onOpenModule, onOpenObject, autoFocusName = false, width, onResize }: {
+export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, onClose, onExpand, onOpenModule, onOpenObject, autoFocusName = false }: {
   target: InspectorTarget;
   world: WorldDefinition;
   /** The canvas's projection of `world`, handed down so the context strip
@@ -1742,14 +1669,8 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
   onOpenObject?: (objectId: string) => void;
   /** Focus a newly created variable's name once, without refocusing on edits. */
   autoFocusName?: boolean;
-  /** A column of its own, draggable. Omitted when the host lends it one that
-   *  is already the right size — on the stage this fills the right column,
-   *  which has one width for all three of its occupants. */
-  width?: number;
-  onResize?: (width: number) => void;
 }) {
   const { t } = useTranslation("editor");
-  const [dragging, setDragging] = useState(false);
   const nameFieldId = useId();
   const nameContainer = useRef<HTMLDivElement>(null);
   const memoryTarget = target.type === "node" && target.section === "memory";
@@ -1766,7 +1687,7 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
     const deadline = performance.now() + 1500;
     const focusName = () => {
       if (cancelled) return;
-      // Stage mounts this portal before its companion column becomes visible.
+      // The floating card mounts a frame before it is placed and shown.
       // A hidden input ignores focus; retry until it actually owns focus.
       const field = nameContainer.current?.querySelector("input");
       field?.focus({ preventScroll: true });
@@ -1779,24 +1700,6 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
     focusName();
     return () => { cancelled = true; window.cancelAnimationFrame(frame); };
   }, [autoFocusName, isVariable, readOnly, targetKey]);
-
-  // Drag the left edge to widen. Pointer capture on window so the drag
-  // survives the cursor crossing the canvas underneath.
-  useEffect(() => {
-    if (!dragging || !onResize) return;
-    const onMove = (e: PointerEvent) => onResize(window.innerWidth - e.clientX);
-    const onUp = () => setDragging(false);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-  }, [dragging, onResize]);
 
   let heading: string;
   let body: React.ReactNode = null;
@@ -1823,11 +1726,20 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
     if (memoryTarget) {
       heading = t("blueprint.blocks.context");
     }
+    // An AI is titled by the name it is shown and called by, from its own
+    // row or from its frame alike, and that title is where it is renamed.
+    const aiBook = !memoryTarget && ((aiTarget && !cardAiTarget) || g.kind === "module") ? (world.worldbooks ?? []).find((b) => b.id === id) : undefined;
     if (cardAiTarget) {
       heading = t("blueprint.insp.cardAiTitle");
-    } else if (aiTarget) {
-      const book = (useEditorStore.getState().worldDraft.worldbooks ?? []).find((b) => b.id === id);
-      heading = book?.station?.name || book?.name || heading;
+    } else if (aiBook?.station) {
+      heading = stationName(aiBook);
+    }
+    if (!readOnly && aiBook?.station) {
+      rename = (name) => {
+        const book = (useEditorStore.getState().worldDraft.worldbooks ?? []).find((b) => b.id === id);
+        const patch = book && renameAiPatch(book, name);
+        if (patch) useEditorStore.getState().updateWorldbook(id, patch);
+      };
     }
     if (!readOnly && !memoryTarget && !aiTarget) {
       const store = useEditorStore.getState;
@@ -1840,7 +1752,7 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
         };
       } else if (g.kind === "rule" && g.id.startsWith("reaction:")) {
         rename = (name) => store().updateReaction(id, { name });
-      } else if (g.kind === "module") {
+      } else if (g.kind === "module" && !aiBook?.station) {
         rename = (name) => store().updateWorldbook(id, { name });
       } else if (g.kind === "image") {
         rename = (name) => store().updateSceneImage(id, { name });
@@ -1998,33 +1910,9 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
 
   return (
     <div
-      // Flat, opaque, seamless with the frame — the inspector is a column of
-      // the studio, not a sheet of glass hovering near one.
-      className={cn(
-        "studio-column relative flex h-full flex-col",
-        onResize ? "shrink-0 border-l border-border/70" : "min-h-0 w-full",
-      )}
-      style={onResize ? { width } : undefined}
+      // Flat, opaque, seamless with the card it stands on.
+      className="studio-column relative flex h-full min-h-0 w-full flex-col"
     >
-      {/* Resize grip — the full edge is the target, the visible line is thin.
-          Only when this is a column of its own; the stage's right column has
-          one width for all three of its occupants. */}
-      {onResize && (
-        <div
-          onPointerDown={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDoubleClick={() => onResize(340)}
-          title={t("blueprint.insp.resize")}
-          className={cn(
-            "group absolute -left-1.5 top-0 z-10 h-full w-3 cursor-col-resize",
-            "before:absolute before:left-1.5 before:top-0 before:h-full before:w-px before:bg-transparent before:transition-colors",
-            "hover:before:bg-amber-400/60",
-            dragging && "before:bg-amber-400",
-          )}
-        />
-      )}
       {/* The object's face: its kind as a tinted tile, its name as a title
           (a field only when you reach for it), and the same chips its row
           on the board wears. The kind's colour also washes the top of the

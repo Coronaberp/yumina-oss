@@ -407,6 +407,8 @@
     "deleteBundleFailed": "无法删除资源包",
     "downloadBundleFailed": "无法下载资源包",
     "deleteAssetFailed": "无法删除素材",
+
+    "deleteAssetInUse": "这张图还是《{{name}}》的封面，先把那张卡的封面换掉再删。",
     "renameAssetFailed": "无法重命名素材",
     "moveAssetFailed": "无法移动素材",
     "createFolderFailed": "无法创建文件夹",
@@ -689,7 +691,8 @@
         "variant": "经典"
       },
       "nsfw-anime": {
-        "name": "NSFW 动漫"
+        "name": "无限制动漫",
+        "variant": "经典"
       },
       "realistic": {
         "name": "写实"
@@ -698,7 +701,7 @@
         "name": "2.5D 半写实"
       },
       "guofeng": {
-        "name": "国风"
+        "name": "水墨"
       },
       "western": {
         "name": "欧美"
@@ -712,6 +715,14 @@
       "anime-story": {
         "name": "动漫 · 剧情",
         "variant": "剧情"
+      },
+      "anime-anima": {
+        "name": "动漫 · Anima",
+        "variant": "Anima"
+      },
+      "nsfw-anima": {
+        "name": "无限制动漫 · Anima",
+        "variant": "Anima"
       }
     },
     "videoStyleFromReference": "视频会沿用参考图的画风。",
@@ -767,6 +778,8 @@
       "VIDEO_NO_LAST_FRAME": "这个模型不能指定尾帧。",
       "VIDEO_ONE_FRAME_ONLY": "这个模型一次只能用首帧或尾帧其中一张。",
       "VIDEO_TOO_MANY_REFERENCES": "角色参考图超过这个模型的上限。",
+      "VIDEO_FRAMES_OR_REFERENCES": "这个模型只能用首尾帧或角色参考图其中一种。",
+      "VIDEO_LAST_NEEDS_FIRST": "这个模型要有首帧才能用尾帧。",
       "VIDEO_NEEDS_FRAME": "这个模型需要一张参考画面。",
       "VIDEO_NO_SOUND": "这个模型不能生成声音。",
       "VIDEO_NO_TUNING": "这个模型不开放这些参数。",
@@ -777,7 +790,9 @@
       "VIDEO_BAD_STYLE": "这个画风现在用不了，换一个再试。",
       "VIDEO_NO_STYLE": "这个画风现在用不了，换一个再试。",
       "VIDEO_STYLE_WITH_FRAME": "这个画风现在用不了，换一个再试。",
-      "QUALITY_BATCH": "4K 一次只能生成一张，把数量改成 1 再试。"
+      "QUALITY_BATCH": "4K 一次只能生成一张，把数量改成 1 再试。",
+      "MODEL_UNAVAILABLE": "这个模型暂时不可用，请换一个模型。",
+      "REFERENCE_UNSUPPORTED": "这个模型不支持参考图。请移除图片，或换一个模型。"
     },
     "queue": {
       "waiting": "排队中…",
@@ -810,12 +825,40 @@
       "fewer": "少一张",
       "more": "多一张",
       "tier": {
+        "seedreamFlash": "最便宜",
         "seedreamLite": "快",
         "seedreamPro": "均衡",
-        "nanoBanana2": "改图强",
+        "nanoBanana21": "最新 · 改图强",
+        "nanoBanana2": "有 512",
         "nanoBananaPro": "高质",
-        "gptImage2": "最强 · 慢"
-      }
+        "gptImage25Flare": "精致 · 快",
+        "gptImage25Sunburst": "最强 · 慢",
+        "gptImage2": "上一代 · 慢",
+        "flux2Pro": "性价比",
+        "flux2Max": "细节多",
+        "flux3": "最新 · 场景丰富",
+        "qwenImage3": "便宜 · 慢",
+        "qwenImage3Pro": "细节多 · 慢",
+        "grokImagine": "最便宜 · 快",
+        "grokImagineQuality": "快",
+        "grokImagine2": "细节多 · 很慢",
+        "klingO1": "干净动漫",
+        "lumaUni1": "400万像素 · 慢",
+        "lumaUni1Max": "400万像素更细 · 慢",
+        "ideogram45": "擅长文字",
+        "wan25": "偏绘画 · 预览版",
+        "recraft41": "设计 · 平面",
+        "krea2Turbo": "最便宜",
+        "krea2Medium": "风格化",
+        "krea2Large": "风格化 · 慢",
+        "maiImage26": "干净 · 快",
+        "hunyuan35": "便宜 · 2K"
+      },
+      "version": "版本",
+      "noReference": "{{model}} 不支持参考图。请移除图片，或换一个模型。",
+      "fromPerImage": "{{count}} / 张起",
+      "moreModels": "更多模型（{{count}}）",
+      "fewerModels": "收起"
     },
     "loading": "正在加载…",
     "loadTemplatesError": "生图选项加载失败，你的草稿仍然保留。",
@@ -933,6 +976,17 @@
       "saving": "保存中"
     },
     "video": {
+      "modeLabel": "视频模式",
+      "mode": {
+        "partner": {
+          "name": "描述生视频",
+          "desc": "Seedance、可灵、Veo 等顶级模型"
+        },
+        "custom": {
+          "name": "自定义生视频",
+          "desc": "自己的显卡 · LoRA、参数全开"
+        }
+      },
       "describe": "画面描述",
       "enhance": "AI 润色",
       "enhanceHint": "生成前让 AI 把描述改写得更适合视频模型",
@@ -949,24 +1003,31 @@
         "last": "视频停在这张图上"
       },
       "slotRefHint": "长相照着它，场景可以全新 · 最多 {{count}} 张，每张 +{{price}}",
+      "slotRefHintFree": "长相照着它，场景可以全新 · 最多 {{count}} 张",
       "notSupported": "{{model}} 不支持",
       "oneFrameOnly": "{{model}} 一次只能用首帧或尾帧其中一张。要首尾都定，换一个模型。",
+      "aspectFromFrame": "用了首尾帧，视频比例跟着首帧走。",
+      "framesOrReferences": "{{model}} 不能这样组合：带角色参考图时最多再加一张首帧。去掉一些再生成。",
+      "lastNeedsFirst": "{{model}} 用尾帧时必须同时给首帧。",
+      "needsFrame": "{{model}} 是让图片动起来的模型：先在上面加一张首帧。",
       "remove": "移除",
       "closePicker": "收起",
       "modelSpec": "模型与规格",
       "model": "模型",
-      "models": {
-        "h3-max": "最快，画质好",
-        "h3": "最清楚，能带声音",
-        "wan-2.2": "自己部署，参数全开"
-      },
       "tag": {
         "text": "文生",
         "image": "图生",
         "sound": "有声",
-        "selfHosted": "无限制"
+        "selfHosted": "无限制",
+        "firstLast": "首尾帧",
+        "refs": "最多 {{count}} 张参考图",
+        "firstLastShort": "首尾帧",
+        "refsShort": "参考图",
+        "fast": "快",
+        "needsImage": "需要图片"
       },
       "priceFrom": "{{count}} / {{seconds}} 秒起",
+      "priceFor": "{{count}} / {{seconds}}秒",
       "aspect": "画面比例",
       "resolution": "清晰度",
       "duration": "时长",
@@ -974,6 +1035,7 @@
       "etaSeconds": "约 {{count}} 秒",
       "etaMinutes": "约 {{count}} 分钟",
       "sound": "一起生成环境音和台词",
+      "soundAlways": "这个模型总是连声音一起生成。",
       "more": "更多参数",
       "fast": "4 步加速",
       "fastHint": "快几倍、便宜一大半；关掉可调步数和 CFG",
@@ -1043,6 +1105,30 @@
       },
       "redo": "4K 版 · {{count}} 蘑菇币",
       "redoNote": "生成好的图可以在右侧点「4K 版」，按原样重新出 4K。"
+    },
+    "badge": {
+      "limitless": "无限制",
+      "textOnly": "仅文生图"
+    },
+    "trait": {
+      "style": {
+        "realistic": "写实为主",
+        "anime": "二次元",
+        "2.5d": "2.5D",
+        "3d": "动漫偏3D",
+        "versatile": "动漫强"
+      },
+      "strength": {
+        "anime": "擅长动漫",
+        "photoreal": "擅长真人",
+        "text": "文字准",
+        "design": "海报设计",
+        "detail": "细节多",
+        "fast": "出图快",
+        "motion": "大动作稳",
+        "camera": "会运镜",
+        "dialogue": "对口型说话"
+      }
     }
   },
   "media": {

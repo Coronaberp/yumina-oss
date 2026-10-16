@@ -47,6 +47,7 @@
     "visualIntroBody": "Activa este interruptor y toda la carta se despliega en un solo tablero: aperturas, lore, números, comportamientos y la pantalla del jugador, uno al lado del otro. Edita cada cosa donde está, y el asistente trabaja directamente sobre el tablero. Puedes apagarlo cuando quieras para volver al editor completo.",
     "visualIntroTry": "Probar el lienzo",
     "visualIntroLater": "Ahora no",
+    "desktopCanvasNote": "Abre esta carta en un ordenador para editarla en el Lienzo (Beta).",
     "recoverDraftMerged": "Esta tarjeta cambió en otro lugar desde entonces; se conservó tu versión recuperada"
   },
   "sections": {
@@ -144,7 +145,6 @@
     "recursionDepth": "Profundidad de recursión",
     "recursionDepthHint": "Profundidad máxima para activaciones en cascada. 0 = deshabilitado.",
     "addOfficialPresets": "Agregar presets oficiales ({{count}} faltan)",
-    "messages": "...mensajes...",
     "name": "Nombre",
     "portrait": "Retrato",
     "sendAs": "Enviar como",
@@ -545,11 +545,15 @@
     "blurb": "Apps que el jugador abre desde una barra junto al chat: mensajes, relaciones, un feed, el reloj… Cada una guarda sus datos en una variable y la IA la va rellenando con la historia. La vista previa de cada tarjeta es la app real; no tienes que programar nada.",
     "add": "Añadir app",
     "added": "Añadida a la barra",
-    "footnote": "Los textos de la app siguen el idioma de la tarjeta (chino, inglés o español). Si la quitas desde la página de Bundles, se van con ella el botón, los datos y las reglas.",
+    "footnote": "Los textos de la app siguen el idioma de la tarjeta (chino, inglés o español). Al quitar una app se van con ella su botón del dock, sus datos y sus reglas.",
     "sets": "Combinaciones sugeridas: lo que suele seguir cada tipo de tarjeta",
     "addSet": "Añadir las cuatro",
     "setAdded": "Todas añadidas",
-    "installed": "{{name}} añadido"
+    "installed": "{{name}} añadido",
+    "remove": "Quitar",
+    "removeSet": "Quitar las cuatro",
+    "removed": "Se quitó {{name}}",
+    "varDeleteHint": "Esta variable guarda los datos de la app {{name}}. Al borrarla se quita la app entera, botón del dock incluido."
   },
   "audio": {
     "title": "Audio",
@@ -681,6 +685,14 @@
     "announcement": "Anuncio",
     "announcementPlaceholder": "Escribe un anuncio...",
     "markdownSupported": "Markdown compatible",
+    "descriptionInsertImage": "Añadir imágenes",
+    "descriptionImageUploading": "Subiendo…",
+    "descriptionImageNeedsSave": "Guarda la tarjeta una vez antes de añadir imágenes.",
+    "descriptionImageTooLong": "La descripción está llena; no cabe otra imagen.",
+    "descriptionImageFromAssets": "Elegir de tus recursos",
+    "descriptionImageFromComputer": "Subir desde el ordenador",
+    "descriptionImageRemove": "Quitar esta imagen",
+    "descriptionImageLabel": "Imagen",
     "descriptionTitle": "Descripción",
     "descriptionDesc": "Se muestra en la tarjeta de Descubrir y en la página de detalle del mundo. Úsala para lore, instrucciones de juego o créditos.",
     "descriptionPlaceholder": "Escribe una descripción...",
@@ -1420,6 +1432,8 @@
         "stillGenerating": "Todavía dibujando",
         "stillGeneratingDetail": "Tarda más de lo habitual; aparecerá en la biblioteca de recursos cuando termine."
       },
+      "imageBlind": "{{model}} no puede ver imágenes, así que la imagen adjunta se omitirá.",
+      "imageBlindSwitch": "Usar {{model}}",
       "creditPause": {
         "retryStep": "Reintentar paso",
         "paused": "Saldo insuficiente · progreso guardado",
@@ -1448,6 +1462,8 @@
         "shortfall": "Faltan {{amount}} Mushies",
         "errorStale": "El contenido ha cambiado. Envía una nueva solicitud para no sobrescribir tus cambios.",
         "restartHere": "Empezar de nuevo desde aquí",
+        "cheaperModel": "Seguir con {{model}}",
+        "cheaperModelNote": "Con {{model}}, cada paso cuesta unos {{amount}} Mushies y tu saldo alcanza. Retoma desde donde se detuvo.",
         "restartMessage": "Continúa desde donde te quedaste, tomando la tarjeta tal como está ahora.",
         "errorActive": "Esta tarea ya está en curso. Espera a que se actualice su estado.",
         "errorFailed": "No se pudo reanudar la tarea. Tu progreso guardado sigue disponible; vuelve a intentarlo.",
@@ -1570,14 +1586,22 @@
       "proposalRejectedReply": "Entendido. Dime cómo quieres continuar.",
       "agentError": {
         "generic": "El asistente tuvo un error. Vuelve a intentarlo.",
-        "stalled": "El asistente no respondió durante 3 minutos y la tarea terminó. Vuelve a intentarlo.",
+        "stalled": "El asistente dejó de responder durante varios minutos y la tarea terminó. Lo que ya cambió está guardado.",
         "timedOut": "La tarea superó los 30 minutos y se detuvo. Prueba con pasos más pequeños.",
         "outputBudget": "El modelo se quedó sin espacio de salida varias veces antes de terminar. Prueba con pasos más pequeños u otro modelo.",
         "provider": "El servicio del modelo de IA devolvió un error. Reintenta o elige otro modelo.",
-        "serverRestart": "El servidor se reinició durante la tarea. Vuelve a intentarlo.",
+        "serverRestart": "El servidor se reinició durante la tarea. Lo que el asistente ya cambió está guardado.",
         "superseded": "Esta tarea fue reemplazada por una solicitud más reciente.",
         "stopped": "Detenido.",
-        "noCredits": "No hay suficientes champiñones para continuar. Recarga y vuelve a intentarlo."
+        "noCredits": "No hay suficientes champiñones para continuar. Recarga y vuelve a intentarlo.",
+        "byokAuth": "Tu clave de API fue rechazada (no válida, caducada o sin permiso para este modelo). Revísala en los ajustes de IA.",
+        "byokBalance": "Tu proveedor de API indica que no queda saldo o cuota. Recárgalo allí o cambia a un modelo oficial.",
+        "byokModel": "Tu proveedor no encuentra este modelo. Revisa el nombre en los ajustes de IA o elige otro.",
+        "byokNoTools": "Este modelo no admite herramientas, que el asistente necesita para cambiar la tarjeta. Elige un modelo que las admita.",
+        "byokRate": "Tu proveedor está limitando las solicitudes. Espera un momento y continúa.",
+        "byokUnreachable": "No se pudo conectar con tu endpoint de API. Revisa la dirección y que el servicio esté activo.",
+        "byokContext": "La solicitud supera la ventana de contexto del modelo. Empieza una conversación nueva o usa un modelo con más contexto.",
+        "continue": "Continuar desde donde se detuvo"
       },
       "turnEstimate_one": "Desde ~{{count}} mushie",
       "turnEstimate_other": "Desde ~{{count}} mushies",
@@ -1588,6 +1612,13 @@
         "save": "Guardando la referencia en esta tarjeta"
       },
       "turnEstimateCold": "el primer mensaje de cada hora cuesta más",
+      "rateRun": "Valora esta respuesta",
+      "rateUp": "Me ayudó",
+      "rateDown": "No me ayudó",
+      "turnTypical": "Normalmente {{low}}–{{high}} mushies por ejecución",
+      "turnTypicalHint": "Ejecuciones con este modelo en las últimas dos semanas: la mitad costó {{low}} o menos, nueve de cada diez {{high}} o menos. Una respuesta cuesta al menos ~{{floor}}.",
+      "conversationSpend_one": "este chat {{count}} mushie",
+      "conversationSpend_other": "este chat {{count}} mushies",
       "turnCost_one": "Este turno: {{count}} mushie",
       "turnCost_other": "Este turno: {{count}} mushies",
       "generatingTool": "escribiendo: {{tool}}",
@@ -2176,7 +2207,15 @@
         "paper": "Papel",
         "night": "Noche",
         "terminal": "Terminal",
-        "blossom": "Flor"
+        "blossom": "Flor",
+        "velvet": "Terciopelo",
+        "harbor": "Puerto",
+        "linen": "Lino",
+        "coolant": "Refrigerante",
+        "moss": "Musgo",
+        "tape": "Cinta",
+        "gilded": "Dorado",
+        "tavern": "Taberna"
       },
       "fontName": {
         "sans": "Palo seco",
@@ -2204,13 +2243,29 @@
         "portrait-scene": "Escena con retrato",
         "adventure-hud": "HUD de aventura",
         "stat-panel": "Panel de estadísticas",
-        "character-sheet": "Ficha de personaje"
+        "character-sheet": "Ficha de personaje",
+        "chapter-portrait": "Retrato por capítulos",
+        "masthead": "Cabecera",
+        "margin-notes": "Notas al margen",
+        "status-strip": "Franja de estado",
+        "night-card": "Tarjeta nocturna",
+        "cassette": "Casete",
+        "art-split": "Arte a media pantalla",
+        "guild-card": "Ficha de gremio"
       },
       "presetHint": {
         "portrait-scene": "Retrato + dos barras + página de detalles. Para una tarjeta sobre un personaje.",
         "adventure-hud": "Dónde estás + día y momento + dos barras. Para aventura textual y exploración.",
         "stat-panel": "Cuatro barras + oro + día. Para criar, gestionar, sobrevivir.",
-        "character-sheet": "El nombre, el rol, la ubicación y la fase del propio jugador. Para rol."
+        "character-sheet": "El nombre, el rol, la ubicación y la fase del propio jugador. Para rol.",
+        "chapter-portrait": "Una franja de capítulo arriba. La columna derecha tiene el retrato, el ánimo y tres barras.",
+        "masthead": "Nombre de la tarjeta, cuatro barras y el reparto en una banda arriba, con la conversación debajo.",
+        "margin-notes": "Fondo claro con tres notas a la derecha: título y lugar, cuatro barras y la gente que conoces.",
+        "status-strip": "Una franja bajo el cuadro de texto con la hora, el oro, el lugar, aguante, energía y quién está cerca.",
+        "night-card": "El día actual arriba a la derecha y una ficha del personaje abajo a la derecha con ánimo, lugar, cuatro barras y la gente que conoces.",
+        "cassette": "Un casete bajo el cuadro de texto con el nombre de la tarjeta en la etiqueta, junto al capítulo actual, el lugar y el ánimo.",
+        "art-split": "El retrato ocupa la mitad derecha, con el nombre de la tarjeta y dos barras abajo.",
+        "guild-card": "Una ficha de pergamino a la izquierda con el nombre, la clase, el rango, el oro, el aguante y la energía del jugador."
       },
       "vars": {
         "portrait": "Retrato",
@@ -2228,13 +2283,17 @@
         "playerRole": "Rol",
         "gender": "Género",
         "age": "Edad",
-        "phase": "Fase"
+        "phase": "Fase",
+        "mood": "Ánimo",
+        "rank": "Rango de aventurero"
       },
       "varDefaults": {
         "timeOfDay": "Mañana",
         "location": "Un lugar sin nombre",
         "playerRole": "Viajero",
-        "phase": "Prólogo"
+        "phase": "Prólogo",
+        "mood": "Tranquilo",
+        "rank": "Cobre"
       },
       "s": {
         "common": {
@@ -2253,10 +2312,11 @@
           "actionWaitSays": "No contesto, y espero a que hable primero.",
           "toolRewind": "Deshacer",
           "toolRegenerate": "Regenerar",
-          "toolCopy": "Copiar"
+          "toolCopy": "Copiar",
+          "castLabel": "Reparto"
         },
         "portrait-scene": {
-          "portraitEmpty": "Aquí va el retrato — añádelo en Detalles de la tarjeta o cámbialo con la variable Retrato",
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
           "meterPrimary": "Afecto",
           "meterSecondary": "Vigor"
         },
@@ -2281,6 +2341,65 @@
           "phaseLabel": "Fase",
           "meterPrimary": "Afecto",
           "meterSecondary": "Vigor"
+        },
+        "chapter-portrait": {
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
+          "ribbonFormat": "✦ {phase} ✦",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía"
+        },
+        "masthead": {
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "goldFormat": "Oro {gold}",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía",
+          "meterThird": "Afinidad",
+          "meterFourth": "Progreso"
+        },
+        "margin-notes": {
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía",
+          "meterFourth": "Progreso"
+        },
+        "status-strip": {
+          "whenLabel": "Hora",
+          "whenFormat": "D{day} · {timeOfDay}",
+          "goldLabel": "Oro",
+          "placeLabel": "Lugar",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía"
+        },
+        "night-card": {
+          "clockFormat": "Día {day}",
+          "whenFormat": "Día {day} · {timeOfDay}",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante",
+          "meterThird": "Energía",
+          "meterFourth": "Progreso"
+        },
+        "cassette": {
+          "sideFormat": "Cara A · Día {day}",
+          "whereFormat": "{timeOfDay} · {location}",
+          "noteTitle": "Ánimo",
+          "meterPrimary": "Afinidad"
+        },
+        "art-split": {
+          "portraitEmpty": "Pon un retrato\nSelecciona esto y elige una imagen a la derecha",
+          "meterPrimary": "Afinidad",
+          "meterSecondary": "Aguante"
+        },
+        "guild-card": {
+          "guildTitle": "Aventurero",
+          "guildSubFormat": "Registrado en {location}",
+          "nameLabel": "Nombre",
+          "roleLabel": "Clase",
+          "rankLabel": "Rango",
+          "goldLabel": "Oro",
+          "meterPrimary": "Aguante",
+          "meterSecondary": "Energía"
         }
       }
     },
@@ -2456,7 +2575,9 @@
       "layoutOffDesktop": "No se muestra en el ordenador",
       "layoutOffHere": "No se muestra en el ordenador",
       "layoutFollowPhone": "Volver a seguir al móvil",
-      "nameLinked": "Al cambiar este nombre también cambia el de la variable ({{name}}): es el nombre que lee la IA."
+      "nameLinked": "Al cambiar este nombre también cambia el de la variable ({{name}}): es el nombre que lee la IA.",
+      "pickStartImage": "Elegir imagen",
+      "changeStartImage": "Cambiar imagen"
     },
     "style": {
       "none": "Ninguno",
@@ -2624,6 +2745,7 @@
         "copy": "Copiar",
         "paste": "Pegar",
         "duplicate": "Duplicar",
+        "ungroup": "Desagrupar",
         "delete": "Eliminar"
       }
     },
@@ -2786,7 +2908,7 @@
       "newPage": "Nuevo",
       "title": "Nuevo · elige una plantilla",
       "tutorTip": "Aquí hay 18 plantillas listas ✧ Arriba, las de inicio (antes de que empiece la historia); abajo, las páginas que se abren desde el menú durante el juego. Haz clic en una para añadirla a tu tarjeta y ya funciona. ¿Aún no quieres ninguna? Cierra con la × y vuelve cuando quieras desde Nuevo.",
-      "sub": "22 plantillas listas (4 pantallas completas, 18 páginas), ya conectadas con variables, botones e instrucciones para la IA: añade una y se juega. Colores, tamaños y posiciones siguen siendo tuyos.",
+      "sub": "30 plantillas listas (12 pantallas completas, 18 páginas), ya conectadas con variables, botones e instrucciones para la IA: añade una y se juega. Colores, tamaños y posiciones siguen siendo tuyos.",
       "groupOpening": "Inicio · antes de que empiece la historia",
       "blank": "Página en blanco",
       "blankDesc": "Sin nada. La organizas tú.",
@@ -4296,6 +4418,15 @@
     }
   },
   "blueprint": {
+    "folder": {
+      "fileIn": "Meter en carpeta",
+      "new": "Nueva carpeta",
+      "newName": "Nueva carpeta",
+      "takeOut": "Sacar de la carpeta",
+      "rename": "Renombrar carpeta",
+      "dissolve": "Deshacer carpeta",
+      "dissolveHint": "Deshacer carpeta (sus entradas se quedan donde están)"
+    },
     "notes": {
       "fold": "Plegar",
       "unstick": "Despegar",
@@ -4310,7 +4441,15 @@
       "byPattern": "Patrón",
       "byTag": "Etiqueta <…>",
       "speakerBubbles": "Una burbuja por personaje (líneas que empiezan con un nombre)",
-      "title": "Procesar la respuesta"
+      "title": "Procesar la respuesta",
+      "opLabel": "Cómo",
+      "op": {
+        "set": "Poner",
+        "append": "Añadir al final",
+        "push": "Añadir a la lista",
+        "replace": "Reemplazar (JSON)"
+      },
+      "badPattern": "Este patrón está vacío o no es válido; no atrapa nada."
     },
     "aiCustom": {
       "randomChoice": "Si sigue fallando, elegir una opción permitida al azar",
@@ -4349,7 +4488,8 @@
       "history": "Mensajes recientes que lee",
       "addVariable": "+ una variable",
       "sees": "Lo que ve",
-      "title": "Formato de respuesta"
+      "title": "Formato de respuesta",
+      "piecesNeedVariable": "Crea primero una variable: un fragmento se añade cuando una variable cumple su condición."
     },
     "aiType": {
       "code": "Por código",
@@ -4526,7 +4666,8 @@
       "writer": "Quien escribe",
       "legendOwn": "Rosa: solo ella, o lo recibe",
       "legendCond": "Dorado: solo en un escenario, o si se menciona",
-      "legendNo": "Gris: no lo sabe"
+      "legendNo": "Gris: no lo sabe",
+      "gated": "Lo sabe cuando se cumple su condición"
     },
     "frame": {
       "collapse": "Contraer",
@@ -4554,7 +4695,8 @@
         "background": "Segundo plano"
       },
       "readiness": "{{done}}/{{total}} listo",
-      "readinessNext": "Siguiente: {{label}}"
+      "readinessNext": "Siguiente: {{label}}",
+      "showOpening": "Mostrar esta apertura en la tarjeta"
     },
     "scene": {
       "none": "Sin escena propia",
@@ -4663,7 +4805,7 @@
       "triggerConditionsHint": "Estas condiciones deciden cuándo corre el escritor: una vez, al pasar de falso a verdadero, no en cada turno.",
       "model": "Modelo",
       "modelInherit": "Seguir la elección del jugador",
-      "modelHint": "Si el jugador no puede usar este modelo, se vuelve al suyo: una tarjeta nunca queda injugable.",
+      "modelHint": "Los jugadores que no pueden usar este modelo reciben otro: una IA que les responde usa su propio modelo; una entre bastidores, el modelo predeterminado.",
       "inputs": "Conectado desde otro sitio",
       "inputKind": {
         "memory": "Partidas pasadas de un escenario",
@@ -4737,7 +4879,17 @@
       "quietSeconds": "Nadie habla durante",
       "quietSecondsUnit": "segundos",
       "triggerQuietHint": "Con el juego abierto, este escenario activo y nadie hablando durante este tiempo, decide si intervenir con una línea, y puede cambiar valores. Si no hay nada que decir, se queda en silencio. Se cobra por llamada.",
-      "isQuietHint": "Despierta tras un rato de silencio; decide si intervenir con una línea o cambiar valores, y si no, calla."
+      "isQuietHint": "Despierta tras un rato de silencio; decide si intervenir con una línea o cambiar valores, y si no, calla.",
+      "modelAndParams": "Modelo y ajustes",
+      "modelDefault": "Predeterminado",
+      "modelHintNarrator": "Los jugadores que no pueden usar este modelo usan su propio modelo de chat, así que la tarjeta siempre se puede jugar.",
+      "modelHintBackground": "Déjalo vacío para usar el modelo de fondo predeterminado. Los jugadores que no puedan usar el modelo indicado también usarán ese.",
+      "paramsNarrator": "Responde al jugador, con los mismos ajustes que la IA de la historia.",
+      "params": "Ajustes",
+      "paramsDefault": "Predeterminado: temperatura {{temperature}} · hasta {{tokens}} tokens",
+      "temperature": "Temperatura ({{min}}–{{max}})",
+      "maxTokens": "Tokens máx. ({{min}}–{{max}})",
+      "maxTokensLabel": "Tokens máx."
     },
     "addGreeting": "Apertura",
     "emptyCta": "Escribe la primera apertura",
@@ -4887,11 +5039,6 @@
       "summaryFocusHint": "Una línea para la IA que resume sobre lo que no puede perderse: relaciones, promesas, deudas, el reloj.",
       "summaryFocusPlaceholder": "p. ej. Conserva cada promesa hecha y quién le debe a quién.",
       "summaryCost": "El resumen se actualiza en segundo plano con un modelo barato; cada actualización suele costar al jugador bastante menos de 1 mushie. Los jugadores pueden leerlo y editarlo en el panel de Memoria.",
-      "pinnedNote": "Nota fijada",
-      "pinnedNoteHint": "Una línea colocada cerca del final del historial en cada turno, donde la IA presta más atención. Recordatorios de estilo y reglas permanentes van bien aquí.",
-      "pinnedNotePlaceholder": "p. ej. Mantén la segunda persona. Termina cada respuesta en suspenso.",
-      "pinnedDepth": "Mensajes desde el final",
-      "pinnedDepthHint": "0 = después del mensaje más reciente, 1 = justo antes.",
       "budget": "Presupuesto de contexto",
       "budgetValue": "Unos {{tokens}} tokens",
       "budgetAuthor": "ajuste de esta carta",
@@ -4910,7 +5057,7 @@
       "recursionDepth": "Disparos en cascada",
       "recursionDepthHint": "Una entrada que entra puede disparar otras, hasta esta profundidad. 0 = apagado.",
       "variablesToAi": "Variables mostradas a la IA",
-      "variablesToAiHint": "Todas: cada variable legible, cada turno. Solo cambiadas: solo las que se movieron de su valor inicial. Ninguna: sin bloque de estado; las variables son cosa de la interfaz.",
+      "variablesToAiHint": "Todas: el valor actual de cada variable legible, cada turno. Solo cambiadas: solo las que se movieron de su valor inicial. Ninguna: sin valores actuales, aunque las Reglas de comportamiento de cada variable se siguen enviando. Para ocultar una variable del todo, pon su acceso de la IA en Solo motor.",
       "variablesAll": "Todas",
       "variablesChanged": "Solo cambiadas",
       "variablesNone": "Ninguna",
@@ -4965,7 +5112,8 @@
       "varFieldWriter_behavior": "un comportamiento",
       "varFieldWriter_ai-call": "una llamada a IA personalizada",
       "varFieldWriterAny": "sin indicar",
-      "varFieldRemove": "Quitar este campo"
+      "varFieldRemove": "Quitar este campo",
+      "previewCode": "Y {{count}} llamadas del código de la interfaz que arman su propio contexto"
     },
     "addModule": "Escenario",
     "addVariable": "Variable",
@@ -5009,7 +5157,8 @@
       "value": "Valor",
       "seedValue": "Valor inicial",
       "apply": "Aplicar",
-      "remove": "Quitar"
+      "remove": "Quitar",
+      "seedJsonFixed": "Aquí no se puede fijar una lista u objeto: un inicio solo guarda números, texto e interruptores. Quita este cable y ponlo como valor por defecto de la variable."
     },
     "ports": {
       "write": "escribir",
@@ -5066,7 +5215,9 @@
       "summaryRemoved": "{{count}} eliminado(s)",
       "undo": "Deshacer este turno",
       "dismiss": "Entendido",
-      "undoFailed": "No se pudo deshacer; la tarjeta no ha cambiado."
+      "undoKeptYours_one": "Turno deshecho; lo que cambiaste después se queda como lo dejaste",
+      "undoKeptYours": "Turno deshecho; tus {{count}} cambios posteriores se quedan como los dejaste",
+      "undoAllKept": "Ya cambiaste todo lo que tocó este turno; se queda tu versión"
     },
     "links": {
       "in": "{{count}} entrada(s)",
@@ -5293,11 +5444,11 @@
         "memoryCardAlone": "Recuerda toda la conversación",
         "memoryCardHint": "Esta es la IA que juega salvo que un escenario tome el relevo, y recuerda todo lo dicho.",
         "summaryOn": "los turnos anteriores se resumen",
-        "pinnedRow": "Fijado: {{text}}",
         "connections": "Lee {{reads}} fuentes · lo leen {{gives}} escenarios",
         "reviewConnections": "{{count}} referencias indirectas por revisar",
         "continuityOn": "Seguimiento inteligente: activado",
-        "continuityOff": "Seguimiento inteligente: desactivado"
+        "continuityOff": "Seguimiento inteligente: desactivado",
+        "codeContext": "Armado por el código de la interfaz · {{count}}"
       }
     },
     "turnCtx": {
@@ -5678,6 +5829,7 @@
       "whenFires": "Cuándo mira este comportamiento: en cada turno por defecto, o cuando el jugador dice algo, cambia una variable o se pulsa un botón.",
       "onlyIf": "Los efectos de abajo solo ocurren si esto se cumple. Con varias condiciones, elige si deben cumplirse todas o basta una. Vacío = siempre.",
       "alwaysSend": "Activado: se envía a la IA en cada turno. Desactivado: solo cuando aparece una palabra clave o se cumplen sus condiciones; ahorra palabras y la IA se centra más.",
+      "alwaysSendGated": "Tiene condiciones de variables conectadas: ellas deciden cuándo llega esto a la IA. Quítalas y este interruptor vuelve a funcionar.",
       "excludeRecursion": "Si el texto de otra entrada contiene por casualidad estas palabras clave, no arrastrará esta. Solo el chat entre jugador e IA la activa.",
       "preventRecursion": "Una vez enviada, su propio texto no activará las palabras clave de otras entradas.",
       "secondary": "Un segundo grupo de palabras que se combina con las claves para afinar, como «también debe aparecer» o «no debe aparecer». Normalmente vacío.",
@@ -5946,6 +6098,20 @@
           "title": "Disparado desde la interfaz",
           "body": "api.executeAction(id)"
         }
+      },
+      "context": {
+        "messages": {
+          "title": "Tus propios mensajes",
+          "body": "api.ai.complete({ messages }): el código decide qué se envía"
+        },
+        "lore": {
+          "title": "Elegir el lore",
+          "body": "includeLorebook, worldbookIds: solo algunas entradas o una situación"
+        },
+        "session": {
+          "title": "Con la partida",
+          "body": "context: \"session\": suma la persona del jugador y los presets"
+        }
       }
     },
     "custom": {
@@ -5957,7 +6123,97 @@
       "behaviorIntro": "Implementado por código.",
       "implementedBy": "Implementado en {{count}} lugares",
       "implementedCode": "Código propio · {{count}} líneas",
-      "firedFrom": "Disparado desde la interfaz · {{file}} línea {{line}}"
+      "firedFrom": "Disparado desde la interfaz · {{file}} línea {{line}}",
+      "contextIntro": "Lo que lee la IA también lo puede decidir el código de la interfaz: escribe los mensajes y elige el lore y la situación. Estas son las llamadas de la tarjeta que lo hacen.",
+      "codeAt": "{{file}} línea {{line}}"
+    },
+    "gateGroups": {
+      "preview": "Vista previa {{name}} =",
+      "hint": "Arrastra para ver qué lee la IA en cada valor",
+      "clear": "Quitar vista previa",
+      "answer": "La IA lee {{count}} · unos {{chars}} caracteres",
+      "answerMaybe": "La IA lee {{count}} · unos {{chars}} caracteres, y {{maybe}} más dependen de otras condiciones",
+      "one": "{{name}} {{value}}",
+      "range": "{{name}} {{from}}–{{to}}",
+      "list": "{{name}} {{values}}",
+      "always": "Cualquier {{name}}",
+      "never": "Ningún {{name}} las envía",
+      "other": "Otras condiciones",
+      "yes": "sí",
+      "no": "no"
+    },
+    "aiCalls": {
+      "view": "IAs de esta tarjeta",
+      "title": "IAs de esta tarjeta",
+      "count": "{{count}} en total",
+      "col": {
+        "name": "IA",
+        "when": "Cuándo se ejecuta",
+        "payer": "Quién paga",
+        "model": "Modelo",
+        "params": "Ajustes"
+      },
+      "kind": {
+        "story": "IA de la historia",
+        "narrator": "Responde al jugador",
+        "behind": "Entre bastidores",
+        "quiet": "Habla en los silencios",
+        "ui": "La llama un botón",
+        "custom": "Personalizada",
+        "code": "Código de la tarjeta"
+      },
+      "story": "IA de la historia",
+      "storyTakenOver": "Nunca: «{{name}}» siempre responde en su lugar",
+      "whereCard": "Toda la tarjeta",
+      "whereNone": "Sin colocar",
+      "off": "nunca se ejecuta",
+      "whenCustom": "Cuando el código de la tarjeta la llama",
+      "whenCode": "Cuando el código llega a esta línea · {{kind}}",
+      "payerPlayer": "Jugador",
+      "followPlayer": "Ajustes del jugador",
+      "followDefault": "Predeterminado",
+      "authorCustom": "Del autor",
+      "authorSet": "Del autor",
+      "recommended": "Recomendado: {{model}}",
+      "lengthPlayer": "La longitud de respuesta es la del jugador",
+      "narratorParams": "Igual que la IA de la historia",
+      "defaultModelNote": "El modelo de fondo del jugador o uno económico por defecto",
+      "restPlayer": "Lo demás sigue al jugador",
+      "rawDefaults": "Valores por defecto donde el código no fija nada",
+      "computed": "Calculado en el código",
+      "temperature": "Temperatura {{v}}",
+      "topP": "Top P {{v}}",
+      "maxTokens": "Hasta {{n}} tokens",
+      "modelUnknown": {
+        "player": "No está en la lista de modelos: los jugadores usan su propio modelo",
+        "default": "No está en la lista de modelos: los jugadores usan el modelo predeterminado",
+        "none": "No está en la lista de modelos: puede que algunos jugadores no puedan usarlo"
+      },
+      "modelShut": {
+        "player": "Los jugadores {{plans}} usan su propio modelo",
+        "default": "Los jugadores {{plans}} usan el modelo predeterminado",
+        "none": "Los jugadores {{plans}} no pueden usar este modelo"
+      },
+      "openAi": "Editar",
+      "openCode": "Abrir código",
+      "footRules": "El modelo de la IA de la historia siempre lo elige el jugador; el autor solo puede recomendar uno. Si una IA de la tarjeta pide un modelo que el jugador no puede usar, cambia a uno que sí pueda.",
+      "footClamp": "Los valores del autor se mantienen dentro de rangos seguros.",
+      "legendAuthor": "Rosa: del autor"
+    },
+    "storyAi": {
+      "title": "Modelo y ajustes de la IA de la historia",
+      "hint": "El jugador elige y paga el modelo. Los ajustes (temperatura, top P) también son los del jugador, salvo que elijas «Del autor»; entonces se usan los de esta tarjeta.",
+      "recommendedModel": "Modelo recomendado",
+      "recommendedModelHint": "Al elegir modelo, el jugador lo verá marcado como «Recomendado por el autor». Nunca se impone.",
+      "recommendedModelNone": "Ninguno",
+      "recommendedUnknown": "No está en la lista de modelos de Yumina, así que el jugador no lo verá marcado.",
+      "sampling": "Ajustes",
+      "samplingHint": "Con «Del autor», la IA de la historia usa la temperatura y el top P de esta tarjeta en vez de los del jugador.",
+      "temperature": "Temperatura",
+      "temperatureHint": "{{min}}–{{max}}; más alto, más libre",
+      "topP": "Top P",
+      "topPHint": "{{min}}–{{max}}",
+      "alwaysPlayer": "El modelo y la longitud de respuesta siempre son los del jugador, que es quien paga."
     }
   },
   "modules": {

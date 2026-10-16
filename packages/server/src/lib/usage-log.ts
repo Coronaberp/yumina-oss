@@ -111,6 +111,9 @@ export const USAGE_ENDPOINT_BILLING_POLICY: Record<string, "billed" | "free-by-d
   // generation billing and adds no user charge, including refused/failed
   // rewrites. Owner-authorized usage visibility fix, 2026-09-08.
   "generation-enhance": "free-by-design",
+  // Update-log editor "auto-translate" (admins only, platform key): an internal
+  // publishing tool, never a user action. Logged so the spend stays visible.
+  "changelog-translate": "free-by-design",
   // Voice readout (TTS). Priced per UTF-8 byte of input text; cost is computed
   // locally (byteLength × per-byte price) and deducted via providerCostUsd —
   // cache hits (same text+voice replayed) never reach recordUsageLog at all.

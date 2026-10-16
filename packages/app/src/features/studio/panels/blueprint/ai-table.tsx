@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
-import { UNPLACED_WORLDBOOK_ID, isContinuityOwned, resolveStation, type Variable, type WorldDefinition, type WorldEntry, type Worldbook } from "@yumina/engine";
+import { UNPLACED_WORLDBOOK_ID, isAlwaysSendEntry, isContinuityOwned, isVariableBoundEntry, resolveStation, type Variable, type WorldDefinition, type WorldEntry, type Worldbook } from "@yumina/engine";
 import { cn } from "@/lib/utils";
 import { aiRoster, stationName, workerReaders, type RosterAi } from "./ai-roster";
 
@@ -35,8 +35,10 @@ export function aiTableSections(world: WorldDefinition, t: Translate): { ais: Ro
     const home = e.worldbookId ? byId.get(e.worldbookId) : undefined;
     return ais.map((ai) => {
       if (!home) {
-        if (speaks(ai)) return e.alwaysSend ? cell(t("blueprint.aiTable.knows"), "yes") : cell(t("blueprint.aiTable.keyword"), "cond");
-        if (ai.kind === "quiet" && e.alwaysSend) return cell(t("blueprint.aiTable.knows"), "yes");
+        if (speaks(ai)) return isAlwaysSendEntry(e) ? cell(t("blueprint.aiTable.knows"), "yes") : isVariableBoundEntry(e) ? cell(t("blueprint.aiTable.gated"), "cond") : cell(t("blueprint.aiTable.keyword"), "cond");
+        // A quiet AI reads what is sent every turn, and a gated entry the same
+        // way the story AI does: while its conditions hold.
+        if (ai.kind === "quiet") return isAlwaysSendEntry(e) ? cell(t("blueprint.aiTable.knows"), "yes") : isVariableBoundEntry(e) ? cell(t("blueprint.aiTable.gated"), "cond") : no();
         return no();
       }
       if (resolveStation(home)) return ai.bookId === home.id ? cell(t("blueprint.aiTable.only"), "own") : no();

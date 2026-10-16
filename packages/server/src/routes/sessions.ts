@@ -1,4 +1,6 @@
+import { refreshSessionGreeting } from "../lib/refresh-session-greeting.js";
 import { playtimeDecision } from "../lib/playtime-policy.js";
+import { appendPendingContext } from "../lib/pending-context.js";
 import { loadMessagePage } from "../lib/message-page.js";
 import { discoveryIdentity, prepareDiscoveryOutcome, recordDiscoveryOutcome } from "../lib/discovery-outcomes.js";
 import { deleteSessionsKeepingUsage } from "../lib/delete-sessions.js";
@@ -10,6 +12,7 @@ import { eq, and, ne, desc, asc, sql, count, inArray, isNotNull } from "drizzle-
 import { db, readOwn } from "../db/index.js";
 import { createHash, randomUUID } from "node:crypto";
 import { playSessions, worlds, messages, apiKeys, worldMemories, checkpoints, userLibrary, user, summaryceptionSnippets, sessionLoreEntries } from "../db/schema.js";
+import { getBlockStatus } from "../lib/blocks.js";
 import { restoreSessionStorage } from "../lib/session-storage-service.js";
 import { MediaError } from "../lib/session-media-service.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -150,6 +153,14 @@ sessionRoutes.post("/", async (c) => {
     body.ephemeral = true;
   }
 
+  // A block in either direction closes the creator's cards to the other
+  // party: answer exactly like GET /api/worlds/:id so the card just looks gone.
+  // The creator's own playtests skip the query; a moderator's audit preview is
+  // exempt so a personal block can't stall a review.
+  if (!isAdminPreview && world.creatorId !== currentUser.id && (await getBlockStatus(currentUser.id, world.creatorId)).blocked) {
+    return c.json({ error: "World not found" }, 404);
+  }
+
   // Multiplayer worlds get ONE session per user (a persistent entry point, not
   // a narrative timeline — world state lives on the game server, progression on
   // the account). Reuse the existing session instead of stacking meaningless
@@ -240,7 +251,7 @@ sessionRoutes.post("/", async (c) => {
     // Insert greeting message if the world has greeting entries. Each greeting
     // swipe carries its OWN stateSnapshot (base + that greeting's
     // initialVariables) so switching openings applies that route's variables.
-    const greetings = greetingBuilder.buildGreetings(worldDef, baseInitialState);
+    const greetings = greetingEntries.map((entry, index) => greetingBuilder.buildGreetings(worldDef, snapshotForGreeting(entry))[index]!);
     const swipes = greetings.map((content, i) => ({
       content,
       stateSnapshot: snapshotForGreeting(greetingEntries[i]) as unknown as Record<string, unknown>,
@@ -541,6 +552,12 @@ sessionRoutes.get("/:id", async (c) => {
       )
     : { priority: [], deferred: [] };
 
+  const greeting = !isReadOnly && renderSchema
+    ? await refreshSessionGreeting(sessionId, currentUser.id, migrateWorldDefinition(renderSchema)) : null;
+  if (greeting) {
+    const index = sessionMessages.findIndex(message => message.id === greeting.id);
+    if (index >= 0) sessionMessages[index] = { ...greeting, createdAt: greeting.createdAt?.toISOString() ?? null };
+  }
   applyPersonaMetadataToState(normalizedState, sessionPersona.persona, currentUser);
   return c.json({
     data: {
@@ -554,6 +571,7 @@ sessionRoutes.get("/:id", async (c) => {
         image: currentUser.image,
       },
       readOnly: isReadOnly,
+      greeting,
       state: normalizedState as unknown as Record<string, unknown>,
       world: worldData,
       messages: sessionMessages,
@@ -595,8 +613,9 @@ sessionRoutes.put("/:id/persona", async (c) => {
   if (body.expectedVersion !== undefined && (typeof body.expectedVersion !== "string" || body.expectedVersion.length > 64)) return c.json({ error: "Invalid persona version" }, 400);
   const result = await setSessionPersona(currentUser.id, sessionId, body.personaId, body.expectedVersion);
   if ("error" in result) return c.json({ error: result.error }, result.error === "Persona selection changed" ? 409 : 404);
+  const greeting = await refreshSessionGreeting(sessionId, currentUser.id);
   // Preserve the legacy data.persona field for older clients.
-  return c.json({ data: { ...result.data, ...personaIdentityReceipt(sessionId, { personaLocked: true, sessionPersona: result.data }, currentUser) } });
+  return c.json({ data: { greeting, ...result.data, ...personaIdentityReceipt(sessionId, { personaLocked: true, sessionPersona: result.data }, currentUser) } });
 
 });
 
@@ -614,7 +633,8 @@ sessionRoutes.put("/:id/persona-lock", async (c) => {
   if (body.expectedVersion !== undefined && (typeof body.expectedVersion !== "string" || body.expectedVersion.length > 64)) return c.json({ error: "Invalid persona version" }, 400);
   const result = await setSessionPersonaLock(currentUser.id, sessionId, body.locked, body.personaId, body.expectedVersion);
   if ("error" in result) return c.json({ error: result.error }, result.error === "Persona selection changed" ? 409 : 404);
-  return c.json({ data: personaIdentityReceipt(sessionId, result.data, currentUser) });
+  const greeting = await refreshSessionGreeting(sessionId, currentUser.id);
+  return c.json({ data: { ...personaIdentityReceipt(sessionId, result.data, currentUser), greeting } });
 });
 
 // PATCH /api/sessions/:id/state — update session state
@@ -857,9 +877,7 @@ sessionRoutes.post("/:id/execute-action", async (c) => {
 
     // A fired reaction may stash one-shot context (tell-ai) for the AI to read
     // on the player's NEXT message — it does not start a turn on its own.
-    if (runResult.contextMessages.length > 0) {
-      stateManager.setMetadata("pendingContext", runResult.contextMessages);
-    }
+    appendPendingContext(stateManager, runResult.contextMessages);
 
     const finalState = stateManager.getSnapshot();
 
@@ -1427,7 +1445,7 @@ sessionRoutes.post("/:id/restart", async (c) => {
   // summaryception snippets (without this, the old story's snippets kept
   // injecting the previous playthrough into the new prompts).
   const restartInvalidation = collectExtensionInvalidation({ reason: "session-restart", sessionId });
-  const greetings = promptBuilder.buildGreetings(worldDef, baseInitialState);
+  const greetings = restartGreetingEntries.map((entry, index) => promptBuilder.buildGreetings(worldDef, snapshotForGreeting(entry))[index]!);
   const restarted = await db.transaction(async (tx) => {
     const [locked] = await tx.select({ id: playSessions.id }).from(playSessions)
       .where(and(eq(playSessions.id, sessionId), eq(playSessions.userId, currentUser.id))).for("update");
@@ -1593,15 +1611,17 @@ export async function branchSession(args: {
   //   branch @ m2  → summary describes m3,m4 the branch never had  → DROP
   //                  + reset compacted flags so m1,m2 re-enter prompts
   //
-  // Checked directly from the flags (any compacted message BEYOND the branch
-  // point ⇒ the summary covers content the branch excludes) instead of
-  // summaryCoversUntilMessageId, which can be null on legacy rows.
+  // Check both flags and coverage: manual summaries can cover raw messages
+  // without marking them compacted. Unknown legacy coverage is dropped.
   // Same rule for the summaryception variant, which additionally must CLONE
   // its snippet rows — before this, branches copied summaryceptionCompacted
   // flags but never the snippets, leaving a silent context hole on every
   // summaryception branch.
   const compactedBeyondBranch = allMessages.some((m, i) => i > branchIdx && m.compacted);
-  const keepSummary = hasStorySummary(parent.summary) && !compactedBeyondBranch;
+  // Manual regeneration may summarize raw rows without setting compacted.
+  // Both the coverage pointer and flags must fit inside the copied prefix.
+  const keepSummary = hasStorySummary(parent.summary) && !compactedBeyondBranch
+    && parent.summaryCoversUntilMessageId != null && idMap.has(parent.summaryCoversUntilMessageId);
   const summaryceptionBeyondBranch = allMessages.some((m, i) => i > branchIdx && m.summaryceptionCompacted);
   const parentSnippets = await db
     .select()
@@ -1672,6 +1692,9 @@ export async function branchSession(args: {
           randomUUID(),
         ) as unknown as Record<string, unknown>,
         summary: keepSummary ? parent.summary : null,
+        summaryCoversUntilMessageId: keepSummary ? idMap.get(parent.summaryCoversUntilMessageId!)! : null,
+        summaryUpdatedAt: keepSummary ? parent.summaryUpdatedAt : null,
+        summaryTokenCount: keepSummary ? parent.summaryTokenCount : null,
         summaryModel: parent.summaryModel,
         stateGuardEnabled: parent.stateGuardEnabled,
         stateGuardModel: parent.stateGuardModel,
@@ -1691,6 +1714,7 @@ export async function branchSession(args: {
         sessionMemoryProcessedMessageId: keepSessionMemory ? idMap.get(memProcId!)! : null,
         sessionMemorySourceHash: keepSessionMemory ? parent.sessionMemorySourceHash : null,
         sessionMemoryUpdatedAt: keepSessionMemory ? parent.sessionMemoryUpdatedAt : null,
+        sessionMemoryStaleAt: keepSessionMemory ? parent.sessionMemoryStaleAt : null,
         // The player's own pinned notes are session config, not derived state:
         // a branch continues the same story, so it inherits them unconditionally.
         sessionMemoryPinned: parent.sessionMemoryPinned,

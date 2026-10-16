@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { creditTransactions, creditWallets, user, walletPlanDrops } from "../db/schema.js";
-import { fulfillWechatPlanPurchase } from "./credit-service.js";
+import { fulfillWechatPlanPurchase, higherPlanStillActive } from "./credit-service.js";
 import { PLANS, type PlanId } from "./plan-config.js";
 
 after(async () => { await (db as unknown as { $client: { close: () => Promise<void> } }).$client.close(); });
@@ -73,6 +73,43 @@ describe("fulfillWechatPlanPurchase", () => {
     assert.deepEqual((await ledger(walletId)).map((r) => r.amount), [3400, 6800]);
   });
 
+  it("switching tiers mid-cycle pays the old plan's undelivered drops before the new grant", async () => {
+    // The 2026-10-14 report: Platinum on WeChat (day 9, drops 2/3 pending), then Gold.
+    const now = new Date();
+    const { userId, walletId } = await makeWechatWallet({
+      plan: "plus", planVersion: 2, balance: 20, periodStart: new Date(now.getTime() - 9 * DAY), released: 1,
+    });
+    assert.equal(await fulfillWechatPlanPurchase(userId, "go", "cs_switch", now), "plan_change");
+    const w = await walletRow(walletId);
+    assert.equal(w.plan, "go");
+    assert.equal(w.periodStart.getTime(), now.getTime());
+    assert.equal(w.balance, 20 + 3400 + 3400 + 1600, "the Platinum drops already paid for are kept");
+    assert.deepEqual((await ledger(walletId)).map((r) => r.amount), [3400, 3400, 1600]);
+    const drops = await dropsRow(walletId);
+    assert.equal(drops.periodStart.getTime(), now.getTime());
+    assert.equal(drops.dropsReleased, 1);
+  });
+
+  it("an upgrade mid-cycle settles the lower plan's drops too", async () => {
+    const now = new Date();
+    const { userId, walletId } = await makeWechatWallet({
+      plan: "go", planVersion: 2, balance: 0, periodStart: new Date(now.getTime() - 3 * DAY), released: 1,
+    });
+    await fulfillWechatPlanPurchase(userId, "plus", "cs_up", now);
+    const w = await walletRow(walletId);
+    assert.equal(w.plan, "plus");
+    assert.deepEqual((await ledger(walletId)).map((r) => r.amount), [800, 800, 6800]);
+  });
+
+  it("a switch after the old month ended pays nothing extra", async () => {
+    const now = new Date();
+    const { userId, walletId } = await makeWechatWallet({
+      plan: "plus", planVersion: 2, balance: 0, periodStart: new Date(now.getTime() - 31 * DAY), released: 3,
+    });
+    await fulfillWechatPlanPurchase(userId, "go", "cs_after", now);
+    assert.deepEqual((await ledger(walletId)).map((r) => r.amount), [1600]);
+  });
+
   it("a renewal after expiry still resets the month from now", async () => {
     const now = new Date();
     const { userId, walletId } = await makeWechatWallet({
@@ -82,5 +119,23 @@ describe("fulfillWechatPlanPurchase", () => {
     const w = await walletRow(walletId);
     assert.equal(w.periodStart.getTime(), now.getTime());
     assert.equal(w.periodEnd.getTime(), now.getTime() + 30 * DAY);
+  });
+});
+
+describe("higherPlanStillActive", () => {
+  const now = new Date("2026-10-14T13:00:00Z");
+  const running = { plan: "plus" as PlanId, periodEnd: new Date(now.getTime() + 21 * DAY), planExpiresAt: null };
+
+  it("closes lower tiers while a higher one is running", () => {
+    assert.equal(higherPlanStillActive(running, "go", now), "plus");
+  });
+  it("leaves the same tier and upgrades open", () => {
+    assert.equal(higherPlanStillActive(running, "plus", now), null);
+    assert.equal(higherPlanStillActive(running, "pro", now), null);
+  });
+  it("opens once the month or the gift has ended", () => {
+    assert.equal(higherPlanStillActive({ ...running, periodEnd: new Date(now.getTime() - 1) }, "go", now), null);
+    assert.equal(higherPlanStillActive({ ...running, planExpiresAt: new Date(now.getTime() - 1) }, "go", now), null);
+    assert.equal(higherPlanStillActive({ ...running, plan: "free" as PlanId }, "go", now), null);
   });
 });

@@ -154,6 +154,12 @@ const envSchema = z.object({
   // browser pixel in packages/app/index.html so dedupe-by-conversion_id works.
   REDDIT_CAPI_TOKEN: z.string().default(""),
   REDDIT_PIXEL_ID: z.string().default("a2_jeuli9udatr6"),
+  // TikTok Events API (server-side copy of the browser pixel's conversions).
+  // Empty token disables sends. Pixel id must match packages/app/index.html.
+  // Test code (Events Manager → Test events) tags sends as tests when set.
+  TIKTOK_EVENTS_ACCESS_TOKEN: z.string().default(""),
+  TIKTOK_PIXEL_ID: z.string().default("DB47JFBC77UA626ELO2G"),
+  TIKTOK_EVENTS_TEST_CODE: z.string().default(""),
   // OpenAI — used for content embeddings (Phase 7 reco). Empty string
   // disables embedding generation; existing embeddings still work.
   OPENAI_API_KEY: z.string().default(""),
@@ -164,6 +170,12 @@ const envSchema = z.object({
   // checks each and submits to the healthiest (e.g. "abc123,def456").
   RUNPOD_API_KEY: z.string().default(""),
   OPENROUTER_IMAGE_API_KEY: z.string().default(""),
+  // "comfy-router": the models Router serves better go there first (see
+  // routerFirst; OpenRouter prices on our team workspace), OpenRouter whenever
+  // Router refuses before dispatching (concurrency, credits). Default: OpenRouter only.
+  SMART_IMAGE_PROVIDER: z.enum(["openrouter", "comfy-router"]).default("openrouter"),
+  // A Comfy team-workspace key for Router; empty uses COMFY_CLOUD_API_KEY.
+  COMFY_ROUTER_API_KEY: z.string().default(""),
   // Fleet limits are deploy-time controls, never values supplied by the client.
   // Raising the ceiling requires provider capacity and load-test evidence.
   OPENROUTER_IMAGE_MAX_CONCURRENT: z.coerce.number().int().min(1).max(5000).default(10),
@@ -229,6 +241,14 @@ const envSchema = z.object({
   // Non-explicit moments without portraits are drawn by this story model
   // (Z-Anime) from the tagger's caption. Empty: the SDXL path.
   PER_TURN_IMAGE_STORY_MODEL: z.string().default(""),
+  // Anima (CircleStone's anime DiT, licensed through Comfy) draws every moment
+  // without portraits, explicit or not, and sex acts with them. Empty: the
+  // story/SDXL routes. Its text encoder and VAE are fixed (qwen_3_06b_base,
+  // qwen_image_vae).
+  PER_TURN_IMAGE_ANIMA_MODEL: z.string().default(""),
+  // "steps:cfg:sampler:scheduler" for it. Empty: 10:1:euler:simple for the
+  // Turbo distill (file name contains "turbo"), else 30:4:er_sde:simple.
+  PER_TURN_IMAGE_ANIMA_SAMPLING: z.string().default(""),
   // The SDXL checkpoint for explicit moments, when it differs from
   // PER_TURN_IMAGE_CHECKPOINT. Same LoRAs and sampling.
   PER_TURN_IMAGE_EXPLICIT_CHECKPOINT: z.string().default(""),

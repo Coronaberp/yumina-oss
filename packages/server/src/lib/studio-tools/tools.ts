@@ -2,6 +2,7 @@ import { getSmartImageCapabilities, SMART_IMAGE_MODEL, SMART_IMAGE_MODELS,
   SMART_IMAGE_ASPECTS, SMART_IMAGE_RESOLUTIONS, MAX_IMAGE_BATCH_ITEMS, IMAGE_ASPECTS,
   platformStylePrice, TTS_VOICES, type PlatformStyleInfo } from "@yumina/shared";
 import type { ToolDefinition } from "../llm/types.js";
+import { smartModelAvailable } from "../generation/smart-availability.js";
 
 /** The assistant picks its own model, so the schema advertises the union across
  *  all of them and normalizeImageProposal narrows the pair down to what the
@@ -15,7 +16,7 @@ import type { ToolDefinition } from "../llm/types.js";
  *  Deliberately no claim about which draws better: nobody has measured that
  *  here, and inventing it would be spending the creator's money on a guess.
  *  The assistant weighs these and says out loud what it picked and why. */
-const IMAGE_TOOL_MODELS = SMART_IMAGE_MODELS.map(model => {
+const IMAGE_TOOL_MODELS = SMART_IMAGE_MODELS.filter(model => smartModelAvailable(model.id)).map(model => {
   const caps = getSmartImageCapabilities(model.id);
   const facts = [
     `~${Math.round(model.estimatedCostUsd * 1000)} mushies/image`,
@@ -270,6 +271,27 @@ export const READ_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "simulate_behaviors",
+      description:
+        "Run the card's behaviors on the engine alone — free, no model call, nothing saved. Starts from the variables' defaults (override any with `start`), then runs each step the way the game does: a player action (what a button sends), a finished turn (optionally with the variable values the AI would set that turn), a variable being set, or a timer. Returns, per step, which behaviors fired, every variable change and which behavior made it, notifications and notes for the AI, plus the end values. Call it after writing or changing behaviors, or variables they read, to check they do what you meant. It cannot test what the AI writes; say so when you report.",
+      parameters: {
+        type: "object",
+        properties: {
+          start: { type: "object", description: "Optional starting values by variable id; dot-paths reach into json variables (\"bag.coins\": 10)." },
+          steps: {
+            type: "array",
+            maxItems: 10,
+            description: "1-10 steps, each exactly one of: {\"action\": \"rest\", \"params\": {...}} | {\"turn\": true, \"player\": \"...\", \"reply\": \"...\", \"ai_sets\": {\"hp\": 3}} | {\"set\": {\"hp\": 0}} | {\"clock\": 60}.",
+            items: { type: "object" },
+          },
+        },
+        required: ["steps"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "search_source",
       description:
         "Search the source texts the creator attached to this card (e.g. the novel a fan-work is based on — listed under \"Source texts\" in your context). Literal search; several space-separated words must all appear close together (\"贝尔 艾丝 告白\" finds that scene). Returns matches with chapter index/title, character offset and a snippet. Use it for canon facts: names as this translation writes them, terms, places, who said what, when something happened. Then read_source the chapter for the full passage. Auto-executes.",
@@ -452,7 +474,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx'). Non-filename IDs target the entry file." },
+          id: { type: "string", description: "Filename inside rootComponent.files (e.g. 'index.tsx', 'homepage.tsx'). A lorebook entry id edits that entry's text the same way. Variables, behaviors and situations have their own write tools." },
           old_code: { type: "string", description: "Exact code snippet to find. Must appear exactly once. Include surrounding lines if needed for uniqueness." },
           new_code: { type: "string", description: "Replacement code snippet." },
         },
@@ -621,14 +643,20 @@ export const WRITE_TOOLS: ToolDefinition[] = [
     function: {
       name: "update_settings",
       description:
-        "Update the card's name and one-line description, world-level generation settings, and player identity.",
+        "Update the card's name and one-line description, world-level generation settings, and player identity. AI-call settings follow the PLAYER by default: the story AI uses the player's own Yumina model, reply length and sampling. The card's temperature/topP/topK/minP/frequencyPenalty/presencePenalty only apply when samplingPolicy is \"author\" (and are clamped to safe ranges); the card's maxTokens never overrides the player's reply length; the model always stays the player's (recommendedModel is only a suggestion). Leave sampling alone unless the creator explicitly wants a fixed style for this card — never set it just to \"tune\" a card. Out-of-range numbers are clamped and reported.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "The card's title as players see it in the library. Short and specific; never a template name such as 角色聊天 / 世界模拟." },
           description: { type: "string", description: "One or two sentences players read on the card before opening it: the hook, not a summary of every system." },
-          maxTokens: { type: "number" },
-          temperature: { type: "number" },
+          maxTokens: { type: "number", description: "Default reply length in tokens (256–32768). Only a fallback: the player's own reply length always wins. Rarely worth setting." },
+          temperature: { type: "number", description: "Story AI temperature (0–1.5). Only applies with samplingPolicy \"author\"." },
+          samplingPolicy: {
+            type: "string",
+            enum: ["player", "author"],
+            description: "Whose sampling style the story AI uses. \"player\" (default): the player's own settings. \"author\": this card's temperature/topP/topK/minP/penalties win, clamped to safe ranges. Only set \"author\" when the creator asks for a fixed style; reply length and model stay the player's either way.",
+          },
+          recommendedModel: { type: "string", description: "The model the creator suggests for this card, shown to players as a suggestion — never forced. Must be an exact model id from Yumina's catalog (an unknown id is rejected). \"\" removes it." },
           playerName: { type: "string" },
           speakerBubbles: { type: "boolean", description: "The default chat splits one reply into a bubble per speaker when lines open with a character's name ('沈霏：…'). For group scenes / idol simulators." },
           replyRules: {
@@ -636,26 +664,26 @@ export const WRITE_TOOLS: ToolDefinition[] = [
             items: { type: "object" },
             description: "回复处理 — replaces the whole list. Rules that take tagged blocks out of the AI's reply: [{ id, name?, match: { tag: '状态' } (matches <状态>…</状态>, 【状态】…【/状态】, [状态]…[/状态]) | { pattern: 'regex, group 1 = content' }, hide?: true (the player does not see it), to?: [{ kind: 'fields' } (each 'name: value' line into the variable of that name/id) | { kind: 'variable', variableId, op?: 'set'|'append'|'push' } | { kind: 'event', name? } | { kind: 'channel', channel } (the card's interface hears it with api.onAiOutput(channel, cb))] }]. Use instead of telling the card's code to parse the reply; still tell the AI (in an entry) to write the block.",
           },
-          topP: { type: "number" },
-          frequencyPenalty: { type: "number" },
-          presencePenalty: { type: "number" },
-          topK: { type: "number" },
-          minP: { type: "number" },
-          lorebookScanDepth: { type: "number", description: "How many recent messages to scan for keyword triggers (default 2)." },
+          topP: { type: "number", description: "Story AI top-p (0.05–1). Only applies with samplingPolicy \"author\"." },
+          frequencyPenalty: { type: "number", description: "Story AI frequency penalty (−1 to 1). Only applies with samplingPolicy \"author\"." },
+          presencePenalty: { type: "number", description: "Story AI presence penalty (−1 to 1). Only applies with samplingPolicy \"author\"." },
+          topK: { type: "number", description: "Story AI top-k (0–200, 0 = off). Only applies with samplingPolicy \"author\"." },
+          minP: { type: "number", description: "Story AI min-p (0–0.5). Only applies with samplingPolicy \"author\"." },
+          lorebookScanDepth: { type: "number", description: "How many recent messages to scan for keyword triggers (1–20, default 2; 3–6 is plenty for most cards). Deeper keeps old lore firing long after the story moved on." },
           lorebookRecursionDepth: {
             type: "number",
             description:
-              "How many extra passes re-scan TRIGGERED entries' own text for more keywords (default 0). >0 makes lore entries trigger each other and can cascade into firing most of the lorebook every turn. Set 0 unless the card genuinely needs chained reveals.",
+              "How many extra passes re-scan TRIGGERED entries' own text for more keywords (0–10, default 0). >0 makes lore entries trigger each other and can cascade into firing most of the lorebook every turn. Set 0 unless the card genuinely needs chained reveals.",
           },
           lorebookBudgetCap: {
             type: "number",
             description:
-              "Hard ceiling (in tokens) on keyword-triggered lore injected per turn. 0 = no cap (default), meaning ALL matched entries inject — the #1 cause of runaway per-turn cost on lore-heavy cards. Set e.g. 20000-30000 as a safety ceiling.",
+              "Hard ceiling (in tokens, 0–1000000) on keyword-triggered lore injected per turn. 0 = no cap (default), meaning ALL matched entries inject — the #1 cause of runaway per-turn cost on lore-heavy cards. Set e.g. 20000-30000 as a safety ceiling.",
           },
           lorebookBudgetPercent: {
             type: "number",
             description:
-              "Lore injection budget as a percent of maxContext (default 100). Lower it (e.g. 25) to bound lore as a fraction of the window. The effective ceiling is min(lorebookBudgetCap, lorebookBudgetPercent% of maxContext).",
+              "Lore injection budget as a percent of maxContext (5–100, default 100 = no extra limit). Lower it (e.g. 25) to bound lore as a fraction of the window; never near 0, which drops every keyword entry. The effective ceiling is min(lorebookBudgetCap, lorebookBudgetPercent% of maxContext).",
           },
           narratorVoice: { type: "string", description: "Voice readout: the fish.audio voice id (32 hex, same catalog as write_entry.voice) narration is read in; a speaking character with no voice of its own falls to it too. Empty string removes it." },
           voiceInputMode: { type: "string", enum: ["confirm", "auto"], description: "Hold-to-talk voice input on release: 'confirm' (default) fills the input box for the player to review, 'auto' sends it as spoken. The player can override." },
@@ -726,7 +754,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
               model: {
                 type: "string",
                 description:
-                  "Model id for this station's turns (e.g. a cheap fast one for a chronicler). Omit to follow the player's own choice. It is a REQUEST: a player who cannot run it falls back to their own model, so this can never make a card unplayable.",
+                  "Model id for this station's turns — omit it (the default) unless the job truly needs a specific model. Must be an exact id from Yumina's model catalog; an unknown id is rejected. It is a REQUEST, never forced: a player whose plan cannot run it falls back — a narrator to the player's own model, a background AI (worker/quiet/ui) to the default summary model — and the result tells you when the model is above the free plan. Without it, a narrator follows the player's model and a background AI uses the session's summary model.",
               },
               inputs: {
                 type: "array",
@@ -813,7 +841,8 @@ export const WRITE_TOOLS: ToolDefinition[] = [
                 description: "Custom AI: { timeoutSec (5-120, default 25), retries (0-3, default 1), fallback: [lines, one picked at random when every try failed], randomChoice?: true (when every try failed, still answer: a random allowed option per choice field — an AI opponent always makes a legal move) }.",
               },
               cooldownSec: { type: "number", description: "Custom AI: seconds before it may be called again." },
-              maxTokens: { type: "number", description: "Custom AI: most tokens one answer may take (default 800)." },
+              maxTokens: { type: "number", description: "Background AIs only (worker/quiet/ui): most tokens one answer may take, a whole number 50–4000 (default 800–900). Omit unless its answers get cut off. Never on a narrator: it answers with the player's own reply length." },
+              temperature: { type: "number", description: "Background AIs only (worker/quiet/ui): sampling temperature 0–1.5 (default 0.2, steady). Omit it for bookkeeping, judging and summaries; raise it (0.7–1.0) only for an AI whose job is varied prose, e.g. a quiet narrator's ambient lines. Never on a narrator: it answers with the player's own settings." },
             },
             required: ["kind"],
           },
@@ -887,7 +916,7 @@ const CONTROL_TOOLS: ToolDefinition[] = [
     function: {
       name: "playtest",
       description:
-        "Play the card yourself, the way a player does, to check that what you built works and reads well. Give 1-10 moves: exactly what a player would type, in the card's language. Each move goes through the real game (the card's own model replies, variables change, behaviors fire, lore is pulled in) in a fresh throwaway session that starts from the card's opening, and the creator watches it live in the playtest panel. You get back every reply with its variable changes, behaviors fired, notifications and lore used. Use it after building or changing something a player will feel; if a turn shows a problem, fix it and play again. You can only type: buttons and screens in the card's interface cannot be clicked here. Costs what the same turns cost a player. Call it alone.",
+        "Play the card yourself, the way a player does, to check that what you built works and reads well. Give 1-10 moves: exactly what a player would type, in the card's language. Each move goes through the real game (the card's own model replies, variables change, behaviors fire, lore is pulled in) in a fresh throwaway session that starts from the card's opening, and the creator watches it live in the playtest panel. You get back every reply with its variable changes, behaviors fired, notifications and lore used. Every move is billed to the creator like a player's turn. Inside a job the creator started, play before you finish; otherwise ask first in one line (how many moves, and that each costs a turn) unless the creator asked you to play. To check behaviors alone use simulate_behaviors, which is free. If a turn shows a problem, fix it and play again. You can only type: buttons and screens in the card's interface cannot be clicked here. Call it alone.",
       parameters: {
         type: "object",
         properties: {

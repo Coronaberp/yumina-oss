@@ -376,6 +376,14 @@ const TABLE_DDLS = [
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS account_deletions (
+    id TEXT PRIMARY KEY,
+    deleted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    account_created_at TIMESTAMP,
+    lifetime_playtime_seconds BIGINT NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'deletion'
+  )`,
+  `CREATE INDEX IF NOT EXISTS account_deletions_deleted_at_idx ON account_deletions(deleted_at)`,
   `CREATE TABLE IF NOT EXISTS account_deletion_cleanup_jobs (
     id TEXT PRIMARY KEY,
     deleted_user_id TEXT NOT NULL,
@@ -773,7 +781,7 @@ const TABLE_DDLS = [
   )`,
   `CREATE TABLE IF NOT EXISTS usage_logs (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
     session_id TEXT REFERENCES play_sessions(id) ON DELETE SET NULL,
     model TEXT NOT NULL,
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -900,6 +908,37 @@ const TABLE_DDLS = [
   revision uuid NOT NULL DEFAULT gen_random_uuid(),
   updated_at timestamp NOT NULL DEFAULT now(),
   CONSTRAINT discover_editorial_singleton CHECK (id = 'published')
+)`,
+  // Update log web edits — applied by scripts/add-changelog-entries.sql first;
+  // these keep fresh PGlite development databases compatible.
+  `CREATE TABLE IF NOT EXISTS changelog_entries (
+  id TEXT PRIMARY KEY CONSTRAINT changelog_entries_id_check CHECK (id ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(-[a-z0-9]+)*$'),
+  date TEXT,
+  audience TEXT CONSTRAINT changelog_entries_audience_check CHECK (audience IS NULL OR audience IN ('public','internal')),
+  areas JSONB,
+  titles JSONB,
+  bodies JSONB,
+  highlight BOOLEAN NOT NULL DEFAULT false,
+  kind TEXT CONSTRAINT changelog_entries_kind_check CHECK (kind IS NULL OR kind IN ('standard','roundup')),
+  cover TEXT,
+  cover_alts JSONB,
+  hidden BOOLEAN NOT NULL DEFAULT false,
+  created_by TEXT,
+  updated_by TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT changelog_entries_content_check CHECK (
+    (titles IS NULL) = (bodies IS NULL) AND (titles IS NULL) = (date IS NULL)
+    AND (titles IS NULL) = (audience IS NULL) AND (titles IS NULL) = (areas IS NULL)
+  )
+)`,
+  `CREATE TABLE IF NOT EXISTS changelog_entry_revisions (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL,
+  action TEXT NOT NULL CONSTRAINT changelog_entry_revisions_action_check CHECK (action IN ('create','edit','hide','unhide','restore','delete')),
+  snapshot JSONB NOT NULL,
+  created_by TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT now()
 )`,
   `CREATE TABLE IF NOT EXISTS discover_artwork_overrides (
   world_id TEXT PRIMARY KEY REFERENCES worlds(id) ON DELETE CASCADE,
@@ -1902,6 +1941,17 @@ export async function ensureAccountDeletionForeignKeys() {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `));
+  // Identity-free deletion ledger written inside the deletion transaction.
+  await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS account_deletions (
+      id TEXT PRIMARY KEY,
+      deleted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      account_created_at TIMESTAMP,
+      lifetime_playtime_seconds BIGINT NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'deletion'
+    )
+  `));
+  await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS account_deletions_deleted_at_idx ON account_deletions(deleted_at)`));
   await db.execute(sql.raw(`
     CREATE TABLE IF NOT EXISTS account_deletion_cleanup_jobs (
       id TEXT PRIMARY KEY,
@@ -2508,6 +2558,8 @@ export async function ensureWorldReviewTables() {
       // Admin "ignore" parking (decision stays 'pending' — author never sees it).
       await db.execute(sql.raw(`ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS ignored_at TIMESTAMP`));
       await db.execute(sql.raw(`ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS ignored_by TEXT`));
+      await db.execute(sql.raw(`ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS version_id TEXT`));
+      await db.execute(sql.raw(`ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS base_version_id TEXT`));
     } catch (err) {
       console.warn("[DEV] ensureWorldReviewTables pglite path warning:", err);
     }
@@ -2546,6 +2598,8 @@ export async function ensureWorldReviewTables() {
     `CREATE INDEX IF NOT EXISTS world_review_submissions_world_idx ON world_review_submissions(world_id, submitted_at)`,
     `CREATE INDEX IF NOT EXISTS world_review_submissions_submitter_idx ON world_review_submissions(submitted_by, submitted_at)`,
     `CREATE INDEX IF NOT EXISTS world_review_submissions_ignored_idx ON world_review_submissions(group_key, ignored_at)`,
+    `ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS version_id TEXT`,
+    `ALTER TABLE world_review_submissions ADD COLUMN IF NOT EXISTS base_version_id TEXT`,
   ]);
 }
 

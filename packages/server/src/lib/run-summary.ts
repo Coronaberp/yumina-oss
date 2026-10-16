@@ -25,7 +25,10 @@ import { attachRunSummary, type RunMemories, type RunRecord } from "./run-scopes
  * run out of existence while we were summarizing — the summary is discarded.
  */
 
-const MAX_RUN_SUMMARY_TOKENS = 700;
+// 700 truncated whole dungeon runs (gemini-2.5-flash-lite, mistral-nemo, a
+// Chinese archivePrompt asking for floors, monsters, injuries, stones, drops
+// and supplies) — about one DanMachi run in four came back empty.
+const MAX_RUN_SUMMARY_TOKENS = 1600;
 
 function buildRunSummaryPrompt(args: {
   worldName: string | null | undefined;

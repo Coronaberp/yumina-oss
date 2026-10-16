@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
-import { ANY_MODULE, diagnoseStation, type ModuleStation, type Worldbook } from "@yumina/engine";
+import {
+  ANY_MODULE, STATION_DEFAULT_TEMPERATURE, STATION_MAX_TOKENS_LIMITS, STATION_TEMPERATURE_LIMITS, diagnoseStation,
+  type ModuleStation, type Worldbook,
+} from "@yumina/engine";
+import { NumberInput } from "@/features/studio/panels/blueprint/controls";
+import { answersWithPlayerSettings, modelReachWarning, stationDefaultMaxTokens, stationParamsCustom } from "../../lib/ai-call-settings";
 import { useModelsStore } from "@/stores/models";
 import { useEditorStore } from "@/stores/editor";
 import { ConditionEditor } from "../condition-editor";
@@ -35,8 +40,150 @@ const INPUT =
 
 type Kind = "content" | "narrator" | "worker";
 
+/** How a folded part is drawn. The console's own is a bordered box; a host
+ *  with a fold of its own (the studio's AI form) passes it, so one form does
+ *  not fold two ways. */
+export type FoldRender = (props: { id: string; label: ReactNode; defaultOpen?: boolean; children: ReactNode }) => ReactNode;
+
+const boxFold: FoldRender = ({ id, label, defaultOpen, children }) => (
+  <details key={id} open={defaultOpen} className={CARD}>
+    <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{label}</summary>
+    {children}
+  </details>
+);
+
 // A custom AI is implemented by interface code; the classic console treats it as content.
+/** The model's box keeps its own heavier title, as it always had. */
+const modelFold: FoldRender = ({ id, label, defaultOpen, children }) => (
+  <details key={id} open={defaultOpen} className={CARD}>
+    <summary className="cursor-pointer text-[11px] font-semibold text-foreground">{label}</summary>
+    {children}
+  </details>
+);
+
 const kindOf = (book: Worldbook): Kind => { const k = book.station?.kind; return k === "narrator" || k === "worker" ? k : "content"; };
+
+/**
+ * An AI's model, and for one behind the scenes its temperature and length.
+ *
+ * One that talks to the player on its turn answers with the player's
+ * settings; the model is the one thing the author can ask for, and a player
+ * who cannot run it gets their own chat model. One behind the scenes runs on
+ * the default background model at a steady 0.2 unless the author sets its
+ * own; a model the player cannot run falls back to that default. The values
+ * are clamped on the server as they are here.
+ */
+export function StationModelFields({ book, onChange }: { book: Worldbook; onChange: (patch: Partial<Worldbook>) => void }) {
+  const { t } = useTranslation(["editor", "common"]);
+  const models = useModelsStore((s) => s.models);
+  // The model box is an <input list>, and the list was always empty here:
+  // nothing outside the chat ever asked for the roster, so an author pinning a
+  // module to a model had to know an exact id by heart. fetchModels dedupes and
+  // caches, so asking on mount costs one request per editor visit at most.
+  useEffect(() => {
+    void useModelsStore.getState().fetchModels();
+  }, []);
+  const station = book.station;
+  if (!station) return null;
+  const narrator = answersWithPlayerSettings(station);
+  const patch = (next: Partial<ModuleStation>) => onChange({ station: { ...station, ...next } });
+  const model = station.model?.trim();
+  const warn = model ? modelReachWarning(model, narrator ? "player" : "default", t as (key: string, opts?: Record<string, unknown>) => string) : undefined;
+  const custom = stationParamsCustom(station);
+  const defaultTokens = stationDefaultMaxTokens(station);
+  const numberClass = "w-20 rounded-md border border-border bg-background px-2 py-1 text-right text-xs tabular-nums text-foreground outline-none focus:border-primary/50";
+  return (
+    <div className="space-y-2" data-station-model-fields>
+      <input
+        list={`station-models-${book.id}`}
+        value={station.model ?? ""}
+        onChange={(e) => patch({ model: e.target.value.trim() || undefined })}
+        placeholder={t(narrator ? "blueprint.station.modelInherit" : "blueprint.station.modelDefault")}
+        className={INPUT}
+        spellCheck={false}
+      />
+      <datalist id={`station-models-${book.id}`}>
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name || m.id}
+          </option>
+        ))}
+      </datalist>
+      <p className={HINT}>{t(narrator ? "blueprint.station.modelHintNarrator" : "blueprint.station.modelHintBackground")}</p>
+      {warn && (
+        <p className="flex items-start gap-1 text-[10px] leading-relaxed text-amber-300" data-station-model-warn>
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+          {warn}
+        </p>
+      )}
+      {narrator ? (
+        <p className={HINT}>{t("blueprint.station.paramsNarrator")}</p>
+      ) : (
+        <div className="space-y-1.5 border-t border-border/60 pt-2" data-station-params>
+          <div className="flex items-center justify-between gap-2">
+            <span className={LABEL}>{t("blueprint.station.params")}</span>
+            <div role="radiogroup" aria-label={t("blueprint.station.params")} className="inline-flex overflow-hidden rounded-md border border-border">
+              {([false, true] as const).map((on) => (
+                <button
+                  key={String(on)}
+                  type="button"
+                  role="radio"
+                  aria-checked={custom === on}
+                  data-station-params-mode={on ? "author" : "default"}
+                  onClick={() => {
+                    if (custom === on) return;
+                    patch(on
+                      ? { temperature: STATION_DEFAULT_TEMPERATURE, maxTokens: defaultTokens }
+                      : { temperature: undefined, maxTokens: undefined });
+                  }}
+                  className={cn(
+                    "px-2 py-0.5 text-[11px] transition-colors",
+                    on && "border-l border-border",
+                    custom === on ? "bg-primary/15 text-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t(on ? "blueprint.aiCalls.authorCustom" : "blueprint.aiCalls.followDefault")}
+                </button>
+              ))}
+            </div>
+          </div>
+          {custom ? (
+            <>
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t("blueprint.station.temperature", { min: STATION_TEMPERATURE_LIMITS.min, max: STATION_TEMPERATURE_LIMITS.max })}
+                <NumberInput
+                  aria-label={t("blueprint.storyAi.temperature")}
+                  value={station.temperature ?? STATION_DEFAULT_TEMPERATURE}
+                  min={STATION_TEMPERATURE_LIMITS.min}
+                  max={STATION_TEMPERATURE_LIMITS.max}
+                  step={0.05}
+                  onCommit={(temperature) => temperature !== undefined && patch({ temperature })}
+                  data-station-temperature
+                  className={numberClass}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t("blueprint.station.maxTokens", { min: STATION_MAX_TOKENS_LIMITS.min, max: STATION_MAX_TOKENS_LIMITS.max })}
+                <NumberInput
+                  aria-label={t("blueprint.station.maxTokensLabel")}
+                  value={station.maxTokens ?? defaultTokens}
+                  min={STATION_MAX_TOKENS_LIMITS.min}
+                  max={STATION_MAX_TOKENS_LIMITS.max}
+                  integer
+                  onCommit={(maxTokens) => maxTokens !== undefined && patch({ maxTokens })}
+                  data-station-max-tokens
+                  className={numberClass}
+                />
+              </label>
+            </>
+          ) : (
+            <p className={HINT}>{t("blueprint.station.paramsDefault", { temperature: STATION_DEFAULT_TEMPERATURE, tokens: defaultTokens })}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ModuleConsole({
   book,
@@ -46,6 +193,7 @@ export function ModuleConsole({
   showMemory = true,
   kindControl = true,
   triggerPicker = true,
+  fold,
 }: {
   book: Worldbook;
   /** Every other module on the card — the sources a wire can point at. */
@@ -64,16 +212,10 @@ export function ModuleConsole({
   /** The worker's 「什么时候跑」 list. Off where the AI's own form asks it,
    *  with every way an AI can run in one list; the details stay here. */
   triggerPicker?: boolean;
+  /** The host's fold, for the model and the activity log. */
+  fold?: FoldRender;
 }) {
   const { t } = useTranslation("editor");
-  const models = useModelsStore((s) => s.models);
-  // The model box is an <input list>, and the list was always empty here:
-  // nothing outside the chat ever asked for the roster, so an author pinning a
-  // module to a model had to know an exact id by heart. fetchModels dedupes and
-  // caches, so asking on mount costs one request per editor visit at most.
-  useEffect(() => {
-    void useModelsStore.getState().fetchModels();
-  }, []);
   const kind = kindOf(book);
   const station = book.station;
   // A worker's "when a condition holds" trigger carries its own conditions
@@ -202,24 +344,14 @@ export function ModuleConsole({
 
       {station && (
         <>
-          <details key={book.id} open={Boolean(station.model)} className={CARD}>
-            <summary className="cursor-pointer text-[11px] font-semibold text-foreground">{t("blueprint.station.model")}<span className="ml-2 font-normal text-muted-foreground">{station.model || t("blueprint.station.modelInherit")}</span></summary>
-            <input
-              list={`station-models-${book.id}`}
-              value={station.model ?? ""}
-              onChange={(e) => patchStation({ model: e.target.value.trim() || undefined })}
-              placeholder={t("blueprint.station.modelInherit")}
-              className={INPUT}
-              spellCheck={false}
-            />
-            <datalist id={`station-models-${book.id}`}>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name || m.id}
-                </option>
-              ))}
-            </datalist>
-          </details>
+          {(fold ?? modelFold)({
+            id: `model:${book.id}`,
+            defaultOpen: Boolean(station.model) || (!answersWithPlayerSettings(station) && stationParamsCustom(station)),
+            label: answersWithPlayerSettings(station)
+              ? <>{t("blueprint.station.model")}<span className="ml-2 font-normal text-muted-foreground">{station.model || t("blueprint.station.modelInherit")}</span></>
+              : <>{t("blueprint.station.modelAndParams")}<span className="ml-2 font-normal text-muted-foreground">{station.model || t("blueprint.station.modelDefault")}</span></>,
+            children: <StationModelFields book={book} onChange={onChange} />,
+          })}
 
           {readsWires && <div className={CARD} data-testid="station-inputs-entry">
             <div className="flex items-center justify-between gap-2">
@@ -394,7 +526,7 @@ export function ModuleConsole({
               you know what is on each end. */}
           {/* wires={false}: the station card above already hosts the inputs
               editor, and one screen gets one editor for the same list. */}
-          {showMemory && <ModuleMemorySettings book={book} otherBooks={otherBooks} onChange={onChange} summary={false} wires={false} />}
+          {showMemory && <ModuleMemorySettings book={book} otherBooks={otherBooks} onChange={onChange} summary={false} wires={false} fold={fold} />}
         </>
       )}
     </div>
@@ -402,7 +534,7 @@ export function ModuleConsole({
 }
 
 /** The independent memory inspector reuses the same station fields as the full editor. */
-export function ModuleMemorySettings({ book, otherBooks, onChange, summary = true, wires = true }: {
+export function ModuleMemorySettings({ book, otherBooks, onChange, summary = true, wires = true, fold = boxFold }: {
   book: Worldbook;
   otherBooks: Worldbook[];
   onChange: (patch: Partial<Worldbook>) => void;
@@ -411,6 +543,7 @@ export function ModuleMemorySettings({ book, otherBooks, onChange, summary = tru
    *  stands alone and keeps it; the module console hosts it beside the
    *  trigger and the task instead. */
   wires?: boolean;
+  fold?: FoldRender;
 }) {
   const { t } = useTranslation("editor");
   const station = book.station;
@@ -462,21 +595,18 @@ export function ModuleMemorySettings({ book, otherBooks, onChange, summary = tru
             </div>
           )}
 
-      {wires && (
-        <details className={CARD}>
-          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{t("blueprint.ctx.history")}{Boolean(station.inputs?.length) && <span className="ml-2 tabular-nums">{station.inputs!.length}</span>}</summary>
-          <ModuleContextWires book={book} otherBooks={otherBooks} onChange={onChange} />
-        </details>
-      )}
-      <details className={CARD}>
-        <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{t(station.kind === "worker" ? "blueprint.station.activityWorker" : "blueprint.station.activityRuns")}</summary>
-        <StationActivity bookId={book.id} kind={station.kind === "worker" ? "worker" : "narrator"} />
-      </details>
+      {wires && fold({
+        id: "wires",
+        label: <>{t("blueprint.ctx.history")}{Boolean(station.inputs?.length) && <span className="ml-2 tabular-nums">{station.inputs!.length}</span>}</>,
+        children: <ModuleContextWires book={book} otherBooks={otherBooks} onChange={onChange} />,
+      })}
+      {fold({
+        id: "activity",
+        label: t(station.kind === "worker" ? "blueprint.station.activityWorker" : "blueprint.station.activityRuns"),
+        children: <StationActivity bookId={book.id} kind={station.kind === "worker" ? "worker" : "narrator"} />,
+      })}
     </>}
-    {summary && <details className={CARD}>
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{t("blueprint.ctx.title")}</summary>
-      <ModuleContextSummary book={book} />
-    </details>}
+    {summary && fold({ id: "summary", label: t("blueprint.ctx.title"), children: <ModuleContextSummary book={book} /> })}
   </div>;
 }
 

@@ -1,12 +1,13 @@
-import type { SessionData } from "@/stores/chat";
+import type { Message, SessionData } from "@/stores/chat";
 import { sameJson } from "./json-equality";
 
 const identityKeys = ["personaActive", "personaName", "personaImage", "personaAppearance", "personaPersonality", "personaBackstory", "personaEntries"] as const;
-type Identity = Pick<SessionData, "id" | "sessionPersona" | "personaLocked"> & { state: { metadata?: Record<string, unknown> } };
+type Identity = Pick<SessionData, "id" | "sessionPersona" | "personaLocked"> & { state: { metadata?: Record<string, unknown> }; greeting?: Message | null };
 type Options = {
   sessionId: string; apiBase: string;
   getState: () => { session: SessionData | null; isStreaming: boolean };
   apply: (session: SessionData) => void;
+  applyGreeting?: (greeting: Message) => void;
   request?: typeof fetch;
 };
 function applyIdentity(options: Options, data: Identity, signal?: AbortSignal) {
@@ -22,6 +23,7 @@ function applyIdentity(options: Options, data: Identity, signal?: AbortSignal) {
   }
   options.apply({ ...current.session, sessionPersona: data.sessionPersona, personaLocked: data.personaLocked,
     state });
+  if (data.greeting) options.applyGreeting?.(data.greeting);
   return true;
 }
 
