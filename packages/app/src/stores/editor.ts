@@ -1,7 +1,6 @@
 import { currentStatusRoot } from "@/features/editor/lib/status-template-upgrade";
 import { invalidJsonDefault } from "@/features/editor/lib/json-default";
 import { create } from "zustand";
-import { toPillText } from "@/lib/feedback-policy";
 import { feedback } from "@/lib/feedback";
 import type {
   WorldDefinition,
@@ -36,7 +35,7 @@ const saveErrorOptions: WorldSaveErrorOptions = {
   t: (key, options) => (i18n.t as (key: string, options: Record<string, unknown>) => string)(key, options),
 };
 /** origin/main's specific save reasons (size limit, expired session, validation) ride the same
- *  Retry pill as a generic failure; toPillText keeps the first sentence so it stays one line. */
+ *  Retry notification with the complete diagnostic preserved until dismissed. */
 function showWorldSaveError(reason: string) {
   saveFailed(reason);
 }
@@ -627,11 +626,12 @@ function loadWorldFailed(worldId: string) {
 // A later successful save retires the failure pill (origin/main dismissed its toast by id).
 let dismissSaveError: (() => void) | null = null;
 function saveFailed(reason?: string) {
-  dismissSaveError?.();
-  dismissSaveError = feedback.error(toPillText(reason ?? tr("editor:save.failed", "Couldn't save your changes")), {
+  // Updating one stable notification preserves its selectable details across
+  // autosave failures. Never summarize away limits or corrective instructions.
+  dismissSaveError = feedback.error(reason ?? tr("editor:save.failed", "Couldn't save your changes"), {
     label: tr("common:action.retry", "Retry"),
     onClick: () => void useEditorStore.getState().saveDraft(),
-  });
+  }, { expanded: true, id: "world-save-error" });
 }
 
 function setPrimaryFailed(variantId: string) {
@@ -648,6 +648,10 @@ function setPrimaryFailed(variantId: string) {
 let dismissRecoveryPill: (() => void) | null = null;
 
 function retireRecoveryOffer() {
+  // A save error belongs to the editor session that produced it; its Retry
+  // must not linger when a different world is opened.
+  dismissSaveError?.();
+  dismissSaveError = null;
   dismissRecoveryPill?.();
   dismissRecoveryPill = null;
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createInstance } from "i18next";
-import { createWorldSchema, MAX_REQUEST_BODY_BYTES } from "@yumina/shared";
+import { createWorldSchema, MAX_REQUEST_BODY_BYTES, MAX_WORLD_SAVE_BODY_BYTES } from "@yumina/shared";
 import {
   serializeWorldSavePayload,
   WorldSavePayloadTooLargeError,
@@ -12,7 +12,7 @@ import {
 } from "./world-save-payload";
 
 test("a large imported game's source saves when compiled cache pushes it over the API limit", () => {
-  const source = "x".repeat(2_800_000);
+  const source = "x".repeat(5_600_000);
   const compiled = { code: source, filesHash: "current", compilerVersion: 1 };
   const payload = {
     name: "3D game",
@@ -23,9 +23,9 @@ test("a large imported game's source saves when compiled cache pushes it over th
     },
     baseUpdatedAt: "2026-09-04T12:00:00.000Z",
   };
-  assert.ok(Buffer.byteLength(JSON.stringify(payload)) > MAX_REQUEST_BODY_BYTES);
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) > MAX_WORLD_SAVE_BODY_BYTES);
   const result = serializeWorldSavePayload(payload);
-  assert.ok(Buffer.byteLength(result) <= MAX_REQUEST_BODY_BYTES);
+  assert.ok(Buffer.byteLength(result) <= MAX_WORLD_SAVE_BODY_BYTES);
   const saved = JSON.parse(result);
   assert.equal(saved.schema.rootComponent.compiled, undefined);
   assert.deepEqual(saved.schema.rootComponent.files, payload.schema.rootComponent.files);
@@ -146,4 +146,10 @@ test("field validation reports details on browsers without Object.hasOwn", () =>
   } finally {
     Object.defineProperty(Object, "hasOwn", descriptor);
   }
+});
+
+test("world saves between 5 and 10 MiB retain their authored payload and 413 explains 10 MiB", () => {
+  const payload = { schema: { entries: [{ content: "x".repeat(6 * 1024 * 1024) }] } };
+  assert.equal(serializeWorldSavePayload(payload), JSON.stringify(payload));
+  assert.match(worldSaveErrorMessage(413, null), /10\.0 MB/);
 });

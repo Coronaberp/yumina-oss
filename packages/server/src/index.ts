@@ -55,7 +55,7 @@ import { localSetupRoutes } from "./routes/local-setup.js";
 import { initLocalBridge } from "./lib/local-bridge/registry.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { sessionArchiveRoutes } from "./routes/session-archives.js";
-import { ARCHIVE_MAX_FILE_BYTES } from "@yumina/shared";
+import { requestBodyLimit } from "./middleware/request-body-limit.js";
 import { sessionMemoryRoutes } from "./routes/session-memory.js";
 import { stateGuardRoutes } from "./routes/state-update-guard.js";
 import { messageRoutes } from "./routes/messages.js";
@@ -257,18 +257,9 @@ app.use("/api/*", corsMiddleware);
 app.use("/api/*", privateStateCache);
 app.use("/health", corsMiddleware);
 
-// Global body size limit — reject payloads over 5 MB before route handlers parse them.
-// S3 uploads bypass this (client uploads directly to S3 via presigned URLs).
-// Stripe webhooks need raw body parsing so they get a generous limit too.
-app.use("/api/*", async (c, next) => {
-  if (c.req.path.startsWith("/api/stripe/webhook")) return next();
-  const contentLength = c.req.header("content-length");
-  const bodyLimitBytes = c.req.path === "/api/session-archives/import" ? ARCHIVE_MAX_FILE_BYTES : 5 * 1024 * 1024;
-  if (contentLength && parseInt(contentLength, 10) > bodyLimitBytes) {
-    return c.json({ error: `Request body too large (max ${bodyLimitBytes / 1024 / 1024} MB)` }, 413);
-  }
-  return next();
-});
+// Count actual bytes before JSON parsing: 10 MiB world saves, 5 MiB ordinary API.
+// Full-save imports retain their dedicated larger limit on the archive route.
+app.use("/api/*", requestBodyLimit);
 
 // Legacy cookie cleanup removed 2026-05-15 (was scheduled for ~2026-05-17).
 // All active users have had their old __Secure-better-auth.* cookies expired.
