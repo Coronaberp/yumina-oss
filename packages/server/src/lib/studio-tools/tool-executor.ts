@@ -1212,6 +1212,11 @@ function newEntryRole(data: Record<string, unknown>): WorldEntry["role"] | undef
 function applyEntryChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
   const base = { index, action, entityType: "entry", id };
 
+  // Validate before create/upsert/update so malformed model text cannot enter lore.
+  if ((action === "create" || action === "update") && data.content !== undefined && typeof data.content !== "string") {
+    return { ...base, status: "error", error: "Entry content must be a string. Send plain text in the content field." };
+  }
+
   if (action === "create") {
     // Duplicate check
     const existing = draft.entries.find((e) => e.id === id);
