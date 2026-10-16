@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
+import { PGlite } from "@electric-sql/pglite";
 import { migrateWorldDefinition, type WorldDefinition } from "@yumina/engine";
 import { db } from "../db/index.js";
 import { user, worlds, playSessions, messages, creditWallets, modelPrices } from "../db/schema.js";
@@ -10,13 +11,24 @@ import { messageRoutes } from "./messages.js";
 import { normalizeGameState } from "../lib/game-state.js";
 import { OpenRouterProvider } from "../lib/llm/openrouter.js";
 import { env } from "../lib/env.js";
+import { kevContentClassifier } from "../lib/kev-content-classifier.js";
+import { createPendingContentFlags } from "../lib/content-flag-policy.js";
 import type { AppEnv } from "../lib/types.js";
 
 test("send, regenerate, swipe, and continue preserve independent reply outcomes through concurrent writes", async t => {
+  // This fixture tests reply state, not the local classifier or delayed
+  // achievement/quest jobs. Keep those dependencies inside the test lifetime.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(kevContentClassifier, "classify", async (role: "user" | "assistant" | "system", content: string, choices: readonly string[] = []) => ({
+    ...createPendingContentFlags(role, content, choices), status: "complete" as const, label: "sfw" as const, routingSafe: true,
+    nsfwProbability: .01, sfwProbability: .99, completedAt: new Date().toISOString(), device: "cpu" as const, model: "fixture-kev",
+  }));
   const priorKey = env.YUMINA_OPENROUTER_KEY;
   env.YUMINA_OPENROUTER_KEY = "synthetic-test-key";
   t.after(() => { env.YUMINA_OPENROUTER_KEY = priorKey; });
-  t.after(async () => { await db.$client.close(); });
+  const client = db.$client;
+  assert.ok(client instanceof PGlite, "the integration fixture uses isolated PGlite");
+  t.after(async () => { await client.close(); });
   const model = "google/gemini-2.5-flash";
   await db.insert(modelPrices).values({ modelId: model, inputPricePerM: 1, outputPricePerM: 1 });
   t.mock.method(globalThis, "fetch", async () => Response.json({ data: [

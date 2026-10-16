@@ -17,7 +17,7 @@ test("chapters are greeting-only choices and the legacy transition endpoint cann
     entries: [{ id: "g", name: "Opening", role: "greeting", content: "At dawn." }], variables: [],
     chapters: [chapterSchema.parse({ id: "origin", name: "Origin", greetingIds: ["g"], nextChapterIds: ["holder"] }), chapterSchema.parse({ id: "holder", name: "Holder" })],
     rules: [], reactions: [], components: [], audioTracks: [], customUI: [], settings: {} } as unknown as WorldDefinition);
-  const state = new GameStateManager(world, { worldId, activeGreetingId: "g", turnCount: 0 }).getSnapshot();
+  const state = new GameStateManager(world, { worldId, variables: {}, metadata: {}, activeGreetingId: "g", turnCount: 0 }).getSnapshot();
   await db.insert(worlds).values({ id: worldId, creatorId: uid, name: world.name, schema: world as unknown as Record<string, unknown> });
   const [session] = await db.insert(playSessions).values({ userId: uid, worldId, state: state as unknown as Record<string, unknown> }).returning();
   const sid = session!.id;
@@ -36,7 +36,7 @@ test("chapters are greeting-only choices and the legacy transition endpoint cann
   assert.equal((await post()).status, 409);
   assert.deepEqual((await db.select().from(playSessions).where(eq(playSessions.id, sid)))[0]!.state, state);
   assert.equal((await db.select().from(messages).where(eq(messages.sessionId, sid))).length, 2);
-  actor = "someone-else";
+  actor = crypto.randomUUID();
   assert.equal((await post()).status, 404);
   assert.equal((await app.request(`/${sid}/chapters`)).status, 404);
 });

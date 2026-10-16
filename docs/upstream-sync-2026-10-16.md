@@ -48,7 +48,8 @@ These patches introduce no database migrations, dependencies or lockfile changes
 | Save serialization/feedback suite | 22 passed, including UTF-8 sizes, 5–10 MiB saves, complete diagnostics, retry races and dismissal. |
 | Build | All four workspace packages built successfully. App was rebuilt after the final preview-validator adaptation. |
 | Browser | Real components/styles rendered at 390×844 and 1440×1000. Native mobile touch and desktop wheel scrolling worked; persona header stayed anchored; dialog and buttons remained in bounds. Save details, Retry and Close worked without horizontal overflow or page errors. Synthetic fixtures only, no account writes or provider calls. |
-| Broad typecheck | Still fails on three pre-existing server test-fixture errors: `messages-state-isolation.test.ts:19` (`Pool`/`PGlite.close`), `session-chapters.test.ts:20` (incomplete `GameState`) and `session-chapters.test.ts:39` (invalid UUID literal). These files are unchanged by this sync. Do not interpret the build/focused results as a clean repository-wide typecheck. |
+| Broad typecheck | Follow-up cleanup resolved the three pre-existing server test-fixture errors: narrow the isolated PGlite client before cleanup, supply required GameState fields and use a valid unrelated UUID in the ownership check. Full workspace `pnpm typecheck` now passes all 7 tasks. |
+| Follow-up integration tests | Both affected route tests pass and exit cleanly. The reply-state fixture mocks the unrelated local classifier and contains delayed background jobs with test-scoped timers; production behavior is unchanged. |
 
 An independent read-only review found a missing fork-specific CSS preview validation case. That was reproduced with regressions and fixed before publication. No other actionable findings were reported.
 
