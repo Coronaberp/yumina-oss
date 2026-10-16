@@ -51,13 +51,12 @@ const TURN_DEADLINE_MS = 180_000;
 
 export { providerFailureCode } from "../../lib/llm/provider-errors.js";
 
-/** Byte count is a conservative upper bound for the byte-level tokenizer. A
- * very long unbroken piece can make BPE merging quadratic and block even the
- * AbortSignal timer, so only tokenize bounded, ordinary text. Returning the
- * upper bound may decline an unusually dense request, never truncate it. */
+/** Keep a byte ceiling on tokenization work. Within that bound, use the
+ * selected model estimator, whose BPE pieces are independently bounded. Long
+ * CJK runs are ordinary text and must not be mistaken for pathological input. */
 export function boundedCorrectionInputTokens(text: string, model: string): number {
   const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes > 96_000 || /\S{512}/u.test(text)) return bytes;
+  if (bytes > 96_000) return bytes;
   return estimateTokens(text, model);
 }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GameStateManager, ResponseParser, type WorldDefinition } from "@yumina/engine";
+import { GameStateManager, ResponseParser, preloadTokenizer, estimateTokens, type WorldDefinition } from "@yumina/engine";
 import type { TurnOutputContext } from "../../lib/extension-hooks.js";
 import type { GenerateParams, StreamChunk } from "../../lib/llm/types.js";
 import { guardTurnOutput, StateGuardError, boundedCorrectionInputTokens, estimateCorrectionUsageTokens } from "./validate.js";
@@ -740,9 +740,10 @@ test("giant unbroken correction input is rejected quickly before tokenization", 
   assert.equal(f.requests.length, 0);
 });
 
-test("bounded token estimate uses conservative UTF-8 bytes for pathological pieces", () => {
+test("bounded token estimate uses model counts for bounded pieces", async () => {
+  await preloadTokenizer();
   const text = "界".repeat(1000);
-  assert.equal(boundedCorrectionInputTokens(text, "selected/model"), Buffer.byteLength(text, "utf8"));
+  assert.equal(boundedCorrectionInputTokens(text, "selected/model"), estimateTokens(text, "selected/model"));
   assert.equal(estimateCorrectionUsageTokens("x".repeat(65537)), 16385);
 });
 
@@ -854,3 +855,29 @@ test("correction requests keep the player identity private even in restored hist
   assert.ok(!content.includes("Private Persona"));
   assert.ok(content.includes("{{user}}"));
 });
+
+for (const model of ["gemini-2.5-pro", "claude-sonnet-4", "deepseek-chat"]) {
+  test(`long CJK and unbroken input use bounded selected-model estimates: ${model}`, () => {
+    assert.equal(boundedCorrectionInputTokens("界".repeat(1000), model), 1000);
+    assert.equal(boundedCorrectionInputTokens("x".repeat(30000), model), 7500);
+    assert.equal(boundedCorrectionInputTokens("x".repeat(512), model), 128);
+    assert.equal(boundedCorrectionInputTokens("界".repeat(33000), model), 99000);
+  });
+}
+for (const path of ["send", "regenerate", "continue"] as const) {
+  test(`CJK JSON state reaches the selected correction model without truncation: ${path}`, async () => {
+    const f = fixture();
+    f.ctx.audit.path = path;
+    f.ctx.model = "gemini-2.5-pro";
+    f.ctx.maxContext = 12000;
+    const content = "界".repeat(2000);
+    f.ctx.world.variables.push({ id: "journal", name: "Journal", type: "json", defaultValue: { content }, aiAccess: "read" });
+    f.ctx.state = new GameStateManager(f.ctx.world).getSnapshot();
+    const before = structuredClone(f.ctx.state);
+    const result = await guardTurnOutput(f.ctx);
+    assert.equal(f.requests.length, 1);
+    assert.ok((f.requests[0]!.messages[1]!.content as string).includes(content));
+    assert.equal(result.audit?.outcome, "explicit-none");
+    assert.deepEqual(f.ctx.state, before);
+  });
+}
