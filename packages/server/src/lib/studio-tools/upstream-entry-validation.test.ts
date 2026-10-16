@@ -43,4 +43,3 @@ test("entry writes allow empty text and metadata-only updates", () => {
   assert.equal(updated.world.entries[0]!.content, "");
   assert.equal(updated.world.entries[0]!.name, "Renamed");
 });
-
