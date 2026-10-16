@@ -37,7 +37,7 @@ export const generatedImageStorage: GeneratedStorage = {
     if (!isS3Configured()) throw new GenerationError('STORAGE_UNAVAILABLE', 'Asset storage is not configured.', 503);
     signal.throwIfAborted();
   },
-  async validate(bytes, signal) { await normalizeGeneratedRaster(bytes, signal); },
+  async validate(bytes, signal) { await normalizeGeneratedRaster(bytes, signal, false, false); },
   async save(userId, bytes, source, signal, artifacts) {
     const image = await normalizeGeneratedRaster(bytes, signal, source.transparent === true);
     const metadata = { ...source, width: image.width, height: image.height };
@@ -51,11 +51,11 @@ export const generatedImageStorage: GeneratedStorage = {
         await sessionMedia.lockOwner(tx, userId);
         const result = await commitGeneratedAssetBundle(userId, image.bytes, metadata,
           original && originalSource ? { bytes: original.bytes, source: originalSource } : undefined, {
-          async write(key, data, writeSignal) { writes.push({ key }); await putObject(key, data, 'image/png', { signal: writeSignal }); },
-          async register(asset, key, length) {
+          async write(key, data, writeSignal, mimeType) { writes.push({ key }); await putObject(key, data, mimeType, { signal: writeSignal }); },
+          async register(asset, key, length, mimeType) {
             const write = [...writes].reverse().find(item => item.key === key);
             if (write) write.assetId = asset.id;
-            await tx.insert(userAssets).values({ id: asset.id, userId, type: 'image', filename: asset.filename, url: key, sizeBytes: length, mimeType: 'image/png', isPublic: false });
+            await tx.insert(userAssets).values({ id: asset.id, userId, type: 'image', filename: asset.filename, url: key, sizeBytes: length, mimeType, isPublic: false });
             await tx.execute(sql`INSERT INTO generated_image_sources(asset_id,user_id,provider,metadata) VALUES(${asset.id},${userId},${asset.source.provider},${JSON.stringify(asset.source)}::jsonb)`);
             if (asset.source.requestId) await tx.execute(sql`UPDATE image_generation_requests SET state='succeeded',asset_id=${asset.id},updated_at=NOW() WHERE user_id=${userId} AND request_id=${asset.source.requestId} AND state='pending'`);
           },

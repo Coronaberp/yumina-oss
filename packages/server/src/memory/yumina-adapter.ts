@@ -52,6 +52,7 @@ export interface AdapterContext extends TurnMemoryContext {
   accountMemoryBudgetTokens?: unknown;
   frontier: number;
   model: string;
+  modelProfileId?: string;
   parentSessionId: string | null;
   backend: "legacy" | "storyhaven" | null;
   worldHash: string;
@@ -71,6 +72,12 @@ export interface TurnContextInput {
   memoryBudgetTokens?: number;
   characterEntryIds?: string[];
 }
+/** Internal route provenance, captured before the story reply queues memory. */
+export async function rememberStoryhavenModelRoute(sessionId: string, actingUserId: string, model: string, profileId?: string): Promise<void> {
+  await db.execute(sql`UPDATE storyhaven_memory_sessions SET story_model=${model},story_profile_id=${profileId ?? null}
+    WHERE session_id=${sessionId} AND EXISTS(SELECT 1 FROM play_sessions WHERE id=${sessionId} AND user_id=${actingUserId})`);
+}
+
 export function memoryTranscriptRow(r: {
   id: string;
   role: string;
@@ -81,8 +88,11 @@ export function memoryTranscriptRow(r: {
   const selected = r.swipes?.[r.activeSwipeIndex ?? 0] ?? {
     content: r.content,
   };
+  // Keep this aligned with the message invalidation trigger: billing and
+  // moderation receipts do not revise the story an extraction already read.
+  const { contentFlags: _flags, creditCost: _cost, creditBalanceAfter: _balance, ...story } = selected;
   const selectedAnswerId = createHash("sha256")
-    .update(JSON.stringify(selected))
+    .update(JSON.stringify(story))
     .digest("hex");
   return {
     id: r.id,
@@ -126,7 +136,9 @@ async function sessionRow(
   actingUserId = ownerUserId,
 ) {
   const result =
-    await db.execute(sql`SELECT s.*,u.name AS user_name,u.preferences->'aiConfig'->'memoryBudgetTokens' AS account_memory_budget,w.schema AS world_schema,w.name AS world_name,w.status AS world_status,w.creator_id AS world_creator_id,p.schema AS pending_world_schema,m.backend,m.epoch,m.frontier,m.settings,m.reset_epoch
+    await db.execute(sql`SELECT s.*,u.name AS user_name,u.preferences->'aiConfig'->'memoryBudgetTokens' AS account_memory_budget,u.preferences->'aiConfig'->>'selectedModel' AS account_story_model,
+    (SELECT COALESCE(a.swipes->COALESCE(a.active_swipe_index,0)->>'model',a.model) FROM messages a WHERE a.session_id=s.id AND a.role='assistant' AND a.model IS NOT NULL ORDER BY COALESCE(a.created_at,'1970-01-01'::timestamp) DESC,a.id DESC LIMIT 1) AS latest_story_model,
+    w.schema AS world_schema,w.name AS world_name,w.status AS world_status,w.creator_id AS world_creator_id,p.schema AS pending_world_schema,m.backend,m.epoch,m.frontier,m.settings,m.reset_epoch,m.story_model,m.story_profile_id
     FROM play_sessions s JOIN "user" u ON u.id=s.user_id JOIN worlds w ON w.id=s.world_id
     LEFT JOIN world_pending_edits p ON p.world_id=w.id
     LEFT JOIN storyhaven_memory_sessions m ON m.session_id=s.id WHERE s.id=${sessionId} AND s.user_id=${ownerUserId}`);
@@ -257,9 +269,14 @@ export async function loadStoryhavenTurnContext(
     model: String(
       settings.model ??
         input.model ??
+        session.story_model ??
+        session.latest_story_model ??
+        session.account_story_model ??
         session.session_memory_model ??
         "openrouter/free",
     ),
+    ...(!settings.model && (!input.model || input.model === session.story_model) && session.story_profile_id
+      ? { modelProfileId: String(session.story_profile_id) } : {}),
     parentSessionId: session.parent_session_id as string | null,
     backend: session.backend as AdapterContext["backend"],
     resetEpoch: Number(session.reset_epoch ?? 0),
@@ -700,7 +717,6 @@ async function runJob(claim: MemoryJobClaim): Promise<void> {
     ownerUserId: p.user_id,
     actingUserId: String(claim.payload.actingUserId ?? p.user_id),
     sessionId: claim.sessionId,
-    model: String(claim.payload.model ?? "openrouter/free"),
   });
   if (ctx.epoch !== claim.epoch || ctx.sourceHash !== claim.sourceHash)
     throw new Error("memory_stale_claim");
@@ -763,6 +779,7 @@ async function runJob(claim: MemoryJobClaim): Promise<void> {
       ctx.actingUserId,
       ctx.sessionId,
       ctx.model,
+      ctx.modelProfileId,
     );
     await reconcileAuthoredLore({
       repositories,

@@ -159,6 +159,7 @@ export interface SandboxState {
   balance: number | null;
   /** "Press Enter to send" preference — see UIChannelData.composerSendKey. */
   composerSendKey: "enter" | "mod-enter";
+  vnTextPreferences?: import("@yumina/shared").VnTextPreferences;
   /** Send-failure counter — see UIChannelData.sendFailureNonce. */
   sendFailureNonce: number;
   /** Authoritative story route/ending progress. */
@@ -256,6 +257,7 @@ export interface UIChannelData {
    *  1 = default). Applied to the sandbox document's root font-size so
    *  rem-based text (the injected chat UI, creator Tailwind classes) scales. */
   uiFontScale: number;
+  vnTextPreferences?: import("@yumina/shared").VnTextPreferences;
   /** Mirrors the host chat store's sendFailureNonce: bumped on every
    *  terminally-failed send, including toast-only failures that never set
    *  `error`. The composer restores its swallowed text on change. */
@@ -426,9 +428,13 @@ export interface ComponentErrorMessage {
  *  compile-error panel is showing). Distinct from `ready`, which only means the
  *  iframe runtime booted — `ready` fires before any world content exists. The
  *  parent uses `rendered` to hide its loading overlay exactly when the world's
- *  own UI is on screen, eliminating the post-handshake grey gap. */
+ *  own UI and required assets are ready. Subsequent asset changes can close
+ *  this gate again until the replacement scene is complete. */
 export interface RenderedMessage {
   type: "rendered";
+  /** False while scene media is downloading/decoding. Omitted by old runtimes. */
+  assetsReady?: boolean;
+  assetError?: boolean;
 }
 
 /** Sandbox-side diagnostic (e.g. the scroll-clamp watchdog correcting a stuck

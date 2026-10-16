@@ -9,6 +9,8 @@ import { IS_LOCAL_EDITION } from "../env.js";
 import { applyPromptPostProcessing } from "./post-process.js";
 import { parseUnsupportedParam, stripParamFromBody, looksLikeReasoningModel } from "./param-fallback.js";
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
+import { fitCustomImageRequest } from "./image-request-size.js";
+import { backgroundReasoningEffort } from "./background-reasoning.js";
 
 // Account caps must never enter the global model catalog: two users can have
 // different Featherless plans for the same model. Keys are opaque hashes.
@@ -570,6 +572,7 @@ export class CustomProvider implements LLMProvider {
   }): Record<string, unknown> {
     const { model, messages, params, stream } = args;
     const reasoning = looksLikeReasoningModel(model);
+    const disableReasoning = params.disableReasoning && !params.reasoningEffortOverride;
 
     const body: Record<string, unknown> = {
       model,
@@ -579,7 +582,7 @@ export class CustomProvider implements LLMProvider {
     };
 
     if (params.maxTokens !== undefined) body.max_tokens = params.maxTokens;
-    if (!params.disableReasoning) body.reasoning_effort = this.metadata.reasoningEffort ?? params.reasoningEffort ?? "low";
+    if (!disableReasoning) body.reasoning_effort = params.reasoningEffortOverride ?? this.metadata.reasoningEffort ?? params.reasoningEffort ?? "low";
 
     // Sampling controls — proactively skipped on suspected reasoning models.
     if (!reasoning) {
@@ -595,10 +598,28 @@ export class CustomProvider implements LLMProvider {
     if (params.toolChoice !== undefined) body.tool_choice = params.toolChoice;
 
     const shaped = this.shapeBody(body);
-    if (params.disableReasoning) delete shaped.reasoning_effort;
     if (params.lockModel) {
       shaped.model = model;
       delete shaped.models;
+    }
+    if (params.reasoningEffortOverride) {
+      shaped.reasoning_effort = params.reasoningEffortOverride;
+      if (shaped.thinking && typeof shaped.thinking === "object" && !Array.isArray(shaped.thinking)) {
+        shaped.thinking = { ...shaped.thinking, type: "enabled" };
+      }
+    }
+    if (disableReasoning) {
+      // GLM-5.3/Flash cannot turn thinking off and default to maximum effort
+      // when this field is omitted. Background checks need explicit low effort
+      // after profile shaping so they stay within their time/output budgets.
+      if (backgroundReasoningEffort(String(shaped.model)) === "low") {
+        shaped.reasoning_effort = "low";
+        if (shaped.thinking && typeof shaped.thinking === "object" && !Array.isArray(shaped.thinking)) {
+          shaped.thinking = { ...shaped.thinking, type: "enabled" };
+        }
+      } else {
+        delete shaped.reasoning_effort;
+      }
     }
 
     // DeepSeek V4 enables thinking by default. Background callers can request
@@ -607,28 +628,33 @@ export class CustomProvider implements LLMProvider {
     // proxies never receive a vendor-specific parameter. Apply this after
     // metadata shaping so an account-level includeBody cannot accidentally
     // re-enable reasoning for a summary request.
-    if (params.disableReasoning && isOfficialDeepSeekEndpoint(this.baseUrl)) {
-      shaped.thinking = { type: "disabled" };
+    if ((disableReasoning || params.reasoningEffortOverride) && isOfficialDeepSeekEndpoint(this.baseUrl)) {
+      shaped.thinking = { type: disableReasoning ? "disabled" : "enabled" };
     }
 
     // MiMo V2.5/V2.6 enables thinking by default and controls it with Xiaomi's
     // `thinking` field, not `reasoning_effort`. Generic custom endpoints such
     // as OpenAI-compatible gateways can serve these model IDs too, so key this
     // translation on the model and apply it after metadata shaping.
-    if (params.disableReasoning && isXiaomiMimoModel(model)) {
-      shaped.thinking = { type: "disabled" };
+    if ((disableReasoning || params.reasoningEffortOverride) && isXiaomiMimoModel(model)) {
+      shaped.thinking = { type: disableReasoning ? "disabled" : "enabled" };
     }
 
     // Strata's Qwen template defaults to thinking even without reasoning_effort.
     // Preserve other template options while giving bounded background calls a
     // visible answer within their output budget.
-    if (params.disableReasoning && isStrataLocalEndpoint(this.baseUrl)) {
+    if (disableReasoning && isStrataLocalEndpoint(this.baseUrl)) {
       const configured = shaped.chat_template_kwargs;
       shaped.chat_template_kwargs = {
         ...(configured && typeof configured === "object" && !Array.isArray(configured) ? configured : {}),
         enable_thinking: false,
       };
     }
+
+    // Cerebras rejects top_k, including sampling defaults added by profile
+    // shaping. Remove it before the first request so bounded memory calls do
+    // not depend on an unsupported-parameter retry.
+    if (new URL(this.baseUrl).hostname === "api.cerebras.ai") delete shaped.top_k;
 
     return shaped;
   }
@@ -648,6 +674,7 @@ export class CustomProvider implements LLMProvider {
     let body = initialBody;
     const model = typeof body.model === 'string' ? body.model : '';
     if (this.unsupportedReasoningHistoryModels.has(model)) body = stripAssistantReasoningHistory(body) ?? body;
+    body = await fitCustomImageRequest(body, signal);
     let response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
     if (response.ok || response.status !== 400 || !allowRetry) return response;
 

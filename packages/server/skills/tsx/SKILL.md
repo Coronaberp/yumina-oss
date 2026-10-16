@@ -62,6 +62,8 @@ Every visual intent maps to a pattern inside the rootComponent — there's no "m
 
 The `renderBubble` callback receives per-message props — see the **Customizing Message Bubbles** table below (note `content` is an alias for `contentHtml`).
 
+Built-in `<Chat />` reads the engine's `[SPEAKER:Exact Name:emotion]` markers for each passage, including `[SPEAKER:Narrator:normal]` and `[SPEAKER:NPC:normal]`. It resolves defined character names and unique aliases, shows the speaker's name/portrait when available, and consumes emotion and NPC identity fields as presentation metadata. Markers do not appear as dialogue text. Keep spoken text in quotes and actions in separate italic narration. No custom renderer or switch to VN is needed for speaker parsing. Do not replace these controls with invented visible labels such as `**Name** [NPC]:`. Preserve the creator's chosen interface; VN keeps its own presentation.
+
 ## TSX Compile Rules
 
 1. `export default function ComponentName` -- REQUIRED

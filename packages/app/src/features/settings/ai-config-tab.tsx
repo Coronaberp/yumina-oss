@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Lock } from "lucide-react";
@@ -317,11 +318,11 @@ export function AiConfigTab() {
                 <div className="mt-1 text-xs text-sub">{t("config.streamingDesc")}</div>
               </div>
               <label className="relative inline-flex cursor-pointer items-center">
-                <input
-                  type="checkbox"
+                <Checkbox
+
                   className="peer sr-only"
                   checked={streaming}
-                  onChange={() => setConfig("streaming", !streaming)}
+                  onCheckedChange={() => setConfig("streaming", !streaming)}
                 />
                 <div className="h-6 w-11 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-checked:bg-gold peer-checked:after:translate-x-full peer-checked:after:border-transparent peer-focus:outline-none" />
               </label>

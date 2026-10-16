@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, BookOpen, Library, Power, PanelLeftClose, PanelLeftOpen, Pencil, Check, Monitor, ChevronDown, ChevronRight } from "lucide-react";
@@ -29,6 +30,7 @@ const OPS: Record<Condition["operator"], string> = {
  *  (conditions with ≥1 condition, or greeting with ≥1 opening). always/manual =
  *  default/unset, so the activation editor opens by default for those. */
 function isActivationConfigured(wb: Worldbook): boolean {
+  if (wb.chapterIds?.length) return true;
   if (wb.activation.mode === "conditions") return wb.activation.conditions.length > 0;
   if (wb.activation.mode === "greeting") return wb.activation.greetingIds.length > 0;
   return false;
@@ -132,6 +134,7 @@ export function KnowledgeBasesSection(_props: { compact?: boolean } = {}) {
 
   function bookBadge(wb: Worldbook) {
     if (wb.enabled === false) return { txt: t("kb.disabled"), cls: "bg-white/5 text-muted-foreground" };
+    if (wb.chapterIds?.length) return { txt: `${t("sections.chapters")} ×${wb.chapterIds.length}`, cls: "bg-violet-500/15 text-violet-300" };
     if (wb.activation.mode === "always") return { txt: t("kb.badgeAlways"), cls: "bg-emerald-500/15 text-emerald-400" };
     if (wb.activation.mode === "manual") return { txt: t("kb.badgeManual"), cls: "bg-white/5 text-muted-foreground" };
     if (wb.activation.mode === "greeting") {
@@ -584,6 +587,7 @@ export function KnowledgeBasesSection(_props: { compact?: boolean } = {}) {
 
                   {actOpen && (
                   <div className="px-3 pb-3">
+                  {!!selectedBook.chapterIds?.length && <p className="mb-3 text-xs text-muted-foreground">Managed by Chapters. Chapter links control when this lorebook is active; the activation below applies if those links are removed.</p>}
                   <div className="flex w-fit flex-wrap gap-1 rounded-lg bg-card p-1">
                     {([
                       ["always", t("kb.modeAlways")],
@@ -627,10 +631,10 @@ export function KnowledgeBasesSection(_props: { compact?: boolean } = {}) {
                             const active = selectedBook.activation.mode === "greeting" && selectedBook.activation.greetingIds.includes(g.id);
                             return (
                               <label key={g.id} className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-white/5">
-                                <input
-                                  type="checkbox"
+                                <Checkbox
+
                                   checked={active}
-                                  onChange={() => toggleGreetingId(selectedBook, g.id)}
+                                  onCheckedChange={() => toggleGreetingId(selectedBook, g.id)}
                                   className="mt-0.5 shrink-0 accent-violet-400"
                                 />
                                 <span className="min-w-0 flex-1 truncate text-xs text-foreground">

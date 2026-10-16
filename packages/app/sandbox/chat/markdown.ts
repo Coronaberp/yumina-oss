@@ -1,19 +1,13 @@
 /**
  * Sandbox-side markdown renderer.
  *
- * This is THE chat renderer: every message and greeting a player reads goes
- * through `renderMessage` here, because the whole chat UI lives inside the
- * sandbox iframe. It began as a copy of packages/app/src/lib/markdown.ts
- * (whose `renderMessage` no longer has a caller), and the two drifted — the
- * host copy gained `![alt](url)` images in April 2026 and this one did not,
- * so image markdown in openings reached players as literal text until
- * September. When touching the message pipeline in either file, check the
- * other.
+ * Messages and greetings use the same CommonMark/GFM implementation as the
+ * Studio preview. This adapter owns sandbox asset URLs, isolated HTML embeds,
+ * sentence capitalization and the completed-message cache.
  */
 
-import DOMPurify from "dompurify";
-import { parseImageEmbeds, renderImageEmbedHtml } from "@yumina/engine";
 import { capitalizeSentenceStarts } from "./sentence-case";
+import { createChatMarkdownRenderer } from "../../src/lib/chat-markdown";
 
 // ── HTML embed types ───────────────────────────────────────────────
 
@@ -29,14 +23,6 @@ interface HtmlEmbed {
   height: number;
 }
 
-const SUPPORTS_LOOKBEHIND = (() => {
-  try { new RegExp("(?<!x)y"); return true; } catch { return false; }
-})();
-const ITALIC_RE = SUPPORTS_LOOKBEHIND
-  ? /(?<!\*)\*([^*]+)\*(?!\*)/g
-  : /\*([^*]+)\*/g;
-
-const HTML_EMBED_LANGS = new Set(["html", "htm", "ui-html", "yumina-html"]);
 const DEFAULT_HTML_EMBED_HEIGHT = 320;
 const MIN_HTML_EMBED_HEIGHT = 120;
 const MAX_HTML_EMBED_HEIGHT = 1200;
@@ -239,134 +225,11 @@ export function renderMessage(raw: string): string {
   return html;
 }
 
-/**
- * Render pipeline (uncached).
- *
- * Pipeline:
- *   1. Protect code blocks / inline code from processing
- *   2. Parse image embed directives [image:https://...|size=...|placement=...]
- *   3. Escape HTML in non-code regions
- *   4. Apply built-in markdown (bold, italic, `![alt](url)` images)
- *   5. Restore code blocks
- *   6. Add line breaks
- *   7. Restore image embeds
- *   8. Restore html iframe embeds from ```html``` blocks
- *   9. Sanitize with DOMPurify
- *  10. Capitalize visible sentence starts, preserving code and embeds
- */
-function renderMessageUncached(raw: string): string {
-  const codeBlocks: string[] = [];
-  const htmlEmbeds: HtmlEmbed[] = [];
-  let html = raw;
-
-  // Fenced code blocks ```...```
-  html = html.replace(
-    /```([\w-]*)\n?([\s\S]*?)```/g,
-    (_match, lang, code) => {
-      const normalizedLang = String(lang ?? "")
-        .trim()
-        .toLowerCase();
-      if (HTML_EMBED_LANGS.has(normalizedLang)) {
-        const idx = htmlEmbeds.length;
-        htmlEmbeds.push(parseHtmlEmbed(code));
-        return `\x00HB${idx}\x00`;
-      }
-
-      const idx = codeBlocks.length;
-      codeBlocks.push(
-        `<pre class="my-2 rounded bg-black/30 p-3 text-sm overflow-x-auto"><code>${escapeHtml(code)}</code></pre>`,
-      );
-      return `\x00CB${idx}\x00`;
-    },
-  );
-
-  // Inline code `...`
-  html = html.replace(/`([^`]+)`/g, (_match, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push(
-      `<code class="rounded bg-black/30 px-1.5 py-0.5 text-sm">${escapeHtml(code)}</code>`,
-    );
-    return `\x00CB${idx}\x00`;
-  });
-
-  // Parse [image:...] directives outside code blocks.
-  const parsedImages = parseImageEmbeds(html);
-  const imageEmbeds = parsedImages.embeds;
-  html = parsedImages.cleanText;
-
-  html = escapeHtml(html);
-
-  // Bold + italic: ***...***
-  html = html.replace(
-    /\*\*\*(.+?)\*\*\*/g,
-    "<strong><em>$1</em></strong>",
-  );
-  // Bold: **...**
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Italic: *...*
-  html = html.replace(ITALIC_RE, "<em>$1</em>");
-
-  // Standard markdown images: ![alt](url)
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, src) => {
-    return `<img src="${resolveSandboxImageSrc(src)}" alt="${alt}" class="rounded-lg max-w-full" loading="lazy" />`;
-  });
-
-  html = html.replace(
-    /\x00CB(\d+)\x00/g,
-    (_match, idx) => codeBlocks[Number(idx)] ?? "",
-  );
-
-  html = html.replace(/\n/g, "<br />");
-
-  // Restore rich image cards.
-  html = html.replace(/\x00IM(\d+)\x00/g, (_match, idx) => {
-    const embed = imageEmbeds[Number(idx)];
-    return embed ? renderImageEmbedHtml(embed, resolveSandboxImageSrc) : "";
-  });
-
-  // Restore iframe-based html ui blocks.
-  html = html.replace(/\x00HB(\d+)\x00/g, (_match, idx) => {
-    const embed = htmlEmbeds[Number(idx)];
-    return embed ? renderHtmlEmbedHtml(embed) : "";
-  });
-
-  const rendered = DOMPurify.sanitize(html, {
-    RETURN_DOM: true,
-    ALLOWED_TAGS: [
-      "span",
-      "div",
-      "img",
-      "strong",
-      "em",
-      "br",
-      "hr",
-      "button",
-      "p",
-      "pre",
-      "code",
-      "b",
-      "i",
-      "a",
-      "iframe",
-    ],
-    ALLOWED_ATTR: [
-      "class",
-      "style",
-      "src",
-      "srcdoc",
-      "alt",
-      "referrerpolicy",
-      "data-yumina-choice",
-      "href",
-      "target",
-      "sandbox",
-      "loading",
-    ],
-  }) as HTMLBodyElement;
-
-  capitalizeSentenceStarts(rendered);
-  return rendered.innerHTML;
-}
+const renderMessageUncached = createChatMarkdownRenderer({
+  resolveImageSrc: resolveSandboxImageSrc,
+  renderHtmlEmbed: code => renderHtmlEmbedHtml(parseHtmlEmbed(code)),
+  afterSanitize: capitalizeSentenceStarts,
+});
 
 /**
  * Render markdown to safe HTML.

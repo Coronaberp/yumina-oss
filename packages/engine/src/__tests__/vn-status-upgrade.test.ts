@@ -1,6 +1,7 @@
 import { statusWidgetV1Templates } from "../world/status-widget-v1-templates.js";
 import { statusBuilderV1Templates } from "../world/status-builder-v1-templates.js";
 import { statusScrollV1Templates } from "../world/status-split-pip-templates.js";
+import { statusEncounterV0Templates } from "../world/status-encounter-v0-templates.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { migrateWorldDefinition } from "../migration/migrate-v1-to-v2.js";
@@ -18,6 +19,14 @@ function world(version = "21.0.0"): WorldDefinition {
 }
 
 describe("shipped VN status compatibility", () => {
+  it("upgrades pre-encounter sheets and data without replacing custom visualization source", () => {
+    const original = world();
+    original.rootComponent!.files = { ...statusTemplates, ...statusEncounterV0Templates, "status-layout.tsx": "custom social widgets" };
+    const updated = upgradeStatusWorld(original);
+    expect(updated.rootComponent!.files['status-sheet.tsx']).toBe(statusTemplates['status-sheet.tsx']);
+    expect(updated.rootComponent!.files['status-data.ts']).toBe(statusTemplates['status-data.ts']);
+    expect(updated.rootComponent!.files['status-layout.tsx']).toBe('custom social widgets');
+  });
   it("saved sheets gain scroll-edge blur without changing authored layout or other focus actions", () => {
     const original = world();
     const entry = 'StatusSheet api={sceneApi}\nview.current?.querySelector(".vn-back")?.focus();\nview.current?.querySelector(".vn-menu-status")?.focus();\nview.current?.querySelector("textarea")?.focus();';
@@ -90,7 +99,7 @@ describe("shipped VN status compatibility", () => {
     const current = upgradeStatusWorld(original);
     expect(current.rootComponent!.files["status-layout.tsx"]).toContain("export default function StatusLayout");
     expect(current.rootComponent!.files["status-sheet.tsx"]).toContain('import StatusLayout from "./status-layout"');
-    expect(current.rootComponent!.files["status-sheet.tsx"]).toContain("<StatusLayout config={statusConfig}");
+    expect(current.rootComponent!.files["status-sheet.tsx"]).toContain("filterCharacters(statusConfig) : statusConfig}");
     expect(current.rootComponent!.files["status-sheet.tsx"]).toContain("onClick={onBack}");
     expect(current.rootComponent!.files["status-config.ts"]).toBe(original.rootComponent!.files["status-config.ts"]);
     const custom = "export default function MyStatus(){return <div>Relationship compass</div>}";

@@ -232,28 +232,28 @@ test("italic actions override character labels and initial character tags", () =
   assert.equal(sections.filter(s => s.speaker).map(s => s.content.trim()).join(""), '"Hello."');
 });
 
-test("emphasis inside spoken quotes is removed from display while raw text stays intact", () => {
+test("emphasis inside spoken quotes reaches the Markdown renderer with raw text intact", () => {
   const text = 'Miveth: "You **must** stay. It is *important*."';
   const sections = split(text);
   assert.equal(sections.length, 1);
   assert.equal(sections[0].speaker?.name, "Miveth");
-  assert.equal(sections[0].content, '"You must stay. It is important."');
+  assert.equal(sections[0].content, '"You **must** stay. It is *important*."');
   assert.equal(sections[0].text, text);
 });
 
-test("escaped and nested star emphasis inside dialogue renders as plain spoken text", () => {
-  for (const [input, expected] of [
-    ['"hey so \\*I\\* did this"', '"hey so I did this"'],
-    ['"hey so **I** did this"', '"hey so I did this"'],
-    ['"hey so ***I*** did this"', '"hey so I did this"'],
-    ['"hey so **I *really* did** this"', '"hey so I really did this"'],
-    ['"*\\*text\\**"', '"text"'],
-    ['"3 * 4 is 12, and the symbol is *"', '"3 * 4 is 12, and the symbol is *"'],
+test("escaped and nested star emphasis inside dialogue retains Markdown semantics", () => {
+  for (const input of [
+    '"hey so \\*I\\* did this"',
+    '"hey so **I** did this"',
+    '"hey so ***I*** did this"',
+    '"hey so **I *really* did** this"',
+    '"*\\*text\\**"',
+    '"3 * 4 is 12, and the symbol is *"',
   ]) {
     const text = `Miveth: ${input}`;
     const sections = split(text);
     assert.equal(sections[0].speaker?.name, "Miveth");
-    assert.equal(sections[0].content, expected);
+    assert.equal(sections[0].content, input);
     assert.equal(sections[0].text, text);
   }
 });
@@ -269,7 +269,7 @@ test("quoted names, escaped quotes, and code do not confuse speech attribution",
   const text = '"Miveth asks about \\"wine\\", **please**," Evelia replies.\n\n```text\n"Not dialogue," *Miveth asks.*\n```';
   const sections = split(text);
   assert.deepEqual(sections.map(s => s.speaker?.name ?? "Narrator"), ["Evelia", "Narrator"]);
-  assert.ok(sections[0].content.includes('\\"wine\\", please'));
+  assert.ok(sections[0].content.includes('\\"wine\\", **please**'));
   assert.ok(sections[1].content.includes('"Not dialogue," *Miveth asks.*'));
   assert.equal(sections.map(s => s.text).join(""), text);
 });

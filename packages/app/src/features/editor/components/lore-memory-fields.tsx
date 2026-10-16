@@ -1,3 +1,5 @@
+import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
@@ -99,10 +101,10 @@ export function LoreMemoryFields({
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm text-foreground">
-        <input
-          type="checkbox"
+        <Checkbox
+
           checked={value?.hidden ?? false}
-          onChange={(event) => change({ hidden: event.target.checked })}
+          onCheckedChange={(checked) => change({ hidden: (checked === true) })}
           className="mt-0.5 size-4 accent-primary"
         />
         <span>
@@ -177,11 +179,10 @@ export function LoreMemoryFields({
             key={index}
             className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
           >
-            <select
+            <Select compact
               value={link.targetId}
-              onChange={(event) =>
-                updateLink(index, { targetId: event.target.value })
-              }
+              onValueChange={(selectedValue) =>
+                updateLink(index, { targetId: selectedValue })}
               aria-label={tt("Related entry", "关联条目")}
               className={fieldClass}
             >
@@ -202,7 +203,7 @@ export function LoreMemoryFields({
                   {entry.name || tt("Untitled entry", "未命名条目")}
                 </option>
               ))}
-            </select>
+            </Select>
             <input
               value={link.label}
               maxLength={60}

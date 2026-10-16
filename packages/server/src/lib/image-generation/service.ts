@@ -17,22 +17,33 @@ export type GeneratedStorage = {
 };
 export type GenerationDependencies = ProviderDependencies & { repository: GenerationRepository; storage: GeneratedStorage;
   buildGreenScreenPrompt(prompt: string): string; removeGreenBackground(bytes: Buffer, signal?: AbortSignal): Promise<Buffer>;
-  now?: () => number };
+  now?: () => number; localGenerationEnabled?: () => boolean; prepareNsfwPrompt?: (userId: string, input: GenerationInput) => Promise<string> };
+export function assertLocalImageGenerationEnabled(enabled: boolean) {
+  if (!enabled) throw new GenerationError('LOCAL_IMAGE_GENERATION_DISABLED',
+    'Anima and Krea image generation is paused by the administrator. Re-enable it in Administration → Image generation.', 409);
+}
 export function createImageGenerationService(dependencies: GenerationDependencies) {
   const active = new Set<string>();
   const recent = new Map<string, number[]>();
   const now = dependencies.now ?? Date.now;
+  const localEnabled = () => dependencies.localGenerationEnabled?.() ?? true;
+  function withAdminControls<T extends { configs: { comfyui: { configured: boolean } } }>(state: T) {
+    const adminDisabled = !localEnabled();
+    return { ...state, configs: { ...state.configs, comfyui: { ...state.configs.comfyui,
+      configured: state.configs.comfyui.configured && !adminDisabled, adminDisabled } } };
+  }
   async function requireProfile(userId: string, provider?: ImageProvider) {
     const state = await dependencies.repository.get(userId);
     const selected = provider ?? state.activeProvider;
+    if (selected === 'comfyui') assertLocalImageGenerationEnabled(localEnabled());
     const profile = state.configs[selected];
     if (profile.keyUnreadable) throw new GenerationError('CREDENTIALS_UNREADABLE', 'Saved image-generation credentials could not be opened. Clear or replace the API key in Settings → AI Configuration.', 503);
     if (!configured(profile, selected)) throw new GenerationError('NOT_CONFIGURED', `Enable and configure ${selected === 'comfyui' ? 'ComfyUI' : 'Forge Neo'} in Settings → AI Configuration.`, 409);
     return { profile, selected };
   }
   return {
-    async getConfig(userId: string) { return publicGenerationConfig(await dependencies.repository.get(userId)); },
-    async getStatus(userId: string) { return generationStatus(await dependencies.repository.get(userId)); },
+    async getConfig(userId: string) { return withAdminControls(publicGenerationConfig(await dependencies.repository.get(userId))); },
+    async getStatus(userId: string) { return withAdminControls(generationStatus(await dependencies.repository.get(userId))); },
     async listAnimaModels(userId: string, callerSignal?: AbortSignal) {
       const signal = combinedSignal(callerSignal, 15_000);
       try {
@@ -42,8 +53,8 @@ export function createImageGenerationService(dependencies: GenerationDependencie
         return { ...catalog, modelOptions: catalog.models.map(name => ({ name, nsfwCapable: animaModelSupportsNsfw(name) })) };
       } catch (error) { throw safeGenerationFailure(error, signal); }
     },
-    async updateConfig(userId: string, raw: unknown) { return publicGenerationConfig(await dependencies.repository.update(userId, settingsInput.parse(raw))); },
-    async clearConfig(userId: string, provider: ImageProvider) { return publicGenerationConfig(await dependencies.repository.clear(userId, provider)); },
+    async updateConfig(userId: string, raw: unknown) { return withAdminControls(publicGenerationConfig(await dependencies.repository.update(userId, settingsInput.parse(raw)))); },
+    async clearConfig(userId: string, provider: ImageProvider) { return withAdminControls(publicGenerationConfig(await dependencies.repository.clear(userId, provider))); },
     async test(userId: string, provider: ImageProvider, callerSignal?: AbortSignal) {
       const signal = combinedSignal(callerSignal, 15_000);
       try {
@@ -73,6 +84,15 @@ export function createImageGenerationService(dependencies: GenerationDependencie
       let claimed = false;
       try {
         const { profile, selected } = await requireProfile(userId, input.provider);
+        const textOnly = input.contentRating === 'nsfw';
+        const hasReferences = !!raw.referenceImages?.length || !!raw.resolvedReferences?.length;
+        if (textOnly && hasReferences) {
+          if (!dependencies.prepareNsfwPrompt) throw new GenerationError('REFERENCE_VISION_REQUIRED', 'A vision model must describe NSFW references before text-to-image generation. No image was generated.', 409);
+          raw.progress?.({ phase: 'preparing' });
+          input.prompt = generationInput.shape.prompt.parse(await dependencies.prepareNsfwPrompt(userId, { ...raw, ...input, signal }));
+          signal.throwIfAborted();
+        }
+        const generationReferences = textOnly ? [] : raw.resolvedReferences ?? [];
         if (input.requestId && dependencies.storage.claimRequest) {
           const existing = await dependencies.storage.claimRequest(userId, input.requestId, signal);
           if (existing) return existing;
@@ -90,14 +110,14 @@ export function createImageGenerationService(dependencies: GenerationDependencie
           const imageWorkflow = input.imageWorkflow ?? (profile.workflow === ANIMA_BUILTIN_WORKFLOW ? 'anima' : undefined);
           if (imageWorkflow === 'anima') {
             if (profile.workflow !== ANIMA_BUILTIN_WORKFLOW) throw new GenerationError('ANIMA_NOT_CONFIGURED', 'Choose the Anima workflow in image-generation settings before using its checkpoints.', 409);
-            if (raw.referenceImages?.length && !raw.resolvedReferences?.length) throw new GenerationError('INVALID_REFERENCE', 'The selected Anima reference images could not be loaded. No image was generated.');
-            const identity = raw.resolvedReferences?.find(reference => reference.role === 'identity');
+            if (!textOnly && raw.referenceImages?.length && !generationReferences.length) throw new GenerationError('INVALID_REFERENCE', 'The selected Anima reference images could not be loaded. No image was generated.');
+            const identity = generationReferences.find(reference => reference.role === 'identity');
             const chroma = transparentSprite
               ? raw.chromaColor ? { hex: raw.chromaColor } : await selectAdaptiveChromaColor(identity?.bytes, signal) : { hex: '#ff00ff' };
             const generated = await generateComfyAnimaImage(profile, input.prompt, signal, {
               animaModel: input.animaModel, imageKind: input.imageKind, transparent: transparentSprite, chromaColor: chroma.hex, seed: input.seed, steps: input.steps,
               cfg: input.cfg, samplerName: input.samplerName,
-              references: (raw.resolvedReferences ?? []).map(reference => ({ name: reference.name, role: reference.role, bytes: reference.bytes, contentType: reference.contentType })),
+              references: generationReferences.map(reference => ({ name: reference.name, role: reference.role, bytes: reference.bytes, contentType: reference.contentType })),
               progress: raw.progress,
             }, dependencies);
             await dependencies.storage.validate(generated.originalBytes, signal);
@@ -135,10 +155,10 @@ export function createImageGenerationService(dependencies: GenerationDependencie
               attribution: 'Untouched source raster from the local ComfyUI Anima workflow.', createdAt: new Date(now()).toISOString(),
               greenRemoved: false, referenceKeys: raw.referenceImages?.map(reference => reference.assetRef ?? reference.key), referenceRoles } };
           } else if (imageWorkflow === 'krea') {
-            if (raw.referenceImages?.length && !raw.resolvedReferences?.length) throw new GenerationError('INVALID_REFERENCE', 'The selected Krea reference images could not be loaded. No image was generated.');
+            if (!textOnly && raw.referenceImages?.length && !generationReferences.length) throw new GenerationError('INVALID_REFERENCE', 'The selected Krea reference images could not be loaded. No image was generated.');
             const generated = await generateComfyKreaImage(profile, input.prompt, signal, {
               imageKind: input.imageKind, transparent: transparentSprite, seed: input.seed, steps: input.steps, cfg: input.cfg,
-              references: (raw.resolvedReferences ?? []).map(reference => ({ name: reference.name, role: reference.role, bytes: reference.bytes, contentType: reference.contentType })),
+              references: generationReferences.map(reference => ({ name: reference.name, role: reference.role, bytes: reference.bytes, contentType: reference.contentType })), textOnly,
               progress: raw.progress,
             }, dependencies);
             await dependencies.storage.validate(generated.originalBytes, signal);
@@ -175,6 +195,7 @@ export function createImageGenerationService(dependencies: GenerationDependencie
         }
         signal.throwIfAborted();
         const source: GeneratedSource = { provider: selected, imageKind: input.imageKind, prompt: input.prompt, ...imageMetadata,
+          ...(hasReferences ? { referenceMode: textOnly ? 'text' as const : 'visual' as const } : {}),
           ...(input.requestId ? { requestId: input.requestId } : {}), ...(promptId ? { promptId } : {}), ...(selected === 'forgeneo' && profile.model ? { model: profile.model } : {}),
           imageWorkflow: input.imageWorkflow ?? imageMetadata.imageWorkflow, contentRating: input.contentRating ?? 'sfw', transparent: transparentSprite,
           attribution: imageMetadata.imageWorkflow === 'krea' ? 'Generated locally with ComfyUI and Krea2-Anime v2.0 INT4.'

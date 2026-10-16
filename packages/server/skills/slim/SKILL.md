@@ -43,7 +43,7 @@ Proven fix patterns:
 
 - **Split by person**: a cast mega-entry becomes one entry per character; each child's `keywords` = ONLY that character's names/aliases. Mentioned character loads; nobody else does.
 - **Index entry for generic terms**: after splitting, generic collective terms (faction name, group name) point to a small index entry (~150-200 tokens) listing members — not to any full profile.
-- **Gate by state**: era/route/phase-specific entries get `conditions` on an existing variable (the same pattern as time-slice entries) so off-era content never loads. Remember `alwaysSend: true` bypasses conditions — turn it off for gated entries.
+- **Gate by opening or state**: group chapter/era/timeline/route-specific entries in worldbooks bound to the intended greeting IDs, or in condition-mode books using the current chapter/timeline variables. These outer gates exclude inactive books even for `alwaysSend:true` entries. If relying on an entry's own `conditions` instead, turn off `alwaysSend` because it bypasses that inner condition gate. Preserve intentional historical variants in separate books; do not merge them as duplicate profiles. See the lore skill's shared-universe chapter recipe.
 - **Tighten keywords**: 2-4 specific nouns/names per entry. Kill common-word triggers; use `secondaryKeywords` to gate any broad word that must stay.
 - **Merge duplicates**: pick the canonical home (the one with usage rules or better structure), fold unique details into it, delete the copy — with approval.
 - **Budget backstop**: suggest `lorebookBudgetCap` (~20,000) via `update_settings` as a safety ceiling. It does not cap always-send — content fixes above are still the main course.

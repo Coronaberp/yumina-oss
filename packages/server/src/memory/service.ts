@@ -164,7 +164,7 @@ export function createMemoryService(deps: MemoryServiceDependencies) {
       model,
       ctx.castNames,
       ctx.signal,
-      {maxFactsPerBatch: cfg.maxFactsPerBatch},
+      {maxFactsPerBatch: cfg.maxFactsPerBatch, requireSuccess: true},
     );
     const scene = {
       doing: state.doing || previousScene.doing,

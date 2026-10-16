@@ -1,3 +1,5 @@
+import { confirmAction } from "@/components/ui/global-confirm-dialog";
+import { Select } from "@/components/ui/select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X, Plus, ImageIcon, Loader2, Camera, FolderOpen, Upload, Globe, Type, History } from "lucide-react";
@@ -84,7 +86,7 @@ export function OverviewSection() {
       //      a new one (which would orphan the published card).
       const isReplacingExisting = !!serverWorldId;
       if (isReplacingExisting) {
-        const ok = window.confirm(t("overview.confirmReplaceWorld"));
+        const ok = (await confirmAction(t("overview.confirmReplaceWorld")));
         if (!ok) {
           e.target.value = "";
           return;
@@ -716,9 +718,9 @@ export function OverviewSection() {
                 {t("overview.languageDesc")}
               </p>
             </div>
-            <select
+            <Select compact
               value={language ?? ""}
-              onChange={(e) => useEditorStore.getState().setLanguage(e.target.value || null)}
+              onValueChange={(selectedValue) => useEditorStore.getState().setLanguage(selectedValue || null)}
               className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="">—</option>
@@ -731,7 +733,7 @@ export function OverviewSection() {
               <option value="de">Deutsch</option>
               <option value="pt">Português</option>
               <option value="ru">Русский</option>
-            </select>
+            </Select>
           </div>
         </div>
 

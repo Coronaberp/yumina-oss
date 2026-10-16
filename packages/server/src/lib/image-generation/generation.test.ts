@@ -284,3 +284,26 @@ test('same-account concurrent generations are denied and failure releases the ac
   await engine.generate('u', { provider: 'forgeneo', prompt: 'r', imageKind: 'image' });
   assert.equal(calls, 2);
 });
+
+
+test('generated storage uses lossless WebP when smaller with matching key, filename, MIME, dimensions and transparent RGB', async () => {
+  const width = 64, height = 64;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < pixels.length; i += 4) {
+    pixels[i] = 12; pixels[i + 1] = 34; pixels[i + 2] = 56; pixels[i + 3] = i % 8 ? 255 : 0;
+  }
+  const input = await sharp(pixels, { raw: { width, height, channels: 4 } }).png({ compressionLevel: 0 }).toBuffer();
+  const image = await normalizeGeneratedRaster(input, combinedSignal());
+  assert.equal((await sharp(image.bytes).metadata()).format, 'webp');
+  assert.ok(image.bytes.length < input.length);
+  assert.deepEqual(await sharp(image.bytes).raw().toBuffer(), pixels);
+  assert.equal(image.width, width); assert.equal(image.height, height);
+  let writtenMime: string | undefined, registeredMime: string | undefined, registeredSize: number | undefined;
+  let writtenKey = '';
+  const asset = await commitGeneratedAsset('u', image.bytes, source, {
+    async write(key, bytes, _signal, mimeType) { writtenKey = key; writtenMime = mimeType; assert.deepEqual(bytes, image.bytes); },
+    async register(asset, key, bytes, mimeType) { assert.equal(key, writtenKey); registeredMime = mimeType; registeredSize = bytes; },
+  }, combinedSignal());
+  assert.match(asset.filename, /\.webp$/); assert.match(writtenKey, /\.webp$/);
+  assert.equal(writtenMime, 'image/webp'); assert.equal(registeredMime, 'image/webp'); assert.equal(registeredSize, image.bytes.length);
+});

@@ -33,6 +33,14 @@ Click **Play** to open the session picker. You'll see all your sessions for that
 
 Sessions are fully independent -- different story states, different histories.
 
+## Export and import chats
+
+Open **Export** in the VN menu, **Export / import chat** in the chat header, or the library's session export action. Choose **Transcript** for messages, profile pictures and attachments, or **Full save** to include the world, progress, checkpoints and memory. Full saves with many images can be large.
+
+The download is one HTML file. Open it in a browser to search, filter by speaker or reply type, sort by time, jump to a turn, or print. Profile pictures and attachments work offline. Filters leave the embedded JSON intact; **Download JSON** saves that same data separately.
+
+To restore an export, choose its HTML or JSON file in the export/import dialog and select **Import as a new session**. A full save creates a separate private card and restores its progress. A transcript creates a session on its original accessible card with the card's initial state. StoryHaven facts travel as continuity notes. The original session remains independent.
+
 ## My Projects
 
 The second tab shows worlds you've created or copied, split into In Development (drafts) and Published. See the [Creator Guide](/creator/) for details.

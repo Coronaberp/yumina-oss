@@ -1,4 +1,5 @@
-import { freezeSessionPersona } from "../lib/persona-selection.js";
+import { settleChapterEventTurn } from "../lib/chapter-event-turn.js";
+import { canSelectSessionPersona, freezeSessionPersona } from "../lib/persona-selection.js";
 import { purgePlayerAgency } from "../lib/player-agency.js";
 import { withoutContentFlags } from "../lib/content-flag-history.js";
 import { bodyLimit } from "hono/body-limit";
@@ -119,6 +120,7 @@ import {
   loadBoundedRawHistory,
   loadTurnMemoryBlocks,
   scheduleTurnMemoryUpdates,
+  rememberTurnMemoryModel,
   type TurnPromptMessage,
 } from "../lib/turn-memory.js";
 import {
@@ -1203,6 +1205,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
 
   if (turnNeedsVision(providerMessages)) await assertImageModel(resolved, model);
   await assertTurnMemoryCurrent(turnMemory);
+  await rememberTurnMemoryModel(turnMemory, currentUser.id, model, routed.resolved.profileId);
 
   // Commit turn side effects only after image capability validation succeeds.
   if (insertedUserMessageId) bumpWorldMessageCount(context.session.worldId);
@@ -1565,13 +1568,13 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
 
           // Evaluate reactions, then follow chains: emitted events + state:changed
           // cascades feed back into the evaluator (bounded; each reaction fires once).
-          const systemResult = runReactionChain(
+          const systemResult = settleChapterEventTurn(worldDef, stateManager, reactionEvaluator, parseResult.eventEvidence, runReactionChain(
             reactionEvaluator,
             stateManager,
             turnEvents,
             worldDef.reactions ?? [],
             worldDef.rules ?? [],
-          );
+          ));
           const ruleChanges = systemResult.changes;
           const allChanges = [...seedChanges, ...changes, ...ruleChanges];
           outputAttempt.recordChanges(changes, ruleChanges);
@@ -2835,6 +2838,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
 
   if (turnNeedsVision(providerMessages)) await assertImageModel(resolved, model);
   await assertTurnMemoryCurrent(regenTurnMemory);
+  await rememberTurnMemoryModel(regenTurnMemory, currentUser.id, model, routed.resolved.profileId);
 
   const regenProvider = resolved.provider;
   const startTime = Date.now();
@@ -3085,13 +3089,13 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           for (const change of changes) {
             regenEvents.push({ type: "state:changed", variableId: change.variableId, oldValue: change.oldValue, newValue: change.newValue });
           }
-          const regenSystemResult = runReactionChain(
+          const regenSystemResult = settleChapterEventTurn(worldDef, stateManager, reactionEvaluator, regenParseResult.eventEvidence, runReactionChain(
             reactionEvaluator,
             stateManager,
             regenEvents,
             worldDef.reactions ?? [],
             worldDef.rules ?? [],
-          );
+          ));
           const ruleChanges = regenSystemResult.changes;
           const allChanges = [...changes, ...ruleChanges];
           outputAttempt.recordChanges(changes, ruleChanges);
@@ -3810,6 +3814,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
 
   if (turnNeedsVision(providerMessages)) await assertImageModel(resolved, model);
   await assertTurnMemoryCurrent(contTurnMemory);
+  await rememberTurnMemoryModel(contTurnMemory, currentUser.id, model, routed.resolved.profileId);
   const provider = resolved.provider;
   const existingContent = lastAssistantMsg.content;
   const abortController = new AbortController();
@@ -4041,13 +4046,13 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           for (const change of changes) {
             contEvents.push({ type: "state:changed", variableId: change.variableId, oldValue: change.oldValue, newValue: change.newValue });
           }
-          const contSystemResult = runReactionChain(
+          const contSystemResult = settleChapterEventTurn(worldDef, stateManager, reactionEvaluator, contParseResult.eventEvidence, runReactionChain(
             reactionEvaluator,
             stateManager,
             contEvents,
             worldDef.reactions ?? [],
             worldDef.rules ?? [],
-          );
+          ));
           const ruleChanges = contSystemResult.changes;
           const allChanges = [...changes, ...ruleChanges];
           outputAttempt.recordChanges(changes, ruleChanges);
@@ -4439,6 +4444,15 @@ messageRoutes.post("/messages/:id/swipe", async (c) => {
 
   if (sessionRows.length === 0) {
     return c.json({ error: "Not authorized" }, 403);
+  }
+
+  // An authored opening is a starting preset, including its chapter. Never
+  // let a direct/stale swipe request rewrite it after the player has proceeded.
+  if (!msg.model) {
+    const [first] = await db.select({ id: messages.id }).from(messages).where(eq(messages.sessionId, msg.sessionId)).orderBy(messages.createdAt, messages.id).limit(1);
+    if (first?.id === msg.id && (isSessionStreaming(msg.sessionId) || !await canSelectSessionPersona(sessionRows[0]!))) {
+      return c.json({ error: "Routes and chapters can only be changed at the greeting." }, 409);
+    }
   }
 
   // Index-based swipe: allow jumping to any swipe on any message (used by switchGreeting)

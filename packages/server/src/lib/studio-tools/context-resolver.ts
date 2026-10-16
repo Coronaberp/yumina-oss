@@ -254,6 +254,8 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
   const structured = world.settings?.storyStructureEnabled !== false;
   const storyPreview = (text: string = "") => JSON.stringify(text.length > 160 ? `${text.slice(0, 160)}…` : text);
   parts.push(`\nSTORY STRUCTURE: storyStructureEnabled=${structured} (${structured ? "structured progression" : "open-ended; definitions retained"})`);
+  const chapters = world.chapters ?? [];
+  if (chapters.length) parts.push("\nCHAPTERS (native, read_entities id=chapters):\n" + chapters.map(chapter => JSON.stringify({ id: chapter.id, name: chapter.name, timeline: chapter.timeline, date: chapter.date, greetingIds: chapter.greetingIds, events: chapter.events?.map(event => ({ id: event.id, name: event.name, enabled: event.enabled, sceneCount: event.scenes.length })) })).join("\n"));
   const routes = world.routes ?? [];
   parts.push(`ROUTES (${routes.length}):`);
   for (const route of routes) {

@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { useEditorStore } from "@/stores/editor";
 import { interfaceKey } from "../lib/interface-presets";
+import { isVnInterface } from "@yumina/engine";
+import { VnTextDefaults } from "./vn-text-defaults";
 
 export function InterfaceOptions() {
   const { t } = useTranslation("editor");
@@ -32,5 +34,6 @@ export function InterfaceOptions() {
     </div>
     {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 size={14} className="animate-spin" />Changing layout…</p>}
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    {isVnInterface(root) && <VnTextDefaults />}
   </div>;
 }

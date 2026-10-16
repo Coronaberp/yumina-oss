@@ -1,5 +1,9 @@
+import { claimStudioTaskResume } from "../lib/studio-task-resume.js";
+import { createStudioTask, isStudioWorkRequest, upsertTaskRequirements, evaluateStudioTask, observeStudioTask, studioTaskPrompt, taskRecoveryNote, StudioTaskPause, type StudioTask } from "../lib/studio-task.js";
+import { readStudioTask } from "@yumina/shared";
 import { buildStudioCompactedMessages, buildStudioSummaryPrompt, estimateStudioTokens, isStudioSummaryRequest } from "../lib/studio-context-compaction.js";
 import { getModelContextWindow } from "../lib/llm/context-window.js";
+import { getStudioContextBudget as getContextBudget } from "@yumina/shared";
 import { enqueueStudioSteering, consumeStudioSteering, readStudioSteering, STUDIO_STEERING_KEY, StudioSteeringError } from "../lib/studio-steering.js";
 import { usageObservation } from "../lib/usage-observation.js";
 import { Hono, type Context } from "hono";
@@ -21,7 +25,7 @@ import { planStudioCreditBudget } from "../lib/studio-credit-budget.js";
 import { studioCreditRecoveryEnabled, getAvailableCredits, reserveStudioCredits, renewStudioCreditReservation, releaseStudioCreditReservation } from "../lib/credit-reservations.js";
 import { settleStudioCreditReservation } from "../lib/credit-service.js";
 import {
-  captureStudioCreditWorldRevision, pauseStudioForCredits, claimStudioCreditResume,
+  captureStudioCreditWorldRevision, captureStudioWorldRevisionInTransaction, pauseStudioForCredits, claimStudioCreditResume,
   restoreStudioCreditPause, withStudioCreditClaimTransaction, readStudioCreditCheckpoint,
   stageStudioCreditIteration, isStudioCreditResumeEligible, canRebaseStudioCreditCheckpoint,
   type StudioCreditCheckpoint,
@@ -74,6 +78,7 @@ import {
 import { acceptanceCriteriaTurn, harnessTurn, outputBudgetGuidance, withToolNote } from "../lib/studio-tools/harness-notes.js";
 import { migrateWorldDefinition } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
+import { createScopedStudioRun, resumeScopedStudioApproval, writeScopedStudioWorldSchema } from "../lib/studio-run-scope.js";
 import { resolveWorkingSchema, writeStudioWorldSchema } from "../lib/pending-edit.js";
 import { loadAgentHistoryForConversation, withStudioUserMessageContext } from "../lib/studio-conversations.js";
 import { stopCodexConversation, leaseCodexConversation, NSFW_IMAGE_REQUEST_ERROR } from "../lib/llm/codex.js";
@@ -86,9 +91,8 @@ import { animaModelSupportsNsfw } from "../lib/image-generation/anima-workflow.j
 // ── Request Routing ──
 
 const MAX_OUTPUT = 64000; // Claude Sonnet max output with streaming
-// Cap raised from 10 → 50 now that (a) prompt caching makes subsequent iterations ~10% the cost of the first
-// and (b) per-entity re-read detection injects guidance and terminates cleanly before runaway loops.
-// Typical flows still finish in 1-2 iterations; this only bites pathological cases we now handle explicitly.
+// Legacy runs retain their cap. Persistent tasks checkpoint at these windows
+// and extend while making progress; only an explicitly chosen budget caps them.
 const MAX_ITERATIONS = 50;
 
 type AgentRunRow = typeof agentRuns.$inferSelect;
@@ -370,16 +374,16 @@ function resolveStudioImageRoute(input: Record<string, unknown>, personal: Await
   const contentRating = input.contentRating === "nsfw" ? "nsfw" as const : "sfw" as const;
   const explicitWorkflow: "anima" | "krea" | "codex" | undefined = input.imageWorkflow === "anima" || input.imageWorkflow === "krea" || input.imageWorkflow === "codex"
     ? input.imageWorkflow : undefined;
-  if (contentRating === "nsfw" && (explicitWorkflow === "codex" || input.source === "codex" || input.source === "forgeneo"))
-    return { workflowOptions, contentRating, error: "Codex and Forge Neo image generation are SFW-only. Choose local Krea or a verified NSFW-capable Anima checkpoint." };
-
   let requested: "anima" | "krea" | "codex" | undefined = explicitWorkflow;
   if (!requested && input.source === "codex") requested = "codex";
+  if (personal.configs.comfyui.adminDisabled && (contentRating === "nsfw" || requested === "anima" || requested === "krea" || input.source === "comfyui"))
+    return { workflowOptions, contentRating, error: "Anima and Krea are paused by the administrator. Re-enable them in Administration → Image generation." };
+  if (contentRating === "nsfw" && requested === "codex") requested = undefined;
   const canonicalReference = /\b(canonical|reference (?:sprite|image|design)|base sprite|initial design|first (?:sprite|design))\b/i
     .test(`${String(input.purpose ?? "")} ${String(input.prompt ?? "")}`);
-  if (!requested && input.source === "comfyui") requested = workflowOptions.anima && (referenceCount === 0 || canonicalReference)
+  if (!requested && input.source === "comfyui" && contentRating !== "nsfw") requested = workflowOptions.anima && (referenceCount === 0 || canonicalReference)
     ? "anima" : referenceCount ? "krea" : workflowOptions.krea ? "krea" : undefined;
-  if (!requested && input.source !== "forgeneo") requested = defaultStudioImageWorkflow({
+  if (!requested && (input.source !== "forgeneo" || contentRating === "nsfw")) requested = defaultStudioImageWorkflow({
     contentRating, hasReferences: referenceCount > 0, imageKind, available: workflowOptions,
     activeSource: personal.activeProvider, animaPreferred: workflowOptions.anima && (referenceCount === 0 || canonicalReference),
   });
@@ -393,7 +397,7 @@ function resolveStudioImageRoute(input: Record<string, unknown>, personal: Await
     if (contentRating === "nsfw" && requested === "anima"
       && (typeof input.animaModel !== "string" || !animaModelSupportsNsfw(input.animaModel)))
       return { workflowOptions, contentRating, error: "Choose an installed Anima checkpoint marked NSFW-capable, or use local Krea." };
-    if (requested === "krea" && referenceCount > 4)
+    if (requested === "krea" && contentRating !== "nsfw" && referenceCount > 4)
       return { workflowOptions, contentRating, error: "Krea accepts at most four project references. Remove a reference or choose Anima or Codex." };
     return { source: requested === "codex" ? "codex" as const : "comfyui" as const, workflow: requested,
       workflowOptions, contentRating, animaEnabled: requested === "anima" };
@@ -451,6 +455,7 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
     message: string;
     model?: string;
     conversationId?: string;
+    maxSteps?: number;
     context?: {
       activePanel?: string;
       selectedElementId?: string;
@@ -461,6 +466,8 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
     existingMessages?: ChatMessage[];
   }>();
 
+  if (body.maxSteps !== undefined && (!Number.isInteger(body.maxSteps) || body.maxSteps < 1 || body.maxSteps > 100000))
+    return c.json({ error: "Step limit must be a whole number from 1 to 100000, or omitted." }, 400);
   // Verify world ownership
   const worldRows = await db
     .select({ id: worlds.id, schema: worlds.schema, status: worlds.status })
@@ -491,28 +498,6 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
     worldRows[0]!.schema as unknown as Record<string, unknown>,
   );
   const world = migrateWorldDefinition(workingSchema as unknown as WorldDefinition);
-
-  // Stop any existing running agent for this world (prevents concurrent mutations).
-  // Since agents now survive SSE disconnects, a stale "running" agent may linger.
-  const existingRuns = studioCreditRecoveryEnabled() ? [] : await db
-    .select({ id: agentRuns.id })
-    .from(agentRuns)
-    .where(
-      and(
-        eq(agentRuns.worldId, worldId),
-        eq(agentRuns.userId, currentUser.id),
-        eq(agentRuns.status, "running"),
-      )
-    );
-  for (const run of existingRuns) {
-    activeAgentRuns.get(run.id)?.abort();
-    await db.update(agentRuns).set({
-      status: "completed",
-      error: "Superseded by new agent run.",
-      updatedAt: new Date(),
-    }).where(eq(agentRuns.id, run.id)).catch(() => {});
-    activeAgentRuns.delete(run.id);
-  }
 
   // The server resolves the account's Studio connection; client story/SFW
   // model selections cannot redirect creator prompts.
@@ -562,32 +547,21 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
   const tools = STUDIO_TOOLS;
   const maxIter = MAX_ITERATIONS;
 
-  // Create agent run record
-  const createRun = async (executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]) => executor
-    .insert(agentRuns).values({
-      worldId,
-      conversationId: body.conversationId ?? null,
-      userId: currentUser.id,
-      status: "running",
-      messages: conversationMessages as unknown as Array<Record<string, unknown>>,
-      iteration: 0,
-      maxIterations: maxIter,
-      model,
-      context: withStudioUserMessageContext(Object.fromEntries(Object.entries(body.context ?? {}).filter(([key]) => key !== STUDIO_STEERING_KEY)), userContent),
-    })
-    .returning();
-  // Serialize start and credit-resume against the same world lock. A new task
-  // explicitly supersedes the old worker, whose checkpoint writes then fail.
-  const [agentRun] = studioCreditRecoveryEnabled() ? await db.transaction(async tx => {
-    await tx.select({ id: worlds.id }).from(worlds)
-      .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, currentUser.id))).for("update");
-    const superseded = await tx.update(agentRuns).set({
-      status: "completed", error: "Superseded by new agent run.", updatedAt: new Date(),
-    }).where(and(eq(agentRuns.worldId, worldId), eq(agentRuns.userId, currentUser.id), eq(agentRuns.status, "running")))
-      .returning();
-    for (const prior of superseded) activeAgentRuns.get(prior.id)?.abort();
-    return createRun(tx);
-  }) : await createRun(db);
+  // Starting another chat leaves its worker alone. Serialize only the start
+  // decision and each save; model calls in independent chats may overlap.
+  const { run: agentRun, supersededIds } = await createScopedStudioRun({
+    worldId, conversationId: body.conversationId ?? null, userId: currentUser.id,
+    status: "running", messages: conversationMessages as unknown as Array<Record<string, unknown>>,
+    iteration: 0, maxIterations: maxIter, model,
+    context: withStudioUserMessageContext({
+      ...Object.fromEntries(Object.entries(body.context ?? {}).filter(([key]) => ["activePanel", "selectedElementId", "selectedElementType"].includes(key))),
+      studioTaskRunner: true, studioTask: createStudioTask(body.message, isStudioWorkRequest(body.message) ? "work" : "answer", body.maxSteps),
+    }, userContent),
+  }, !isStudioWorkRequest(body.message) && !/\b(?:new task|forget|cancel|instead|never mind)\b/i.test(body.message) ? body.message : undefined);
+  for (const priorId of supersededIds) {
+    activeAgentRuns.get(priorId)?.abort();
+    if (redis) void redis.publish(AGENT_STOP_CHANNEL, JSON.stringify({ runId: priorId })).catch(() => {});
+  }
 
   const runId = agentRun!.id;
 
@@ -608,12 +582,34 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
     provider: resolved.provider,
     isByok: resolved.isByok,
     apiKeyTier: resolved.apiKeyTier,
-    context: body.context,
+    context: agentRun.context as AgentLoopParams["context"],
     iteration: 0,
     maxIterations: maxIter,
     tools,
     unlimited: guard.ok ? guard.ctx.planConfig.unlimited : false,
   });
+});
+
+// Continuing a saved task uses a fresh worker ID. A late exit from the old
+// worker cannot close, stop or write over its successor, even with Codex.
+agentRoutes.post("/:worldId/agent/resume-task", async c => {
+  const account = c.get("user"), worldId = c.req.param("worldId");
+  const body = await c.req.json<{ runId?: string }>();
+  if (!body.runId) return c.json({ error: "runId is required" }, 400);
+  const [owned] = await db.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.id, body.runId), eq(agentRuns.worldId, worldId), eq(agentRuns.userId, account.id)));
+  if (!owned) return c.json({ error: "Run not found" }, 404);
+  const resolved = await resolveStudioNsfwProvider(account.id);
+  if (!resolved) return c.json({ error: STUDIO_NSFW_ENDPOINT_ERROR }, 400);
+  const guard = await guardGeneration(account.id, resolved.model, { isByok: resolved.isByok, isSuspended: !!account.isSuspended, skipConcurrency: true, skipModelValidation: STUDIO_MODEL_IDS.has(resolved.model) });
+  if (!guard.ok) return c.json(guard.body, guard.status as 400);
+  const claimed = await claimStudioTaskResume({ worldId, userId: account.id, runId: body.runId }, resolved.model);
+  if (!claimed.ok) return c.json({ error: claimed.code, code: claimed.code }, claimed.code === "NOT_FOUND" ? 404 : 409);
+  const { run } = claimed;
+  c.header("X-Accel-Buffering", "no"); c.header("X-Agent-Run-Id", run.id);
+  return streamAgentLoop(c, { runId: run.id, conversationId: run.conversationId ?? run.id, worldId, userId: account.id,
+    world: migrateWorldDefinition(claimed.schema as unknown as WorldDefinition), messages: run.messages as unknown as ChatMessage[],
+    model: resolved.model, provider: resolved.provider, isByok: resolved.isByok, apiKeyTier: resolved.apiKeyTier,
+    context: run.context as AgentLoopParams["context"], iteration: 0, maxIterations: run.maxIterations, tools: STUDIO_TOOLS, unlimited: guard.ctx.planConfig.unlimited });
 });
 
 // Resume the stored step only after an explicit user action. The model and
@@ -674,30 +670,7 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
 
   // Atomically transition status to "running" — only succeeds if currently "awaiting_approval".
   // Prevents two concurrent approve requests from both executing write tools.
-  const transitionApproval = (executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]) => executor
-    .update(agentRuns)
-    .set({ status: "running", updatedAt: new Date() })
-    .where(
-      and(
-        eq(agentRuns.id, body.runId),
-        eq(agentRuns.userId, currentUser.id),
-        eq(agentRuns.worldId, worldId),
-        eq(agentRuns.status, "awaiting_approval"),
-      )
-    )
-    .returning();
-  // Legacy approvals can still exist. They share the same world lock as new
-  // runs and credit recovery, so two paused tasks cannot both start writing.
-  const approval = studioCreditRecoveryEnabled() ? await db.transaction(async tx => {
-    const [ownedWorld] = await tx.select({ id: worlds.id }).from(worlds)
-      .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, currentUser.id))).for("update");
-    if (!ownedWorld) return { run: undefined, blocked: false };
-    const [active] = await tx.select({ id: agentRuns.id }).from(agentRuns)
-      .where(and(eq(agentRuns.worldId, worldId), ne(agentRuns.id, body.runId), eq(agentRuns.status, "running"))).limit(1);
-    if (active) return { run: undefined, blocked: true };
-    const [run] = await transitionApproval(tx);
-    return { run, blocked: false };
-  }) : { run: (await transitionApproval(db))[0], blocked: false };
+  const approval = await resumeScopedStudioApproval({ worldId, userId: currentUser.id, runId: body.runId });
   if (approval.blocked) return c.json({ error: "Another agent run is active", code: "ACTIVE_RUN" }, 409);
   const run = approval.run;
 
@@ -798,11 +771,18 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
 
     // Save updated world to DB. For a published world a material change is held
     // for re-review (the live card is untouched) instead of going live.
-    await writeStudioWorldSchema({
-      worldId,
-      creatorId: currentUser.id,
-      schema: world as unknown as Record<string, unknown>,
-    });
+    try {
+      await writeScopedStudioWorldSchema({ worldId, userId: currentUser.id, runId: run.id,
+        schema: world as unknown as Record<string, unknown>, expectedSchema: approveWorkingSchema });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "STALE_STUDIO_WORLD_SCHEMA") throw error;
+      for (const result of writeResults) {
+        if (result.status === "success") { result.status = "error"; result.result = null;
+          result.error = "Card changed in another conversation. This change was not saved. Read the latest target and retry."; }
+      }
+      const latest = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
+      world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
+    }
   } else {
     // Rejection results
     writeResults = pendingToolCalls.map((tc) => ({
@@ -972,28 +952,7 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
   const existingImage = await replayQueuedImage();
   if (existingImage) return existingImage;
 
-  const transitionApproval = (executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]) => executor
-    .update(agentRuns)
-    .set({ status: "running", updatedAt: new Date() })
-    .where(
-      and(
-        eq(agentRuns.id, body.runId),
-        eq(agentRuns.userId, currentUser.id),
-        eq(agentRuns.worldId, worldId),
-        eq(agentRuns.status, "awaiting_approval"),
-      )
-    )
-    .returning();
-  const approval = studioCreditRecoveryEnabled() ? await db.transaction(async tx => {
-    const [ownedWorld] = await tx.select({ id: worlds.id }).from(worlds)
-      .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, currentUser.id))).for("update");
-    if (!ownedWorld) return { run: undefined, blocked: false };
-    const [active] = await tx.select({ id: agentRuns.id }).from(agentRuns)
-      .where(and(eq(agentRuns.worldId, worldId), ne(agentRuns.id, body.runId), eq(agentRuns.status, "running"))).limit(1);
-    if (active) return { run: undefined, blocked: true };
-    const [run] = await transitionApproval(tx);
-    return { run, blocked: false };
-  }) : { run: (await transitionApproval(db))[0], blocked: false };
+  const approval = await resumeScopedStudioApproval({ worldId, userId: currentUser.id, runId: body.runId });
   if (approval.blocked) return c.json({ error: "Another agent run is active", code: "ACTIVE_RUN" }, 409);
   const run = approval.run;
   if (!run) return (await replayQueuedImage()) ?? c.json({ error: "Agent run not found or not awaiting confirmation" }, 404);
@@ -1084,6 +1043,7 @@ agentRoutes.post("/:worldId/agent/generate-image", async (c) => {
       context: run.context as { activePanel?: string; selectedElementId?: string; selectedElementType?: string },
       iteration: nextIteration,
       maxIterations: opts.oneMoreTurn ? nextIteration + 1 : run.maxIterations,
+      allowTaskContinuation: !opts.oneMoreTurn,
       tools: STUDIO_TOOLS,
       unlimited: isUnlimited,
       prelude: opts.prelude,
@@ -1193,6 +1153,8 @@ agentRoutes.post("/:worldId/agent/image-jobs/:jobId/anima-model", async c => {
   }
   const ownedJob = await configuredImageJobs.get(userId, jobId, worldId);
   if (!ownedJob?.animaEnabled) return c.json({ error: "Image job not found", code: "IMAGE_JOB_NOT_FOUND" }, 404);
+  if (ownedJob.contentRating === "nsfw" && !animaModelSupportsNsfw(body.model))
+    return c.json({ error: "SFW-only Anima checkpoints are excluded while NSFW is selected.", code: "NSFW_MODEL_REQUIRED" }, 400);
   try {
     const catalog = await imageGenerationService.listAnimaModels(userId, c.req.raw.signal);
     if (!catalog.models.includes(body.model)) return c.json({ error: "That checkpoint is not installed in this ComfyUI container.", code: "ANIMA_MODEL_UNAVAILABLE" }, 409);
@@ -1226,7 +1188,7 @@ agentRoutes.post("/:worldId/agent/image-jobs/:jobId/generation-options", async c
   if (!ownedJob.workflowOptions?.[workflow]) return c.json({ error: "That image workflow is not available for this job.", code: "WORKFLOW_UNAVAILABLE" }, 409);
   if (body.contentRating === "nsfw" && workflow === "codex")
     return c.json({ error: "Codex image generation is SFW-only. Choose local Krea or a verified NSFW-capable Anima checkpoint.", code: "NSFW_MODEL_REQUIRED" }, 400);
-  if (workflow === "krea" && (ownedJob.referenceImages?.length ?? 0) > 4)
+  if (workflow === "krea" && body.contentRating !== "nsfw" && (ownedJob.referenceImages?.length ?? 0) > 4)
     return c.json({ error: "Krea accepts at most four project references. Remove a reference or choose Anima or Codex.", code: "REFERENCE_LIMIT" }, 400);
   let installedModels: string[] = [];
   let recommendedAnimaModel: string | undefined;
@@ -1499,6 +1461,8 @@ agentRoutes.get("/:worldId/agent/status", async (c) => {
       id: run.id,
       model: run.model,
       conversationId: run.conversationId,
+      task: readStudioTask(run.context),
+      taskResumedBy: run.context?.studioTaskResumedBy ?? null,
       status: run.status,
       iteration: run.iteration,
       maxIterations: run.maxIterations,
@@ -1535,7 +1499,8 @@ agentRoutes.post("/:worldId/agent/stop", async (c) => {
 
   const [ownedRun] = await db.select({ id: agentRuns.id, conversationId: agentRuns.conversationId }).from(agentRuns)
     .where(and(eq(agentRuns.id, body.runId), eq(agentRuns.userId, currentUser.id), eq(agentRuns.worldId, worldId)));
-  if (ownedRun) await stopCodexConversation(`studio:${currentUser.id}:${worldId}:${ownedRun.conversationId ?? ownedRun.id}`, ownedRun.id);
+  if (!ownedRun) return c.json({ error: "Run not found" }, 404);
+  await stopCodexConversation(`studio:${currentUser.id}:${worldId}:${ownedRun.conversationId ?? ownedRun.id}`, ownedRun.id);
 
   // Try local abort first (same replica)
   const localController = activeAgentRuns.get(body.runId);
@@ -1552,7 +1517,8 @@ agentRoutes.post("/:worldId/agent/stop", async (c) => {
 
   await db
     .update(agentRuns)
-    .set({ status: "completed", error: "Stopped by user.", creditCheckpoint: null, updatedAt: new Date() })
+    .set({ status: "error", error: "Stopped by user.", creditCheckpoint: null, updatedAt: new Date(),
+      context: sql`CASE WHEN ${agentRuns.context}->'studioTask' IS NOT NULL THEN jsonb_set(jsonb_set(${agentRuns.context}, '{studioTask,status}', '"stopped"'::jsonb), '{studioTask,reason}', '"Stopped by you. Completed work is saved."'::jsonb) ELSE ${agentRuns.context} END` })
     .where(
       and(
         eq(agentRuns.id, body.runId),
@@ -1602,30 +1568,6 @@ function estimateTokens(msg: ChatMessage): number {
 
 // Reserve ~60% of context for history (rest = system prompt + tools + response budget)
 const MIN_RECENT_MESSAGES = 6; // Always keep at least 3 user-assistant pairs
-
-/** Derive context budget from model ID. Uses ~60% of the model's known context window. */
-function getContextBudget(modelId: string): number {
-  const id = modelId.toLowerCase();
-  // Gemini models: 1M+ context
-  if (id.includes("gemini")) return 600_000;
-  // Claude — Sonnet 4.6 (our studio default) has a 1M window; older Sonnets/Opus are 200K.
-  // The 60% cap leaves room for the 3-tier system prompt, tools schema, and MAX_OUTPUT=64K.
-  if (id.includes("claude")) {
-    if (id.includes("sonnet-4.6") || id.includes("sonnet-4-6") || id.includes("-1m")) {
-      return 600_000;
-    }
-    return 120_000;
-  }
-  // GPT-4o/4.1: 128k context
-  if (id.includes("gpt-4o") || id.includes("gpt-4.1")) return 75_000;
-  // Grok: 128k-131k context
-  if (id.includes("grok")) return 75_000;
-  if (id.includes("qwen") || id.includes("kimi")) return 75_000;
-  // Llama/Mistral/DeepSeek: varies 32k-128k
-  if (id.includes("llama") || id.includes("mistral") || id.includes("deepseek")) return 50_000;
-  // Default: conservative 120k (assumes 200k model)
-  return 120_000;
-}
 
 /**
  * Dynamic context compaction: estimates token usage and compacts
@@ -1842,7 +1784,7 @@ export interface AgentLoopParams {
   provider: LLMProvider;
   isByok: boolean;
   apiKeyTier: ApiKeyTier;
-  context?: {
+  context?: Record<string, unknown> & {
     activePanel?: string;
     selectedElementId?: string;
     selectedElementType?: string;
@@ -1856,6 +1798,8 @@ export interface AgentLoopParams {
   committedTurns?: AgentRunRow["committedTurns"];
   /** Background completion has already settled the original image action. */
   imageNotification?: boolean;
+  /** A declined image is allowed one reporting turn, never an automatic continuation. */
+  allowTaskContinuation?: boolean;
   /** Runs once the stream is open, before the first model call, and returns
    *  messages to append (a resumed tool's result). It may take a while and
    *  narrates to the client through `send`; `progress` feeds the stall watchdog. */
@@ -1986,8 +1930,20 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       provider, isByok, apiKeyTier, context, iteration, maxIterations,
       tools,
     } = params;
+    const [taskRun] = await db.select({ context: agentRuns.context }).from(agentRuns)
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId), eq(agentRuns.worldId, params.worldId)));
+    let task: StudioTask | null = params.imageNotification ? null : readStudioTask(taskRun?.context ?? context);
+    if (!task && context?.studioTaskRunner === true) task = createStudioTask(latestStudioUserText(messages), isStudioWorkRequest(latestStudioUserText(messages)) ? "work" : "answer", typeof context.studioTaskMaxSteps === "number" ? context.studioTaskMaxSteps : undefined);
+    if (task?.status === "waiting") { task.status = "working"; delete task.reason; }
+    let taskObservations: unknown[] = [];
+    let taskObservedIteration = -1;
+    const verifyTask = (schema: WorldDefinition) => {
+      if (task) task = evaluateStudioTask(task, schema, mode => executeValidateWorld(schema, { skipTsx: mode === "structure" }).issues.filter(issue => issue.severity === "error").map(issue => `[${issue.code}] ${issue.message}`));
+      return task;
+    };
+    const taskRemaining = () => task ? [task.planRequired ? "Define or update the checklist for every requested requirement." : "", ...task.requirements.filter(item => !item.verified).map(item => `${item.text}: ${item.evidence.join("; ")}`), ...task.validationErrors].filter(Boolean).join("\n").slice(0, 10000) : "";
     let imageCapabilities: StudioImageCapabilities = {};
-    const traceMessageStart = params.imageNotification ? params.messages.length : 0;
+    const traceMessageStart = params.imageNotification || context?.studioTaskParent ? params.messages.length : 0;
     let outputLanguage = normalizeStudioOutputLanguage(undefined);
     const unlimited = params.unlimited ?? false;
     const creditRecovery = studioCreditRecoveryEnabled() && !isByok && (!unlimited || !!params.creditResume);
@@ -2012,7 +1968,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     // Track SSE disconnect separately from agent abort.
     // When the SSE connection drops (e.g. Railway proxy timeout), the agent
     // continues running and saves results to DB. The client recovers via polling.
-    // Only user-initiated stop, credit exhaustion, or the 10-min safety timeout abort the agent.
+    // User Stop, credit exhaustion and the idle watchdog remain authoritative.
     let sseDisconnected = false;
     stream.onAbort(() => { sseDisconnected = true; });
 
@@ -2034,6 +1990,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     const evaluateSavedAcceptance = async () => {
       const [savedRun] = await db.select({ context: agentRuns.context }).from(agentRuns).where(ownedRunWhere()).limit(1);
       const criteria = readAcceptanceCriteria(savedRun?.context ?? null);
+      const latest = await captureStudioCreditWorldRevision(creditScope);
+      world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
       const status = await evaluateCurrentAcceptance(world, userId, params.worldId, criteria);
       if (status) await db.update(agentRuns).set({
         context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{acceptanceStatus}', ${JSON.stringify(status)}::jsonb, true)`,
@@ -2043,13 +2001,46 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     };
     const announceSteering = async (items: ReturnType<typeof readStudioSteering>) => {
       if (!items.length) return;
+      if (task) {
+        const [saved] = await db.select({ context: agentRuns.context }).from(agentRuns).where(ownedRunWhere());
+        task = readStudioTask(saved?.context) ?? task;
+      }
       cachedSystemPrompt = null;
       clearReadProgress(readProgress);
       lastWriteToolKey = "";
       textOnlyNudges = 0;
       await safeSend("steering", JSON.stringify({ runId, items }));
     };
+    const saveTask = async () => {
+      if (!task) return;
+      await db.update(agentRuns).set({ context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioTask}', ${JSON.stringify(task)}::jsonb, true)` }).where(ownedRunWhere());
+      await safeSend("task_status", JSON.stringify({ runId, task }));
+    };
+    const advanceTask = async () => {
+      if (!task) return;
+      if (task.status === "stalled" || task.status === "budget_paused") throw new StudioTaskPause();
+      if (task.maxSteps && task.steps >= task.maxSteps) {
+        task.status = "budget_paused"; task.reason = "The step limit you set was reached. Completed work and the remaining checklist are saved.";
+        await saveTask(); throw new StudioTaskPause();
+      }
+      if (taskObservedIteration === iteration || task.observedStep === `${runId}:${iteration}`) return;
+      const latest = await captureStudioCreditWorldRevision(creditScope);
+      world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
+      verifyTask(world);
+      const observed = observeStudioTask(task, world, taskObservations);
+      task = observed.task; task.observedStep = `${runId}:${iteration}`; taskObservations = []; taskObservedIteration = iteration;
+      if (observed.recovery) messages = withToolNote(messages, taskRecoveryNote(task));
+      if (task.status !== "stalled" && task.maxSteps && task.steps >= task.maxSteps) {
+        task.status = "budget_paused"; task.reason = "The step limit you set was reached. Completed work and the remaining checklist are saved.";
+      }
+      await saveTask();
+      if (task.status === "stalled" || task.status === "budget_paused") throw new StudioTaskPause();
+    };
     const finishCreditIteration = async (nextMessages: ChatMessage[], nextIteration: number, contextPatch?: Record<string, unknown>) => {
+      if (task && nextIteration > iteration) {
+        messages = nextMessages; await advanceTask(); nextMessages = messages;
+      }
+      if (task) contextPatch = { ...contextPatch, studioTask: task };
       if (reservationId) {
         await releaseStudioCreditReservation(userId, reservationId);
         reservationId = undefined;
@@ -2059,14 +2050,14 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       // the next checkpoint. Both changes commit under the same run-row lock.
       if (creditClaimId) {
         const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (_tx, checkpoint, _schema, run) => {
-          const consumed = nextIteration < maxIterations ? consumeStudioSteering(run.context, nextMessages, nextIteration) : null;
+          const consumed = (task || nextIteration < maxIterations) ? consumeStudioSteering({ ...run.context, ...contextPatch }, nextMessages, nextIteration) : null;
           nextMessages = consumed?.messages ?? nextMessages;
           applied = consumed?.items ?? [];
           return { value: null, checkpoint: {
             version: 1 as const, phase: "preflight" as const, messages: nextMessages,
             iteration: nextIteration, worldRevision: checkpoint.worldRevision, requiredCredits: 0,
           }, runUpdates: { messages: nextMessages as unknown as Array<Record<string, unknown>>, iteration: nextIteration,
-            ...((consumed || contextPatch) ? { context: { ...(consumed?.context ?? run.context), ...contextPatch } } : {}) } };
+            ...((consumed || contextPatch) ? { context: { ...run.context, ...contextPatch, ...consumed?.context } } : {}) } };
         }, { rebase: true });
         creditCheckpoint = saved.checkpoint;
       } else {
@@ -2074,11 +2065,11 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           await tx.select({ id: worlds.id }).from(worlds).where(eq(worlds.id, params.worldId)).for("update");
           const [run] = await tx.select().from(agentRuns).where(ownedRunWhere()).for("update");
           if (!run) { controller.abort(); return; }
-          const consumed = nextIteration < maxIterations ? consumeStudioSteering(run.context, nextMessages, nextIteration) : null;
+          const consumed = (task || nextIteration < maxIterations) ? consumeStudioSteering({ ...run.context, ...contextPatch }, nextMessages, nextIteration) : null;
           nextMessages = consumed?.messages ?? nextMessages;
           applied = consumed?.items ?? [];
           await tx.update(agentRuns).set({ messages: nextMessages as unknown as Array<Record<string, unknown>>,
-            iteration: nextIteration, ...((consumed || contextPatch) ? { context: { ...(consumed?.context ?? run.context), ...contextPatch } } : {}), updatedAt: new Date() }).where(ownedRunWhere());
+            iteration: nextIteration, ...((consumed || contextPatch) ? { context: { ...run.context, ...contextPatch, ...consumed?.context } } : {}), updatedAt: new Date() }).where(ownedRunWhere());
         });
       }
       messages = nextMessages;
@@ -2090,17 +2081,35 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       if (isShutdownAbort(controller.signal)) return true;
       let applied: ReturnType<typeof readStudioSteering> = [];
       let finished = true;
-      const nextState = (run: AgentRunRow) => {
+      const nextState = (run: AgentRunRow, schema: Record<string, unknown>) => {
+        if (task) {
+          if (["awaiting_user", "awaiting_approval"].includes(set.status ?? "") && task.observedStep !== `${runId}:${iteration}`) { task.steps++; task.observedStep = `${runId}:${iteration}`; }
+          if (set.status === "completed") {
+            verifyTask(migrateWorldDefinition(schema as unknown as WorldDefinition));
+            if (!task!.met) {
+              if (opts?.allowSteering && params.allowTaskContinuation !== false && !controller.signal.aborted) {
+                task!.status = "working"; finished = false;
+                messages = [...((set.messages ?? messages) as unknown as ChatMessage[]), { role: "user", content: "The saved card changed before the final check. Continue and repair the remaining requirements: " + taskRemaining() }];
+                return { ...set, status: "running" as const, iteration: iteration + 1, messages: messages as unknown as Array<Record<string, unknown>>, context: { ...run.context, ...set.context, studioTask: task } };
+              }
+              set.status = "awaiting_user"; task!.status = "stalled"; task!.reason = "The task stopped with unverified work remaining. Continue to finish the saved checklist.";
+            }
+            else task!.status = "completed";
+          } else if (set.status === "awaiting_user" && task.status === "working") task.status = "needs_input";
+          else if (set.status === "awaiting_approval") task.status = "waiting";
+          else if (set.status === "error") task.status = "interrupted";
+          set.context = { ...set.context, studioTask: task };
+        }
         // Acceptance and this decision use the same row lock. An accepted
         // follow-up cannot be stranded between the last check and completion.
-        if (opts?.allowSteering && iteration + 1 < maxIterations && !controller.signal.aborted) {
-          const consumed = consumeStudioSteering(run.context,
+        if (opts?.allowSteering && (task || iteration + 1 < maxIterations) && !controller.signal.aborted) {
+          const consumed = consumeStudioSteering({ ...run.context, ...set.context },
             (set.messages ?? messages) as unknown as ChatMessage[], iteration + 1);
           if (consumed.items.length) {
             applied = consumed.items;
             messages = consumed.messages;
             finished = false;
-            return { messages: messages as unknown as Array<Record<string, unknown>>, context: { ...consumed.context, ...set.context, [STUDIO_STEERING_KEY]: consumed.context[STUDIO_STEERING_KEY] },
+            return { messages: messages as unknown as Array<Record<string, unknown>>, context: { ...set.context, ...consumed.context, [STUDIO_STEERING_KEY]: consumed.context[STUDIO_STEERING_KEY] },
               iteration: iteration + 1, status: "running" as const };
           }
         }
@@ -2115,7 +2124,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           reservationId = undefined;
         }
         const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (_tx, checkpoint, _schema, run) => {
-          const updates = nextState(run);
+          const updates = nextState(run, _schema);
           return { value: null, checkpoint: finished ? null : {
             version: 1 as const, phase: "preflight" as const, messages, iteration: iteration + 1,
             worldRevision: checkpoint.worldRevision, requiredCredits: 0,
@@ -2127,10 +2136,14 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         await db.transaction(async tx => {
           await tx.select({ id: worlds.id }).from(worlds).where(eq(worlds.id, params.worldId)).for("update");
           const [run] = await tx.select().from(agentRuns).where(ownedRunWhere()).for("update");
-          if (run) await tx.update(agentRuns).set({ ...nextState(run), updatedAt: new Date() }).where(ownedRunWhere());
+          if (run) {
+            const latest = await captureStudioWorldRevisionInTransaction(tx, creditScope);
+            await tx.update(agentRuns).set({ ...nextState(run, latest.schema), updatedAt: new Date() }).where(ownedRunWhere());
+          }
         });
       }
       await announceSteering(applied);
+      if (task) await safeSend("task_status", JSON.stringify({ runId, task }));
       return finished;
     };
     const sendCreditBalance = async (cost?: number) => {
@@ -2139,6 +2152,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       return balances;
     };
     const pauseForCredits = async (checkpoint: StudioCreditCheckpoint, reason = "INSUFFICIENT_CREDITS") => {
+      if (task) { task.status = "waiting"; task.reason = "Waiting for credits. Completed work and the checklist are saved."; await saveTask(); }
       // Persist the result before any independent hold release. If the worker
       // dies next, the result survives and the abandoned lease expires.
       const paused = await pauseStudioForCredits(creditScope, checkpoint, creditClaimId, reason);
@@ -2171,6 +2185,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     const safeSend = async (event: string, data: string) => {
       if (controller.signal.aborted || sseDisconnected) return;
       try {
+        if (event === "done" && task && task.status !== "completed") data = JSON.stringify({ ...JSON.parse(data), status: task.status === "interrupted" || task.status === "stopped" ? "error" : "awaiting_user" });
         await stream.writeSSE({ event, data });
         lastSendTime = Date.now();
       } catch {
@@ -2225,7 +2240,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       if (controller.signal.aborted) return;
       const sinceProgress = Date.now() - lastProgressAt;
       const sinceStart = Date.now() - runStartedAt;
-      if (sinceProgress > IDLE_TIMEOUT_MS || sinceStart > ABSOLUTE_TIMEOUT_MS) {
+      if (sinceProgress > IDLE_TIMEOUT_MS || (!task && sinceStart > ABSOLUTE_TIMEOUT_MS)) {
         const reason = sinceProgress > IDLE_TIMEOUT_MS
           ? "Agent stalled — no model output for 3 minutes."
           : "Agent timed out after 30 minutes.";
@@ -2390,9 +2405,29 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     const gateAcceptanceCompletion = async (response: string): Promise<
       { kind: "clear" } | { kind: "continue" } | { kind: "unmet"; status: NonNullable<Awaited<ReturnType<typeof evaluateSavedAcceptance>>>; reply: string }
     > => {
+      if (task) {
+        await advanceTask();
+        if (!task.met) {
+          let jobs = await configuredImageJobs.list(userId, params.worldId, params.conversationId, runId);
+          if (jobs.some(job => job.status === "queued" || job.status === "running")) {
+            task.status = "waiting"; await saveTask();
+            while (!controller.signal.aborted && jobs.some(job => job.status === "queued" || job.status === "running")) {
+              await new Promise<void>(resolve => { const done = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", done); resolve(); }; const timer = setTimeout(done, 1000); controller.signal.addEventListener("abort", done, { once: true }); });
+              noteProgress();
+              jobs = await configuredImageJobs.list(userId, params.worldId, params.conversationId, runId);
+            }
+            task.status = "working";
+            messages = withToolNote(messages, "Image jobs finished. Use their saved references or handle the actual failure: " + JSON.stringify(jobs));
+          }
+          messages = [...messages, { role: "assistant", content: response }, { role: "user", content: `Continue the saved task. Do not claim completion before these checks pass:\n${taskRemaining()}` }];
+          await finishCreditIteration(messages, iteration + 1);
+          iteration++; lastTextContent = response;
+          return { kind: "continue" };
+        }
+      }
       const status = await evaluateSavedAcceptance();
       if (!status || status.met) return { kind: "clear" };
-      if (!controller.signal.aborted && iteration + 1 < maxIterations) {
+      if (!controller.signal.aborted && ((task && params.allowTaskContinuation !== false) || iteration + 1 < maxIterations)) {
         messages = [...messages, { role: "assistant", content: response }, acceptanceCriteriaTurn(formatUnmetAcceptance(status))];
         await finishCreditIteration(messages, iteration + 1, { acceptanceStatus: status });
         iteration++;
@@ -2406,7 +2441,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       const replyIteration = committedTurns.some((turn) => turn.iteration === iteration) ? iteration + 1 : iteration;
       messages = [...messages, { role: "assistant", content: reply }];
       await commitTextTurn(replyIteration, reply, { lane: "answer" });
-      const finished = await finalizeRun({ status: "completed", messages: messages as unknown as Array<Record<string, unknown>>,
+      const finished = await finalizeRun({ status: "awaiting_user", messages: messages as unknown as Array<Record<string, unknown>>,
         textContent: reply, iteration: replyIteration, context: { acceptanceStatus: status } }, { allowSteering: true });
       if (!finished) {
         iteration++;
@@ -2481,6 +2516,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       imageCapabilities = {
         imageGeneration: isSmartGenerationEnabled() || personalImages.configs.codex.configured || personalImages.configs.comfyui.configured || personalImages.configs.forgeneo.configured,
         imageBatchGeneration: isImageBatchEnabled(),
+        localImageGeneration: !personalImages.configs.comfyui.adminDisabled,
       };
       tools = tools.filter(tool =>
         (tool.function.name !== IMAGE_TOOL_NAME || imageCapabilities.imageGeneration) &&
@@ -2525,8 +2561,12 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         }
       }
 
-      while (iteration < maxIterations) {
+      while (iteration < maxIterations || (task && params.allowTaskContinuation !== false)) {
         if (controller.signal.aborted) break;
+        if (iteration >= maxIterations) {
+          maxIterations = iteration + MAX_ITERATIONS;
+          await db.update(agentRuns).set({ maxIterations }).where(ownedRunWhere());
+        }
         // Read the account preference on every step, including resumes and steering.
         const [profile] = await db.select({ preferences: user.preferences }).from(user).where(eq(user.id, userId)).limit(1);
         const nextLanguage = normalizeStudioOutputLanguage((profile?.preferences as Record<string, unknown> | null)?.studioOutputLanguage);
@@ -2537,9 +2577,11 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           if (controller.signal.aborted) break;
         }
         noteProgress();
-        const sourceRevision = creditRecovery ? await captureStudioCreditWorldRevision(creditScope) : null;
+        const sourceRevision = await captureStudioCreditWorldRevision(creditScope);
+        let expectedWorkingSchema = sourceRevision.schema;
         if (sourceRevision && !replayGenerated) {
           world = migrateWorldDefinition(sourceRevision.schema as unknown as WorldDefinition);
+          if (task) { verifyTask(world); await saveTask(); }
           cachedSystemPrompt = null;
         }
 
@@ -2573,6 +2615,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
             + "\nContinue independent work while queued/running. Use completed refs for image-dependent work. If not ready, explain that the image is still drawing and end this turn; do not repeatedly poll, regenerate, or claim it finished. NSFW_IMAGE_REQUEST means generation is disabled for NSFW requests; tell the creator no image was generated." });
         }
 
+        if (task && !summarizing) systemContent.push({ type: "text", text: studioTaskPrompt(task) });
         if (!summarizing && endpointContextWindow !== undefined) {
           const inputBudget = Math.floor((endpointContextWindow - endpointOutputLimit(MAX_OUTPUT)) * 0.85);
           const fixedTokens = estimateStudioTokens([{ role: "system", content: systemContent }]) + estimateTextTokens(JSON.stringify(requestTools));
@@ -2769,8 +2812,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           // /agent/stop, or supersession already wrote its own terminal status,
           // and "Stopped by user." must not overwrite e.g. the stall reason.
           await finalizeRun({
-            status: controller.signal.aborted ? "completed" : "error",
-            error: controller.signal.aborted ? "Stopped by user." : errMsg,
+            status: "error",
+            error: controller.signal.aborted ? (controller.signal.reason instanceof Error ? controller.signal.reason.message : "Task interrupted.") : errMsg,
             textContent: textContent || lastTextContent || undefined,
           }).catch(() => {});
           if (!controller.signal.aborted) {
@@ -3034,7 +3077,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           // handles models (Sonnet, Qwen3, DeepSeek, GPT, Gemini) that sometimes "plan" in
           // text instead of calling tools.
           if (
-            textOnlyNudges < MAX_TEXT_NUDGES &&
+            !task && textOnlyNudges < MAX_TEXT_NUDGES &&
             textContent.trim().length > 0 &&
             iteration < maxIterations - 1 &&
             !anyToolExecuted
@@ -3227,7 +3270,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
                 const imageRoute = resolveStudioImageRoute(input, personal, refs.length, imageKind, isSmartGenerationEnabled());
                 const parallelSource = imageRoute.source;
                 const parallelProposal = normalizeImageProposal({ ...input, imageKind, target: autoContext.target, referenceImages: refs,
-                  ...imageRoute,
+                  ...imageRoute, imageWorkflow: imageRoute.workflow,
                   ...(autoContext.target ? { target: autoContext.target } : {}), ...(autoContext.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
                   ...(autoContext.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(parallelSource ? { source: parallelSource,
                   model: imageRoute.workflow === "krea" ? "Krea2-Anime v2.0 INT4 · local" : parallelSource === "codex" ? CODEX_IMAGE_LABEL : parallelSource === "forgeneo" ? (personal.configs.forgeneo.model || "Forge Neo") : "ComfyUI" } : {}) });
@@ -3272,7 +3315,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           const imageRoute = resolveStudioImageRoute(raw, personal, referenceImages.length, imageKind, isSmartGenerationEnabled());
           const source = imageRoute.source;
           const proposal = normalizeImageProposal({ ...raw, imageKind, target: autoContext?.target, referenceImages,
-            ...imageRoute,
+            ...imageRoute, imageWorkflow: imageRoute.workflow,
             ...(autoContext?.target ? { target: autoContext.target } : {}), ...(autoContext?.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
             ...(autoContext?.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(source ? { source,
             model: imageRoute.workflow === "krea" ? "Krea2-Anime v2.0 INT4 · local" : source === "codex" ? CODEX_IMAGE_LABEL : source === "forgeneo" ? (personal.configs.forgeneo.model || "Forge Neo") : "ComfyUI" } : {}) });
@@ -3446,6 +3489,13 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
                 ...missingAssets.map((asset) => ({ severity: "error" as const, code: "missing-image-asset", message: `Image reference ${asset.ref} is unavailable: ${asset.reason}`, evidence: asset.ref, fix: "Use an owned image @asset reference from list_assets or import a new image." })),
               ];
               allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: { ...report, clean: blockingErrors.length === 0, blockingErrors } });
+            } else if (tc.function.name === "update_task_plan" || tc.function.name === "check_task_progress") {
+              if (!task) task = createStudioTask(latestStudioUserText(messages), "work");
+              if (tc.function.name === "update_task_plan") task = upsertTaskRequirements(task, args.requirements);
+              const latest = await captureStudioCreditWorldRevision(creditScope);
+              verifyTask(migrateWorldDefinition(latest.schema as unknown as WorldDefinition));
+              await saveTask();
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: task });
             } else if (tc.function.name === "set_acceptance_criteria") {
               const criteria = normalizeAcceptanceCriteria(args.criteria);
               const activeCriteria = Object.keys(criteria).length > 0 ? criteria : null;
@@ -3533,6 +3583,9 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           await safeSend("read_tools_executed", JSON.stringify({ iteration, readResults: readStatuses }));
         }
 
+        taskObservations.push(...allResults.filter(result => !["update_task_plan", "check_task_progress", "check_acceptance_criteria"].includes(result.name))
+          .map(({ name, status, result, error }) => ({ name, status, result, error })));
+        if (task && writeCalls.length && task.mode === "answer") { task.mode = "work"; task.planRequired = true; task.met = false; }
         // Step 3: If no writes, add results and continue loop
         if (writeCalls.length === 0) {
           messages = [
@@ -3582,7 +3635,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           // counts as progress no matter how often the file has been touched. Only the
           // identical call, re-issued, is a spiral. See lib/studio-tools/read-progress.ts.
           const touches = extractReadTouches(readCalls);
-          if (touches.length > 0) {
+          if (!task && touches.length > 0) {
             const verdict = recordReadTouches(readProgress, touches);
 
             if (verdict.kind === "stop") {
@@ -3688,10 +3741,16 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         // Map from toolCallId to the corresponding writeCall (for multi-delete expansion)
         const writeCallById = new Map(writeCalls.map((tc) => [tc.id, tc]));
 
+        let staleWriteBatch = false;
         for (const [parsedIndex, parsed] of parsedCalls.entries()) {
           if (controller.signal.aborted) break;
           const tc = writeCallById.get(parsed.toolCallId);
           if (!tc) continue;
+          if (staleWriteBatch) {
+            allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error", result: null,
+              error: "Card changed during this batch. Read the latest target and retry this unapplied change." });
+            continue;
+          }
           const progressKey = `${tc.id}:${parsedIndex}`;
           const committedResult = creditCheckpoint?.phase === "generated" ? creditCheckpoint.generated.progress?.[progressKey] : undefined;
           if (committedResult) {
@@ -3732,9 +3791,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
 
           if (singleResult.success) {
             const schemaChanged = JSON.stringify(singleResult.world) !== JSON.stringify(world);
+            const beforeWrite = world;
             world = singleResult.world;
-            appliedCount++;
-            noteProgress();
             const note = singleResult.results[0]?.note;
 
             // Build rich result so the agent doesn't need to re-read the entity
@@ -3768,18 +3826,27 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
                 });
                 creditCheckpoint = saved.checkpoint;
               } else {
-                await writeStudioWorldSchema({ worldId, creatorId: params.userId, schema: world as unknown as Record<string, unknown> });
+                await writeScopedStudioWorldSchema({ worldId, userId: params.userId, runId, schema: world as unknown as Record<string, unknown>, expectedSchema: expectedWorkingSchema });
+                expectedWorkingSchema = JSON.parse(JSON.stringify(world)) as Record<string, unknown>;
               }
               saved = true;
+              appliedCount++;
+              noteProgress();
             } catch (saveErr) {
               // The transaction left both the stored world and journal intact.
               // Pause the unfinished step instead of advancing its in-memory copy.
               if (creditClaimId) throw saveErr;
+              world = beforeWrite;
+              staleWriteBatch = true;
+              const latest = await captureStudioCreditWorldRevision(creditScope);
+              world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
+              cachedSystemPrompt = null;
               console.error("[Agent] World save failed:", saveErr instanceof Error ? saveErr.message : saveErr);
               allResults[allResults.length - 1] = {
                 ...allResults[allResults.length - 1]!,
                 status: "error",
-                error: `Applied but failed to save: ${saveErr instanceof Error ? saveErr.message : "DB error"}`,
+                result: null,
+                error: `Change was not saved: ${saveErr instanceof Error ? saveErr.message : "DB error"}. Read the latest target before retrying.`,
               };
             }
             if (saved && schemaChanged) {
@@ -3787,7 +3854,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               catch (markerErr) { console.error("[Agent] Applied-change marker failed:", markerErr instanceof Error ? markerErr.message : markerErr); }
             }
 
-            await safeSend("applied", JSON.stringify({
+            if (saved) await safeSend("applied", JSON.stringify({
               changes: 1,
               autoExecuted: true,
               reason: `${tc.function.name} "${change.id}"`,
@@ -3809,6 +3876,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           }
         }
 
+        taskObservations.push(...allResults.filter(result => result.status === "error").map(({ name, status, error }) => ({ name, status, error })));
         await traceResults(toolCalls, allResults);
         cachedSystemPrompt = null;
 
@@ -3850,7 +3918,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
 
         // Catch duplicate write batches (model retrying a failing write with identical args).
         const toolKey = toolCalls.map((tc) => tc.function.name + ":" + tc.function.arguments).sort().join("|");
-        if (toolKey === lastWriteToolKey) {
+        if (!task && toolKey === lastWriteToolKey) {
           const acceptanceGate = await gateAcceptanceCompletion(textContent || lastTextContent);
           if (acceptanceGate.kind === "continue") {
             lastWriteToolKey = "";
@@ -3888,7 +3956,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       // watchdog or /agent/stop already recorded a terminal status, this
       // fallthrough must NOT restamp it as "completed".
       await finalizeRun({
-        status: "completed",
+        status: controller.signal.aborted ? "error" : "completed",
+        ...(controller.signal.aborted ? { error: controller.signal.reason instanceof Error ? controller.signal.reason.message : "Task interrupted." } : {}),
         messages: messages as unknown as Array<Record<string, unknown>>,
         textContent: lastTextContent || undefined,
         iteration,
@@ -3900,6 +3969,14 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       }));
 
     } catch (err) {
+      if (err instanceof StudioTaskPause && task && !controller.signal.aborted) {
+        const reply = `${task.reason ?? "Task paused."}\n\n${taskRemaining()}`;
+        messages = [...messages, { role: "assistant", content: reply }];
+        await commitTextTurn(iteration + 1, reply, { lane: "notice" });
+        await finalizeRun({ status: "awaiting_user", context: { studioTask: task }, messages: messages as unknown as Array<Record<string, unknown>>, textContent: reply, iteration }, { consumeClaim: true });
+        await safeSend("done", JSON.stringify({ runId, status: "awaiting_user" }));
+        return;
+      }
       const errMsg = err instanceof Error ? err.message : "Agent loop failed";
       // A recovered worker owns this run now. Do not finalize it, replace its
       // transcript, or report the old worker's failure as the current result.
@@ -3936,6 +4013,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           // provider call from an explicit stop instead of claiming success.
           await db.update(agentRuns).set({
             status: "error", error: "Server restarted. Please retry.", updatedAt: new Date(),
+            context: sql`CASE WHEN ${agentRuns.context}->'studioTask' IS NOT NULL THEN jsonb_set(${agentRuns.context}, '{studioTask,status}', '"interrupted"'::jsonb) ELSE ${agentRuns.context} END`,
           }).where(ownedRunWhere()).catch(() => {});
         }
       }

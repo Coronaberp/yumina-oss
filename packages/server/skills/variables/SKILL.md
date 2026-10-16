@@ -13,10 +13,12 @@ description: Create and manage game state variables (stats, inventory, flags, re
 | inventory | Item collections | json (array) | Equipment, quest items |
 | resource | Consumable numbers, min 0 | number | Gold, food, ammo |
 | flag | Boolean toggles | boolean | Quest complete, NPC met |
-| relationship | NPC affinity/reputation | number (-100–100) | Trust, fear, romance |
+| relationship | MRPG relationship/reputation management | signed numeric stage progress + read-only string state + milestone flags | Current standing and earned bonds; follow world-design Pattern 2 |
 | custom | Anything else | string/number | Location, scene ID, phase |
 
 ## behaviorRules — CRITICAL
+
+Relationship management on any card defaults to Magic Academy RPG (MRPG)'s current-state progression in world-design Pattern 2. Use a different system only when the user explicitly asks for their own relationship system. The AI adds/subtracts action progress and records earned milestones; engine behaviors own state changes and resets. Preserve existing earned progress and history. Do not substitute a cumulative affinity score, numeric-sign labels, or a JSON trust fallback because the cast is large.
 
 behaviorRules tell the gameplay AI when and how to change the variable. Without them, the AI won't update variables. Write them as specific instructions.
 

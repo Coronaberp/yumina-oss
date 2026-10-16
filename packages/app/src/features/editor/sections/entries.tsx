@@ -1,3 +1,4 @@
+import { Select } from "@/components/ui/select";
 import { LoreMemoryFields } from "../components/lore-memory-fields";
 import { useState, useRef, useMemo, useCallback, useEffect, memo } from "react";
 import { useTranslation } from "react-i18next";
@@ -1365,16 +1366,16 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                 {scopeWorldbookId === undefined && worldbooks.length > 0 && (
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-foreground">{t("entries.worldbookLabel")}</label>
-                    <select
+                    <Select compact
                       value={selected.worldbookId ?? ""}
-                      onChange={(e) => setEntryWorldbook(selected.id, e.target.value || undefined)}
+                      onValueChange={(selectedValue) => setEntryWorldbook(selected.id, selectedValue || undefined)}
                       className="w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                       <option value="">{t("entries.worldbookCore")}</option>
                       {worldbooks.map((wb) => (
                         <option key={wb.id} value={wb.id}>{wb.name}</option>
                       ))}
-                    </select>
+                    </Select>
                     <p className="text-xs text-muted-foreground/60">{t("entries.worldbookHint")}</p>
                   </div>
                 )}
@@ -1764,13 +1765,12 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                       {(selected.secondaryKeywords ?? []).length > 0 && (
                         <div className="space-y-3">
                           <label className="text-sm font-bold text-foreground">{t("entries.secondaryLogicLabel")}</label>
-                          <select
+                          <Select compact
                             value={selected.secondaryKeywordLogic ?? "AND_ANY"}
-                            onChange={(e) =>
+                            onValueChange={(selectedValue) =>
                               updateEntry(selected.id, {
-                                secondaryKeywordLogic: e.target.value as WorldEntry["secondaryKeywordLogic"],
-                              })
-                            }
+                                secondaryKeywordLogic: selectedValue as WorldEntry["secondaryKeywordLogic"],
+                              })}
                             className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground transition-all focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 [&>option]:bg-popover"
                           >
                             {SECONDARY_LOGIC_OPTIONS.map((opt) => (
@@ -1778,7 +1778,7 @@ export function EntriesSection({ compact, mobileListMode, scopeWorldbookId }: { 
                                 {opt.label} — {opt.hint}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </div>
                       )}
 

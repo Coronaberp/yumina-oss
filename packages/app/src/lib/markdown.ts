@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { parseImageEmbeds, renderImageEmbedHtml } from "@yumina/engine";
 import { resolveImageUrl } from "./asset-url";
+import { createChatMarkdownRenderer } from "./chat-markdown";
 
 interface HtmlEmbedPayload {
   html: string;
@@ -153,124 +154,14 @@ function renderHtmlEmbedHtml(embed: HtmlEmbed): string {
   return `<iframe class="my-2 w-full rounded-lg border border-border/50 bg-transparent" style="height:${embed.height}px;" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy" srcdoc="${srcDoc}"></iframe>`;
 }
 
-/**
- * Render a chat message to safe HTML.
- *
- * Pipeline:
- *   1. Protect code blocks / inline code from processing
- *   2. Parse image embed directives [image:https://...|size=...|placement=...]
- *   3. Escape HTML in non-code regions
- *   4. Apply built-in markdown (bold, italic)
- *   5. Restore code blocks
- *   6. Add line breaks
- *   7. Restore image embeds
- *   8. Restore html iframe embeds from ```html``` blocks
- *   9. Sanitize with DOMPurify
- */
+const renderChatMessage = createChatMarkdownRenderer({
+  resolveImageSrc: resolveMarkdownImageSrc,
+  renderHtmlEmbed: code => renderHtmlEmbedHtml(parseHtmlEmbed(code)),
+});
+
+/** Shared CommonMark/GFM rendering for Studio's Chat preview. */
 export function renderMessage(raw: string): string {
-  const codeBlocks: string[] = [];
-  const htmlEmbeds: HtmlEmbed[] = [];
-  let html = raw;
-
-  // Fenced code blocks ```...```
-  html = html.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-    const normalizedLang = String(lang ?? "").trim().toLowerCase();
-    if (HTML_EMBED_LANGS.has(normalizedLang)) {
-      const idx = htmlEmbeds.length;
-      htmlEmbeds.push(parseHtmlEmbed(code));
-      return `\x00HB${idx}\x00`;
-    }
-
-    const idx = codeBlocks.length;
-    codeBlocks.push(
-      `<pre class="my-2 rounded bg-black/30 p-3 text-sm overflow-x-auto"><code>${escapeHtml(code)}</code></pre>`,
-    );
-    return `\x00CB${idx}\x00`;
-  });
-
-  // Inline code `...`
-  html = html.replace(/`([^`]+)`/g, (_match, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push(
-      `<code class="rounded bg-black/30 px-1.5 py-0.5 text-sm">${escapeHtml(code)}</code>`,
-    );
-    return `\x00CB${idx}\x00`;
-  });
-
-  // Parse [image:...] directives outside code blocks.
-  const parsedImages = parseImageEmbeds(html);
-  const imageEmbeds = parsedImages.embeds;
-  html = parsedImages.cleanText;
-
-  html = escapeHtml(html);
-
-  // Bold + italic: ***...***
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  // Bold: **...**
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Italic: *...*
-  html = html.replace(ITALIC_RE, "<em>$1</em>");
-
-  // Standard markdown images: ![alt](url)
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, src) => {
-    return `<img src="${resolveMarkdownImageSrc(src)}" alt="${alt}" class="rounded-lg max-w-full" loading="lazy" />`;
-  });
-
-  // Standard markdown links: [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, href) => {
-    return renderMarkdownLinkHtml(text, href);
-  });
-
-  html = html.replace(/\x00CB(\d+)\x00/g, (_match, idx) => codeBlocks[Number(idx)] ?? "");
-
-  html = html.replace(/\n/g, "<br />");
-
-  // Restore rich image cards.
-  html = html.replace(/\x00IM(\d+)\x00/g, (_match, idx) => {
-    const embed = imageEmbeds[Number(idx)];
-    return embed ? renderImageEmbedHtml(embed, resolveMarkdownImageSrc) : "";
-  });
-
-  // Restore iframe-based html ui blocks.
-  html = html.replace(/\x00HB(\d+)\x00/g, (_match, idx) => {
-    const embed = htmlEmbeds[Number(idx)];
-    return embed ? renderHtmlEmbedHtml(embed) : "";
-  });
-
-  html = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: [
-      "span",
-      "div",
-      "img",
-      "strong",
-      "em",
-      "br",
-      "hr",
-      "button",
-      "p",
-      "pre",
-      "code",
-      "b",
-      "i",
-      "a",
-      "iframe",
-    ],
-    ALLOWED_ATTR: [
-      "class",
-      "style",
-      "src",
-      "srcdoc",
-      "alt",
-      "referrerpolicy",
-      "data-yumina-choice",
-      "href",
-      "target",
-      "sandbox",
-      "loading",
-    ],
-  });
-
-  return html;
+  return renderChatMessage(raw);
 }
 
 /**

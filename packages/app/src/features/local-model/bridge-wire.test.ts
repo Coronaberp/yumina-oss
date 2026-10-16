@@ -27,9 +27,10 @@ test('native and compatible computer requests preserve JSON mode, terminal reaso
   };
   const bridge=new LocalBridge({runtime:{kind:native?'ollama':'lmstudio',label:'Test',origin:native?'http://127.0.0.1:11434':'http://127.0.0.1:1234',native},models:[{id:'test'}]});
   try{
-   await bridge.start();Source.current.dispatchEvent(new MessageEvent('job',{data:JSON.stringify({requestId:'job',payload:{model:'test',messages:[{role:'user',content:'Hi'}],num_ctx:32768,...(structured?{response_format:{type:'json_object'}}:{})}})}));
+   await bridge.start();Source.current.dispatchEvent(new MessageEvent('job',{data:JSON.stringify({requestId:'job',payload:{model:'test',messages:[{role:'user',content:'Hi'}],num_ctx:32768,reasoning_effort:'low',think:'low',...(structured?{response_format:{type:'json_object'}}:{})}})}));
    await finished;
    assert.equal(runtimeBodies.length,1);
+   assert.equal(native?runtimeBodies[0].think:runtimeBodies[0].reasoning_effort,'low');
    assert.deepEqual(native?runtimeBodies[0].format:runtimeBodies[0].response_format,structured?(native?'json':{type:'json_object'}):undefined);
    assert.deepEqual(reports.map(r=>r.kind),['chunk','done']);assert.equal(reports[1].stopReason,'length');assert.deepEqual(reports[1].usage,{promptTokens:7,completionTokens:4});
   }finally{bridge.stop();}

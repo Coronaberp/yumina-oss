@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GameStateManager, ResponseParser, type WorldDefinition } from "@yumina/engine";
+import { chapterSchema, advanceChapterEvents, GameStateManager, ResponseParser, type WorldDefinition } from "@yumina/engine";
 import type { TurnOutputContext } from "./extension-hooks.js";
 
 // Set inert connection settings BEFORE dynamic imports. These are pure tests:
@@ -172,6 +172,25 @@ test("narrative usage audit link is stable and deduplicated per attempt", () => 
   assert.equal(attempt.trackNarrativeUsage(), usageId);
   assert.deepEqual(attempt.audit.usageLogIds, [usageId]);
   assert.notEqual(new TurnOutputAttempt(args).trackNarrativeUsage(), usageId);
+});
+
+test("chapter moments are reviewed on send, regenerate and continue without the optional state guard", async () => {
+  const card: WorldDefinition = { ...world, chapters: [chapterSchema.parse({ id: "holder", name: "Holder", events: [{ id: "mission", name: "Mission", enabled: true, scenes: [{ id: "gate", name: "Gate", requiredMoments: [{ id: "open", description: "The gate opens." }] }], effects: [{ variableId: "hp", operation: "add", value: 2 }] }] })] };
+  for (const path of ["send", "regenerate", "continue"] as const) {
+    const state = new GameStateManager(card, { ...makeState(), activeChapterId: "holder" }).getSnapshot();
+    const signal = new AbortController().signal;
+    let calls = 0;
+    const attempt = new TurnOutputAttempt({ dispatch: absent, userId: "unit", sessionId: "unit", targetId: "unit", path, world: card, baseline: state, model: "unit", apiKeyTier: "unit", startedAt: Date.now(), worldVersion: null, pendingVersion: null, worldId: card.id, checkPending: false, signal,
+      eventRequest: async request => { calls++; assert.equal(request.stage, "review"); return { raw: JSON.stringify({ moments: [{ momentId: "open", quote: "The gate opens." }] }) }; },
+    });
+    const raw = "The gate opens.";
+    const result = await attempt.validate({ world: card, state, raw, parsed: new ResponseParser().parse(raw), signal, playerNames: [], characterNames: [], maxContext: 16000 } as unknown as Parameters<typeof attempt.validate>[0], async () => {});
+    assert.equal(calls, 1); assert.equal(result.parsed.cleanText, raw); assert.equal(attempt.enabled, false);
+    const manager = new GameStateManager(card, state);
+    advanceChapterEvents(card, manager, result.parsed.eventEvidence);
+    assert.equal(manager.get("hp"), 102);
+    assert.equal(Object.values(manager.getSnapshot().storyEvents!)[0]!.status, "completed");
+  }
 });
 
 test("uninstalled turn can use a stable usage id without generating a guard audit", () => {

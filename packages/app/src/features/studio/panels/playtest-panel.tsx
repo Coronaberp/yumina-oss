@@ -105,7 +105,7 @@ export function PlaytestPanel(_props: IDockviewPanelProps) {
         setStatus("error");
         return null;
       }
-      if (!confirmPreflightWarnings(preflight.warnings, "playtesting")) {
+      if (!await confirmPreflightWarnings(preflight.warnings, "playtesting")) {
         setStatus("idle");
         return null;
       }

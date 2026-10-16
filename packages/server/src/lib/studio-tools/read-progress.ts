@@ -1,4 +1,5 @@
 import type { ToolCall } from "../llm/types.js";
+import { normalizeStudioVisualAuditPage } from "@yumina/shared";
 import { parseToolArgs } from "./parse-tool-args.js";
 
 /** ── Read-Progress Tracker ──────────────────────────────────────────────
@@ -17,7 +18,7 @@ import { parseToolArgs } from "./parse-tool-args.js";
  *  ~2% genuine repeats.
  *
  *  So: a touch is (id, signature), where the signature captures what actually
- *  determines the response — the slice for `read_entities`, the query+scope for
+ *  determines the response — the requested batch and slice for `read_entities`, the query+scope for
  *  `grep_world`. A signature never seen before is progress, however many times
  *  its id has been touched. A signature seen before is a repeat, and three of
  *  those still ends the run, exactly as strictly as before. */
@@ -63,7 +64,7 @@ export function extractReadTouches(calls: ToolCall[]): ReadTouch[] {
   const out: ReadTouch[] = [];
   for (const tc of calls) {
     const name = tc.function.name;
-    if (name !== "read_entities" && name !== "grep_world") continue;
+    if (name !== "read_entities" && name !== "grep_world" && name !== "get_visual_audit_inputs") continue;
     let args: Record<string, unknown>;
     try {
       args = parseToolArgs(tc.function.arguments) as Record<string, unknown>;
@@ -71,17 +72,26 @@ export function extractReadTouches(calls: ToolCall[]): ReadTouch[] {
       continue;
     }
 
+    if (name === "get_visual_audit_inputs") {
+      if (args.kind !== "characters" && args.kind !== "backgrounds") continue;
+      // Match getVisualAuditInputs: a requested limit of 100 still returns 20.
+      // Default and clamped arguments must not disguise identical pages.
+      const { offset, limit } = normalizeStudioVisualAuditPage(args.offset, args.limit);
+      out.push({ id: `visual-audit:${args.kind}`, signature: `visual-audit:${JSON.stringify([offset, limit])}` });
+      continue;
+    }
+
     if (name === "read_entities") {
-      // The slice IS the request. Two reads of one file at different offsets are
-      // two different questions; only the same window twice is a re-read.
-      const signature = `read:${JSON.stringify([args.offset_lines ?? null, args.limit_lines ?? null])}`;
-      if (Array.isArray(args.ids)) {
-        for (const id of args.ids) if (typeof id === "string") out.push({ id, signature });
-      }
+      const ids = Array.isArray(args.ids) ? args.ids.filter((id): id is string => typeof id === "string") : [];
       // Models sometimes send the singular `id` here. The executor returns nothing for
       // it, so the call is pure loop fuel — still worth tracking so a model stuck on it
       // gets stopped rather than burning to the iteration cap.
-      if (typeof args.id === "string") out.push({ id: args.id, signature });
+      if (typeof args.id === "string") ids.push(args.id);
+      const batch = [...new Set(ids)].sort();
+      // Narrowing a large batch to one character returns a different, smaller
+      // payload. Preserve that progress; reordering the same IDs adds no information.
+      const signature = `read:${JSON.stringify([batch, args.offset_lines ?? null, args.limit_lines ?? null])}`;
+      for (const id of batch) out.push({ id, signature });
       continue;
     }
 
@@ -143,12 +153,14 @@ export function clearReadProgress(state: ReadProgressState): void {
  *  the "Stopped: " prefix that `studio-conversations` uses to recognize
  *  server-authored notices on rows written before `lane` existed. */
 export function readSpiralStopMessage(id: string): string {
+  if (id.startsWith("visual-audit:")) return `Stopped: repeated visual-reference pages returned information already read. Reuse those results and inspect the relevant images before making the requested change. Only request a new page if it contains references you have not read.`;
   return `Stopped: "${id}" was requested three times with identical arguments — the same call can only return the same answer. If you're chasing a syntax error or a blank render, call validate_world — it returns the exact file + line + a code window around the break. Otherwise use grep_world with a different query, or read_entities with an offset_lines range you haven't read yet, then edit_custom_ui to modify.`;
 }
 
 /** Attached to the read's tool result on the second identical request — a
  *  course correction while the model can still recover. */
 export function readRepeatNudge(id: string): string {
+  if (id.startsWith("visual-audit:")) return `You requested a visual-reference page you already have. Reuse the existing results; do not restart the catalog scan. Inspect the relevant references with view_image, then make the requested change. Request another page only if it contains unread references.`;
   return `You just re-issued an identical request for "${id}" — it returns exactly what you already have. Do not repeat it. If you're chasing a syntax error or a blank/broken render, call validate_world: it returns the exact file + line + a code window around the break, so you can fix it without re-reading. To see a part you haven't read, call read_entities({ ids: ["${id}"], offset_lines, limit_lines }) with a NEW range, or grep_world({ query: "...", id: "${id}" }) with a NEW query. If you already have what you need, proceed to edit_custom_ui.`;
 }
 
@@ -156,5 +168,6 @@ export function readRepeatNudge(id: string): string {
  *  times without an edit.
  *  Distinct slices are progress, so this only prods — it never ends the run. */
 export function readWanderNudge(id: string, turns: number): string {
+  if (id.startsWith("visual-audit:")) return `You have read ${turns} visual-reference pages. Reuse them to inspect the relevant images and make the requested change. Only fetch further pages if they contain necessary unread references.`;
   return `You've pulled ${turns} separate slices of "${id}" without editing it. That's enough context — make the change with edit_custom_ui now, or call validate_world if you're still hunting a syntax error. Only read again if you need a range you genuinely haven't seen.`;
 }

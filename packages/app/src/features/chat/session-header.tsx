@@ -11,6 +11,7 @@ import {
   Minimize,
   GitBranch,
   X,
+  Download,
 } from "lucide-react";
 import { PlayZoomControl } from "./play-zoom-control";
 import { TipButton } from "@/edition/slots";
@@ -218,6 +219,9 @@ export function SessionHeader({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => useUiStore.getState().openSessionExport()} disabled={isStreaming}>
+                <Download className="mr-2 h-4 w-4" />Export / import chat
+              </DropdownMenuItem>
               {hubEnabled && (
               <DropdownMenuItem
                 onClick={handleOpenCardOverview}

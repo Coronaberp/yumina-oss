@@ -469,6 +469,8 @@ export type WorldbookActivation =
  *  pure function of game state (variables/conditions), so it is revert-safe and
  *  needs no client round-trip. Membership is by WorldEntry.worldbookId. */
 export interface Worldbook {
+  /** Chapter ownership replaces the opening activation while retaining the master enable gate. */
+  chapterIds?: string[];
   id: string;
   name: string;
   description?: string;
@@ -590,6 +592,7 @@ export interface CoverCropSettings {
 
 /** The full World definition — the complete game package */
 export interface WorldDefinition {
+  chapters?: Array<import("../story/chapters.js").StoryChapter>;
   id: string;
   version: string;
   /** BCP 47 language code (e.g., "en", "zh", "ja"). For multi-language linking. */
@@ -704,6 +707,10 @@ export interface WorldSettings {
 
 /** Runtime game state during a play session */
 export interface GameState {
+  /** Engine-owned chapter event progress, retained by snapshots and rewinds. */
+  storyEvents?: Record<string, import("../story/chapter-event-schema.js").ChapterEventProgress>;
+  /** Current chapter; independent of the original opening, preserved by snapshots. */
+  activeChapterId?: string | null;
   worldId: string;
   variables: Record<string, number | string | boolean | Record<string, unknown> | unknown[]>;
   /** @deprecated No longer used — character identity is now an entry */

@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import sharp from "sharp";
-import { ANIMA_BUILTIN_WORKFLOW, ANIMA_OUTPUT_NODE_IDS, DEFAULT_ANIMA_MODEL } from "./anima-workflow.js";
+import { ANIMA_BUILTIN_WORKFLOW, ANIMA_OUTPUT_NODE_IDS } from "./anima-workflow.js";
 import { defaultGenerationConfig, GenerationError } from "./config.js";
 import { combinedSignal } from "./transport.js";
 import * as comfy from "./comfyui.js";
 
 type Reference = { name: string; role: "identity" | "environment" | "style" | "creator"; bytes: Buffer; contentType?: string };
-type Options = { animaModel: string; chromaColor: string; seed?: number; references?: Reference[]; progress?: (progress: { phase: string; percent?: number }) => void };
+type Options = { animaModel?: string; imageKind?: "sprite" | "background" | "image"; transparent?: boolean; chromaColor: string; seed?: number; references?: Reference[]; progress?: (progress: { phase: string; percent?: number }) => void };
 type Deps = { fetch: typeof fetch; pollDelayMs?: number };
 const generate = (comfy as unknown as { generateComfyAnimaImage?: (profile: ReturnType<typeof defaultGenerationConfig>["configs"]["comfyui"], prompt: string, signal: AbortSignal, options: Options, deps: Deps) => Promise<Record<string, unknown>> }).generateComfyAnimaImage;
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 
-test("built-in Anima API uploads owned references, returns original and BiRefNet mask, and reports metadata", async () => {
+test("built-in Anima API defaults to WaiAni, preserves references and reports output metadata", async () => {
   assert.equal(typeof generate, "function");
   const original = await sharp({ create: { width: 64, height: 64, channels: 4, background: { r: 240, g: 0, b: 220, alpha: 1 } } }).png().toBuffer();
   const matte = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
@@ -20,7 +20,7 @@ test("built-in Anima API uploads owned references, returns original and BiRefNet
   let promptGraph: Record<string, { class_type: string; inputs: Record<string, unknown> }> | undefined;
   const fetcher: typeof globalThis.fetch = async (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
     const url = new URL(String(input)); paths.push(url.pathname);
-    if (url.pathname === "/models/diffusion_models") return json(["anima-base-v1.0.safetensors", "not-anima.safetensors"]);
+    if (url.pathname === "/models/diffusion_models") return json(["anima-base-v1.0.safetensors", "wai_anima.safetensors", "not-anima.safetensors"]);
     if (url.pathname === "/models/loras") return json(["anima-turbo-lora-v0.2.safetensors", "anima-incontext-character.safetensors"]);
     if (url.pathname === "/upload/image") {
       assert.ok(init?.body instanceof FormData);
@@ -32,7 +32,7 @@ test("built-in Anima API uploads owned references, returns original and BiRefNet
     if (url.pathname === "/prompt") {
       const request = JSON.parse(String(init?.body)) as { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>; client_id: string };
       promptGraph = request.prompt;
-      assert.equal(request.prompt["1"]?.inputs.unet_name, DEFAULT_ANIMA_MODEL);
+      assert.equal(request.prompt["1"]?.inputs.unet_name, "wai_anima.safetensors");
       assert.equal(request.prompt["8"]?.inputs.steps, 8);
       assert.equal(request.prompt["20"]?.class_type, "LoraLoader");
       assert.ok(Object.values(request.prompt).some(node => node.class_type === "LoadImage" && String(node.inputs.image).startsWith("illumi-reference-")));
@@ -49,7 +49,7 @@ test("built-in Anima API uploads owned references, returns original and BiRefNet
   };
   const profile = { ...defaultGenerationConfig().configs.comfyui, enabled: true, workflow: ANIMA_BUILTIN_WORKFLOW };
   const result = await generate!(profile, "cheerful student", combinedSignal(undefined, 20_000), {
-    animaModel: DEFAULT_ANIMA_MODEL, chromaColor: "#00d8ff", seed: 71,
+    imageKind: "sprite", transparent: true, chromaColor: "#00d8ff", seed: 71,
     references: [{ name: "Signynn", role: "identity", bytes: Buffer.from("ref") }],
     progress: value => updates.push(value),
   }, { fetch: fetcher, pollDelayMs: 1 });
@@ -57,7 +57,7 @@ test("built-in Anima API uploads owned references, returns original and BiRefNet
   assert.equal((result.segmentationMaskBytes as Buffer).byteLength, matte.byteLength);
   assert.equal((result.refinedForegroundBytes as Buffer).byteLength, original.byteLength);
   assert.equal(result.seed, 71);
-  assert.equal(result.model, DEFAULT_ANIMA_MODEL);
+  assert.equal(result.model, "wai_anima.safetensors");
   assert.ok(paths.includes("/upload/image") && paths.includes("/prompt") && paths.includes("/history/anima-job"));
   assert.ok(updates.some(item => item.phase === "queued"));
   assert.ok(promptGraph);

@@ -24,6 +24,8 @@ export interface YuminaAPI {
   };
   sendMessage: (text: string, attachments?: import("@yumina/shared").ChatImageInput[]) => void;
   generateChoices?: (messageId: string) => Promise<string[]>;
+  getCharacterEncounters?: (beforeMessageId: string) => Promise<string[]>;
+  getCharacterHistory?: (characterId: string, beforeMessageId: string, label: string, swipeIndex?: number) => Promise<{ text: string; partial: boolean; model?: string; language?: string }>;
   retryPendingReply?: (messageId: string) => void;
   storyProgress?: StoryProgress;
   isCompletingEnding?: boolean;

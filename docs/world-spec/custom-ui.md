@@ -222,6 +222,11 @@ storage.remove(key: string): Promise<void>;
 ```typescript
 toggleImmersive(): void;
 openPersonaManager(): void;
+// Open the host's portable HTML export / JSON import dialog for this session.
+openSessionExport(): void;
+// Shared Routes/Chapters starting picker. Built into <Chat /> and ChatCanvas.
+// No-op after the greeting is left.
+openStoryRoutes(): void;
 getPersonaProfile(): Promise<{ name: string; appearance: string; personality: string; backstory: string; entries?: Array<{ title: string; content: string }> } | null>;
 openSupport(): Promise<{ opened: boolean; reason?: "self" | "signed-out" | "unavailable" }>;
 fetchAsset(ref: string): Promise<{ ok: boolean; bytes?: ArrayBuffer; contentType?: string; error?: string }>;
@@ -231,6 +236,8 @@ showToast(message: string, type?: "success" | "error" | "info"): void;
 resolveAssetUrl(ref: string): string;
 renderMarkdown(text: string): string;
 ```
+
+Initial scene loading stays covered until requested asset bytes arrive, displayed images finish decoding, CSS backgrounds load, and fonts used by visible text are ready. A temporary transparent asset placeholder is never treated as readiness. Once the first scene is revealed, later scene and expression changes load without returning to the startup loading screen. Autoplay videos wait for their first frame at startup. Missing startup assets keep the scene covered and offer Retry, which reloads the view from its saved session. There is no timer that reveals an unfinished opening. Saved card source and custom layouts do not need to be rewritten to inherit this behavior.
 
 `getPersonaProfile()` explicitly imports a copy of the current session's selected persona, including custom entries and excluding private notes. It returns `null` for No persona and rejects on failure. Call it when the player chooses to import, let them review the result and save their copy per run. An already imported copy changes only when the card imports again; older hosts may omit `entries` or the method itself. These persona entries are separate from the world's lorebook `api.entries`.
 
@@ -407,5 +414,7 @@ Item arrays support names, quantities and optional icons: `[{"name":"Potion","qu
 Category tabs use the ordered `groups` list in `status-config.ts`: each category has a stable `id` and an editable `label`. The editor can add, rename and remove categories, and fields select a category by ID. Removing a category moves its fields to Overview when present, otherwise the first remaining category. Older configs without `groups` retain Overview, Character and Inventory.
 
 The settings are stored as a literal JSON `statusConfig` export in `status-config.ts`. The creator agent can edit this file using its existing custom-UI tools. The visual editor and runtime use the same normalizer and renderer. Older cards using the shipped status files upgrade automatically in the editor, play mode and Studio agent; saving an edited card persists those updated files. Saved configuration, assets, overlays and game values are retained. Authored status components are preserved and require integrating new display formats in Code.
+
+VN play hides character-specific fields until that character first appears on stage or speaks on a displayed page. A name mentioned in narration does not reveal fields; unread future pages do not count. An explicit `[SPEAKER:Character:normal] *Character enters.*` marks a silent stage appearance while keeping the action styled as narration. Known character names and unique aliases in field labels, variable IDs or JSON paths associate fields automatically. For unrelated variable names, set `"characterId": "entry-id"` on the field. This filters the configuration passed to the Status layout without changing its widgets, colors, formats or authoritative values. Editor previews show all fields. Earlier completed turns are restored through the session-owned, read-only `api.getCharacterEncounters(beforeMessageId)` lookup; current-turn encounters remain scoped to the selected swipe.
 
 For built-in displays, the agent edits only the data configuration. Writes or deletes targeting shipped `status-data.ts`, `status-gauge.tsx` and `status-widgets.tsx` are rejected; these implementations are maintained by Yumina. Custom authored modules remain editable.

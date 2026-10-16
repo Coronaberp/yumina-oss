@@ -1,9 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldTrailingSystemIntoUser } from "./local-bridge.js";
+import { foldTrailingSystemIntoUser, LocalBridgeProvider } from "./local-bridge.js";
+import { addConnection, submitEvent, type BridgeJobPayload } from "../local-bridge/registry.js";
 import type { GenerateParams } from "./types.js";
 
 type Msgs = GenerateParams["messages"];
+
+test("computer-hosted checks carry low effort through the browser bridge", async () => {
+  const payloads: BridgeJobPayload[] = [];
+  const dispose = addConnection("check-user", job => {
+    payloads.push(job.payload);
+    submitEvent({ requestId: job.requestId, kind: "done", stopReason: "stop" });
+  });
+  try {
+    for (const model of ["local/gpt-oss:20b", "local/qwen3.8:27b"]) {
+      for await (const _ of new LocalBridgeProvider("check-user").generateStream({ model, messages: [{ role: "user", content: "Check the draft." }], reasoningEffortOverride: "low" })) {}
+    }
+    assert.deepEqual(payloads.map(p => p.reasoning_effort), ["low", "low"]);
+    assert.deepEqual(payloads.map(p => p.think), ["low", false]);
+  } finally { dispose(); }
+});
 
 const text = (m: Msgs[number]) => (typeof m.content === "string" ? m.content : "");
 

@@ -14,10 +14,11 @@
 import React, { useState, useRef, useLayoutEffect, useMemo } from "react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { extractResponseChoices, stripGameStateDump, stripVariableUpdateTags } from "@yumina/engine";
+import { extractResponseChoices, stripAngleVariableDirectives, stripGameStateDump, stripStateReceipts, stripVariableUpdateTags } from "@yumina/engine";
 import { useYumina } from "../sandbox-context";
 import { renderMessage, renderMarkdown } from "./markdown";
-import { displayPersonaText } from "../../src/lib/persona-profile";
+import { displayPersonaText, updatePersonaDisplayText } from "../../src/lib/persona-profile";
+import { restoreChatMarkdownIndentation } from "../../src/lib/chat-markdown-indentation";
 import { MessageRendererBoundary } from "./message-renderer-boundary";
 import {
   isContentBlockedError,
@@ -52,8 +53,8 @@ const DIR_STRUCTURAL_XML =
   /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim;
 const DIR_TRAILING = /\[[\w\p{L}\p{N}.$-]+:[^\]]*$/u;
 
-function stripDirectives(text: string): string {
-  return stripVariableUpdateTags(text)
+function stripDirectives(text: string, declaredVariables: readonly string[]): string {
+  return stripVariableUpdateTags(stripAngleVariableDirectives(text, declaredVariables, true))
     .replace(DIR_UPDATE_VAR, "")
     .replace(DIR_AUDIO, "")
     .replace(DIR_JSON, "")
@@ -120,17 +121,23 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   const t = useMemo(() => makeChatT(api.language), [api.language]);
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
+  const activeSwipeIdx = message.activeSwipeIndex ?? 0;
+  const activeSwipe = message.swipes?.[activeSwipeIdx];
   const rawContent = isUser || isSystem ? message.content
-    : stripGameStateDump(extractResponseChoices(isStreaming ? (streamingContent ?? "") : message.content).text);
+    : stripStateReceipts(stripGameStateDump(extractResponseChoices(isStreaming ? (streamingContent ?? "") : message.content).text));
   // The leading speaker tag is stripped server-side for stored content, but
   // a live stream is raw — peel it before the generic directive strip (which
   // cannot match a multi-word name).
   // While the tag itself is still arriving (`[spea`) show nothing yet: the
   // label would otherwise flash "Narrator" for a token before the face lands.
   const holdingSpeakerTag = isStreaming && isPartialLeadingSpeakerTag(rawContent);
-  const displayContent = isStreaming
-    ? holdingSpeakerTag ? "" : stripDirectives(stripLeadingSpeakerTag(rawContent))
-    : isUser || isSystem ? rawContent : stripVariableUpdateTags(rawContent.replace(DIR_VAR_WRAPPER, ""));
+  const declaredVariableIds = Object.keys(variables ?? api.variables ?? {});
+  const visibleContent = displayPersonaText(isStreaming
+    ? holdingSpeakerTag ? "" : stripDirectives(stripLeadingSpeakerTag(rawContent), declaredVariableIds)
+    : isUser || isSystem ? rawContent : stripAngleVariableDirectives(stripVariableUpdateTags(rawContent.replace(DIR_VAR_WRAPPER, "")), declaredVariableIds), api.user?.name);
+  const displayContent = useMemo(() => isStreaming || isUser || isSystem ? visibleContent
+    : restoreChatMarkdownIndentation(visibleContent, displayPersonaText(activeSwipe?.rawContent ?? message.content, api.user?.name)),
+  [visibleContent, activeSwipe?.rawContent, message.content, api.user?.name, isStreaming, isUser, isSystem]);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -163,8 +170,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   // Raw LLM output for the active swipe. Persisted server-side starting 2026-05
   // so older messages may not have it — hide the toggle when missing rather
   // than showing an empty drawer.
-  const activeSwipeIdx = message.activeSwipeIndex ?? 0;
-  const activeSwipe = message.swipes?.[activeSwipeIdx];
   const rawOutput =
     !isUser && !isStreaming && !isSystem
       ? activeSwipe?.rawContent ?? null
@@ -201,8 +206,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
     [api.entries, isUser, isSystem, speakerSource],
   );
   const sections = useMemo(
-    () => (isUser || isSystem ? [] : splitSpeakerSections([...(api.entries || []), ...["{{user}}", "You", "Player", api.user?.name].filter((name): name is string => !!name && !(api.entries || []).some(e => e.name === name && e.role === "character")).map(name => ({ name, role: "character", player: true, playerName: api.user?.name ? `${api.user.name} (You)` : "You", portrait: api.user?.avatar || null }))], displayContent, speakerSource)),
-    [api.entries, api.user?.name, api.user?.avatar, displayContent, isUser, isSystem, speakerSource],
+    () => (isUser || isSystem ? [] : splitSpeakerSections([...(api.entries || []), ...["{{user}}", "You", "Player", api.user?.name].filter((name): name is string => !!name && !(api.entries || []).some(e => e.name === name && e.role === "character")).map(name => ({ name, role: "character", player: true, playerName: api.user?.name ? `${api.user.name} (You)` : "You", portrait: api.user?.avatar || null }))], displayContent, speakerSource, { streaming: isStreaming })),
+    [api.entries, api.user, displayContent, isUser, isSystem, speakerSource, isStreaming],
   );
   const useSpeakerSections = !isUser && !RendererComp && !isEditing;
 
@@ -359,10 +364,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
               <textarea
                 ref={editTextareaRef}
                 autoFocus
-                value={editContent}
+                value={displayPersonaText(editContent ?? "", api.user?.name)}
                 disabled={isSavingEdit}
                 onChange={(e) => {
-                  onEditContentChange?.(e.target.value);
+                  onEditContentChange?.(updatePersonaDisplayText(editContent ?? "", e.target.value, api.user?.name));
                 }}
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -468,6 +473,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                   key={index}
                   className="play-message-section mb-4 last:mb-0"
                   data-speaker={section.speaker?.name ?? "narrator"}
+                  data-emotion={section.emotion}
+                  data-scene={section.scene}
                 >
                   {section.speaker ? (
                     <div className="play-message-speaker mb-1.5 flex items-center gap-2">
@@ -546,7 +553,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
         {/* Raw LLM output drawer — toggled by the eye icon in the action row. */}
         {hasRawOutput && rawExpanded && (
           <div className="mt-2 rounded-md border border-muted-foreground/15 bg-muted-foreground/[0.04] px-3 py-2 text-[11px] font-mono leading-relaxed text-muted-foreground/70 whitespace-pre-wrap break-all max-h-[40vh] overflow-y-auto">
-            {rawOutput}
+            {rawOutput && displayPersonaText(rawOutput, api.user?.name)}
           </div>
         )}
 

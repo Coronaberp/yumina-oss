@@ -33,28 +33,37 @@ Always set `section` when creating entries. The engine auto-derives `alwaysSend`
 
 ## Entry Creation by Intent
 
-| User says | Section | Tags | Extra fields |
-|-----------|---------|------|-------------|
-| "character", "NPC" | system-presets | ["Characters"] | |
-| "system prompt" | system-presets | | |
-| "scenario", "setting" | system-presets | ["Plot"] | |
-| "lore", "world info" | chat-history | | Add keywords |
-| "style guide" | system-presets | ["Style"] | |
-| "example dialogue" | system-presets | | role: "example" |
-| "format enforcement" | post-history | | |
-| "pacing reminder" | chat-history | | depth: 4 |
+| User says | Role | Section | Tags | Extra fields |
+|-----------|------|---------|------|-------------|
+| "character", "NPC", a person's profile | character | system-presets | ["Characters"] | |
+| "system prompt" | system | system-presets | | |
+| "scenario", "setting" | scenario | system-presets | ["Plot"] | |
+| "lore", "world info" | lore | chat-history | | Add keywords |
+| "style guide" | style | system-presets | ["Style"] | |
+| "example dialogue" | example | examples | | |
+| "format enforcement" | system | post-history | | |
+| "pacing reminder" | custom | chat-history | | depth: 4 |
+
+Always set the semantic `role` explicitly when creating an entry. A named character or NPC needs `role: "character"`, including a keyword-triggered "character lore" profile in `chat-history`. Section controls injection; role identifies the entry's purpose. Character role exposes the editor's portrait upload field and character viewer even before an image exists. Omit `portrait` until an owned image is available; never invent an image URL or generate an image just to expose the upload field.
+
+For a creator-supplied name, for example:
+
+```js
+write_entry({id: "mei-amery", name: "Mei Amery", role: "character", section: "system-presets", tags: ["Characters"], content: "The creator's character description…"})
+```
+
+For partial updates, reuse the existing ID and preserve omitted role, portrait and content. To correct a misclassified character, update that same entry with `role: "character"`; do not duplicate it or patch the interface to simulate a character.
 
 ## Fields to NOT set
 
 - **position** — auto-assigned. Only set explicitly to reorder or insert between entries (floats allowed).
 - **alwaysSend** — auto-derived from section. Never set.
-- **role** — auto-derived from tags. Only set for "example" (special parsing) and "greeting" (first message).
 
 ## Tags
 
 Tags are organizational labels for the editor UI. They do NOT affect prompt behavior.
 - Default tags: **"Characters"**, **"Plot"**, **"Style"**
-- First tag auto-sets the `role` field: Characters → "character", Plot → "plot", Style → "style"
+- Tags do not replace the semantic `role`. Set the role explicitly on creation. A new entry tagged "Characters" has a character-role fallback when role is omitted, but explicit roles and existing entries are preserved.
 
 ## Keywords & Matching (chat-history entries)
 
@@ -150,6 +159,8 @@ Greetings use `role: "greeting"` and appear in the **First Message** panel, not 
 Multiple greetings: create several entries with `role: "greeting"` — each becomes a swipeable first message (the platform adds swipe nav automatically). Set different `position` values to order them (lower = first); greetings are the ONE exception to the "omit position" rule above — ordinary entries still omit it.
 
 **Per-opening routes:** a greeting can carry `initialVariables` — a map of `variableId` → starting value seeded into session state when a player picks that opening (e.g. `{ "route": "mayu" }`). This is how an opening becomes a route/scenario preset: the seeded variable drives condition-mode worldbooks, conditional entries, and the frontend. A worldbook can also bind directly to an opening (activation mode `greeting`). The chosen opening is tracked as engine `activeGreetingId` (revert/branch safe) — don't reinvent it. Edited in the editor under **Variables → Per-opening values**; see the **lore** skill.
+
+**Chapters, eras and alternate timelines:** organize related starts as chapters within one universe. A chapter can cover a different time in the same history or an alternate history; several greetings can start the same chapter. Different chapter names or dates alone do not imply divergent histories or mandatory linear progression. Declare selector variables first, then seed each opening's `chapter`, `timeline` and date as needed through `initialVariables`; a separate `era` is optional, and fixed selectors can use `aiAccess:"read"`. Bind each start's lore and `role:"character"` versions to worldbooks with `activation:{mode:"greeting",greetingIds:[actualGreetingId]}` and assign their `worldbookId`. Shared, nonconflicting lore stays in Core or a book shared by compatible greetings. Preserve canonical names while using distinct entry IDs for gated versions. For chapter transitions/time jumps within a played history, use condition-mode books based on current chapter/timeline; the original greeting binding does not follow the clock. Selecting an opening does not migrate history or branch a save. Load the **lore** skill's "Chapters in a shared universe" recipe before constructing the system.
 
 For custom app components, use `api.switchGreeting(index)` from the `useYumina()` SDK to switch greetings.
 

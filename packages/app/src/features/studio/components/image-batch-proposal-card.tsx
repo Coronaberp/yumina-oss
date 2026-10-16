@@ -1,3 +1,5 @@
+import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState } from "react";
 import { Check, ImagePlus, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -80,8 +82,8 @@ export function ImageBatchProposalView({ proposal, interactive, busy, error, est
     {proposal.acceptanceMessage && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] text-muted-foreground" role="status">{proposal.acceptanceMessage}</p>}
     {proposal.purpose && <p className="mt-1 break-words text-muted-foreground">{proposal.purpose}</p>}
     {pending && <label className="mt-3 flex min-h-8 items-center gap-2 text-muted-foreground">
-      <input type="checkbox" checked={chosen.length === selectable.size && selectable.size > 0} disabled={!editable || !selectable.size}
-        onChange={event => setSelected(event.target.checked ? selectable : new Set())} className="h-4 w-4 accent-primary" />
+      <Checkbox  checked={chosen.length === selectable.size && selectable.size > 0} disabled={!editable || !selectable.size}
+        onCheckedChange={checked => setSelected((checked === true) ? selectable : new Set())} className="h-4 w-4 accent-primary" />
       {t("studio.aiChat.imageBatch.selectAll", { count: chosen.length })}
     </label>}
     <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto overscroll-contain">
@@ -93,9 +95,9 @@ export function ImageBatchProposalView({ proposal, interactive, busy, error, est
             : t("studio.aiChat.imageBatch.component", { key: item.target.key });
         return <div key={item.id} className="rounded-lg border border-border/70 bg-background/60 p-2" data-batch-item={item.id}>
           <div className="flex items-center gap-2">
-            {pending && <input type="checkbox" aria-label={item.label} checked={selected.has(item.id) && !item.existingAssetId}
+            {pending && <Checkbox  aria-label={item.label} checked={selected.has(item.id) && !item.existingAssetId}
               disabled={!editable || !!item.existingAssetId} className="h-4 w-4 shrink-0 accent-primary"
-              onChange={event => setSelected(previous => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} />}
+              onCheckedChange={checked => setSelected(previous => { const next = new Set(previous); if ((checked === true)) next.add(item.id); else next.delete(item.id); return next; })} />}
             {assetId && <a href={resolveImageUrl(assetId)} target="_blank" rel="noopener noreferrer" aria-label={item.label}
               className="h-11 w-11 shrink-0 overflow-hidden rounded-md border border-border">
               <img src={resolveImageUrl(assetId)} alt={item.label} loading="lazy" className="h-full w-full object-cover" />
@@ -123,14 +125,14 @@ export function ImageBatchProposalView({ proposal, interactive, busy, error, est
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <label className="flex min-w-0 flex-1 flex-col gap-1 text-[11px] text-muted-foreground">
           {t("studio.aiChat.imageBatch.model")}
-          <select value={modelId} disabled={!editable} className={selectClass} onChange={event => {
-            const id = event.target.value; setModelId(id); setAspectRatio(resolveSmartImageAspect(id, aspectRatio)); setResolution(resolveSmartImageResolution(id, resolution));
-          }}>{SMART_IMAGE_MODELS.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</select>
+          <Select compact value={modelId} disabled={!editable} className={selectClass} onValueChange={selectedValue => {
+            const id = selectedValue; setModelId(id); setAspectRatio(resolveSmartImageAspect(id, aspectRatio)); setResolution(resolveSmartImageResolution(id, resolution));
+          }}>{SMART_IMAGE_MODELS.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</Select>
         </label>
         <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">{t("studio.aiChat.imageProposal.aspect")}
-          <select value={aspectRatio} disabled={!editable} className={selectClass} onChange={event => setAspectRatio(event.target.value)}>
+          <Select compact value={aspectRatio} disabled={!editable} className={selectClass} onValueChange={selectedValue => setAspectRatio(selectedValue)}>
             {capabilities.aspectRatios.map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}
-          </select>
+          </Select>
         </label>
       </div>
       {proposal.modelReason && modelId === proposal.model && <p className="mt-2 break-words text-[11px] text-muted-foreground">{proposal.modelReason}</p>}

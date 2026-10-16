@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, Hash, ArrowLeft } from "lucide-react";
@@ -609,10 +610,10 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                                     key={g.id}
                                     className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-white/5"
                                   >
-                                    <input
-                                      type="checkbox"
+                                    <Checkbox
+
                                       checked={checked}
-                                      onChange={() => {
+                                      onCheckedChange={() => {
                                         const prev =
                                           activation.mode === "greeting" ? activation.greetingIds : [];
                                         const next = prev.includes(g.id)

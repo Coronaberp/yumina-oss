@@ -45,7 +45,7 @@ export function ExportCardMenu({ worldId, worldName, size = "md", disabled, clas
         feedback.error(`Fix these preflight errors before export:\n${preflightIssueSummary(preflight.blockingErrors)}`);
         return;
       }
-      if (!confirmPreflightWarnings(preflight.warnings, "export")) return;
+      if (!await confirmPreflightWarnings(preflight.warnings, "export")) return;
       if (kind === "png") await downloadWorldPNG(worldId, worldName || undefined);
       else await downloadWorldJSON(worldId, worldName || undefined);
     } catch (err) {

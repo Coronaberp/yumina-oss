@@ -62,7 +62,7 @@ export class SandboxBridge {
   private onStreamCall: StreamHandler;
   private onResize: (height: number) => void;
   private onError: (message: string) => void;
-  private onRendered: () => void;
+  private onRendered: (ready: boolean, assetError: boolean) => void;
   private onDiag: (event: string, data: Record<string, string | number | boolean>) => void;
   private onComposerDraft: (text: string) => void;
   private onPlayInteraction: () => void;
@@ -74,8 +74,8 @@ export class SandboxBridge {
     onStreamCall?: StreamHandler;
     onResize?: (height: number) => void;
     onError?: (message: string) => void;
-    /** Fired when the sandbox reports the world has painted its first frame. */
-    onRendered?: () => void;
+    /** Scene reveal state; false while required assets are loading or failed. */
+    onRendered?: (ready: boolean, assetError: boolean) => void;
     /** Sandbox self-diagnostics (e.g. scroll-clamp corrections) for analytics. */
     onDiag?: (event: string, data: Record<string, string | number | boolean>) => void;
     /** The composer's unsent text, mirrored out of the iframe. Carries user
@@ -210,7 +210,7 @@ export class SandboxBridge {
         break;
 
       case "rendered":
-        this.onRendered();
+        this.onRendered(msg.assetsReady !== false, msg.assetError === true);
         break;
 
       case "api-call": {

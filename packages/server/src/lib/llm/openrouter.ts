@@ -5,6 +5,7 @@ import { LLM_CONNECTION_TIMEOUT_MS, LLM_REQUEST_TIMEOUT_MS, LLM_STREAM_INACTIVIT
 import { clampTemperatureForModel, clampTopKForModel, repetitionPenaltyForModel } from "./sampling-limits.js";
 import { parseClaudeVersion } from "./anthropic-thinking.js";
 import { normalizeProviderCostUsd } from "../provider-cost.js";
+import { backgroundReasoningEffort } from "./background-reasoning.js";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
@@ -685,7 +686,7 @@ export class OpenRouterProvider implements LLMProvider {
         messages: serialized,
         max_tokens: effectiveMaxTokens(
           params.maxTokens,
-          params.disableReasoning ? "none" : params.reasoningEffort,
+          params.disableReasoning ? backgroundReasoningEffort(params.model) : params.reasoningEffort,
           params.model,
         ),
         temperature: clampTemperatureForModel(params.model, params.temperature),
@@ -714,7 +715,7 @@ export class OpenRouterProvider implements LLMProvider {
         // retain the existing semantics where a stored "none" means provider
         // default and an active effort opts into reasoning headroom.
         ...(params.disableReasoning
-          ? { reasoning: { effort: "none" } }
+          ? { reasoning: { effort: backgroundReasoningEffort(params.model) } }
           : params.reasoningEffort && params.reasoningEffort !== "none"
             ? { reasoning: { effort: params.reasoningEffort } }
             : {}),
@@ -1038,7 +1039,7 @@ export class OpenRouterProvider implements LLMProvider {
           messages: serialized,
           max_tokens: effectiveMaxTokens(
             params.maxTokens,
-            params.disableReasoning ? "none" : params.reasoningEffort,
+            params.disableReasoning ? backgroundReasoningEffort(params.model) : params.reasoningEffort,
             params.model,
           ),
           temperature: clampTemperatureForModel(params.model, params.temperature),
@@ -1059,7 +1060,7 @@ export class OpenRouterProvider implements LLMProvider {
           }),
           ...(params.toolChoice !== undefined && { tool_choice: params.toolChoice }),
           ...(params.disableReasoning
-            ? { reasoning: { effort: "none" } }
+            ? { reasoning: { effort: backgroundReasoningEffort(params.model) } }
             : params.reasoningEffort && params.reasoningEffort !== "none"
               ? { reasoning: { effort: params.reasoningEffort } }
               : {}),

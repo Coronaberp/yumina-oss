@@ -541,6 +541,8 @@ test("missing receipt issues exactly one same-model singleAttempt request and re
   assert.equal(f.requests.length, 1);
   assert.equal(f.requests[0]?.model, f.ctx.model);
   assert.equal(f.requests[0]?.singleAttempt, true);
+  assert.equal(f.requests[0]?.reasoningEffortOverride, "low");
+  assert.notEqual(f.requests[0]?.disableReasoning, true);
   assert.equal(f.requests[0]?.maxTokens, 4096);
   assert.equal(f.requests[0]?.fallbackModels, undefined);
   assert.equal(f.requests[0]?.tools, undefined);

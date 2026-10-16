@@ -16,7 +16,9 @@ export function computeActiveWorldbookIds(
   if (!Array.isArray(worldbooks)) return active;
   for (const wb of worldbooks) {
     if (wb.enabled === false) continue; // master enable toggle off → never active
-    if (wb.activation.mode === "conditions") {
+    if (wb.chapterIds?.length) {
+      if (state.activeChapterId && wb.chapterIds.includes(state.activeChapterId)) active.add(wb.id);
+    } else if (wb.activation.mode === "conditions") {
       if (checkConditions(state, wb.activation.conditions, wb.activation.conditionLogic)) {
         active.add(wb.id);
       }

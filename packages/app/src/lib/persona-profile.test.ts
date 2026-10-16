@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readPersonaProfile, readPlayerPresentation } from "./persona-profile";
+import { displayPersonaText, updatePersonaDisplayText, readPersonaProfile, readPlayerPresentation } from "./persona-profile";
+
+test("persona display and edits preserve canonical references without rewriting literal names", () => {
+  const raw = "Cinder gives {{USER}} a coin. {{user}}'s coat is blue. Robin smiles.";
+  const shown = displayPersonaText(raw, "Robin");
+  assert.equal(shown, "Cinder gives Robin a coin. Robin's coat is blue. Robin smiles.");
+  assert.equal(updatePersonaDisplayText(raw, shown, "Robin"), raw);
+  const edited = updatePersonaDisplayText(raw, shown.replace("blue", "red"), "Robin");
+  assert.equal(edited, raw.replace("blue", "red"));
+  assert.equal(displayPersonaText(edited, "Alex"), "Cinder gives Alex a coin. Alex's coat is red. Robin smiles.");
+  assert.equal(updatePersonaDisplayText("{{user}} waits.", "Ro waits.", "Robin"), "Ro waits.");
+  assert.equal(updatePersonaDisplayText("{{user}} waits.", "Robin! waits.", "Robin"), "{{user}}! waits.");
+  assert.equal(updatePersonaDisplayText("{{user}} waits.", "Before Robin waits. After", "Robin"), "Before Robin waits. After");
+  assert.equal(updatePersonaDisplayText("{{user}} waits.", "waits.", "Robin"), "waits.");
+});
 
 const persona = { id: "B", name: "Robin", appearance: "red coat", personality: "curious", backstory: "teacher", note: "PRIVATE", userId: "owner", avatarUrl: "private-avatar" };
 const legacyState = { metadata: { personaActive: true, personaName: "Legacy A", personaAppearance: "blue coat", personaPersonality: "quiet", personaBackstory: "farmer" } };

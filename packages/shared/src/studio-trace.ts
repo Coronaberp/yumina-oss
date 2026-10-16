@@ -1,3 +1,5 @@
+import { normalizeStudioVisualAuditPage } from "./studio-visual-audit.js";
+
 export type StudioTraceItem = {
   id: string; kind: "read" | "search" | "image" | "write" | "check" | "action";
   title: string; detail: string; status: "working" | "done" | "failed" | "unconfirmed"; assetRef?: string; generatedNames?: string[];
@@ -25,6 +27,13 @@ export function describeStudioTrace(call: Call, result?: Result): StudioTraceIte
     item.detail = [text(args.query) || text(args.tags), text(args.scope)].filter(Boolean).join(" · ").slice(0, 240);
   } else if (name === "generate_image") {
     item.kind = "image";item.title = result?.status === "success" ? "Queued image" : "Request image";item.detail = text(args.purpose) || "Image generation";
+  } else if (name === "get_visual_audit_inputs") {
+    item.kind = "read";item.title = result ? "Read" : "Read files";
+    const { offset, limit } = normalizeStudioVisualAuditPage(output.offset ?? args.offset, output.limit ?? args.limit);
+    const total = typeof output.total === "number" ? output.total : undefined;
+    const label = args.kind === "backgrounds" ? "Background visual references" : "Character visual references";
+    const range = total === undefined ? `${offset + 1}–${offset + limit}` : offset >= total ? `0 of ${total}` : `${offset + 1}–${Math.min(offset + limit, total)} of ${total}`;
+    item.detail = `${label} · ${range}`;
   } else if (name.startsWith("read_") || name.startsWith("list_") || name.startsWith("get_") || name === "load_skill" || name === "browse_assets") {
     item.kind = "read";item.title = result ? "Read" : "Read files";
     item.detail = names(args.ids) || text(args.id) || text(args.name) || text(args.kind) || READ_LABELS[name] || "Card information";

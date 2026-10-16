@@ -58,8 +58,8 @@ import {
   SidebarPanel,
   VariablesPanel,
 } from "./panels";
-import { PANEL_MENU_GROUPS, migrateStudioPanelId, type StudioPanelMenuItem } from "./studio-page-catalog";
-import { CustomUiPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
+import { getStudioPanelMenuGroups, migrateStudioPanelId, type StudioPanelMenuItem } from "./studio-page-catalog";
+import { CustomUiPanel, ChaptersPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
 import type { ToolCall } from "./lib/types";
 import { buildReviewDiffTokens } from "./lib/review-diff";
 
@@ -74,6 +74,7 @@ type MobileStudioPanelId =
   | "rules"
   | "first-message"
   | "custom-ui"
+  | "chapters"
   | "vn-sprites"
   | "character-showcase"
   | "vn-backgrounds"
@@ -119,6 +120,7 @@ const MOBILE_PANEL_COMPONENTS: Record<MobileStudioPanelId, React.FC<IDockviewPan
   "custom-ui": CustomUiPanel,
   "character-showcase": CharacterShowcasePanel,
   "vn-sprites": VnSpritesPanel,
+  chapters: ChaptersPanel,
   "vn-backgrounds": VnBackgroundsPanel,
   audio: AudioPanel,
   overview: OverviewPanel,
@@ -136,6 +138,7 @@ const MOBILE_PANEL_LABEL_KEYS: Record<MobileStudioPanelId, string> = {
   "custom-ui": "sections.customUI",
   "character-showcase": "sections.characterShowcase",
   "vn-sprites": "sections.vnSprites",
+  chapters: "sections.chapters",
   "vn-backgrounds": "sections.vnBackgrounds",
   audio: "studio.panels.audio",
   overview: "studio.panels.overview",
@@ -414,7 +417,7 @@ function MobilePaneFrame({
           {focused ? <X className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <MobilePanelRenderer panelId={panelId} />
       </div>
     </section>
@@ -435,9 +438,10 @@ function MobilePanelPicker({
   onSelect: (panelId: MobileStudioPanelId) => void;
 }) {
   const { t } = useTranslation("editor");
+  const root = useEditorStore(s => s.worldDraft.rootComponent);
 
   const groups = useMemo(() => {
-    const baseGroups = PANEL_MENU_GROUPS.map(group => ({
+    const baseGroups = getStudioPanelMenuGroups(root).map(group => ({
       labelKey: group.labelKey,
       items: group.items.filter(item => isMobileStudioPanelId(item.id) && item.id !== "ai-chat" && item.id !== "playtest"),
     })).filter(group => group.items.length > 0);
@@ -460,7 +464,7 @@ function MobilePanelPicker({
       },
       ...baseGroups,
     ];
-  }, []);
+  }, [root]);
 
   if (!open || !pane) return null;
 

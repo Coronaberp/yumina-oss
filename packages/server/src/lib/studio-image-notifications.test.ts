@@ -30,7 +30,7 @@ async function fixture(t: test.TestContext) {
   const service = createStudioImageNotifications(async params => { launches.push(params); }, async () => ({
     model: "test-model", provider: {} as any, isByok: true, apiKeyTier: "byok" as const,
   }));
-  return { uid, wid, rid, addJob, launches, service };
+  return { uid, wid, rid, cid, addJob, launches, service };
 }
 
 test("a settled image starts a fresh notified agent turn exactly once without waiting", async t => {
@@ -102,8 +102,20 @@ test("stop, newer user work, cancellation, old jobs and foreign owners never res
   for (const reason of ["stop", "newer", "cancelled", "historical", "foreign"]) {
     const f = await fixture(t);await f.addJob(reason === "cancelled" ? "cancelled" : "succeeded", reason !== "historical");
     if (reason === "stop") await db.update(agentRuns).set({ error: "Stopped by user." }).where(eq(agentRuns.id, f.rid));
-    if (reason === "newer") await db.insert(agentRuns).values({ userId: f.uid, worldId: f.wid, model: "test-model", status: "completed", createdAt: new Date(Date.now() + 1000) });
+    if (reason === "newer") await db.insert(agentRuns).values({ userId: f.uid, worldId: f.wid, conversationId: f.cid, model: "test-model", status: "completed", createdAt: new Date(Date.now() + 1000) });
     await f.service.notify(reason === "foreign" ? "foreign" : f.uid, f.wid, f.rid);
     assert.equal(f.launches.length, 0, reason);
   }
+});
+
+
+test("work in another chat does not suppress an image completion in this chat", async t => {
+  const f=await fixture(t);await f.addJob();
+  const other=crypto.randomUUID();
+  await db.insert(studioConversations).values({id:other,userId:f.uid,worldId:f.wid,title:"Other chat"});
+  await db.insert(agentRuns).values({userId:f.uid,worldId:f.wid,conversationId:other,model:"test-model",status:"running",createdAt:new Date(Date.now()+1000)});
+  await f.service.notify(f.uid,f.wid,f.rid);
+  assert.equal(f.launches.length,1);
+  const [notified]=await db.select().from(agentRuns).where(eq(agentRuns.id,f.launches[0]!.runId));
+  assert.equal(notified!.conversationId,f.cid);
 });

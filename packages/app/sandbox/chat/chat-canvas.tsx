@@ -2,6 +2,7 @@ import React from "react";
 import { useYumina } from "../sandbox-context";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
+import { StoryOpeningControl } from "./story-opening-control";
 
 interface ChatCanvasProps {
   /** Compiled creator message renderer component, or null for default markdown */
@@ -19,6 +20,7 @@ export function ChatCanvas({ messageRenderer = null }: ChatCanvasProps) {
 
   return (
     <div className="flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
+      <StoryOpeningControl />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <MessageList rendererComponent={messageRenderer} />

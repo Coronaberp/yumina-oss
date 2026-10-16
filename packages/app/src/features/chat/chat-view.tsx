@@ -1,3 +1,4 @@
+import { StoryNavigation } from "./chapter-navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { StateGuardHost, StateGuardHostButton } from "./state-guard-host";
 import { guardLabels } from "../../../sandbox/extensions/state-update-guard/details";
@@ -19,6 +20,7 @@ import { absoluteImageUrl } from "@/lib/asset-url";
 import { readPlayerPresentation } from "@/lib/persona-profile";
 import { expandMacros } from "@yumina/engine";
 import { resolveDisplayMacros } from "@/lib/resolve-display-macros";
+import { stripAngleVariableDirectives } from "@yumina/engine";
 import { TOP_EDGE_ALWAYS_PX, TOP_EDGE_PX } from "@/lib/top-edge-gate";
 import { useUiStore } from "@/stores/ui";
 import { useUserProfileStore } from "@/stores/user-profile";
@@ -29,6 +31,7 @@ import { CombatPanel } from "./combat-panel";
 import { WorldRenderer } from "./world-renderer";
 import { StoryEndingStatus } from "./story-ending-status";
 import { PersonaManagerDialog } from "./persona-manager-dialog";
+import { SessionArchiveDialog } from "./session-archive-dialog";
 import { SharePlaythroughModal } from "./share-playthrough-modal";
 import { TipModal } from "@/edition/slots";
 import { fetchCreditsForChat } from "@/edition/slots.state";
@@ -128,6 +131,8 @@ export function ChatView({
   // a window hook) keeps a single source of truth and avoids mount-timing races.
   const personaManagerOpen = useUiStore((s) => s.personaManagerOpen);
   const closePersonaManager = useUiStore((s) => s.closePersonaManager);
+  const sessionExportOpen = useUiStore((s) => s.sessionExportOpen);
+  const closeSessionExport = useUiStore((s) => s.closeSessionExport);
   const sharePlaythroughOpen = useUiStore((s) => s.sharePlaythroughOpen);
   const closeSharePlaythrough = useUiStore((s) => s.closeSharePlaythrough);
   // api.openSupport() → same store route → <TipModal>. Mounted here rather than
@@ -498,13 +503,15 @@ export function ChatView({
     if (isActive && !hasSessionMismatch && vnPerspective) return activateVnDialogTheme(document);
   }, [isActive, hasSessionMismatch, vnPerspective]);
 
-  // Resolve macros in message content before passing to sandbox
+  const declaredVariableIds = useMemo(() => worldDef?.variables.flatMap(variable => [variable.id, variable.name]) ?? [], [worldDef?.variables]);
+  // Clean historical model metadata for every renderer, preserving saved raw output.
   const resolvedMessages = useMemo(() =>
     messages.map((m) => ({
       ...m,
-      content: resolveDisplayMacros(m.content, displayUserName, displayCharName, vnPerspective),
+      content: resolveDisplayMacros(m.role === "assistant" ? stripAngleVariableDirectives(m.content, declaredVariableIds) : m.content,
+        displayUserName, displayCharName, vnPerspective),
     })),
-    [messages, displayUserName, displayCharName, vnPerspective],
+    [messages, displayUserName, displayCharName, vnPerspective, declaredVariableIds],
   );
 
   // `api.setVariable("hunger", …)` has to land on the variable's id, not create
@@ -593,7 +600,7 @@ export function ChatView({
       capabilities: storyCapabilities,
       personaSelectable: session?.personaSelectable === true,
       isStreaming,
-      streamingContent: isStreaming ? stripDirectivesForSandbox(streamingContent ?? "") : "",
+      streamingContent: isStreaming ? stripDirectivesForSandbox(streamingContent ?? "", declaredVariableIds) : "",
       // WorldRenderer reads these directly off api (legacy path passes them
       // via extraProps={canvasExtraProps} instead). Mirror them here so
       // rootComponent worlds get greetingContent / pendingChoices / etc.
@@ -619,7 +626,7 @@ export function ChatView({
       isLoadingEarlier,
     } as YuminaAPI),
     [
-      yuminaAPI, fullScreenVariables, storyCapabilities, session?.personaSelectable, isStreaming, streamingContent,
+      yuminaAPI, fullScreenVariables, storyCapabilities, session?.personaSelectable, isStreaming, streamingContent, declaredVariableIds,
       pendingChoices, storyProgress, isCompletingEnding, endingError, error, sendFailureNonce, streamingReasoning, streamingTokenCount, readOnly, checkpoints,
       resolvedGreetingContent, selectedModel, mixMode, modelPool, userPlan, memorySummaryEnabled, installedExtensions, preferredProvider,
       hasEarlierMessages, isLoadingEarlier,
@@ -760,6 +767,7 @@ export function ChatView({
       {!fullScreenMode && <StateGuardHostButton />}
       {!fullScreenMode && !theaterMode && <SessionHeader showSidebarToggle={false} onBack={navigateBackFromPlay} />}
       <StoryEndingStatus overlay={vnPerspective} />
+      <StoryNavigation key={sessionId} chapters={worldDef?.chapters ?? []} showTrigger={false} greetings={(worldDef?.entries ?? []).filter(entry => entry.role === "greeting" && entry.enabled !== false).sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity))} />
       <WorldRenderer
         dialogTheme={vnPerspective ? "vn" : undefined}
         entryFile={rc.entryFile}
@@ -785,6 +793,7 @@ export function ChatView({
         onClose={closePersonaManager}
         sessionId={session?.id}
       />
+      <SessionArchiveDialog open={isActive && sessionExportOpen} onClose={closeSessionExport} sessionId={session?.id} />
       <SharePlaythroughModal
         open={sharePlaythroughOpen}
         worldId={session?.worldId ?? ""}

@@ -54,6 +54,8 @@ import localBridgeRoutes from "./routes/local-bridge.js";
 import { localSetupRoutes } from "./routes/local-setup.js";
 import { initLocalBridge } from "./lib/local-bridge/registry.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { sessionArchiveRoutes } from "./routes/session-archives.js";
+import { ARCHIVE_MAX_FILE_BYTES } from "@yumina/shared";
 import { sessionMemoryRoutes } from "./routes/session-memory.js";
 import { stateGuardRoutes } from "./routes/state-update-guard.js";
 import { messageRoutes } from "./routes/messages.js";
@@ -261,8 +263,9 @@ app.use("/health", corsMiddleware);
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/stripe/webhook")) return next();
   const contentLength = c.req.header("content-length");
-  if (contentLength && parseInt(contentLength, 10) > 5 * 1024 * 1024) {
-    return c.json({ error: "Request body too large (max 5 MB)" }, 413);
+  const bodyLimitBytes = c.req.path === "/api/session-archives/import" ? ARCHIVE_MAX_FILE_BYTES : 5 * 1024 * 1024;
+  if (contentLength && parseInt(contentLength, 10) > bodyLimitBytes) {
+    return c.json({ error: `Request body too large (max ${bodyLimitBytes / 1024 / 1024} MB)` }, 413);
   }
   return next();
 });
@@ -328,6 +331,7 @@ mountMemoryRoutes(
   createStoryhavenMemoryRoutes(createStoryhavenController),
 );
 app.route("/api/sessions", sessionRoutes);
+app.route("/api/session-archives", sessionArchiveRoutes);
 app.route("/api/sessions", sessionMemoryRoutes);
 app.route("/api/sessions", stateGuardRoutes);
 app.route("/api/combat", combatRoutes);

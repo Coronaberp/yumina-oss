@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./dialog";
 
 interface ConfirmRequest {
   description: string;
@@ -18,6 +19,44 @@ const useGlobalConfirmStore = create<ConfirmState>(() => ({
   request: null,
   resolve: null,
 }));
+
+interface PromptState {
+  request: { description: string; value: string } | null;
+  resolve: ((value: string | null) => void) | null;
+}
+const useGlobalPromptStore = create<PromptState>(() => ({ request: null, resolve: null }));
+
+export function promptAction(description: string, initialValue = ""): Promise<string | null> {
+  return new Promise(resolve => {
+    useGlobalPromptStore.getState().resolve?.(null);
+    useGlobalPromptStore.setState({ request: { description, value: initialValue }, resolve });
+  });
+}
+
+function GlobalPromptDialog() {
+  const { t } = useTranslation();
+  const request = useGlobalPromptStore(state => state.request);
+  const settle = (value: string | null) => {
+    const resolve = useGlobalPromptStore.getState().resolve;
+    useGlobalPromptStore.setState({ request: null, resolve: null });
+    resolve?.(value);
+  };
+  return <Dialog open={request !== null} onOpenChange={open => { if (!open) settle(null); }}>
+    <DialogContent mobileSheet>
+      <form className="space-y-5" onSubmit={event => { event.preventDefault(); settle(request?.value ?? ""); }}>
+        <DialogHeader><DialogTitle>{t("action.edit")}</DialogTitle><DialogDescription>{request?.description}</DialogDescription></DialogHeader>
+        <input autoFocus aria-label={request?.description} value={request?.value ?? ""}
+          onFocus={event => event.target.select()}
+          onChange={event => { if (request) useGlobalPromptStore.setState({ request: { ...request, value: event.target.value } }); }}
+          className="min-h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+        <DialogFooter>
+          <button type="button" onClick={() => settle(null)} className="min-h-11 rounded-lg border border-border px-4 text-sm">{t("action.cancel")}</button>
+          <button type="submit" className="min-h-11 rounded-lg bg-primary px-4 text-sm text-primary-foreground">{t("action.confirm")}</button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
 
 export function confirmAction(
   description: string,
@@ -44,7 +83,7 @@ export function GlobalConfirmDialog() {
   };
 
   return (
-    <ConfirmDialog
+    <><GlobalPromptDialog /><ConfirmDialog
       open={request !== null}
       onOpenChange={(open) => { if (!open) settle(false); }}
       title={request?.title ?? t("action.confirm")}
@@ -53,6 +92,6 @@ export function GlobalConfirmDialog() {
       cancelLabel={t("action.cancel")}
       onConfirm={() => settle(true)}
       tone={request?.tone ?? "warning"}
-    />
+    /></>
   );
 }

@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Brain, Loader2, Plus } from "lucide-react";
@@ -242,12 +243,11 @@ export function MemoryEmbeddingsSettings() {
             />
           </label>
           <label className="flex items-start gap-2 text-xs text-sub">
-            <input
-              type="checkbox"
+            <Checkbox
+
               checked={draft.sendDimensions}
-              onChange={(e) =>
-                setDraft({ ...draft, sendDimensions: e.target.checked })
-              }
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, sendDimensions: (checked === true) })}
             />
             {label(
               "sendDimensions",

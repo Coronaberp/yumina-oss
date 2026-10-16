@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -436,10 +437,10 @@ export function AudioSection({ compact, mobileListMode }: { compact?: boolean; m
                   <div className="space-y-6">
                     <div className="space-y-2">
                       <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-foreground">
-                        <input
-                          type="checkbox"
+                        <Checkbox
+
                           checked={selected.allowAiControl !== false}
-                          onChange={(e) => updateAudioTrack(selected.id, { allowAiControl: e.target.checked })}
+                          onCheckedChange={(checked) => updateAudioTrack(selected.id, { allowAiControl: (checked === true) })}
                           className="h-5 w-5 shrink-0 accent-primary"
                         />
                         {t("audio.allowAiControl")}

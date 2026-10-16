@@ -44,6 +44,29 @@ const PARAMS = {
   messages: [{ role: "user" as const, content: "hi" }],
 };
 
+test("Cerebras single-attempt requests omit unsupported top_k without resending the request", async () => {
+  const mock = withMockedFetch([() => sseResponse([
+    { choices: [{ delta: { content: '{"facts":[]}' }, finish_reason: "stop" }] },
+  ])]);
+  try {
+    const provider = new CustomProvider("test-key", "https://api.cerebras.ai/v1", { topK: 40, includeBody: { top_k: 40 } });
+    const chunks = await collect(provider.generateStream({ ...PARAMS, model: "custom/gpt-oss-120b", topK: 40, singleAttempt: true }));
+    assert.equal(mock.calls(), 1);
+    assert.equal("top_k" in mock.bodies()[0]!, false);
+    assert.ok(chunks.some(chunk => chunk.type === "text"));
+  } finally { mock.restore(); }
+});
+
+test("generic endpoints retain explicitly configured top_k", async () => {
+  const mock = withMockedFetch([() => sseResponse([
+    { choices: [{ delta: { content: "result" }, finish_reason: "stop" }] },
+  ])]);
+  try {
+    await collect(new CustomProvider("test-key", "https://api.example.com/v1", { topK: 40 }).generateStream({ ...PARAMS, model: "custom/test", topK: 40, singleAttempt: true }));
+    assert.equal(mock.bodies()[0]!.top_k, 40);
+  } finally { mock.restore(); }
+});
+
 for (const payloads of [[], [{ choices: [{ delta: { reasoning_content: "Still processing" } }] }]]) {
   test("CustomProvider does not resend an incomplete stream without a completion marker", async () => {
     const mock = withMockedFetch([() => sseResponse(payloads)]);

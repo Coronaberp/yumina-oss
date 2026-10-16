@@ -21,6 +21,19 @@ function response(provider: ProviderName): Response {
 }
 
 for (const entry of cases) {
+  test(`${entry.provider} checks use low thinking even when the profile is high`, async t => {
+    let body: any;
+    t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return response(entry.provider);
+    });
+    const provider = createByokProvider(entry.provider, entry.provider === 'ollama' ? 'http://localhost:11434' : 'fixture-only', 'https://compatible.example/v1', { reasoningEffort: 'high', includeBody: { reasoning_effort: 'high', thinking: { type: 'disabled' } } });
+    const chunks = [];
+    for await (const chunk of provider.generateStream({ model: entry.model, messages: [{ role: 'user', content: 'Check the draft.' }], stream: false, maxTokens: 4096, singleAttempt: true, reasoningEffortOverride: 'low' })) chunks.push(chunk);
+    assert.equal(chunks.some(chunk => chunk.type === 'error'), false, JSON.stringify(chunks));
+    assert.equal(entry.effort(body), 'low');
+    if (entry.provider === 'custom') assert.deepEqual(body.thinking, { type: 'enabled' });
+  });
   for (const effort of [undefined, 'high'] as const) {
     test(`${entry.provider} sends ${effort ?? 'low by default'} and honors the saved endpoint over chat defaults`, async t => {
       let body: any;

@@ -4,6 +4,7 @@ import { statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Temp
 import type { RootComponent, WorldDefinition } from '../types/index.js';
 import { legacyStatusTemplates } from './legacy-status-templates.js';
 import { statusTemplates } from './status-templates.generated.js';
+import { statusEncounterV0Templates } from './status-encounter-v0-templates.js';
 
 /** Introduce the Visualizations-owned content without changing Back/Close or authored content. */
 export function installStatusLayoutFiles(files: Record<string, string>, templates: Record<string, string> = statusTemplates): Record<string, string> {
@@ -28,7 +29,7 @@ export function installStatusLayoutFiles(files: Record<string, string>, template
 export function upgradeStatusFiles(files: Record<string, string>, templates: Record<string, string> = statusTemplates): Record<string, string> {
   const standard = (name: string) => {
     const source = files[name];
-    return source === undefined || typeof source === "string" && [templates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates].some(version => source.trim() === version[name]?.trim());
+    return source === undefined || typeof source === "string" && [templates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates].some(version => source.trim() === version[name]?.trim());
   };
   const names = ['status-data.ts', 'status-view.tsx', 'status-gauge.tsx', 'status-widgets.tsx'];
   // A styled renderer can still use the shared data/widget contract. Preserve
@@ -75,5 +76,5 @@ export function upgradeStatusWorld(world: WorldDefinition): WorldDefinition {
 export function isManagedStatusHelper(files: Record<string, string>, name: string): boolean {
   if (!['status-data.ts', 'status-gauge.tsx', 'status-widgets.tsx', 'status-view.tsx', 'status-sheet.tsx'].includes(name)) return false;
   const source = files[name];
-  return typeof source === "string" && [statusTemplates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates].some(version => source.trim() === version[name]?.trim());
+  return typeof source === "string" && [statusTemplates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates].some(version => source.trim() === version[name]?.trim());
 }

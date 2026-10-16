@@ -145,7 +145,8 @@ export class LocalBridgeProvider implements LLMProvider {
       // first word. With thinking off the same models answer as soon as they're
       // loaded, and the prose held up. The trade-off: thinking made small models
       // likelier to emit state directives — a reply that never arrives is worse.
-      think: false,
+      think: params.reasoningEffortOverride && /gpt-oss/i.test(params.model) ? "low" : false,
+      ...(params.reasoningEffortOverride && { reasoning_effort: params.reasoningEffortOverride }),
       ...(params.temperature !== undefined && { temperature: params.temperature }),
       ...(params.topP !== undefined && { top_p: params.topP }),
       ...(params.topK !== undefined && params.topK > 0 && { top_k: params.topK }),

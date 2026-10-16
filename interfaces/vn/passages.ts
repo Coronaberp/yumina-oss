@@ -1,8 +1,9 @@
+import { stripAngleMarkup } from "./angle-markup";
 import { splitSpeakerSections } from "./speaker";
 import { displayCharacterName, canonicalCharacterName, parseLeadingSpeakerTag } from "./speaker-tag";
 import { dialogueSpans, plainDialogue } from "./dialogue-spans";
 import { extractResponseChoices, normalizeChoices } from "./choices";
-import { stripGameStateDump } from "./metadata";
+import { stripGameStateDump, stripVariableUpdateTags } from "./metadata";
 import { normalizeSpriteExpression } from "./expressions";
 import { stripZeroWidthSpaces } from "./text-normalization";
 import { standardizeSpeakerMarkup } from "./presentation-markup";
@@ -32,9 +33,9 @@ function pages(text) {
 export function passages(entries, content, rawContent = content, player = null) {
   if (!content) return [];
   const names = (entries || []).filter(entry => entry.role === "character" && entry.enabled !== false).map(entry => displayCharacterName(entry.name));
-  content = standardizeSpeakerMarkup(stripZeroWidthSpaces(content), names);
-  rawContent = standardizeSpeakerMarkup(stripZeroWidthSpaces(rawContent), names);
-  content = stripGameStateDump(extractResponseChoices(content).text);
+  content = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(content))), names);
+  rawContent = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(rawContent))), names);
+  content = stripVariableUpdateTags(stripGameStateDump(extractResponseChoices(content).text));
   const legacy = parseLeadingSpeakerTag(rawContent);
   content = parseLeadingSpeakerTag(content).text;
   const candidateLeading = /^\s*\[\s*(?:SPEAKER|Name)\s*:\s*([^:\]\n]+)\s*:\s*([^\]\n]+)\]/i.exec(rawContent);
@@ -95,6 +96,7 @@ export function passages(entries, content, rawContent = content, player = null) 
         const definedSpeaker = spoken && speaker && !isPlayer ? character(entries, speaker.name) : null;
         return pages(text).map(text => ({ name: isPlayer ? player?.name ? `${player.name} (You)` : "You" : spoken ? definedSpeaker ? displayCharacterName(definedSpeaker.name) : "NPC" : "", portrait: isPlayer ? player?.avatar || null : definedSpeaker?.portrait || null,
           ...(isPlayer ? { player: true } : {}),
+          ...(!spoken && declared && chunk.explicit && span.kind !== "literal" ? { stageName: displayCharacterName(declared.name) } : {}),
           emotion: chunk.emotion, scene: chunk.scene, kind, text,
           ...(spoken && !definedSpeaker && chunk.npcGender ? { npcGender: chunk.npcGender, npcId: chunk.npcId } : {}) }));
       });

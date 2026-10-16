@@ -1,3 +1,4 @@
+import { chapterSchema } from "../story/chapters.js";
 import { z } from "zod";
 import { cardShowcaseSchema } from "./card-showcase.js";
 import { nameGeneratorProfilesSchema } from "@yumina/shared";
@@ -328,6 +329,7 @@ export const loreUiBindingSchema = z.object({
 });
 
 export const worldbookSchema = z.object({
+  chapterIds: z.array(z.string()).optional(),
   id: z.string().min(1),
   name: z.string(),
   description: z.string().optional(),
@@ -423,6 +425,7 @@ export const coverCropSettingsSchema = z.object({
 });
 
 export const worldDefinitionSchema = z.object({
+  chapters: z.array(chapterSchema).optional(),
   id: z.string(),
   version: z.string().default("1.0.0"),
   name: z.string().min(1),
@@ -465,6 +468,7 @@ export const worldDefinitionSchema = z.object({
 });
 
 export const gameStateSchema = z.object({
+  activeChapterId: z.string().nullable().optional(),
   worldId: z.string(),
   variables: z.record(z.union([z.number(), z.string(), z.boolean(), z.record(z.unknown()), z.array(z.unknown())])),
   activeCharacterId: z.string().nullable().optional(),

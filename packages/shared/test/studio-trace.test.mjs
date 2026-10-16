@@ -3,6 +3,15 @@ import test from 'node:test';
 import { describeStudioTrace, recoverStudioTrace } from '../dist/index.js';
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 
+test('visual audit activity distinguishes pages and reflects the actual clamped slice',()=>{
+ const first=describeStudioTrace(call('a','get_visual_audit_inputs',{kind:'characters',limit:100}));
+ assert.equal(first.detail,'Character visual references · 1–20');
+ const next=describeStudioTrace(call('b','get_visual_audit_inputs',{kind:'characters',offset:20,limit:20}),{status:'success',result:{offset:20,limit:20,total:32,items:[]}});
+ assert.equal(next.detail,'Character visual references · 21–32 of 32');
+ const background=describeStudioTrace(call('c','get_visual_audit_inputs',{kind:'backgrounds',offset:40}));
+ assert.equal(background.detail,'Background visual references · 41–60');
+});
+
 test('trace records actual read/search/image/write outcomes and only bounded public details',()=>{
  const secret='do-not-copy-secret';
  const read=describeStudioTrace(call('read','read_entities',{ids:['scenes.ts','variable-updates'],apiKey:secret}),{status:'success',result:{hugeText:secret}});

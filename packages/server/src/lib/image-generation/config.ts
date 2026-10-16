@@ -135,6 +135,7 @@ export type GenerationInput = z.infer<typeof generationInput> & { signal?: Abort
   referenceImages?: import('../studio-image-references.js').StudioImageReference[]; resolvedReferences?: ResolvedAnimaReference[];
   chromaColor?: string; progress?: (progress: GenerationProgress) => void };
 export type GeneratedSource = { provider: ImageProvider | 'codex'; imageKind: ImageKind; prompt: string; requestId?: string; promptId?: string; model?: string; reasoningEffort?: string;
+  referenceMode?: 'visual' | 'text';
   imageWorkflow?: StudioImageWorkflow; contentRating?: StudioImageContentRating; transparent?: boolean;
   attribution: string; createdAt: string; width?: number; height?: number; greenRemoved: boolean; referenceKeys?: string[];
   assetRole?: 'original' | 'final'; originalAssetId?: string; seed?: number; steps?: number; cfg?: number; sampler?: string; scheduler?: string;

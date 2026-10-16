@@ -354,9 +354,10 @@ export * from "./social/simulator.js";
 export { parseGuardedResponse, validateAiBatch } from "./parser/guarded-response.js";
 export type { GuardedParseResult, StateDiagnostic } from "./parser/guarded-response.js";
 export { StateReceiptFilter, stripStateReceipts } from "./parser/state-receipt.js";
+export { stripAngleMarkup } from "./parser/angle-markup.js";
 export { extractResponseChoices, normalizeChoices } from "./parser/response-choices.js";
 export { stripZeroWidthSpaces } from "./parser/text-normalization.js";
-export { stripGameStateDump, stripVariableUpdateTags } from "./parser/response-metadata.js";
+export { normalizeAngleVariableDirectives, stripAngleVariableDirectives, stripGameStateDump, stripVariableUpdateTags } from "./parser/response-metadata.js";
 
 // Data-only VN asset editing shared by the editor and Studio agent.
 export * from "./world/vn-assets.js";
@@ -372,3 +373,10 @@ export { resolveStoryProgress, completeStoryEnding, getStoryValidationIssues, st
 export type { StoryProgressOptions, StoryValidationIssue } from "./story/progression.js";
 export { personaPresetSchema, personaPresetsSchema } from "./world/persona-presets.js";
 export type { PersonaPreset } from "./world/persona-presets.js";
+
+export { chapterSchema, activeChapter, transitionChapter, chapterIssues, chapterPrompt } from "./story/chapters.js";
+export type { StoryChapter } from "./story/chapters.js";
+
+export { chapterEventSchema, chapterEventSceneSchema, chapterEventEffectSchema, chapterEventIssues } from "./story/chapter-event-schema.js";
+export type { ChapterEvent, ChapterEventScene, ChapterEventProgress, ChapterEventEvidence } from "./story/chapter-event-schema.js";
+export { chapterEventContext, chapterEventPrompt, advanceChapterEvents } from "./story/chapter-events.js";

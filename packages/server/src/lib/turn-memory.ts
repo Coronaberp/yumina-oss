@@ -63,7 +63,12 @@ export type StoryhavenTurnAdapter = Pick<
   | "retrieveStoryhavenMemory"
   | "ensureStoryhavenSnapshotCurrent"
   | "scheduleStoryhavenMemory"
->;
+> & Partial<Pick<StoryhavenModule, "rememberStoryhavenModelRoute">>;
+
+/** The same model and saved endpoint must own later outbox extraction jobs. */
+export async function rememberTurnMemoryModel(turn: TurnMemory, actingUserId: string, model: string, profileId?: string): Promise<void> {
+  await turn.storyhaven?.adapter.rememberStoryhavenModelRoute?.(turn.sessionId, actingUserId, model, profileId);
+}
 export class TurnMemoryChangedError extends Error {
   readonly code = "TURN_CHANGED";
   constructor() {

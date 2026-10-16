@@ -15,6 +15,36 @@ export function displayPersonaText(text: string, name = "Player"): string {
   return text.replace(/\{\{user\}\}/gi, () => name.trim() || "Player");
 }
 
+/** Edit displayed text while retaining untouched canonical player tokens.
+ * Literal character names stay literal, including names matching the persona. */
+export function updatePersonaDisplayText(previous: string, next: string, name = "Player"): string {
+  const shown = displayPersonaText(previous, name);
+  if (shown === next) return previous;
+  const ranges: Array<{ start: number; end: number; rawStart: number; rawEnd: number }> = [];
+  let delta = 0;
+  for (const match of previous.matchAll(/\{\{user\}\}/gi)) {
+    const start = match.index + delta, end = start + (name.trim() || "Player").length;
+    ranges.push({ start, end, rawStart: match.index, rawEnd: match.index + match[0].length });
+    delta += end - start - match[0].length;
+  }
+  let start = 0, oldEnd = shown.length, newEnd = next.length;
+  while (start < oldEnd && start < newEnd && shown[start] === next[start]) start++;
+  while (oldEnd > start && newEnd > start && shown[oldEnd - 1] === next[newEnd - 1]) { oldEnd--; newEnd--; }
+  for (const range of ranges) {
+    if (range.start < start && start < range.end) start = range.start;
+    if (range.start < oldEnd && oldEnd < range.end) {
+      newEnd += range.end - oldEnd;
+      oldEnd = range.end;
+    }
+  }
+  const rawOffset = (offset: number) => {
+    let shift = 0;
+    for (const range of ranges) if (range.end <= offset) shift += (range.rawEnd - range.rawStart) - (range.end - range.start);
+    return offset + shift;
+  };
+  return previous.slice(0, rawOffset(start)) + next.slice(start, newEnd) + previous.slice(rawOffset(oldEnd));
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;

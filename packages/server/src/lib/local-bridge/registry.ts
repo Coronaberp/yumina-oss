@@ -46,8 +46,9 @@ export interface BridgeJobPayload {
   min_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
-  /** Ollama's `think`: false so thinking models write instead of reasoning (see LocalBridgeProvider). */
-  think?: boolean;
+  /** GPT-OSS supports low effort; binary thinking models use false for bounded checks. */
+  think?: boolean | "low";
+  reasoning_effort?: "low";
   /**
    * Context window to run the local model at. The runtime's own default is
    * often far below what we packed (Ollama shipped 32k while our prompt

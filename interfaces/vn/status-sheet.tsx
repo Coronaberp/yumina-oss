@@ -16,7 +16,7 @@ const sheetStyles = `
 @media(max-height:600px) and (orientation:landscape){.vn-drawer.vn-status-drawer{padding-top:60px}.vn-status-drawer .vn-menu-close{top:8px}.vn-status-drawer .vn-back{margin-top:6px!important}.vn-status-drawer .vn-subpanel{margin-top:8px}}
 `;
 
-export function StatusSheet({ api, onClose, onBack, preview = false }) {
+export function StatusSheet({ api, onClose, onBack, preview = false, filterCharacters }) {
   const content = React.useRef(null);
   const [edges, setEdges] = React.useState(null);
   React.useEffect(() => {
@@ -60,7 +60,7 @@ export function StatusSheet({ api, onClose, onBack, preview = false }) {
       <h1 className="vn-menu-title">{statusConfig.title}</h1>
       <button className="vn-back" onClick={onBack}><Icons.ArrowLeft size={20} />Back</button>
       <div className="vn-subpanel" ref={content}>
-        <StatusLayout config={statusConfig} variables={api.variables} preview={preview} />
+        <StatusLayout config={!preview && filterCharacters ? filterCharacters(statusConfig) : statusConfig} variables={api.variables} preview={preview} />
         {edges && <>
           <span aria-hidden="true" className="vn-status-edge vn-status-edge-left" style={{ left: edges.left, top: edges.top, width: edges.width, height: edges.height, opacity: edges.before ? 1 : 0 }} />
           <span aria-hidden="true" className="vn-status-edge vn-status-edge-right" style={{ left: edges.right, top: edges.top, width: edges.width, height: edges.height, opacity: edges.after ? 1 : 0 }} />

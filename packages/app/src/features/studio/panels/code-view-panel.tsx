@@ -1,3 +1,4 @@
+import { promptAction, confirmAction } from "@/components/ui/global-confirm-dialog";
 import { useState, useEffect, useRef } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { Check, AlertCircle, FileCode, Pencil, Plus, Trash2 } from "lucide-react";
@@ -118,9 +119,7 @@ function RootComponentCodeView() {
   const safeActiveFile = fileExists ? activeFile : entryFile;
   const activeFileCode = files[safeActiveFile] ?? "";
 
-  /** Validate a name typed into a prompt(); report why it was refused.
-   *  The name came from a native prompt() — there is no field left to anchor
-   *  an inline error to, so these go to a toast. */
+  /** Validate a submitted file name and report invalid or duplicate names. */
   const resolveTypedName = (typed: string): string | null => {
     const result = normalizeCardFileName(typed);
     if (!result.ok) {
@@ -140,8 +139,8 @@ function RootComponentCodeView() {
     return result.name;
   };
 
-  const handleAddFile = () => {
-    const typed = prompt(t("studio.codeView.newFilePrompt") || "File name (e.g. stat-bar.tsx):");
+  const handleAddFile = async () => {
+    const typed = (await promptAction(t("studio.codeView.newFilePrompt") || "File name (e.g. stat-bar.tsx):"));
     if (!typed) return;
     const name = resolveTypedName(typed);
     if (!name) return;
@@ -149,8 +148,8 @@ function RootComponentCodeView() {
     setActiveFile(name);
   };
 
-  const handleRenameFile = (oldName: string) => {
-    const typed = prompt(t("studio.codeView.renamePrompt") || "New file name:", oldName);
+  const handleRenameFile = async (oldName: string) => {
+    const typed = (await promptAction(t("studio.codeView.renamePrompt") || "New file name:", oldName));
     if (!typed || typed === oldName) return;
     const name = resolveTypedName(typed);
     if (!name) return;
@@ -226,8 +225,8 @@ function RootComponentCodeView() {
           )}
           {safeActiveFile !== entryFile && (
             <button
-              onClick={() => {
-                if (!window.confirm(t("studio.codeView.confirmDelete"))) return;
+              onClick={async () => {
+                if (!(await confirmAction(t("studio.codeView.confirmDelete")))) return;
                 const newFiles = { ...files };
                 delete newFiles[safeActiveFile];
                 updateRootComponent({ files: newFiles });

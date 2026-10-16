@@ -21,6 +21,7 @@ const BACKGROUND_BILLING_LABELS: Record<string, string> = {
   "summaryception": "Layered summary",
   "state-update-guard": "State update correction",
   "character-identity-review": "Character identity check",
+  "chapter-event-check": "Chapter event check",
   "character-identity-correction": "Character identity correction",
 };
 

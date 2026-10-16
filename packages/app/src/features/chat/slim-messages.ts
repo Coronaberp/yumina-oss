@@ -26,14 +26,14 @@
  */
 import { displayAudit } from "../../../sandbox/extensions/state-update-guard/audit-records";
 import type { StateValidationAudit } from "@yumina/shared";
-import { stripVariableUpdateTags } from "@yumina/engine";
+import { stripAngleMarkup, stripStateReceipts, stripVariableUpdateTags } from "@yumina/engine";
 type Msg = Record<string, unknown>;
 
 export function slimMessages(messages: ReadonlyArray<Msg>, defs?: ReadonlyArray<{ id: string; name?: string }>): Msg[] {
   let changed = false;
   const out = messages.map((m) => {
     if (m.role === "assistant" && typeof m.content === "string") {
-      const content = stripVariableUpdateTags(m.content);
+      const content = stripAngleMarkup(stripStateReceipts(stripVariableUpdateTags(m.content)));
       if (content !== m.content) { m = { ...m, content }; changed = true; }
     }
     const audit = m.stateValidation as StateValidationAudit | undefined;
@@ -49,7 +49,7 @@ export function slimMessages(messages: ReadonlyArray<Msg>, defs?: ReadonlyArray<
       const swipeAudit = rest.stateValidation as StateValidationAudit | undefined;
       if (swipeAudit?.version === 1) rest.stateValidation = displayAudit(swipeAudit, rest.rawContent, defs);
       if (i === activeIdx) {
-        if (m.role === "assistant" && typeof rest.content === "string") rest.content = stripVariableUpdateTags(rest.content);
+        if (m.role === "assistant" && typeof rest.content === "string") rest.content = stripAngleMarkup(stripStateReceipts(stripVariableUpdateTags(rest.content)));
         return rest; // active swipe keeps content + original rawContent
       }
       // Non-active swipe: drop the big display strings too (not rendered).

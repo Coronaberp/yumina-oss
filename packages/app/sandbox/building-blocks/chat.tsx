@@ -3,6 +3,7 @@ import { useYumina } from "../sandbox-context";
 import { MessageList } from "../chat/message-list";
 import { MessageInput } from "../chat/message-input";
 import { renderMessage } from "../chat/markdown";
+import { StoryOpeningControl } from "../chat/story-opening-control";
 
 /**
  * Props for the creator's custom bubble renderer.
@@ -50,7 +51,8 @@ export interface ChatProps {
  * <Chat> — The platform's chat experience as an importable building block.
  *
  * Handles: scroll management, streaming cursor, swipe controls, message actions,
- * input box, choice buttons, model picker, read-only mode, greeting display.
+ * input box, choice buttons, model picker, read-only mode, greeting display,
+ * and greeting-only Routes/Chapters selection.
  *
  * Creator customizes bubble appearance via `renderBubble`. Everything else is
  * managed by the platform. Platform improvements auto-propagate.
@@ -143,6 +145,8 @@ export function Chat({ renderBubble, className, children }: ChatProps) {
     >
       {/* Optional creator header content */}
       {children}
+
+      <StoryOpeningControl />
 
       {/* Message list with optional custom renderer */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

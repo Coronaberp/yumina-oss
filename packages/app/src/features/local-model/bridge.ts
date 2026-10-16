@@ -60,8 +60,9 @@ interface BridgeJob {
     frequency_penalty?: number;
     presence_penalty?: number;
     num_ctx?: number;
-    /** Ollama's `think`. The server sends false: see LocalBridgeProvider. */
-    think?: boolean;
+    /** GPT-OSS accepts low effort; binary thinking models use their fastest mode. */
+    think?: boolean | "low";
+    reasoning_effort?: "low";
   };
 }
 
@@ -210,6 +211,7 @@ async function runOpenAiCompatible(
       stream_options: { include_usage: true },
       ...(p.response_format?.type === 'json_object' && { response_format: p.response_format }),
       ...(p.max_tokens !== undefined && { max_tokens: p.max_tokens }),
+      ...(p.reasoning_effort && { reasoning_effort: p.reasoning_effort }),
       ...(p.temperature !== undefined && { temperature: p.temperature }),
       ...(p.top_p !== undefined && { top_p: p.top_p }),
       ...(p.frequency_penalty !== undefined && { frequency_penalty: p.frequency_penalty }),

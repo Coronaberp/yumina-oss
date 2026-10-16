@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { savePreferredProvider } from "@/lib/provider-switch";
 import { estimateReplyCost, formatCostEstimate } from "@yumina/shared";
 import { useState, useEffect, useCallback } from "react";
@@ -328,11 +329,11 @@ export function ProfileAiSettings() {
                 <span className="text-[11px] text-white/30">{t("config.streamingBypass", { defaultValue: "Disable to bypass filters" })}</span>
               </div>
               <label className="relative inline-flex cursor-pointer items-center">
-                <input
-                  type="checkbox"
+                <Checkbox
+
                   className="peer sr-only"
                   checked={streaming}
-                  onChange={() => setConfig("streaming", !streaming)}
+                  onCheckedChange={() => setConfig("streaming", !streaming)}
                 />
                 <div className="h-5 w-9 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-checked:bg-gold peer-checked:after:translate-x-full peer-checked:after:border-transparent peer-focus:outline-none" />
               </label>

@@ -70,7 +70,7 @@ import { buildReviewDiffTokens } from "./lib/review-diff";
 
 import "dockview-react/dist/styles/dockview.css";
 import "./studio-theme.css";
-import { CustomUiPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
+import { CustomUiPanel, ChaptersPanel, CharacterShowcasePanel, VnSpritesPanel, VnBackgroundsPanel } from "./panels/editor-panels";
 
 const STUDIO_CHANGE_REVIEW_COMPONENT = "studio-change-review";
 
@@ -89,6 +89,7 @@ const PANEL_COMPONENTS: Record<
   "custom-ui": CustomUiPanel,
   "character-showcase": CharacterShowcasePanel,
   "vn-sprites": VnSpritesPanel,
+  chapters: ChaptersPanel,
   "vn-backgrounds": VnBackgroundsPanel,
   playtest: PlaytestPanel,
   assets: VnSpritesPanel,
@@ -116,6 +117,7 @@ const PANEL_TITLE_KEYS: Record<string, string> = {
   "custom-ui": "sections.customUI",
   "character-showcase": "sections.characterShowcase",
   "vn-sprites": "sections.vnSprites",
+  chapters: "sections.chapters",
   "vn-backgrounds": "sections.vnBackgrounds",
   overview: "studio.panels.overview",
   playtest: "studio.panels.playtest",

@@ -330,6 +330,7 @@ function createEmptyWorld(): WorldDefinition {
 
 
 export type EditorSection =
+  | "chapters"
   | "generation"
   | "first-message"
   | "entries"
@@ -475,6 +476,7 @@ interface EditorState {
   reorderEntries: (entryIds: string[]) => void;
 
   // Worldbook actions (lore modules)
+  setChapters: (chapters: NonNullable<WorldDefinition["chapters"]>, worldbooks?: Worldbook[]) => void;
   addWorldbook: (name?: string) => void;
   updateWorldbook: (id: string, patch: Partial<Worldbook>) => void;
   removeWorldbook: (id: string) => void;
@@ -1531,6 +1533,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // Worldbook actions (lore modules). Activation is a pure function of game
   // state (variables/conditions) — see engine filterEntriesByActiveWorldbooks —
   // so the active set is identical on server + client and survives revert.
+  setChapters: (chapters, worldbooks) => {
+    set(s => {
+      const ids = new Set(chapters.map(chapter => chapter.id));
+      return commitDraft(s, { ...s.worldDraft, chapters: chapters.map(chapter => ({ ...chapter, nextChapterIds: chapter.nextChapterIds.filter(id => ids.has(id)) })),
+        worldbooks: (worldbooks ?? s.worldDraft.worldbooks ?? []).map(book => ({ ...book, ...(book.chapterIds ? { chapterIds: book.chapterIds.filter(id => ids.has(id)) } : {}) })) });
+    });
+  },
+
   addWorldbook: (name) => {
     set((s) => {
       const existing = s.worldDraft.worldbooks ?? [];

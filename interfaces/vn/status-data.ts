@@ -6,6 +6,8 @@ export type StatusField = {
   id: string;
   label: string;
   variableId: string;
+  /** Optional explicit owner for character stats whose variable ID is unrelated to their name. */
+  characterId?: string;
   path: string;
   group: StatusGroup;
   format: StatusFormat;
@@ -54,6 +56,7 @@ export function normalizeStatusConfig(value: unknown): StatusConfig {
     if (!groups.some(category => category.id === group)) groups.push({ id: group, label: group[0]!.toUpperCase() + group.slice(1).replace(/[-_]/g, " ") });
     return [{
       id, label: string(field.label, "Value"), variableId: string(field.variableId), path: string(field.path),
+      ...(typeof field.characterId === "string" && field.characterId ? { characterId: field.characterId } : {}),
       group,
       format: ["bar", "segments", "badges", "inventory", "gauge", "resource", "chips", "pips", "xp-ring", "scene"].includes(string(field.format)) ? field.format as StatusFormat : "value",
       icon: string(field.icon).slice(0, 8), color: statusColor(field.color, accent),

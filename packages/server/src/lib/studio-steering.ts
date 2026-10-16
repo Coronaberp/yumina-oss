@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { readStudioTask } from "@yumina/shared";
 import { db } from "../db/index.js";
 import { agentRuns, worlds } from "../db/schema.js";
 import type { ChatMessage } from "./llm/types.js";
@@ -39,6 +40,13 @@ export function consumeStudioSteering(context: Record<string, unknown> | null, m
   const items = readStudioSteering(context);
   const pending = items.filter(item => item.status === "queued");
   const applied = pending.map(item => ({ ...item, status: "applied" as const, beforeIteration }));
+  const task = readStudioTask(context);
+  if (task && applied.length) {
+    task.additionalRequests = [...task.additionalRequests, ...applied.map(item => item.content)].slice(-100);
+    task.planRequired = true; task.met = false; task.mode = "work"; task.status = "working";
+    task.progress.noProgress = 0; task.progress.recoveries = 0;
+    context = { ...context, studioTask: task };
+  }
   return {
     items: applied,
     context: { ...context, [STUDIO_STEERING_KEY]: items.map(item => applied.find(next => next.id === item.id) ?? item) },

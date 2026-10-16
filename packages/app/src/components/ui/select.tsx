@@ -6,19 +6,17 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-
-export interface SelectOption {
-  value: string;
-  label: string;
-  description?: string;
-  icon?: React.ReactNode;
-}
+import { selectOptionsFromChildren, type SelectOption } from "./select-options";
+export type { SelectOption } from "./select-options";
 
 export interface SelectProps extends Pick<React.ComponentPropsWithoutRef<typeof DropdownMenuTrigger>, 'id' | 'aria-label' | 'aria-labelledby' | 'title'> {
-  value: string;
+  value: string | number;
   onValueChange: (value: string) => void;
-  options: SelectOption[];
+  options?: SelectOption[];
+  children?: React.ReactNode;
+  compact?: boolean;
   placeholder?: string;
   className?: string;
   triggerClassName?: string;
@@ -30,6 +28,8 @@ export function Select({
   value,
   onValueChange,
   options,
+  children,
+  compact = false,
   placeholder = "Select an option",
   className,
   triggerClassName,
@@ -37,20 +37,33 @@ export function Select({
   disabled,
   ...triggerProps
 }: SelectProps) {
-  const selectedOption = options.find((opt) => opt.value === value);
+  const choices = options ?? selectOptionsFromChildren(children);
+  const [portalContainer, setPortalContainer] = React.useState<HTMLElement>();
+  const captureTrigger = React.useCallback((node: HTMLButtonElement | null) => {
+    if (!node) return;
+    const root = node.getRootNode();
+    if (typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot) {
+      setPortalContainer(root.querySelector<HTMLElement>(".yumina-platform-overlay-surface") ?? node.parentElement ?? undefined);
+    }
+  }, []);
+  const selectedValue = String(value);
+  const selectedOption = choices.find((opt) => opt.value === selectedValue);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        ref={captureTrigger}
         {...triggerProps}
+        type="button"
         disabled={disabled}
         className={cn(
-          "flex w-full items-center justify-between rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground shadow-inner transition-all hover:bg-accent focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50",
+          "group flex max-w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-border bg-card text-foreground shadow-inner transition-all hover:bg-accent focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50",
+          compact ? "min-h-11 px-2 py-1 text-xs sm:min-h-8" : "w-full px-4 py-3 text-sm",
           triggerClassName,
           className
         )}
       >
-        <div className="flex items-center gap-2 truncate">
+        <span className="flex min-w-0 items-center gap-2 truncate text-left">
           {selectedOption ? (
             <>
               {selectedOption.icon && (
@@ -63,21 +76,27 @@ export function Select({
           ) : (
             <span className="text-muted-foreground/50">{placeholder}</span>
           )}
-        </div>
+        </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        portalContainer={portalContainer}
         align="start"
-        className={cn("w-[var(--radix-dropdown-menu-trigger-width)] max-h-[300px] overflow-y-auto min-w-[200px] p-1.5 rounded-xl", contentClassName)}
+        collisionPadding={12}
+        className={cn("w-[var(--radix-dropdown-menu-trigger-width)] max-h-[min(300px,var(--radix-dropdown-menu-content-available-height))] max-w-[calc(100vw-24px)] overflow-y-auto min-w-[min(200px,calc(100vw-24px))] p-1.5 rounded-xl", contentClassName)}
       >
-        {options.map((opt) => (
+        {choices.map((opt, index) => (
+          <React.Fragment key={opt.value}>
+          {opt.group && opt.group !== choices[index - 1]?.group && <DropdownMenuLabel>{opt.group}</DropdownMenuLabel>}
           <DropdownMenuItem
-            key={opt.value}
-            onClick={() => onValueChange(opt.value)}
+            role="menuitemradio"
+            aria-checked={selectedValue === opt.value}
+            disabled={opt.disabled}
+            onSelect={() => onValueChange(opt.value)}
             className={cn(
               "flex cursor-pointer items-start gap-2 rounded-lg px-3 py-2 outline-none transition-colors",
               "focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-              value === opt.value ? "bg-primary/5 text-primary" : "text-foreground"
+              selectedValue === opt.value ? "bg-primary/5 text-primary" : "text-foreground"
             )}
           >
             {opt.icon && (
@@ -85,7 +104,7 @@ export function Select({
                 {opt.icon}
               </div>
             )}
-            <div className="flex flex-1 flex-col">
+            <div className="flex min-w-0 flex-1 flex-col whitespace-normal [overflow-wrap:anywhere]">
               <span className="text-sm font-medium">{opt.label}</span>
               {opt.description && (
                 <span className="text-xs text-muted-foreground">
@@ -93,10 +112,11 @@ export function Select({
                 </span>
               )}
             </div>
-            {value === opt.value && (
+            {selectedValue === opt.value && (
               <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             )}
           </DropdownMenuItem>
+          </React.Fragment>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>

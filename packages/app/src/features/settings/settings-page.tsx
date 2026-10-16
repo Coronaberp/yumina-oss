@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   useState,
   useEffect,
@@ -321,12 +322,12 @@ function loadSettings(preferences?: Record<string, unknown>): ProfileSettings {
 function ToggleSwitch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <label className="relative inline-flex shrink-0 cursor-pointer items-center">
-      <input
-        type="checkbox"
+      <Checkbox
+
         className="peer sr-only"
         aria-label={label}
         checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
+        onCheckedChange={(checked) => onChange((checked === true))}
       />
       <div className="h-6 w-11 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-checked:bg-gold peer-checked:after:translate-x-full peer-checked:after:border-transparent peer-focus-visible:ring-2 peer-focus-visible:ring-gold/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-card" />
     </label>
@@ -1770,10 +1771,10 @@ function DeleteAccountCard({ email, username }: { email: string; username: strin
               </div>
 
               <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/[0.025] p-3 text-xs leading-relaxed text-sub">
-                <input
-                  type="checkbox"
+                <Checkbox
+
                   checked={acknowledged}
-                  onChange={(event) => setAcknowledged(event.target.checked)}
+                  onCheckedChange={(checked) => setAcknowledged((checked === true))}
                   className="mt-0.5 h-4 w-4 shrink-0 accent-red-500"
                 />
                 <span>{t("account.deleteAccount.acknowledge")}</span>
@@ -2210,10 +2211,10 @@ function BlacklistManager() {
                         ] as const).map(([key, labelKey]) => (
                           <label key={key} className="flex items-center justify-between gap-3 text-sm text-sub/72">
                             <span>{t(`privacy.blacklist.${labelKey}`, { defaultValue: labelKey })}</span>
-                            <input
-                              type="checkbox"
+                            <Checkbox
+
                               checked={item[key]}
-                              onChange={(e) => void updateBlock(item.id, { [key]: e.target.checked })}
+                              onCheckedChange={(checked) => void updateBlock(item.id, { [key]: (checked === true) })}
                               className="h-4 w-4 accent-[#D6A94A]"
                             />
                           </label>

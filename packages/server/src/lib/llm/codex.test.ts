@@ -14,11 +14,14 @@ async function fixture(t: test.TestContext, mode: string) {
 import readline from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 const mode = ${JSON.stringify(mode)};
+if (mode === 'blank-lines') process.stdout.write(' \\t\\r\\n\\n');
 const results=[];
 let steered='', imageEnabled=false;
 readline.createInterface({input:process.stdin}).on('line', line => {
  const msg=JSON.parse(line), p=msg.params;
  if(!msg.method&&msg.result&&[101,102].includes(msg.id)) {
+  if(mode==='unknown-recover') { send({method:'item/agentMessage/delta',params:{threadId:'thread-test',delta:msg.result.success===false?'Recovered unavailable tool':'Incorrect tool success'}}); send({method:'turn/completed',params:{threadId:'thread-test',turn:{id:'turn-test',status:'completed'}}});return; }
+  if(mode==='unknown') { send({id:101,method:'item/tool/call',params:{threadId:'thread-test',turnId:'turn-test',callId:'call-1',tool:'unknown_write',arguments:{}}});return; }
   results.push(msg.result.contentItems[0].text);
   if(results.length===2) {
    send({method:'item/agentMessage/delta',params:{threadId:'thread-test',delta:mode==='steering'?(steered.includes('Prioritize the new instruction')&&steered.includes('Updated world instruction')?'Used latest steering':'Missed steering'):'Handled both results'}});
@@ -26,10 +29,15 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   }
  }
  if(msg.method==='turn/steer') {steered=JSON.stringify(p.input);send({id:msg.id,result:{turnId:'turn-test'}});}
- if(msg.method==='initialize') send({id:msg.id,result:{}});
+ if(msg.method==='initialize') {
+  if(mode==='bom') process.stdout.write('\\uFEFF');
+  if(mode==='invalid-json') {process.stdout.write('{broken protocol secret=do-not-expose\\n');return;}
+  if(mode==='invalid-shape') {send(null);return;}
+  send({id:msg.id,result:{}});
+ }
  if(msg.method==='account/read') send({id:msg.id,result:{account:{type:mode==='auth'?'apiKey':'chatgpt'}}});
  if(msg.method==='config/read') send({id:msg.id,result:{config:{mcp_servers:{inherited:{enabled:true}},plugins:{'test@local':{enabled:true}}}}});
- if(msg.method==='model/list') send({id:msg.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'}]},{id:'gpt-6.1-sol',model:'gpt-6.1-sol',supportedReasoningEfforts:[{reasoningEffort:'xhigh'}]}]}});
+ if(msg.method==='model/list') send({id:msg.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'},{reasoningEffort:'low'}]},{id:'gpt-6.1-sol',model:'gpt-6.1-sol',supportedReasoningEfforts:[{reasoningEffort:'xhigh'}]}]}});
  if(msg.method==='modelProvider/capabilities/read') send({id:msg.id,result:{imageGeneration:mode!=='image-unsupported'}});
  if(msg.method==='thread/start') {
   if(mode.startsWith('image')) {
@@ -58,7 +66,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
    if(!['image-empty','image-explanation'].includes(mode))send({method:'item/completed',params:{threadId:'thread-test',item:{id:'image-1',type:'imageGeneration',status:mode==='image-failed'?'failed':'completed',failure:mode==='image-failed'?{message:'Image quota exhausted'}:null,result:mode==='image-bad'?'../../private.png':'aW1hZ2UtYnl0ZXM=',transparentBackground:true}}});
    send({method:'turn/completed',params:{threadId:'thread-test',turn:{status:'completed'}}});return;
   }
-  if(p.effort!=='max') {send({id:msg.id,error:{message:'Wrong effort'}});return;}
+  if(p.effort!==(mode==='check'?'low':'max')) {send({id:msg.id,error:{message:'Wrong effort'}});return;}
   send({id:msg.id,result:{turn:{id:'turn-test'}}});
   if(mode==='timeout') return;
   if(mode==='exit') {process.exit(0);return;}
@@ -66,7 +74,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if(mode==='tools'||mode==='steering') {
    send({id:101,method:'item/tool/call',params:{threadId:'thread-test',turnId:'turn-test',callId:'call-1',tool:'read_entities',arguments:{entityType:'rule'}}});
    send({id:102,method:'item/tool/call',params:{threadId:'thread-test',turnId:'turn-test',callId:'call-2',tool:'validate_world',arguments:{}}});
-  } else if(mode==='unknown') {
+  } else if(mode==='unknown'||mode==='unknown-recover') {
    send({id:101,method:'item/tool/call',params:{threadId:'thread-test',turnId:'turn-test',callId:'call-1',tool:'unknown_write',arguments:{}}});
   } else {
    send({method:'thread/tokenUsage/updated',params:{threadId:'thread-test',tokenUsage:{last:{inputTokens:12,outputTokens:4,totalTokens:16,reasoningOutputTokens:2}}}});
@@ -95,6 +103,11 @@ test("Codex emits real parallel tool calls for Yumina to execute with Max reason
   assert.equal(chunks.at(-1)?.type, "done");
   assert.ok(!chunks.some(c => c.type === "error"));
 });
+test("Codex validation checks explicitly use low while Studio retains Max", async t => {
+  const chunks = await collect(new CodexProvider(await fixture(t, "check")), { tools: [], reasoningEffortOverride: "low" });
+  assert.equal(chunks.at(-1)?.type, "done");
+  assert.ok(!chunks.some(c => c.type === "error"));
+});
 test("Codex returns host tool results to the same native turn instead of repeating actions", async t => {
   const controller = new AbortController(); t.after(() => controller.abort());
   const command = await fixture(t, "tools");
@@ -116,6 +129,23 @@ test("Codex streams text and reports completion only on a completed turn", async
   assert.equal(chunks.filter(c => c.type === "text").map(c => c.content).join(""), "Hello");
   assert.deepEqual(chunks.at(-1)?.usage, { promptTokens: 12, completionTokens: 4, totalTokens: 16, reasoningTokens: 2 });
 });
+for (const mode of ["blank-lines", "bom"]) {
+  test(`Codex accepts ${mode} framing without interrupting valid protocol messages`, async t => {
+    const chunks = await collect(new CodexProvider(await fixture(t, mode)));
+    assert.equal(chunks.filter(chunk => chunk.type === "text").map(chunk => chunk.content).join(""), "Hello");
+    assert.equal(chunks.at(-1)?.type, "done");
+    assert.ok(!chunks.some(chunk => chunk.type === "error"));
+  });
+}
+for (const [mode, match] of [["invalid-json", /malformed JSON.*stdout/i], ["invalid-shape", /invalid JSON-RPC message.*stdout/i]] as const) {
+  test(`Codex ${mode} fails precisely without exposing raw protocol contents`, async t => {
+    const chunks = await collect(new CodexProvider(await fixture(t, mode)));
+    assert.equal(chunks.at(-1)?.type, "error");
+    assert.match(chunks.at(-1)!.content, match);
+    assert.doesNotMatch(chunks.at(-1)!.content, /do-not-expose/);
+    assert.ok(!chunks.some(chunk => chunk.type === "done"));
+  });
+}
 test("Codex continuation applies new user steering and rebuilt world instructions", async t => {
   const controller = new AbortController(); t.after(() => controller.abort());
   const provider = new CodexProvider(await fixture(t, "steering"));
@@ -205,7 +235,7 @@ test("Codex images use an isolated native Sol 6.1 xhigh turn and return bytes", 
   assert.equal(result.reasoningEffort, "xhigh");
 });
 test("transparent general images are not forced onto an opaque background", async t => {
-  const result = await generateCodexImage({ command: await fixture(t, "image-transparent-follow"), prompt: "A small circle with a transparent background", imageKind: "image" });
+  const result = await generateCodexImage({ command: await fixture(t, "image-transparent-follow"), prompt: "A small circle with a transparent background", imageKind: "image", transparent: true });
   assert.equal(result.bytes.toString(), "image-bytes");
 });
 for (const [mode, message] of [["image-unsupported", /not available/], ["image-empty", /did not generate/], ["image-bad", /invalid image/], ["image-failed", /quota/]] as const) {
@@ -236,4 +266,30 @@ test("Codex sends reference images to both the disabled checker and native image
 });
 test("a safe prompt with an NSFW reference is refused before enabling image generation", async t => {
   await assert.rejects(generateCodexImage({ command: await fixture(t, "image-reference-nsfw"), prompt: "Copy the reference", imageKind: "image", referenceImages: ["data:image/png;base64,cmVm"] }), /Image generation is disabled for NSFW requests/);
+});
+
+test("Codex rejects an unavailable tool without executing it and lets the model recover", async t => {
+  const chunks = await collect(new CodexProvider(await fixture(t, "unknown-recover")));
+  assert.equal(chunks.filter(c => c.type === "text").map(c => c.content).join(""), "HelloRecovered unavailable tool");
+  assert.equal(chunks.at(-1)?.type, "done");
+  assert.ok(!chunks.some(c => c.type === "tool_call_end" || c.type === "error"));
+});
+
+
+test("independent Studio chats retain separate native Codex workers when one is stopped", async t => {
+  const command=await fixture(t,"tools");
+  const a="studio:qa:world:conversation-A",b="studio:qa:world:conversation-B";
+  t.after(async()=>{await stopCodexConversation(a,"run-A");await stopCodexConversation(b,"run-B");});
+  const [first,second]=await Promise.all([
+    collect(new CodexProvider(command),{conversationId:a,generationId:"run-A"}),
+    collect(new CodexProvider(command),{conversationId:b,generationId:"run-B"}),
+  ]);
+  assert.equal(first.filter(c=>c.type==="tool_call_end").length,2);
+  assert.equal(second.filter(c=>c.type==="tool_call_end").length,2);
+  await stopCodexConversation(a,"run-A");
+  const continued=await collect(new CodexProvider(command),{conversationId:b,generationId:"run-B",messages:[
+    ...params.messages,{role:"tool",tool_call_id:"call-1",content:"B read result"},{role:"tool",tool_call_id:"call-2",content:"B validation result"},
+  ]});
+  assert.equal(continued.filter(c=>c.type==="text").map(c=>c.content).join(""),"Handled both results");
+  assert.equal(continued.at(-1)?.type,"done");
 });

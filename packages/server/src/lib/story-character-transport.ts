@@ -34,7 +34,7 @@ export interface CharacterGuardUsage {
 
 export function createCharacterGuardTransport(args: {
   userId: string; selected: ContentRoutingRequest["selected"]; protectedWorld?: boolean;
-  maxContext: number; signal: AbortSignal; startedAt: number;
+  maxContext: number; signal: AbortSignal; startedAt: number; reviewTimeoutMs?: number;
   playerNames?: (string | null | undefined)[]; characterNames?: string[];
   route?: typeof prepareContentRoutedRequest;
   recordUsage: (record: CharacterGuardUsage) => Promise<void>;
@@ -46,7 +46,7 @@ export function createCharacterGuardTransport(args: {
     const controller = new AbortController();
     const abort = () => controller.abort(args.signal.reason);
     args.signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(), Math.min(remaining, request.stage === "review" ? 60_000 : 120_000));
+    const timer = setTimeout(() => controller.abort(), Math.min(remaining, request.stage === "review" ? (args.reviewTimeoutMs ?? 60_000) : 120_000));
     const prefix = Math.max(0, request.messages.length - 1);
     const messages = [...request.messages.slice(0, prefix), ...request.history, ...request.messages.slice(prefix)];
     let routed: Awaited<ReturnType<typeof prepareContentRoutedRequest>> | undefined;
@@ -60,7 +60,7 @@ export function createCharacterGuardTransport(args: {
       if (controller.signal.aborted) throw new CharacterIdentityError("cancelled");
       servedModel = routed.model;
       started = true;
-      for await (const chunk of routed.resolved.provider.generateStream({ messages: routed.messages, model: routed.model, maxTokens: request.maxTokens, temperature: 0, disableReasoning: true, stream: false, signal: controller.signal,
+      for await (const chunk of routed.resolved.provider.generateStream({ messages: routed.messages, model: routed.model, maxTokens: request.maxTokens, temperature: 0, reasoningEffortOverride: "low", stream: false, signal: controller.signal,
         ...(request.stage === "review" ? { responseFormat: { type: "json_object" as const } } : {}),
       })) {
         if (chunk.model) servedModel = chunk.model;

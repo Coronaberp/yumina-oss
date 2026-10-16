@@ -1,3 +1,4 @@
+import { Select } from "@/components/ui/select";
 import { Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Condition, Variable } from "@yumina/engine";
@@ -95,10 +96,11 @@ export function ConditionEditor({
                 key={i}
                 className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-accent/50 p-2"
               >
-                <select
+                <Select compact
+                  aria-label={`${t("conditionEditor.variable", "Condition variable")} ${i + 1}`}
                   value={cond.variableId}
-                  onChange={(e) => {
-                    const nextVar = variables.find((v) => v.id === e.target.value);
+                  onValueChange={(selectedValue) => {
+                    const nextVar = variables.find((v) => v.id === selectedValue);
                     if (!nextVar) return;
                     onChange(
                       conditions.map((c, idx) =>
@@ -113,15 +115,15 @@ export function ConditionEditor({
                       {`${v.name} (${v.type})`}
                     </option>
                   ))}
-                </select>
+                </Select>
 
-                <select
+                <Select compact
+                  aria-label={`${t("conditionEditor.operator", "Condition operator")} ${i + 1}`}
                   value={cond.operator}
-                  onChange={(e) =>
+                  onValueChange={(selectedValue) =>
                     updateCondition(i, {
-                      operator: e.target.value as Condition["operator"],
-                    })
-                  }
+                      operator: selectedValue as Condition["operator"],
+                    })}
                   className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
                 >
                   {operators.map((op) => (
@@ -131,30 +133,31 @@ export function ConditionEditor({
                         : OP_LABELS[op]}
                     </option>
                   ))}
-                </select>
+                </Select>
 
                 {(varType === "number" || varType === "string") && (
-                  <select
+                  <Select compact
+                    aria-label={`${t("conditionEditor.valueSource", "Condition value source")} ${i + 1}`}
                     value={cond.valueRef !== undefined ? "var" : "const"}
-                    onChange={(e) =>
+                    onValueChange={(selectedValue) =>
                       updateCondition(
                         i,
-                        e.target.value === "var"
+                        selectedValue === "var"
                           ? { valueRef: valueRefVars[0]?.id ?? "" }
                           : { valueRef: undefined },
-                      )
-                    }
+                      )}
                     className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
                   >
                     <option value="const">{t("behaviors.operandConstant")}</option>
                     <option value="var">{t("behaviors.operandVariable")}</option>
-                  </select>
+                  </Select>
                 )}
 
                 {cond.valueRef !== undefined ? (
-                  <select
+                  <Select compact
+                    aria-label={`${t("conditionEditor.sourceVariable", "Condition source variable")} ${i + 1}`}
                     value={cond.valueRef}
-                    onChange={(e) => updateCondition(i, { valueRef: e.target.value })}
+                    onValueChange={(selectedValue) => updateCondition(i, { valueRef: selectedValue })}
                     className="min-w-[6rem] rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
                   >
                     {valueRefVars.map((v) => (
@@ -162,18 +165,18 @@ export function ConditionEditor({
                         {v.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 ) : varType === "boolean" ? (
-                  <select
+                  <Select compact
+                    aria-label={`${t("conditionEditor.booleanValue", "Condition value")} ${i + 1}`}
                     value={cond.value === true ? "true" : "false"}
-                    onChange={(e) =>
-                      updateCondition(i, { value: e.target.value === "true" })
-                    }
+                    onValueChange={(selectedValue) =>
+                      updateCondition(i, { value: selectedValue === "true" })}
                     className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
                   >
                     <option value="true">{t("conditionEditor.trueValue")}</option>
                     <option value="false">{t("conditionEditor.falseValue")}</option>
-                  </select>
+                  </Select>
                 ) : varType === "json" && cond.operator !== "contains" ? (
                   <input
                     type="text"

@@ -6,6 +6,8 @@ import { sql } from "drizzle-orm";
 import { encryptApiKey, decryptApiKey } from "../lib/crypto.js";
 import { resolveStoryProviderForModel, isProtectedStorySession } from "../lib/story-provider.js";
 import { decorateStoryProvider } from "../lib/story-content-routing.js";
+import { resolveSavedProfileProvider } from "../lib/saved-profile-provider.js";
+import { resolveAdminContentProvider } from "../lib/admin-content-defaults.js";
 import { recordUsageLog } from "../lib/usage-log.js";
 import { usageObservation } from "../lib/usage-observation.js";
 import { createMemoryDatabase } from "./database.js";
@@ -290,9 +292,28 @@ export async function createMemoryModel(
   userId: string,
   sessionId: string,
   model: string,
+  profileId?: string,
 ): Promise<MemoryModel> {
   const protectedWorld = await isProtectedStorySession(userId, sessionId);
-  const resolved = await resolveStoryProviderForModel(userId, model, { allowOfficialFallback: false, forceOfficial: protectedWorld });
+  let resolved = await resolveStoryProviderForModel(userId, model, { allowOfficialFallback: false, forceOfficial: protectedWorld });
+  if (!protectedWorld && profileId && resolved?.profileId !== profileId) {
+    // A model ID alone cannot identify a custom endpoint. Only resolve the
+    // captured owned profile or an explicitly shared administrator default.
+    resolved = await resolveSavedProfileProvider(userId, profileId, model);
+    if (!resolved) {
+      for (const kind of ["sfw", "nsfw"] as const) {
+        const shared = await resolveAdminContentProvider(kind);
+        if (shared?.profileId === profileId && shared.model === model) { resolved = shared; break; }
+      }
+    }
+  } else if (!protectedWorld && !profileId) {
+    // Older sessions predate route provenance. Their last served fallback
+    // model must use that configured fallback connection, never the SFW URL.
+    const account = (await db.execute(sql`SELECT preferences FROM "user" WHERE id=${userId}`)).rows[0];
+    const fallbackId = (account?.preferences as { nsfwApiKeyId?: string } | undefined)?.nsfwApiKeyId;
+    const fallback = fallbackId ? await resolveSavedProfileProvider(userId, fallbackId) : await resolveAdminContentProvider("nsfw");
+    if (fallback?.model === model) resolved = fallback;
+  }
   if (!resolved?.isByok) throw new Error("memory_model_unavailable");
   const runtime = await getMemoryRuntime();
   return createRecordedMemoryModel({

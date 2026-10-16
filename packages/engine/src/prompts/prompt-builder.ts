@@ -1,3 +1,5 @@
+import { chapterEventPrompt } from "../story/chapter-events.js";
+import { chapterPrompt, chapterGreetingEnabled } from "../story/chapters.js";
 import { COT_BYPASS_CONTENT, LEGACY_COT_BYPASS_CONTENT } from "../entries/official-presets.js";
 import { storyPromptBlock } from "../story/progression.js";
 import type {
@@ -175,7 +177,7 @@ export class PromptBuilder {
    */
   buildGreeting(world: WorldDefinition, state: GameState): string {
     const greetingEntry = world.entries.find(
-      (e) => e.role === "greeting" && e.enabled
+      (e) => e.role === "greeting" && e.enabled && chapterGreetingEnabled(world, e.id)
     );
     if (!greetingEntry) return "";
     return this.interpolate(greetingEntry.content, world, state);
@@ -187,7 +189,7 @@ export class PromptBuilder {
    */
   buildGreetings(world: WorldDefinition, state: GameState): string[] {
     return world.entries
-      .filter((e) => e.role === "greeting" && e.enabled)
+      .filter((e) => e.role === "greeting" && e.enabled && chapterGreetingEnabled(world, e.id))
       .sort(entrySort)
       .map((e) => this.interpolate(e.content, world, state));
   }
@@ -198,7 +200,7 @@ export class PromptBuilder {
    *  the strings buildGreetings returns. */
   buildGreetingEntries(world: WorldDefinition): WorldEntry[] {
     return world.entries
-      .filter((e) => e.role === "greeting" && e.enabled)
+      .filter((e) => e.role === "greeting" && e.enabled && chapterGreetingEnabled(world, e.id))
       .sort(entrySort);
   }
 
@@ -480,6 +482,10 @@ export class PromptBuilder {
   ): ChatMessage[] {
     const entries = preCollected?.filter((entry) => !entry.memory?.hidden) ?? this.collectEntries(world, matchedEntries, userPrompts, toggledEntries, state);
     const result: ChatMessage[] = [];
+    const eventPrompt = chapterEventPrompt(world, state);
+    if (eventPrompt) result.push({ role: "system", content: eventPrompt });
+    const currentChapter = chapterPrompt(world, state);
+    if (currentChapter) result.push({ role: "system", content: currentChapter });
     const activeDirectives = directives ?? [];
 
     const getDirectivesForPosition = (pos: string) =>

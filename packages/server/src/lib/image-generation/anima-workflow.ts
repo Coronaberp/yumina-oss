@@ -1,7 +1,7 @@
 import { ANIMA_BUILTIN_WORKFLOW, GenerationError, record } from "./config.js";
 export { ANIMA_BUILTIN_WORKFLOW } from "./config.js";
 
-export const DEFAULT_ANIMA_MODEL = "anima-base-v1.0.safetensors";
+export const DEFAULT_ANIMA_MODEL = "wai_anima.safetensors";
 export const ANIMA_TURBO_LORA = "anima-turbo-lora-v0.2.safetensors";
 export const ANIMA_IN_CONTEXT_LORA = "anima-incontext-character.safetensors";
 export const ANIMA_OUTPUT_NODE_IDS = { original: "12", mask: "13", foreground: "14" } as const;

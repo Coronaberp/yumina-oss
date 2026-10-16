@@ -4,7 +4,7 @@ import { personaControlInstructions, type PersonaControlMode } from '@yumina/sha
 /**
  * Speaker tag — the AI names who is talking BEFORE it writes the line.
  *
- * In a world where several characters carry portraits, the prompt asks the
+ * In a world with named characters, the prompt asks the
  * model to open every reply with `[speaker: Name]`. The tag is the first few
  * tokens of the stream, so the chat knows whose face to show before any prose
  * arrives, instead of guessing from names in the text afterwards.
@@ -67,11 +67,11 @@ export function canonicalCharacterName(names: ReadonlyArray<string>, name: strin
   return characterIdentifiers(names).find(candidate => normalize(candidate.identifier) === normalize(name))?.name || null;
 }
 
-/** Whether this world should be asked for a speaker tag: two or more
- *  characters with portraits (with one, every line is theirs), and no
+/** Speech and narration need distinct names even before portraits are
+ *  uploaded, including in single-character worlds. Keep clear of any
  *  variable that would collide with the tag's name. */
 export function speakerTagEnabled(world: Pick<WorldDefinition, "entries" | "variables">): boolean {
-  if (portraitCharacters(world.entries).length < 2) return false;
+  if (!(world.entries ?? []).some(e => e.role === "character" && e.enabled !== false && displayCharacterName(e.name))) return false;
   if ((world.variables ?? []).some((v) => v.id.toLowerCase() === "speaker")) return false;
   return true;
 }
@@ -163,10 +163,10 @@ export function buildSpeakerFormatBlock(world: SpeakerFormatWorld, personaContro
     ].join("\n");
   }
   if (!speakerTagEnabled(world)) return "";
-  const names = portraitCharacters(world.entries).map((e) => displayCharacterName(e.name));
+  const names = (world.entries ?? []).filter(e => e.role === "character" && e.enabled !== false && displayCharacterName(e.name)).map(e => displayCharacterName(e.name));
   return [
     "<speaker-format>",
-    `Characters with portraits: ${names.join(", ")}.`,
+    `Characters: ${names.join(", ")}.`,
     "Begin EVERY reply with a speaker tag as the very first thing, before any prose:",
     "  [speaker: Name]",
     "Name is exactly one of the names above — the speaker of the FIRST paragraph. For an undefined character, use NPC, including in later NPC: dialogue paragraphs.",

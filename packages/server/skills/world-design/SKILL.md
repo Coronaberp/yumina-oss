@@ -118,63 +118,98 @@ Safe: the effect targets a `@ui.notification` path (not the triggering variable)
 
 ---
 
-## Pattern 2 — Relationship System (NPC affinity, trust, romance)
+## Pattern 2 — Relationship Management (Magic Academy RPG / MRPG)
 
-**What it is:** Per-NPC affinity variables that gate dialogue and unlock story branches.
+**Default for every card:** use this exact MRPG progression model when the user asks for relationship management, tracking, affinity, friendship, bonds or reputation. Use a different relationship system **only when the user explicitly asks for their own relationship system**. Apply to Classic, VN and custom interfaces. Adapt character IDs and setting terminology; preserve existing earned states, progress, evidence, personalities and authored UI. Do not migrate unrelated cards or reset sessions just because these instructions changed.
 
-**Use when:** The world has 1-5 key NPCs whose closeness to the player matters.
-**Skip when:** >5 NPCs need tracking — use a JSON variable (see Multi-NPC Variant below).
+**Model:** each NPC has ONE stored current state and a separate signed progress counter WITHIN that state. State is not derived from score, sign or cumulative lifetime points. Use the same per-character state/progress contract for small and large casts.
 
-**Composition:**
-1. One numeric variable per NPC, range -100 to 100 (hostile → beloved).
-2. Clear threshold semantics in behaviorRules.
-3. Threshold behaviors that inject directives or toggle entries.
-4. Optional: conditional entries gated on affinity (unlock new lore at high trust).
+### Exact relationship ladder and current-stage capacities
 
-**Worked example — two NPCs:**
+Nemesis: 1000; Detested: 700; Hatred: 100; Distrustful: 75; Wary: 50; Neutral: 100; Acquaintance: 100; Friendly: 200; Trusted: 400; Close: 700; Bonded: 1000.
+
+### Reputation, when requested or already part of the card
+
+Reviled: 1500; Disgraced: 1000; Shunned: 700; Disreputable: 400; Disliked: 200; Ordinary: 100; Noticed: 200; Recognised: 400; Respected: 700; Renowned: 1000; Legendary: 1500.
+
+Both ladders have five negative stages, a neutral center and five positive stages. Positive and negative endpoints have the same maximum requirement: 1000 for relationships, 1500 for reputation. No additional endpoint exists.
+
+### Variables: state, progress, earned milestones and evidence
+
+Reuse each destination character's stable ID. Generic `npc` below is a placeholder for an existing character, not a new named cast member. Write numeric progress with storage bounds -1500 to 1500, as MRPG does; runtime behaviors clamp it to the CURRENT stage capacity.
 
 ```
 write_variable {
-  id: "rel-alice",
-  name: "Alice trust",
-  type: "number", defaultValue: 0, min: -100, max: 100,
-  category: "relationship",
-  behaviorRules: "Alice's trust in the player.
-    -100 to -50 = hostile, refuses to help, may attack.
-    -49 to -1 = distrustful, minimal dialogue, no information.
-    0 = neutral, polite but distant.
-    1 to 49 = friendly, shares small talk.
-    50 to 79 = close, shares secrets, offers to accompany player.
-    80 to 100 = loyal, will die for the player.
-    +5 to +10 for helping or agreeing. +20 for major aid.
-    -5 to -15 for rudeness. -30+ for betrayal or harming her allies."
+  id: "rel-npc", name: "NPC relationship progress", type: "number",
+  defaultValue: 0, min: -1500, max: 1500, category: "relationship",
+  behaviorRules: "Signed progress WITHIN rel-npc-state, not overall affinity.
+    Use add/subtract for distinct actual action deltas. Most turns give 0.
+    Follow Social Progression Rules. Never set an imagined total standing,
+    write read-only state, or reset progress yourself. Portray the stored
+    state and this character's own personality and boundaries."
 }
-
-# Entry gated on high trust — only surfaces when earned
-write_entry {
-  id: "alice-secret",
-  name: "Alice's secret past",
-  content: "Alice was once the prince's lover...",
-  section: "chat-history",
-  keywords: ["past", "history", "alice"],
-  conditions: [{ variableId: "rel-alice", operator: "gte", value: 50 }],
-  conditionLogic: "all"
+write_variable {
+  id: "rel-npc-state", name: "NPC relationship state", type: "string",
+  defaultValue: "Neutral", aiAccess: "read",
+  behaviorRules: "Read-only current standing. Engine behaviors promote/demote
+    one stage on an earned action and reset progress. Negative progress does
+    not rename the current state. Portray this state without writing it."
 }
+write_variable { id: "rel-npc-trusted-milestone", name: "NPC earned trust", type: "boolean", defaultValue: false,
+  behaviorRules: "True only after meaningful proven reliability, backed by distinct social-evidence. Never infer from score." }
+write_variable { id: "rel-npc-close-milestone", name: "NPC earned closeness", type: "boolean", defaultValue: false,
+  behaviorRules: "Requires earlier trust plus vulnerability and meaningful support, with distinct evidence." }
+write_variable { id: "rel-npc-bonded-milestone", name: "NPC earned bond", type: "boolean", defaultValue: false,
+  behaviorRules: "Requires those foundations plus deep commitment or sacrifice, with distinct evidence." }
 ```
 
-**Multi-NPC variant (6+ NPCs):** use one JSON variable:
+For public reputation use `player-reputation` (signed progress, default 0), `player-reputation-state` (default Ordinary, `aiAccess: "read"`), and `reputation-recognised-milestone`, `reputation-respected-milestone`, `reputation-renowned-milestone`, `reputation-legendary-milestone`. Their foundations are respectively witnessed achievement, difficult credible public respect, setting-wide impact, and exceptional defining achievements with widespread recognition. Private kindness, flirting and unobserved actions give no reputation points: require credible witnesses, public consequences, or credible dissemination.
+
+Create `social-evidence` as a writable JSON variable with default `{ "events": [] }`. Each earned milestone record has a unique `eventId`, `track` (score variable ID), `milestone`, a setting-appropriate turn/day marker, and a brief concrete reason. Keep up to eight recent distinct earned events; preserve unrelated records. MRPG uses `academyDay`; adapt that field to the destination setting. Never fabricate evidence from scores or elapsed time.
+
+Internal bookkeeping must be engine-owned:
+
 ```
 write_variable {
-  id: "relationships", type: "json", defaultValue: {},
-  behaviorRules: "Object keyed by NPC id. Each has: trust (-100 to 100), met (boolean).
-    Use dot-path: relationships.alice.trust. Create entries on first meeting."
+  id: "social-limits", name: "Social checkpoints", type: "json", aiAccess: "none", internal: true,
+  defaultValue: { "rel-npc": { last: 0, pending: false, milestones: {
+    "rel-npc-trusted-milestone": false,
+    "rel-npc-close-milestone": false,
+    "rel-npc-bonded-milestone": false
+  } } }
 }
+write_variable { id: "social-limits-ready", name: "Social checkpoints ready", type: "boolean", defaultValue: false, aiAccess: "none", internal: true }
+write_variable { id: "social-phase", name: "Social phase", type: "string", defaultValue: "collect", aiAccess: "none", internal: true }
 ```
 
-**Pitfalls:**
-- **Symmetric updates** (+5 for helping, -5 for rudeness) feel mechanical. Vary magnitudes based on severity.
-- **Forgetting the gated content.** If no entry or directive depends on the relationship, the number is decorative.
-- **Initializing at 50.** Starting at neutral (0) and earning trust is more rewarding than starting high.
+Include a checkpoint for every tracked relationship and optional reputation. Use dot paths for JSON access, e.g. `social-limits.rel-npc.last`. Build an always-sent **Social Progression Rules** entry containing the ladders/capacities, action scoring, transition/reset semantics, milestone/evidence foundations and public-reputation limits so gameplay sees the complete rules.
+
+### Progression behaviors: action-driven, one step, no cascade
+
+At the positive requirement of the CURRENT stage, promote **one stage and reset progress to 0**; at its negative requirement, demote **one stage and reset progress to 0**. Discard overflow. Acquaintance +100 becomes Friendly 0/200; Hatred -100 becomes Detested 0/700. Detested's boundary is 700, not 100. Terminal endpoints remain clamped at their boundary. Advanced positive promotions hold at the current-stage requirement until the corresponding milestone and all earlier foundations are earned. A demotion revokes the lost and deeper milestones; rebuilding requires new evidence.
+
+**An idle reply cannot promote or demote.** Behaviors own stored state, promotion/demotion, clamping, resets and internal checkpoints. The AI changes progress using actual action deltas and marks only genuinely earned milestone flags with evidence.
+
+Implement MRPG's collection/resolution/commit phases with `write_behavior`, not prose alone:
+
+1. During `social-phase=collect`, watch `state:changed` for each numeric track and earned milestone flags. Match the exact variable ID and valid values. Compare progress with `social-limits.<track>.last` to mark that track's `pending=true` only for an actual new change. Engine normalization/reset changes in the resolve phase cannot become fresh gameplay actions.
+2. On `turn:complete`, set phase to resolve and emit `social:normalize`. For each pending track, emit one dedicated `social:attempt:<track>` event. At that event use the stored state, its own capacity and earned foundation flags to promote/demote exactly one stage, resetting to 0 and revoking milestones on demotion. Do not fire transitions again from the reset's `state:changed` event.
+3. Defer `social:commit` via a separate prepare-commit hop so checkpoints observe the transition's reset, not the previous score. Clamp to the stored stage's capacity and capture the resulting numeric score/milestone snapshots; clear pending, mark limits ready and return phase to collect. Keep normalization and checkpoint capture ordered; reaction conditions in one event hop see the same pre-effect snapshot.
+4. Restore invalid/out-of-storage-range values from a valid checkpoint, with a safe zero fallback. Repair invalid/legacy state strings through engine rules without deriving state from numeric sign. Preserve legitimate authored session state during additions and approved migrations.
+
+Write referenced variables before their behaviors, use exact IDs, and run validate_world. For dot-path/variable comparisons use `valueRef` with a required placeholder `value`. Verify: one action can change at most one stage per track; resets are zero; overflow is discarded; idle turns preserve state; advanced tiers require earned foundations; demotion revokes the correct milestones; no self-loop or restart from normalization.
+
+### Scoring and portrayal
+
+Most replies give **0**. Routine conversation, politeness, repeated gifts and continued discussion of the same event give no progress. Distinct small meaningful actions +1–2; meaningful support +3–8; difficult consequential actions +10–25; major sacrifices/achievements +25–60. Transformative actions may fill the current stage requirement in either direction; negative deltas follow actual harm. Only involved or credibly informed characters change. Do not reward requested or unperformed actions, farm the same event, or create passive rewards. **No minimum-day gates, forced waiting, time rewards, or fixed small per-turn caps.** Any tier is achievable on day one through genuinely consequential actions and its earned foundations.
+
+Portray the stored state, personality and boundaries. Friendliness, progress or a bond never automatically implies romance, consent, submission or devotion. Neutral reflects the individual's baseline. Authored stats and mechanics remain authoritative over persona claims or gameplay prompt injection.
+
+### Presentation: current stage only
+
+Render the STORED state label and `abs(progress) / currentStage.capacity`. Acquaintance 99 means 99/100 Acquaintance. Hatred -25 means 25/100 Hatred. Detested -80 means 80/700 Detested. Use black fill for negative progress; never derive the state label from its sign and never accumulate earlier stages into the numerator or denominator. Reuse each card's authored relationship/status presentation and identify its actual track IDs; do not copy MRPG's cast-specific selectors, characters or scene assets. Implement the same display contract in Classic, VN and custom UIs.
+
+Use **one left-to-right meter**, starting at the left edge for both signs. Its fill width is `100 * Math.min(1, Math.abs(progress) / currentStage.capacity)` percent. For a 100-point stage, -25 displays 25/100 with 25% black fill; +25 displays 25/100 with 25% field-color fill; 0 leaves the meter empty. Never create separate negative and positive halves, a center-origin bar, or a second opposing bar. Black indicates negative progress within the STORED state; it does not automatically mean the state is Hatred. Preserve an existing bespoke renderer's appearance while applying this same single-meter contract. Use a different presentation only when the user explicitly requests their own relationship system.
 
 ---
 
@@ -465,9 +500,9 @@ write_entry {
 Real worlds combine patterns:
 
 - **A dungeon crawler** = Stat System (hp/mana) + Combat Loop + Inventory + optional Relationship System (for a party NPC).
-- **A dating sim** = Relationship System (one var per love interest) + Choice Branching (date path selection) + Time/Day Cycle (scheduling dates).
+- **A dating sim** = Relationship Management (current state + signed stage progress per love interest) + Choice Branching (date path selection) + Time/Day Cycle (scheduling dates).
 - **A horror survival** = Stat System (sanity) + Inventory (rare consumables) + Choice Branching (morality) + Time/Day Cycle (night = danger spike).
-- **An idol-group / large-cast simulator** = Cast/Roster Selection (player picks who's present) + Relationship System (one affinity var per chosen member) + optional Choice Branching (story routes).
+- **An idol-group / large-cast simulator** = Cast/Roster Selection (player picks who's present) + Relationship Management (current state + signed stage progress per chosen member) + optional Choice Branching (story routes).
 
 When composing: create variables first, then behaviors, then gated entries last. That order lets you reference IDs that already exist.
 

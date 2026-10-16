@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
   addStudioPanelInstance,
-  PANEL_MENU_GROUPS,
+  getStudioPanelMenuGroups,
   type StudioAddPagePickerParams,
 } from "../studio-page-catalog";
 
@@ -16,18 +16,20 @@ export function AddPagePickerPanel(props: IDockviewPanelProps<StudioAddPagePicke
   const { t } = useTranslation("editor");
   const variants = useEditorStore((s) => s.variants);
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
+  const root = useEditorStore((s) => s.worldDraft.rootComponent);
 
   // Flag-based (not tab-position) primary detection — matches the 主/副 model.
   const currentVariant = variants.find((v) => v.id === serverWorldId);
   const isNonPrimaryVariant = !!currentVariant && currentVariant.isPrimaryVariant === false;
 
   const filteredGroups = useMemo(() => {
-    if (!isNonPrimaryVariant) return PANEL_MENU_GROUPS;
-    return PANEL_MENU_GROUPS.map((group) => ({
+    const groups = getStudioPanelMenuGroups(root);
+    if (!isNonPrimaryVariant) return groups;
+    return groups.map((group) => ({
       ...group,
       items: group.items.filter((item) => !VARIANT_RESTRICTED_PANELS.has(item.id)),
     })).filter((group) => group.items.length > 0);
-  }, [isNonPrimaryVariant]);
+  }, [isNonPrimaryVariant, root]);
 
   const handleSelect = (panelId: string, title: string) => {
     addStudioPanelInstance({

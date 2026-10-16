@@ -1,5 +1,7 @@
+import { readStudioTask } from "@yumina/shared";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
+import { studioConversationScope } from "./studio-run-scope.js";
 import { db } from "../db/index.js";
 import { agentRuns, worldPendingEdits, worlds } from "../db/schema.js";
 import type { ChatMessage, StreamChunk, ToolCall } from "./llm/types.js";
@@ -107,12 +109,13 @@ async function worldState(tx: StudioCreditTransaction, world: NonNullable<Awaite
   return { revision, schema };
 }
 
+export async function captureStudioWorldRevisionInTransaction(tx: StudioCreditTransaction, scope: StudioCreditWorldScope) {
+  const world = await lockedWorld(tx, scope);
+  if (!world) throw new StudioCreditCheckpointError("NOT_FOUND");
+  return worldState(tx, world);
+}
 export async function captureStudioCreditWorldRevision(scope: StudioCreditWorldScope) {
-  return db.transaction(async tx => {
-    const world = await lockedWorld(tx, scope);
-    if (!world) throw new StudioCreditCheckpointError("NOT_FOUND");
-    return worldState(tx, world);
-  });
+  return db.transaction(tx => captureStudioWorldRevisionInTransaction(tx, scope));
 }
 
 function scopedRun(scope: StudioCreditScope) {
@@ -257,7 +260,7 @@ export async function claimStudioCreditResume(scope: StudioCreditScope) {
     if (!isStudioCreditResumeEligible(run, stored)) return { ok: false as const, code: "NOT_PAUSED" as const };
     if (!stored) return { ok: false as const, code: "INVALID_CHECKPOINT" as const };
     const [active] = await tx.select({ id: agentRuns.id }).from(agentRuns)
-      .where(and(eq(agentRuns.worldId, scope.worldId), ne(agentRuns.id, scope.runId), eq(agentRuns.status, "running"))).limit(1);
+      .where(and(eq(agentRuns.worldId, scope.worldId), eq(agentRuns.userId, scope.userId), studioConversationScope(run.conversationId), ne(agentRuns.id, scope.runId), eq(agentRuns.status, "running"))).limit(1);
     if (active) return { ok: false as const, code: "ACTIVE_RUN" as const };
     const current = await worldState(tx, world);
     let checkpoint = stored;
@@ -291,8 +294,10 @@ export async function restoreStudioCreditPause(scope: StudioCreditScope, claimId
     const checkpoint = readStudioCreditCheckpoint(run?.creditCheckpoint);
     if (!run || run.status !== "running" || checkpoint?.claim?.id !== claimId) return false;
     const { claim: _claim, ...unclaimed } = reason === undefined ? checkpoint : { ...checkpoint, reason };
+    const task = readStudioTask(run.context);
+    if (task && !["stalled", "budget_paused", "stopped"].includes(task.status)) { task.status = "waiting"; task.reason = "Task paused. Completed work and the checklist are saved."; }
     await tx.update(agentRuns).set({
-      status: "awaiting_credits", creditCheckpoint: unclaimed, error: null, updatedAt: new Date(),
+      status: "awaiting_credits", creditCheckpoint: unclaimed, error: null, updatedAt: new Date(), ...(task ? { context: { ...run.context, studioTask: task } } : {}),
     }).where(scopedRun(scope));
     return true;
   });

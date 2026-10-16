@@ -44,6 +44,33 @@ const STORY_CONDITION_TOOL_SCHEMA = {
   required: ["variableId", "operator", "value"],
 };
 
+const EVENT_EFFECTS_TOOL_SCHEMA = { type: "array", maxItems: 64, items: {
+  type: "object", properties: {
+    variableId: { type: "string", description: "Existing declared variable ID or dot path." },
+    operation: { type: "string", enum: ["set", "add", "subtract", "multiply", "toggle", "append", "merge", "push", "delete"] },
+    value: { anyOf: [{ type: "number" }, { type: "string" }, { type: "boolean" }, { type: "object" }, { type: "array", items: {} }] },
+    valueRef: { type: "string", description: "Optional existing variable whose value replaces the literal value." },
+  }, required: ["variableId", "operation", "value"],
+} };
+const EVENT_ENTRIES_TOOL_SCHEMA = { type: "array", maxItems: 64, items: { type: "object", properties: { entryId: { type: "string" }, enabled: { type: "boolean" } }, required: ["entryId", "enabled"] } };
+const CHAPTER_EVENTS_TOOL_SCHEMA = { type: "array", maxItems: 32,
+  description: "Replaces the COMPLETE event list for this chapter; read and preserve unrelated events first. Events are sequences INSIDE this chapter, not new chapters. Stable event/scene/moment IDs preserve saved progress. New events default disabled. Enable only complete definitions; do not edit engine-owned storyEvents or invent completion markers.",
+  items: { type: "object", properties: {
+    id: { type: "string" }, name: { type: "string" }, enabled: { type: "boolean" },
+    description: { type: "string", description: "Author-only overview; not sent to the story model. Put playable instructions in scenes." },
+    conditions: { type: "array", items: STORY_CONDITION_TOOL_SCHEMA, description: "Start prerequisites. Empty means immediately eligible in this chapter. Checked on start only." },
+    conditionLogic: { type: "string", enum: ["all", "any"] },
+    scenes: { type: "array", maxItems: 40, description: "Ordered scenes. Only the current scene is prompted; one scene can complete per reply. Each needs requiredMoments or completionConditions.", items: { type: "object", properties: {
+      id: { type: "string" }, name: { type: "string" }, instructions: { type: "string", description: "Playable directions for this scene only. Preserve player agency; no future-scene spoilers." },
+      requiredMoments: { type: "array", maxItems: 16, items: { type: "object", properties: { id: { type: "string" }, description: { type: "string", description: "A clear observable occurrence. All moments require quoted evidence from actual narrative, not plans, mentions or model self-certification. Can accumulate over turns." } }, required: ["id", "description"] } },
+      completionConditions: { type: "array", items: STORY_CONDITION_TOOL_SCHEMA, description: "Additional state gates, all required alongside confirmed moments." },
+      effects: EVENT_EFFECTS_TOOL_SCHEMA, entryChanges: EVENT_ENTRIES_TOOL_SCHEMA,
+    }, required: ["id", "name"] } },
+    effects: { ...EVENT_EFFECTS_TOOL_SCHEMA, description: "Applied once when the final scene completes, after its scene effects." },
+    entryChanges: { ...EVENT_ENTRIES_TOOL_SCHEMA, description: "Enable/disable existing lore/character entries on final completion. Existing lorebook/chapter/keyword gates still apply." },
+  }, required: ["id", "name"] },
+};
+
 // ── Studio AI: 8-tool agent (Claude Code pattern) ──
 //
 // The model makes multiple write_* calls in one response (parallel tool use).
@@ -54,6 +81,19 @@ const STORY_CONDITION_TOOL_SCHEMA = {
 
 export const READ_TOOLS: ToolDefinition[] = [
   ...NAME_READ_TOOLS,
+  { type: "function", function: { name: "update_task_plan",
+    description: "Save every requested requirement and its concrete checks. Existing requirements are retained; reuse a stable ID to correct a check. Verification is performed by the server against saved state. Empty checks remain pending; use ask_user for an essential ambiguity.",
+    parameters: { type: "object", properties: { requirements: { type: "array", minItems: 1, maxItems: 40, items: {
+      type: "object", properties: { id: { type: "string" }, text: { type: "string" }, checks: { type: "array", maxItems: 16, items: {
+        type: "object", properties: { kind: { type: "string", enum: ["entity", "world", "file", "validation"] },
+          collection: { type: "string", enum: ["entries", "variables", "rules", "reactions", "chapters", "routes", "endings", "worldbooks", "audioTracks"] },
+          id: { type: "string", description: "Entity ID or virtual file name" }, field: { type: "string", description: "Optional entity field; required for world checks. Dot paths supported." },
+          operator: { type: "string", enum: ["exists", "absent", "eq", "contains", "not_contains", "length_gte", "gte"] }, value: {},
+          mode: { type: "string", enum: ["structure", "full"], description: "Validation mode; full checks TSX too." },
+        }, required: ["kind"],
+      } } }, required: ["id", "text", "checks"],
+    } } }, required: ["requirements"] } } },
+  { type: "function", function: { name: "check_task_progress", description: "Recheck the saved working card and source against the task checklist. Returns actual pass/fail evidence and remaining work; model claims cannot mark a check passed.", parameters: { type: "object", properties: {} } } },
   {
     type: "function", function: {
       name: "get_image_sources",
@@ -290,6 +330,12 @@ export const READ_TOOLS: ToolDefinition[] = [
 // ── Write Tools (collected, validated atomically, approval classified) ──
 
 export const WRITE_TOOLS: ToolDefinition[] = [
+  { type: "function", function: { name: "write_chapter", description: "Create or partially update a native starting chapter. Stable ID; omitted fields are preserved. Chapters group greeting openings under Routes and are selectable ONLY before leaving the greeting. Link existing greetings with greetingIds and lorebooks with write_worldbook.chapterIds. Starting values come from each greeting's initialVariables. There is no in-play chapter navigation. Use timeline/date labels for eras and alternate histories. Read chapters first, preserve character roles and authored text, then validate_world.", parameters: { type: "object", properties: {
+    id: { type: "string" }, name: { type: "string" }, enabled: { type: "boolean" }, description: { type: "string" }, timeline: { type: "string" }, date: { type: "string" },
+    greetingIds: { type: "array", items: { type: "string" }, description: "Existing greeting entry IDs. One enabled chapter per greeting." },
+    events: CHAPTER_EVENTS_TOOL_SCHEMA,
+  }, required: ["id"] } } },
+
   {
     type: "function",
     function: {
@@ -406,7 +452,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
           name: { type: "string" },
           content: { type: "string", description: "Entry text sent to the LLM. Supports {{char}}, {{user}}, {{variableId}} macros." },
           portrait: { type: "string", description: "Character portrait @asset reference. Empty string removes the portrait." },
-          role: { type: "string", enum: ["system", "character", "personality", "scenario", "lore", "plot", "style", "example", "greeting", "custom"] },
+          role: { type: "string", enum: ["system", "character", "personality", "scenario", "lore", "plot", "style", "example", "greeting", "custom"], description: "Set explicitly for new entries: use character for every character/NPC/person profile, including keyword-triggered character lore. This enables portrait uploads and the character viewer without requiring a portrait. Tags and section do not replace role. On partial updates, omit to preserve the existing role; correct a misclassification using the same ID." },
           section: { type: "string", enum: ["system-presets", "examples", "chat-history", "post-history"] },
           keywords: { type: "array", items: { type: "string" }, description: "Trigger words for chat-history entries." },
           enabled: { type: "boolean" },
@@ -426,7 +472,7 @@ export const WRITE_TOOLS: ToolDefinition[] = [
           position: { type: "number", description: "Position in section (auto-calculated if omitted)." },
           worldbookId: { type: "string", description: "Knowledge base (worldbook) this entry belongs to (see write_worldbook). Omit or \"\" = the always-on Core book. Entries in a non-Core book are gated by that book's activation BEFORE their own alwaysSend/keyword/condition trigger — so alwaysSend means 'always while this book is active', not globally." },
           audience: { type: "string", enum: ["ai", "player", "both"], description: "Who receives this entry's content: 'ai' (prompt only — hidden director notes), 'player' (UI-facing only; the model is NOT told it), 'both' (default)." },
-          initialVariables: { type: "object", description: "GREETING entries only: map of variableId → starting value seeded into session state when a player picks this opening (route/scenario preset). e.g. { \"route\": \"mayu\" }. Condition-mode worldbooks and conditional entries key off the seeded value." },
+          initialVariables: { type: "object", description: "GREETING entries only: declared variableId → starting value seeded when this opening is picked. Supports chapter/route/scenario, era and alternate-timeline presets, e.g. { \"chapter\": \"holder\", \"timeline\": \"main\", \"story-year\": 2280 }. Declare variables first; seed all opening-controlled selectors. Several greetings can start the same chapter. Bind lore with worldbook greetingIds or conditions. This does not transfer playthrough history or fork a save." },
         },
         required: ["id"],
       },
@@ -600,10 +646,11 @@ export const WRITE_TOOLS: ToolDefinition[] = [
     function: {
       name: "write_worldbook",
       description:
-        "Create or update a worldbook (the editor calls it a \"knowledge base\") — a named, independently-activatable group of entries. Only ACTIVE worldbooks' entries reach the AI, so one card can hold multiple routes/scenarios/chapters within budget. Assign entries to it with write_entry { worldbookId }; entries with no worldbookId live in the always-on Core book (you do NOT create a worldbook for Core). If the ID exists it updates only the provided fields. See the lore skill (\"Worldbooks — one card, many routes\") for the two-layer gating rule.",
+        "Create or update a worldbook (the editor calls it a \"knowledge base\") — an independently-activatable group of entries. Organize a shared universe into chapters covering routes, eras or alternate timelines: bind each start's history and character versions to its greeting IDs; several greetings can share compatible chapter lore. Different chapters/dates can belong to the same timeline. Only ACTIVE books' entries reach the AI, even with alwaysSend:true. Assign entries with write_entry { worldbookId }; omit worldbookId for universally valid Core facts (do NOT create a Core book). Existing IDs update only supplied fields. See the lore skill for greeting/condition gating and the shared-universe chapter recipe.",
       parameters: {
         type: "object",
         properties: {
+          chapterIds: { type: "array", items: { type: "string" }, description: "Native chapter IDs. Nonempty links replace this book's opening/condition activation with current-chapter membership. Master enabled=false still wins. Empty restores its ordinary activation." },
           id: { type: "string", description: "Kebab-case worldbook ID, referenced by entry.worldbookId." },
           name: { type: "string" },
           enabled: { type: "boolean", description: "Master on/off. false = never active regardless of activation mode. Default true." },
@@ -719,14 +766,14 @@ const CONTROL_TOOLS: ToolDefinition[] = [
     function: {
       name: "generate_image",
       description:
-        "Queue one picture as a cancellable background job. Resolve owned character, scene, style and creator references automatically, label their roles, and keep the references attached to the job. For a first canonical character sprite or scene background, prefer local ComfyUI Anima and let the creator choose any installed Anima checkpoint in the card. For later SFW variations with references, default to Codex native image generation through GPT-6.1 Sol xhigh; Codex currently chooses its own image submodel. If the creator explicitly requests Krea or Krea2-Anime, set imageWorkflow=krea for that job even when it is SFW. For explicit NSFW requests, use local Krea2-Anime v2.0 INT4 for character sprites and scene backgrounds; never send NSFW prompts or references to Codex or Forge Neo. Krea2-Anime is NSFW-capable. NSFW backgrounds use imageKind=background, contentRating=nsfw and remain opaque. Use 8 or more steps and do not add a 4-step Turbo LoRA to this fine-tune. Set contentRating=nsfw only when the creator requests NSFW content. Set transparent=true only when a transparent cutout is requested or needed for a VN overlay sprite; opaque art and scene backgrounds must keep their generated background. The queued card exposes a transparent-background checkbox for sprite jobs. The queued card also lets the creator switch among available workflows, select the Anima model, set CFG/steps, choose random or fixed seed, and choose SFW/NSFW only when the selected local model supports it. Never pass URLs, storage keys, file paths, or refs that did not come from the asset tools. Call get_image_sources first. Anima and Krea run segmentation only when transparent=true; opaque outputs preserve their background. Codex requests native alpha only when transparent=true and is SFW-only. Use imageKind background for opaque scenes; never run background removal for scene backgrounds. For multiple pictures, make one generate_image call per picture together in the same turn; local GPU jobs are bounded to one at a time. Continue other work while they run. Background job status supplies completed @asset refs for assignment. If still drawing, say so and do not poll repeatedly or claim success. Each image call starts one configured generation.",
+        "Queue one picture as a cancellable background job. Resolve owned character, scene, style and creator references automatically, label their roles, and keep the references attached to the job. Offer three generators for both character sprites and scene backgrounds: Anima and Krea are local NSFW-capable choices, and Codex is SFW-only. Default all SFW requests, including first designs and reference-guided variations, to Codex native image generation through GPT-6.1 Sol xhigh; Codex chooses its own image submodel. Automatically exclude Codex when contentRating=nsfw, keeping the NSFW rating. Anima requires an installed NSFW-capable checkpoint for NSFW requests. If the creator explicitly requests Krea or Krea2-Anime, set imageWorkflow=krea for that job even when it is SFW. For explicit NSFW requests, use local Krea2-Anime v2.0 INT4 for character sprites and scene backgrounds; never send NSFW prompts or references to Codex or Forge Neo. Krea2-Anime is NSFW-capable. NSFW sprite and background generation is text-to-image only: the configured NSFW vision model reads references and converts their visible features into a text description before generation. Reference pixels are never sent to the NSFW image generator; do not use reference-to-image. NSFW backgrounds use imageKind=background, contentRating=nsfw and remain opaque. Use 8 or more steps and do not add a 4-step Turbo LoRA to this fine-tune. Set contentRating=nsfw only when the creator requests NSFW content. Set transparent=true only when a transparent cutout is requested or needed for a VN overlay sprite; opaque art and scene backgrounds must keep their generated background. The queued card exposes a transparent-background checkbox for sprite jobs. The queued card also lets the creator switch among available workflows, select the Anima model, set CFG/steps, choose random or fixed seed, and choose SFW/NSFW; selecting NSFW excludes SFW-only generators and checkpoints without downgrading the rating. Never pass URLs, storage keys, file paths, or refs that did not come from the asset tools. Call get_image_sources first. Anima and Krea run segmentation only when transparent=true; opaque outputs preserve their background. Codex requests native alpha only when transparent=true and is SFW-only. Use imageKind background for opaque scenes; never run background removal for scene backgrounds. For multiple pictures, make one generate_image call per picture together in the same turn; local GPU jobs are bounded to one at a time. Continue other work while they run. Background job status supplies completed @asset refs for assignment. If still drawing, say so and do not poll repeatedly or claim success. Each image call starts one configured generation.",
       parameters: {
         type: "object",
         properties: {
-          source: { type: "string", enum: ["codex", "comfyui", "forgeneo"], description: "Image connection. Usually choose via imageWorkflow; omit for the automatic first-reference Anima or SFW referenced Codex default." },
-          imageWorkflow: { type: "string", enum: ["anima", "krea", "codex"], description: "Optional workflow override. If the creator explicitly requests Krea or Krea2-Anime, select krea even for SFW requests. Anima creates the canonical sprite or background; Krea2-Anime v2.0 INT4 makes local reference-guided follow-ups and can handle NSFW; Codex uses its native SFW image tool through GPT-6.1 Sol xhigh and selects the image submodel internally. The creator can change this in the queued card." },
+          source: { type: "string", enum: ["codex", "comfyui", "forgeneo"], description: "Image connection. Usually choose via imageWorkflow; omit for the automatic SFW Codex or NSFW Krea default." },
+          imageWorkflow: { type: "string", enum: ["anima", "krea", "codex"], description: "Optional workflow override. If the creator explicitly requests Krea or Krea2-Anime, select krea even for SFW requests. Anima and Krea2-Anime v2.0 INT4 generate local sprites and backgrounds; both use NSFW text-to-image with vision-described references, and Anima requires an NSFW-capable checkpoint; Codex uses its native SFW image tool through GPT-6.1 Sol xhigh and selects the image submodel internally. The creator can change this in the queued card." },
           contentRating: { type: "string", enum: ["sfw", "nsfw"], description: "Set nsfw only when requested by the creator. NSFW is accepted only for local Krea or an installed Anima checkpoint tagged NSFW-capable; Codex and Forge Neo are SFW-only." },
-          animaModel: { type: "string", description: "Optional installed Anima checkpoint. The creator can choose any available checkpoint from the image card." },
+          animaModel: { type: "string", description: "Optional installed Anima checkpoint. The image card excludes SFW-only checkpoints when NSFW is selected." },
           cfg: { type: "number", minimum: 0.5, maximum: 8, description: "Local Anima/Krea guidance scale; defaults to 1." },
           steps: { type: "integer", minimum: 1, maximum: 20, description: "Local Anima/Krea sampling steps; defaults to 8." },
           seedMode: { type: "string", enum: ["random", "fixed"], description: "Local generation seed mode. Use random by default; fixed requires seed." },

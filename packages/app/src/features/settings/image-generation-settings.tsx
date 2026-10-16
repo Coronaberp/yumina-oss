@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Loader2, Trash2 } from "lucide-react";
@@ -5,7 +6,7 @@ import { feedback } from "@/lib/feedback";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 type Provider = "comfyui" | "forgeneo";
-type Profile = { enabled: boolean; baseUrl: string; workflow?: string; workflowMode?: "custom" | "anima"; model?: string; hasKey: boolean; configured: boolean };
+type Profile = { enabled: boolean; baseUrl: string; workflow?: string; workflowMode?: "custom" | "anima"; model?: string; hasKey: boolean; configured: boolean; adminDisabled?: boolean };
 type State = { activeProvider: Provider; configs: Record<Provider, Profile> };
 const defaults: Record<Provider, Profile> = {
   comfyui: { enabled: false, baseUrl: "http://127.0.0.1:8188", workflow: "", workflowMode: "custom", hasKey: false, configured: false },
@@ -73,7 +74,8 @@ export function ImageGenerationSettings() {
     <div className="flex items-start gap-3"><ImageIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div className="min-w-0 flex-1"><h3 className="text-sm font-semibold text-main">{label("title", "Image generation")}</h3><p className="mt-1 text-xs leading-relaxed text-sub">{label("description", "Choose the default generator for the Studio agent. The creator confirms each generation before any provider request is made.")}</p></div></div>
     <div role="tablist" aria-label={label("providers", "Image providers")} className="flex flex-wrap gap-2">{(["comfyui", "forgeneo"] as Provider[]).map(item => <button key={item} type="button" role="tab" aria-selected={provider === item} disabled={disabled} onClick={() => setState(value => ({ ...value, activeProvider: item }))} className={`rounded-lg border px-3 py-2 text-sm ${provider === item ? "border-primary/40 bg-primary/10 text-primary" : "border-white/10 text-sub hover:bg-white/[0.04]"}`}>{item === "comfyui" ? "ComfyUI" : "Forge Neo"}</button>)}</div>
     <p className="text-xs text-sub">{label("defaultHint", "Saving makes the selected provider the default. Both provider profiles are kept separately.")}</p>
-    <label className="flex items-start gap-2 text-sm text-main"><input type="checkbox" role="switch" checked={profile.enabled} disabled={disabled} onChange={e => update({ enabled: e.target.checked })} className="mt-0.5 h-4 w-4 accent-primary" /><span><span className="block">{label("enable", `Enable ${providerLabel}`)}</span><span className="block text-xs text-sub">{provider === "comfyui" ? label("comfyHint", "Use local Anima for VN sprites with automatic background removal, or connect a custom ComfyUI workflow.") : label("forgeNeoHint", "Uses the checkpoint loaded in Forge Neo. Sprites use a green background that Yumina removes to create a transparent PNG.")}</span></span></label>
+    {provider === "comfyui" && profile.adminDisabled && <p role="status" className="text-xs text-amber-300">{label("adminPaused", "Anima and Krea are paused by the administrator. Your saved setup is kept. Re-enable them in Administration → Image generation.")}</p>}
+    <label className="flex items-start gap-2 text-sm text-main"><Checkbox  role="switch" checked={profile.enabled} disabled={disabled} onCheckedChange={checked => update({ enabled: (checked === true) })} className="mt-0.5 h-4 w-4 accent-primary" /><span><span className="block">{label("enable", `Enable ${providerLabel}`)}</span><span className="block text-xs text-sub">{provider === "comfyui" ? label("comfyHint", "Use local Anima for VN sprites with automatic background removal, or connect a custom ComfyUI workflow.") : label("forgeNeoHint", "Uses the checkpoint loaded in Forge Neo. Sprites use a green background that Yumina removes to create a transparent PNG.")}</span></span></label>
     <label className="block space-y-1 text-xs text-sub"><span>{label("baseUrl", "Base URL")}</span><input type="url" value={profile.baseUrl} disabled={disabled} onChange={e => update({ baseUrl: e.target.value })} className={input} /><span className="block text-[11px] text-sub/70">{provider === "forgeneo" ? label("forgeNeoServerHint", "Use the Forge Neo root URL and start Forge Neo with --api. Do not append /sdapi/v1.") : label("serverUrlHint", "ComfyUI must be reachable from the Yumina server. localhost refers to that machine.")}</span></label>
     {provider === "comfyui" ? <>
       <div role="tablist" aria-label={label("workflowMode", "ComfyUI workflow")} className="flex flex-wrap gap-2">

@@ -5,6 +5,7 @@ import { ResponseParser, type ParseResult } from "./response-parser.js";
 import { StructuredResponseParser } from "./structured-response-parser.js";
 import { ThinkingTagFilter } from "./thinking-tag-filter.js";
 import { stripStateReceipts } from "./state-receipt.js";
+import { stripAngleMarkup } from "./angle-markup.js";
 import { parseLeadingSpeakerTag } from "../prompts/speaker-tag.js";
 import { extractResponseChoices } from "./response-choices.js";
 import { stripZeroWidthSpaces } from "./text-normalization.js";
@@ -276,7 +277,7 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
   return {
     ...parsed, effects: relevant.length ? [] : checked.effects,
     ...(speakerTag.speaker ? { speaker: speakerTag.speaker } : {}),
-    cleanText: stripZeroWidthSpaces(stripStateReceipts(parsed.cleanText)), diagnostics: relevant,
+    cleanText: stripAngleMarkup(stripZeroWidthSpaces(stripStateReceipts(parsed.cleanText))), diagnostics: relevant,
     outcome: relevant.length ? "invalid" : !required ? "not-required" : receipt === "none" ? "explicit-none" : "valid-updates",
     declaredCount, repaired,
   };

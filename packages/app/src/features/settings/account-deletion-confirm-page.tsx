@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Loader2, TriangleAlert } from "lucide-react";
@@ -257,10 +258,10 @@ export function AccountDeletionConfirmPage({ token }: { token: string }) {
         </div>
 
         <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/[0.025] p-3 text-xs leading-relaxed text-sub">
-          <input
-            type="checkbox"
+          <Checkbox
+
             checked={acknowledged}
-            onChange={(event) => setAcknowledged(event.target.checked)}
+            onCheckedChange={(checked) => setAcknowledged((checked === true))}
             className="mt-0.5 h-4 w-4 shrink-0 accent-red-500"
           />
           <span>{t("account.deleteAccount.acknowledge")}</span>

@@ -1,3 +1,4 @@
+import { confirmAction } from "@/components/ui/global-confirm-dialog";
 import { useState } from "react";
 import { FieldError } from "@/components/ui/field-error";
 import { handleRateLimitToast } from "@/lib/rate-limit-error";
@@ -175,7 +176,7 @@ export function ReviewStateControl({
 
   async function withdrawFirstPublishReview() {
     if (!serverWorldId) return;
-    if (!window.confirm(t("review.withdrawConfirm"))) return;
+    if (!(await confirmAction(t("review.withdrawConfirm")))) return;
     setBusy(true);
     setActionError(null);
     const res = await fetch(`${apiBase}/api/worlds/${serverWorldId}/withdraw-review`, {

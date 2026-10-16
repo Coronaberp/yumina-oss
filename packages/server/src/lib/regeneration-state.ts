@@ -38,6 +38,7 @@ export function regenerationState(
     if (previous) {
       const prior = normalizeGameState(world, previous);
       before.ruleState = prior.ruleState;
+      before.storyEvents = structuredClone(prior.storyEvents);
       for (const key of ["activeAudio", "pendingContext"]) {
         if (key in prior.metadata) before.metadata[key] = prior.metadata[key];
         else delete before.metadata[key];
@@ -61,6 +62,7 @@ export function regenerationState(
   }
   result.ruleState = structuredClone(before.ruleState);
   result.story = structuredClone(before.story);
+  result.storyEvents = structuredClone(before.storyEvents);
   // Regeneration replaces a reply within this turn, never advances/rewinds it.
   return result;
 }

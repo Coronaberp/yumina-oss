@@ -8,6 +8,15 @@ test("streaming text hides variable-update wrappers as well as their state direc
   assert.equal(stripDirectivesForSandbox('[speaker: Clerk]\n' + raw).trim(), '[speaker: Clerk]\nThe clerk waits.');
 });
 
+test("streaming hides angle tags while keeping literal examples", () => {
+  const declared = ["current-period"];
+  const text = '[speaker: Cinder]\nThe lamps glow.\n<current-period: set "evening">';
+  assert.equal(stripDirectivesForSandbox(text, declared).trim(), '[speaker: Cinder]\nThe lamps glow.');
+  assert.equal(stripDirectives('The lamps glow.\n<current-period: set "eve', declared).trim(), "The lamps glow.");
+  for (const literal of ['`<current-period: set "evening">`', '“Use <current-period: set evening> as an example.”'])
+    assert.equal(stripDirectives(literal, declared), literal);
+});
+
 test("stripDirectives removes a completed speaker tag like any other directive", () => {
   assert.equal(stripDirectives("[speaker: Balder] The forge roars. [hp: -1]"), " The forge roars. ");
 });
@@ -29,4 +38,12 @@ test("stripDirectivesForSandbox holds a partial leading tag instead of leaking i
 test("stripDirectivesForSandbox is the plain stripper when there is no tag", () => {
   assert.equal(stripDirectivesForSandbox("Plain prose. [gold: +5]"), "Plain prose. ");
   assert.equal(stripDirectivesForSandbox("Text first. [speaker: Mia]"), "Text first. ");
+});
+
+
+test("all streamed angle-tag prefixes are hidden without depending on their spelling", () => {
+  const tag = '<Yunmina-state version="1" status="updated" count="3" />';
+  for (let i = 1; i <= tag.length; i++) assert.equal(stripDirectives('Story.\n' + tag.slice(0, i)), 'Story.\n');
+  assert.equal(stripDirectives('<unknown: set "evening">'), '');
+  assert.equal(stripDirectives('<unknown>Kept prose</unknown>'), 'Kept prose');
 });

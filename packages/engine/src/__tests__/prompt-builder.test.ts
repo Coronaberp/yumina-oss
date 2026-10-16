@@ -2222,15 +2222,18 @@ describe("speaker tag prompt block", () => {
     ...(portrait ? { portrait } : {}),
   });
 
-  it("is absent with one portrait character, present with two, and names them", () => {
+  it("requests speech separation for named characters even without portraits", () => {
     const pb = new PromptBuilder();
-    const one = createMockWorld({ entries: [character("Mia", "@asset:a"), character("Rex")] });
-    expect(pb.buildStaticFormatBlock(one)).toBe("");
+    const one = createMockWorld({ entries: [character("Mia")] });
+    expect(pb.buildStaticFormatBlock(one)).toContain("Characters: Mia.");
+
+    const noPortraits = createMockWorld({ entries: [character("Mei Amery"), character("Blair Winters")] });
+    expect(pb.buildStaticFormatBlock(noPortraits)).toContain("Characters: Mei Amery, Blair Winters.");
 
     const two = createMockWorld({ entries: [character("Mia", "@asset:a"), character("人物：Balder", "@asset:b")] });
     const block = pb.buildStaticFormatBlock(two);
     expect(block).toContain("<speaker-format>");
-    expect(block).toContain("Characters with portraits: Mia, Balder.");
+    expect(block).toContain("Characters: Mia, Balder.");
     expect(block).toContain("[speaker: narrator]");
   });
 

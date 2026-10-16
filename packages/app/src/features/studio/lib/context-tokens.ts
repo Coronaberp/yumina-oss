@@ -1,7 +1,6 @@
 /** Client-side context-usage estimator for the Studio AI chat.
  *
- *  Mirrors the server's budget logic (packages/server/src/routes/agent.ts ·
- *  estimateTextTokens + getContextBudget) so the UI meter reflects the actual
+ *  Shares the server's model budget so the UI meter reflects the actual
  *  threshold at which the server starts summarizing older messages.
  *
  *  Why client-side instead of trusting server-reported usage: we need to show
@@ -11,6 +10,7 @@
  *  reading, but the estimate is close enough for a health indicator.
  */
 import type { StudioChatMessage } from "./types";
+export { getStudioContextBudget as getContextBudget } from "@yumina/shared";
 
 // Mirrors agent.ts:456–467. CJK characters count ~1 token each (BPE tokenizers
 // rarely merge them); ASCII stays ~4 chars/token. Undercounting CJK caused the
@@ -43,23 +43,6 @@ export function estimateHistoryTokens(messages: StudioChatMessage[]): number {
   let total = 0;
   for (const m of messages) total += estimateMessageTokens(m);
   return total;
-}
-
-/** 1:1 mirror of agent.ts · getContextBudget. Keep in sync when adding models. */
-export function getContextBudget(modelId: string): number {
-  const id = modelId.toLowerCase();
-  if (id.includes("gemini")) return 600_000;
-  if (id.includes("claude")) {
-    if (id.includes("sonnet-4.6") || id.includes("sonnet-4-6") || id.includes("-1m")) {
-      return 600_000;
-    }
-    return 120_000;
-  }
-  if (id.includes("gpt-4o") || id.includes("gpt-4.1")) return 75_000;
-  if (id.includes("grok")) return 75_000;
-  if (id.includes("qwen") || id.includes("kimi")) return 75_000;
-  if (id.includes("llama") || id.includes("mistral") || id.includes("deepseek")) return 50_000;
-  return 120_000;
 }
 
 export type ContextHealth = "fresh" | "comfortable" | "filling" | "tight" | "compacting";

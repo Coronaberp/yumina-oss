@@ -132,6 +132,10 @@ export interface SandboxedYuminaAPI {
   /** Server-side KEV classification for the selected player's VN expression. */
   classifyPlayerExpression: (choice: string) => Promise<PersonaSpriteExpression>;
   getPersonaControlMode: () => Promise<import('@yumina/shared').PersonaControlMode>;
+  /** Characters encountered in committed turns before the supplied message. */
+  getCharacterEncounters: (beforeMessageId: string) => Promise<string[]>;
+  /** Selected saved character history before this reply; excludes unread pages. */
+  getCharacterHistory: (characterId: string, beforeMessageId: string, label: string, swipeIndex?: number) => Promise<{ text: string; partial: boolean; model?: string; language?: string }>;
   setPersonaControlMode: (mode: import('@yumina/shared').PersonaControlMode) => Promise<import('@yumina/shared').PersonaControlMode>;
   /** Session-scoped, transactional social simulation; requests resolve after persistence. */
   social: {
@@ -194,6 +198,10 @@ export interface SandboxedYuminaAPI {
    *  saved its own imported profile must explicitly re-import to change it.
    *  Fire-and-forget. */
   openPersonaManager: () => void;
+  /** Open the shared Routes/Chapters picker, only while still at the greeting. */
+  openStoryRoutes: () => void;
+  /** Open the host's HTML chat export and JSON/HTML import dialog. */
+  openSessionExport: () => void;
   /** Open the shared parent-app model picker used by the play controls. */
   openModelPicker: () => void;
   /** Read the current session's selected Persona when the player chooses to
@@ -333,6 +341,8 @@ export interface SandboxedYuminaAPI {
    *  "enter" = Enter sends / Shift+Enter newline; "mod-enter" = Ctrl/⌘+Enter
    *  sends / Enter newline. Custom composers should honor it too. */
   composerSendKey: "enter" | "mod-enter";
+  vnTextPreferences: import("@yumina/shared").VnTextPreferences;
+  setVnTextPreferences: (value: import("@yumina/shared").VnTextPreferences) => Promise<import("@yumina/shared").VnTextPreferences>;
   /** Bumped by the host on every terminally-failed send — including toast-only
    *  failures that never set `error`. Watch it to restore swallowed input. */
   sendFailureNonce: number;
@@ -633,6 +643,8 @@ const defaultAPI: SandboxedYuminaAPI = {
   sendMessage: () => {},
   classifyPlayerExpression: () => Promise.resolve("normal"),
   getPersonaControlMode: () => Promise.resolve('player'),
+  getCharacterEncounters: () => Promise.resolve([]),
+  getCharacterHistory: () => Promise.resolve({ text: '', partial: false }),
   setPersonaControlMode: () => Promise.reject(new Error('No active session')),
   social: { get: () => noopPromise(null), action: () => noopPromise(null), generate: () => noopPromise(null) },
   setVariable: () => {},
@@ -665,6 +677,8 @@ const defaultAPI: SandboxedYuminaAPI = {
   toggleSystemFullscreen: () => noopPromise(undefined),
   toggleImmersive: () => {},
   openPersonaManager: () => {},
+  openStoryRoutes: () => {},
+  openSessionExport: () => {},
   openModelPicker: () => {},
   getPersonaProfile: () => noopPromise(null),
   sharePlaythrough: () => {},
@@ -716,6 +730,8 @@ const defaultAPI: SandboxedYuminaAPI = {
   endingError: null,
   error: null,
   composerSendKey: "enter",
+  vnTextPreferences: { dialogue: {}, narration: {} },
+  setVnTextPreferences: () => Promise.reject(new Error("Sign in to save personal VN settings.")),
   sendFailureNonce: 0,
   streamingReasoning: "",
   // Start safe until the parent pushes UI state. This prevents the sandbox from
@@ -1002,6 +1018,8 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
       ? callParent<PersonaSpriteExpression>("classifyPlayerExpression", [choice], 120_000)
       : Promise.resolve("normal"),
     getPersonaControlMode: () => sessionApisAvailable ? callParent('getPersonaControlMode', []) : Promise.resolve('player'),
+    getCharacterEncounters: (beforeMessageId) => sessionApisAvailable ? callParent('getCharacterEncounters', [beforeMessageId]) : Promise.resolve([]),
+    getCharacterHistory: (characterId, beforeMessageId, label, swipeIndex) => sessionApisAvailable ? callParent('getCharacterHistory', [characterId, beforeMessageId, label, swipeIndex]) : Promise.reject(new Error('Saved character history is unavailable')),
     setPersonaControlMode: (mode) => sessionApisAvailable && !state.readOnly ? callParent('setPersonaControlMode', [mode]) : Promise.reject(new Error('No editable session')),
     sendMessage: (text, attachments) => postToParent("sendMessage", [text, attachments]),
     social: {
@@ -1052,6 +1070,8 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     toggleSystemFullscreen: () => callParent<void>("toggleSystemFullscreen", []),
     toggleImmersive: () => postToParent("toggleImmersive", []),
     openPersonaManager: () => postToParent("openPersonaManager", []),
+    openStoryRoutes: () => { if (sessionApisAvailable) postToParent("openStoryRoutes", []); },
+    openSessionExport: () => { if (sessionApisAvailable) postToParent("openSessionExport", []); },
     openModelPicker: () => postToParent("openModelPicker", []),
     getPersonaProfile: () => callParent("getPersonaProfile", []),
     sharePlaythrough: () => postToParent("sharePlaythrough", []),
@@ -1139,6 +1159,8 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     endingError: state.endingError ?? null,
     error: state.error ?? null,
     composerSendKey: state.composerSendKey ?? "enter",
+    vnTextPreferences: state.vnTextPreferences ?? { dialogue: {}, narration: {} },
+    setVnTextPreferences: value => callParent("setVnTextPreferences", [value]),
     sendFailureNonce: state.sendFailureNonce ?? 0,
     streamingReasoning: state.streamingReasoning ?? "",
     readOnly: state.readOnly ?? false,

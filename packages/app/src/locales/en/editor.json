@@ -36,6 +36,7 @@
     "recoverDraftAction": "Recover"
   },
   "sections": {
+    "chapters": "Chapters",
     "characterShowcase": "Character showcase",
     "firstMessage": "First Message",
     "lorebook": "Lorebook",

@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -148,12 +149,12 @@ function WorldUpdateDialog(props: (EditDialogProps & { mode: "edit" }) | (Create
           {props.mode === "create" && (
             <div className="space-y-2">
               <label className="flex min-h-11 items-center gap-2 text-sm">
-                <input type="checkbox" checked={isMajor} onChange={(event) => setIsMajor(event.target.checked)} disabled={saving} className="h-4 w-4 shrink-0 accent-primary" />
+                <Checkbox  checked={isMajor} onCheckedChange={(checked) => setIsMajor((checked === true))} disabled={saving} className="h-4 w-4 shrink-0 accent-primary" />
                 {t("detail.updateMajorLabel")}
               </label>
               {props.canNotify ? (
                 <label className="flex min-h-11 items-center gap-2 text-sm">
-                  <input type="checkbox" checked={notifyPlayers} onChange={(event) => setNotifyPlayers(event.target.checked)} disabled={saving} className="h-4 w-4 shrink-0 accent-primary" />
+                  <Checkbox  checked={notifyPlayers} onCheckedChange={(checked) => setNotifyPlayers((checked === true))} disabled={saving} className="h-4 w-4 shrink-0 accent-primary" />
                   {t("detail.updateNotifyPlayers")}
                 </label>
               ) : (

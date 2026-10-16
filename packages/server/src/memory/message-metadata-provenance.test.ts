@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { sql } from "drizzle-orm";
 import { db, ensureStoryhavenMemoryTables } from "../db/index.js";
-import { loadStoryhavenTurnContext, ensureStoryhavenSnapshotCurrent, stopMemoryWorker } from "./yumina-adapter.js";
+import { loadStoryhavenTurnContext, ensureStoryhavenSnapshotCurrent, rememberStoryhavenModelRoute, stopMemoryWorker } from "./yumina-adapter.js";
 import { getMemoryRuntime, closeMemoryRuntime } from "./runtime.js";
 
 test("credit receipts on appended replies preserve an in-flight memory prefix while story edits invalidate it", async (t) => {
@@ -15,12 +15,20 @@ test("credit receipts on appended replies preserve an in-flight memory prefix wh
   await db.execute(sql`INSERT INTO play_sessions(id,user_id,world_id) VALUES('receipt-s','receipt-u','receipt-w')`);
   await db.execute(sql`INSERT INTO messages(id,session_id,role,content,created_at) VALUES('receipt-u1','receipt-s','user','Store the violet astrolabe.','2020-01-01'),('receipt-a1','receipt-s','assistant','Sera stores it in the north observatory.','2020-01-02')`);
   const load = () => loadStoryhavenTurnContext({ownerUserId:'receipt-u',actingUserId:'receipt-u',sessionId:'receipt-s'});
+  await rememberStoryhavenModelRoute('receipt-s','receipt-u','custom/current-model','owned-current-profile');
+  assert.equal((await load()).model, 'custom/current-model', 'outbox work follows the story model without a request argument');
+  assert.equal((await load()).modelProfileId, 'owned-current-profile', 'model and endpoint stay paired');
+  await rememberStoryhavenModelRoute('receipt-s','foreign','custom/wrong-model','foreign-profile');
+  assert.equal((await load()).model, 'custom/current-model', 'another account cannot change the session model route');
   const extracting = await load();
   await db.execute(sql`INSERT INTO messages(id,session_id,role,content,swipes,created_at) VALUES('receipt-u2','receipt-s','user','Check the lantern.','[]'::jsonb,'2020-01-03'),('receipt-a2','receipt-s','assistant','The lantern is intact.','[{"content":"The lantern is intact.","choices":["Inspect it"]}]'::jsonb,'2020-01-04')`);
   await db.execute(sql`UPDATE messages SET swipes=jsonb_set(jsonb_set(swipes,'{0,creditCost}','0'::jsonb),'{0,creditBalanceAfter}','100'::jsonb) WHERE id='receipt-a2'`);
   assert.equal((await load()).epoch, extracting.epoch, "a normal credit receipt must not cancel a previous extraction");
   assert.equal(await ensureStoryhavenSnapshotCurrent(extracting), true, "new complete turns must preserve the settled prefix");
   const accepted = await load();
+  await db.execute(sql`UPDATE messages SET swipes=jsonb_set(jsonb_set(jsonb_set(swipes,'{0,creditCost}','5'::jsonb),'{0,creditBalanceAfter}','95'::jsonb),'{0,contentFlags}','{"status":"complete","classification":"SFW"}'::jsonb) WHERE id='receipt-a2'`);
+  assert.equal((await load()).sourceHash, accepted.sourceHash, "billing and moderation receipts are not transcript revisions");
+  assert.equal(await ensureStoryhavenSnapshotCurrent(accepted), true, "receipts inside an already captured prefix cannot discard its facts");
   await db.execute(sql`UPDATE messages SET swipes=jsonb_set(swipes,'{0,choices}','["Break it"]'::jsonb) WHERE id='receipt-a2'`);
   assert.ok((await load()).epoch > accepted.epoch);
   assert.equal(await ensureStoryhavenSnapshotCurrent(accepted), false);

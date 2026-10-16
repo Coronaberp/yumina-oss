@@ -53,6 +53,9 @@ export function mergeGameStatePatch(
     ruleState: normalizedCurrentState.ruleState,
     // Story progression is engine-owned; a UI state patch cannot forge route, ending, or completion state.
     story: normalizedCurrentState.story,
+    storyEvents: normalizedCurrentState.storyEvents,
+    activeChapterId: normalizedCurrentState.activeChapterId,
+    ...(worldDef.chapters?.length ? { activeGreetingId: normalizedCurrentState.activeGreetingId } : {}),
   };
 
   if (worldDef.systems?.includes("kochuu-survival-v1")) {
@@ -71,7 +74,7 @@ export function mergeGameStatePatch(
       | undefined;
   }
 
-  if ("activeGreetingId" in patchRecord) {
+  if ("activeGreetingId" in patchRecord && !worldDef.chapters?.length) {
     mergedState.activeGreetingId = patchRecord.activeGreetingId as
       | string
       | null
@@ -139,5 +142,7 @@ export function reconcileTurnState(
     reconciled.activeCharacterId = live.activeCharacterId;
   }
 
+  // Chapters only move through the engine transition endpoint, never an older model turn.
+  reconciled.activeChapterId = live.activeChapterId;
   return reconciled;
 }

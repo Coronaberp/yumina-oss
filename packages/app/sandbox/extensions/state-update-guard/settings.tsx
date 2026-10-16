@@ -1,3 +1,4 @@
+import { Select } from "../../../src/components/ui/select";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_STATE_GUARD_MODEL, FREE_STATE_GUARD_MODEL, parseStateGuardModel, stateGuardModelSelection, type StateGuardSettings } from "@yumina/shared";
 import { clampLanguage as languageKey } from "../../../src/lib/language-clamp";
@@ -108,12 +109,12 @@ export function StateGuardSettingsPanel(props: StateGuardSettingsProps) {
           className="min-h-11 max-w-full break-all rounded-lg border border-white/30 px-3 py-2 text-left hover:bg-white/10 disabled:opacity-50">
           {settings.model && (officialModels || savedSelection.provider !== "official") ? models.find((m) => m.id === settings.model)?.name ?? settings.model : defaultModelLabels[languageKey(props.language)]}
         </button>}
-      </div> : <select aria-labelledby={modelId} value={!officialModels && savedSelection.provider === "official" ? "" : settings.model ?? ""} disabled={busy} onChange={(event) => void save({ model: event.target.value || null })}
+      </div> : <Select compact aria-labelledby={modelId} value={!officialModels && savedSelection.provider === "official" ? "" : settings.model ?? ""} disabled={busy} onValueChange={(selectedValue) => void save({ model: selectedValue || null })}
         className="min-h-11 w-full min-w-0 rounded-lg border border-white/30 bg-card px-3 py-2 text-white">
         <option value="">{officialModels ? "Gemini 2.5 Flash Lite" : props.storyModel ?? defaultModelLabels[languageKey(props.language)]}</option>
         {settings.model && (officialModels || savedSelection.provider !== "official") && !models.some((m) => m.id === settings.model) && <option value={settings.model}>{settings.model}</option>}
         {models.filter((model) => officialModels || parseStateGuardModel(model.id).provider !== "official").map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-      </select>}
+      </Select>}
       <div className="flex flex-wrap items-center gap-2 text-xs text-white/60">
         <span>{!officialModels || parseStateGuardModel(settings.model ?? DEFAULT_STATE_GUARD_MODEL).provider === "private" || settings.model?.startsWith("custom/") ? billing[3]
           : settings.model && !parseStateGuardModel(settings.model).provider ? legacyBillingCopy[languageKey(props.language)]

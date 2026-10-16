@@ -1,3 +1,4 @@
+import { ChaptersSection } from "./sections/chapters";
 import { PersonasSection } from "./sections/personas";
 import { useStoryNavigation } from "@/hooks/use-story-navigation";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
@@ -77,6 +78,7 @@ const apiBase = import.meta.env.VITE_API_URL || "";
 
 const SECTION_KEYS: { id: EditorSection; labelKey: string; icon: typeof FileText }[] =
   [
+    { id: "chapters", labelKey: "sections.chapters", icon: BookOpen },
     { id: "first-message", labelKey: "sections.firstMessage", icon: MessageCircle },
     { id: "personas", labelKey: "sections.personas", icon: Users },
     { id: "entries", labelKey: "sections.lorebook", icon: BookOpen },
@@ -99,7 +101,7 @@ const SECTION_KEYS: { id: EditorSection; labelKey: string; icon: typeof FileText
 // card at the sidebar bottom (separate visual treatment from regular sections).
 const SECTION_GROUPS: { groupKey: string; ids: EditorSection[] }[] = [
   { groupKey: "content", ids: ["first-message", "personas", "entries", "variables", "rules"] },
-  { groupKey: "story", ids: ["routes", "endings"] },
+  { groupKey: "story", ids: ["chapters", "routes", "endings"] },
   { groupKey: "creation", ids: ["generation"] },
   { groupKey: "presentation", ids: ["components", "audio"] },
   { groupKey: "visualNovel", ids: ["vn-sprites", "vn-backgrounds"] },
@@ -108,6 +110,7 @@ const SECTION_GROUPS: { groupKey: string; ids: EditorSection[] }[] = [
 
 const SECTION_COMPONENTS: Record<EditorSection, React.FC> = {
   "first-message": FirstMessageSection,
+  chapters: ChaptersSection,
   personas: PersonasSection,
   entries: KnowledgeBasesSection,
   variables: VariablesSection,

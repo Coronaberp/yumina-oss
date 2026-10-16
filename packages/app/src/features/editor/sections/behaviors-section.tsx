@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useMemo, useEffect } from "react";
 import {
   Plus,
@@ -843,8 +844,8 @@ function LegacyTriggerFields({ trigger, variables, onChange }: {
       <label className="block text-sm">{t("behaviors.whenFields.keyword")}</label>
       <KeywordsInput value={trigger.keywords ?? []} onChange={keywords => update({ keywords })} />
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={trigger.matchWholeWords ?? false}
-          onChange={e => update({ matchWholeWords: e.target.checked })} />
+        <Checkbox  checked={trigger.matchWholeWords ?? false}
+          onCheckedChange={checked => update({ matchWholeWords: (checked === true) })} />
         {t("audio.matchWholeWords")}
       </label>
       <label className="block text-sm">{t("entries.secondaryKeywords")}</label>
@@ -1691,7 +1692,7 @@ function RandomValueEditor({
             {showAdv && (
               <div className="space-y-3 border-t border-border pt-3">
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input type="checkbox" checked={useVar} onChange={(e) => onChange({ ...spec, candidatesVar: e.target.checked ? (variables[0]?.id ?? "") : undefined })} />
+                  <Checkbox  checked={useVar} onCheckedChange={(checked) => onChange({ ...spec, candidatesVar: (checked === true) ? (variables[0]?.id ?? "") : undefined })} />
                   {tx("behaviors.randomPick.advUseVar", { defaultValue: "Use an array variable as the candidate pool instead of a fixed list" })}
                 </label>
                 {!useVar && (

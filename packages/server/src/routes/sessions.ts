@@ -1,3 +1,5 @@
+import { registerChapterRoutes } from "./session-chapters.js";
+import { activeChapter } from "@yumina/engine";
 import { z } from 'zod';
 import { normalizePersonaControlMode, personaControlModeSchema } from '@yumina/shared';
 import { isSessionStreaming } from '../lib/stream-registry.js';
@@ -42,10 +44,14 @@ import { captureStoryhavenMemoryFork, materializePendingMemoryFork } from '../me
 import { memoryTranscriptRow } from '../memory/yumina-adapter.js';
 import { logicalTranscript, memoryWorldHash } from '../memory/provenance.js';
 import { scheduleQuestCollect } from "../lib/quest-auto-collect.js";
+import { historicalCharacterEncounters } from "../lib/character-encounters.js";
+import { CharacterStoryHistory } from '../lib/character-story-history.js';
+import { DEFAULT_STORY_SUMMARY_MODEL } from '../lib/session-compaction.js';
 
 const sessionRoutes = new Hono<AppEnv>();
 
 sessionRoutes.use("/*", authMiddleware);
+registerChapterRoutes(sessionRoutes);
 
 /** Newest messages returned inline by GET /sessions/:id. Older pages load via
  *  GET /sessions/:id/messages?before=… — never grow this past a few hundred:
@@ -231,6 +237,7 @@ sessionRoutes.post("/", async (c) => {
       // activate as a pure function of game state (revert/branch safe). Stored as
       // a first-class field (NOT in variables) so it survives normalization.
       snap.activeGreetingId = g.id;
+      snap.activeChapterId = activeChapter(worldDef, snap)?.id;
       return resolveStoryProgress(worldDef, snap, { selectEnding: false });
     };
     initialState = snapshotForGreeting(greetingEntries[0]);
@@ -878,7 +885,85 @@ sessionRoutes.get("/:id/memories", async (c) => {
   return c.json({ data: memories });
 });
 
-// PATCH /api/sessions/:id — rename session
+// Read-only encounter backfill for VN status fields in paginated histories.
+sessionRoutes.get('/:id/character-encounters', async c => {
+  const userId = c.get('user').id, sessionId = c.req.param('id');
+  const beforeId = c.req.query('beforeMessageId');
+  if (!beforeId) return c.json({ error: 'Choose the current assistant turn' }, 400);
+  const [session] = await db.select({ worldId: playSessions.worldId }).from(playSessions)
+    .where(and(eq(playSessions.id, sessionId), eq(playSessions.userId, userId))).limit(1);
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+  const [target] = await db.select({ id: messages.id, createdAt: messages.createdAt }).from(messages)
+    .where(and(eq(messages.id, beforeId), eq(messages.sessionId, sessionId), eq(messages.role, 'assistant'))).limit(1);
+  if (!target?.createdAt) return c.json({ error: 'Turn not found' }, 404);
+  const world = await loadSessionWorldDef(session.worldId, userId);
+  if (!world) return c.json({ error: 'World not found' }, 404);
+  const entries = world.entries.filter(entry => entry.role === 'character' && entry.enabled !== false);
+  const met = new Set<string>();
+  let cursorId: string | undefined;
+  // Keyset pages keep large saved stories out of a single unbounded result.
+  while (entries.length && met.size < entries.length) {
+    const rows = await db.select({ id: messages.id, createdAt: messages.createdAt, content: messages.content,
+      swipes: messages.swipes, activeSwipeIndex: messages.activeSwipeIndex }).from(messages).where(and(
+        eq(messages.sessionId, sessionId), eq(messages.role, 'assistant'), eq(messages.status, 'complete'),
+        sql`(${messages.createdAt}, ${messages.id}) < (SELECT created_at, id FROM messages WHERE id = ${target.id})`,
+        ...(cursorId ? [sql`(${messages.createdAt}, ${messages.id}) > (SELECT created_at, id FROM messages WHERE id = ${cursorId})`] : []),
+      )).orderBy(asc(messages.createdAt), asc(messages.id)).limit(200);
+    if (!rows.length) break;
+    for (const row of rows) {
+      const swipe = row.swipes?.[row.activeSwipeIndex ?? 0];
+      for (const id of historicalCharacterEncounters(entries, swipe?.rawContent || swipe?.content || row.content)) met.add(id);
+    }
+    const last = rows.at(-1);
+    if (!last) break;
+    cursorId = last.id;
+    if (rows.length < 200) break;
+  }
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: { characterIds: [...met], beforeMessageId: target.id } });
+});
+
+// Read-only character recap evidence, independent of frontend history pagination.
+// The current reply is deliberately excluded: the client supplies only passages
+// already revealed through the clicked line, never its unread later pages.
+sessionRoutes.get('/:id/character-history', async c => {
+  const userId = c.get('user').id, sessionId = c.req.param('id');
+  const beforeId = c.req.query('beforeMessageId'), characterId = c.req.query('characterId'), label = c.req.query('label');
+  if (!beforeId || !characterId || !label || label.length > 200) return c.json({ error: 'Choose a character and a story passage' }, 400);
+  const [session] = await db.select({ worldId: playSessions.worldId, model: playSessions.summaryModel, language: playSessions.summaryLanguage }).from(playSessions)
+    .where(and(eq(playSessions.id, sessionId), eq(playSessions.userId, userId))).limit(1);
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+  const [target] = await db.select({ id: messages.id, createdAt: messages.createdAt, activeSwipeIndex: messages.activeSwipeIndex }).from(messages)
+    .where(and(eq(messages.id, beforeId), eq(messages.sessionId, sessionId), eq(messages.role, 'assistant'))).limit(1);
+  if (!target?.createdAt) return c.json({ error: 'Turn not found' }, 404);
+  const requestedSwipe = c.req.query('swipeIndex');
+  if (requestedSwipe !== undefined && requestedSwipe !== String(target.activeSwipeIndex ?? 0)) return c.json({ error: 'This reply changed. Reopen the character viewer.' }, 409);
+  const world = await loadSessionWorldDef(session.worldId, userId);
+  if (!world) return c.json({ error: 'World not found' }, 404);
+  let history: CharacterStoryHistory;
+  try { history = new CharacterStoryHistory(world.entries, characterId, label); }
+  catch (error) { return c.json({ error: error instanceof Error ? error.message : 'Character not found' }, 400); }
+  let cursorId: string | undefined, pendingPlayer = '', scannedMessages = 0;
+  while (scannedMessages < 20_000) {
+    const rows = await db.select({ id: messages.id, role: messages.role,
+      content: sql<string>`COALESCE(${messages.swipes}->COALESCE(${messages.activeSwipeIndex},0)->>'content',${messages.content})`,
+    }).from(messages).where(and(eq(messages.sessionId, sessionId), eq(messages.status, 'complete'), inArray(messages.role, ['user', 'assistant']),
+      sql`(${messages.createdAt},${messages.id}) < (SELECT created_at,id FROM messages WHERE id=${target.id})`,
+      ...(cursorId ? [sql`(${messages.createdAt},${messages.id}) > (SELECT created_at,id FROM messages WHERE id=${cursorId})`] : []),
+    )).orderBy(asc(messages.createdAt), asc(messages.id)).limit(200);
+    if (!rows.length) break;
+    for (const row of rows) {
+      if (row.role === 'user') pendingPlayer = row.content;
+      else { history.add(row.content, pendingPlayer); pendingPlayer = ''; }
+    }
+    scannedMessages += rows.length; cursorId = rows.at(-1)!.id;
+    if (rows.length < 200) break;
+  }
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: { characterId, beforeMessageId: target.id, text: history.text(), partial: history.partial || scannedMessages >= 20_000,
+    matchedMessages: history.matchedMessages, scannedMessages, model: session.model || DEFAULT_STORY_SUMMARY_MODEL, language: session.language || 'auto' } });
+});
+
 sessionRoutes.get('/:id/persona-control', async c => {
   const [session] = await db.select({ mode: playSessions.personaControlMode }).from(playSessions)
     .where(and(eq(playSessions.id, c.req.param('id')), eq(playSessions.userId, c.get('user').id)));
@@ -902,6 +987,7 @@ sessionRoutes.patch('/:id/persona-control', async c => {
   return c.json({ data: { mode: session.personaControlMode } });
 });
 
+// PATCH /api/sessions/:id — rename session
 sessionRoutes.patch("/:id", async (c) => {
   const currentUser = c.get("user");
   const sessionId = c.req.param("id");
@@ -1210,6 +1296,7 @@ sessionRoutes.post("/:id/restart", async (c) => {
     for (const [k, v] of Object.entries(g.initialVariables ?? {})) sm.set(k, v);
     const snap = sm.getSnapshot();
     snap.activeGreetingId = g.id;
+      snap.activeChapterId = activeChapter(worldDef, snap)?.id;
     return resolveStoryProgress(worldDef, snap, { selectEnding: false });
   };
   // The active (first) opening's snapshot becomes the live session state.

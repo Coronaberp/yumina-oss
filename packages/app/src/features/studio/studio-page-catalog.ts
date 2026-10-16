@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { DockviewApi } from "dockview-react";
+import { isVnInterface, type RootComponent } from "@yumina/engine";
 
 export const STUDIO_ADD_PAGE_PICKER_COMPONENT = "studio-add-page-picker";
 
@@ -31,6 +32,7 @@ export const PANEL_MENU_GROUPS = [
   {
     labelKey: "studio.groups.story",
     items: [
+      { id: "chapters", labelKey: "sections.chapters", icon: BookOpen },
       { id: "first-message", labelKey: "studio.panels.firstMessage", icon: MessageCircle },
       { id: "lorebook", labelKey: "studio.panels.lorebook", icon: BookOpen },
       { id: "variables", labelKey: "studio.panels.variables", icon: Variable },
@@ -69,6 +71,15 @@ export const PANEL_MENU_GROUPS = [
   labelKey: string;
   items: ReadonlyArray<StudioPanelMenuItem>;
 }>;
+
+/** Match the available panels to the card's active interface, including legacy VN cards. */
+export function getStudioPanelMenuGroups(root?: RootComponent) {
+  const supportsVn = isVnInterface(root);
+  return PANEL_MENU_GROUPS.map(group => ({
+    ...group,
+    items: group.items.filter(item => !item.id.startsWith("vn-") || supportsVn),
+  })).filter(group => group.items.length > 0);
+}
 
 export function getAddPagePickerPanelId(groupId: string) {
   return `${STUDIO_ADD_PAGE_PICKER_COMPONENT}::${groupId}`;

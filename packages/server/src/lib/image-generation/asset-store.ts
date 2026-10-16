@@ -25,8 +25,9 @@ function acquireDecode(signal: AbortSignal): Promise<() => void> {
     else { waitingDecodes.push(waiter);signal.addEventListener('abort', abort, { once: true }); }
   });
 }
-/** Normalize to a decoded PNG and remove embedded provider/workflow metadata. */
-export async function normalizeGeneratedRaster(bytes: Buffer, signal: AbortSignal, requireTransparentPng = false) {
+/** Decode and remove embedded provider/workflow metadata, then store lossless
+ * WebP when it is smaller than the equivalent full-resolution PNG. */
+export async function normalizeGeneratedRaster(bytes: Buffer, signal: AbortSignal, requireTransparentPng = false, optimizeForStorage = true) {
   signal.throwIfAborted();
   if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new GenerationError('FILE_TOO_LARGE', 'The generated image must be at most 20 MB.', 413);
   // Completed provider outputs wait for bounded decoding rather than failing
@@ -39,26 +40,32 @@ export async function normalizeGeneratedRaster(bytes: Buffer, signal: AbortSigna
     if (!['png', 'jpeg', 'webp', 'gif', 'avif', 'heif'].includes(metadata.format ?? '') || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000 || (metadata.pages ?? 1) > 1) throw new Error('invalid raster');
     if (requireTransparentPng && (metadata.format !== 'png' || !metadata.hasAlpha || (await image.stats()).isOpaque))
       throw new GenerationError('SPRITE_NOT_TRANSPARENT', 'The provider returned an opaque sprite. Request an isolated character with a transparent background.', 503);
-    const output = await image.png().toBuffer();
+    let output = await image.png().toBuffer();
+    if (optimizeForStorage && metadata.depth === 'uchar') {
+      const webp = await sharp(output).webp({ lossless: true, exact: true, effort: 6 }).timeout({ seconds: 15 }).toBuffer();
+      if (webp.length < output.length) output = webp;
+    }
     signal.throwIfAborted();
-    if (output.length > MAX_IMAGE_BYTES) throw new GenerationError('FILE_TOO_LARGE', 'The generated PNG exceeds the 20 MB size limit.', 413);
+    if (output.length > MAX_IMAGE_BYTES) throw new GenerationError('FILE_TOO_LARGE', 'The generated image exceeds the 20 MB size limit.', 413);
     return { bytes: output, width: metadata.width, height: metadata.height };
   } catch (error) { signal.throwIfAborted(); if (error instanceof GenerationError) throw error; throw new GenerationError('INVALID_IMAGE', 'The provider did not return a valid supported raster image.', 503); }
   finally { release(); }
 }
 export type GenerationTransaction = {
-  write(key: string, bytes: Buffer, signal: AbortSignal): Promise<void>;
-  register(asset: GeneratedAsset, key: string, bytes: number): Promise<void>;
+  write(key: string, bytes: Buffer, signal: AbortSignal, mimeType: string): Promise<void>;
+  register(asset: GeneratedAsset, key: string, bytes: number, mimeType: string): Promise<void>;
 };
 /** Caller holds the same owner lock as normal uploads while registering the image. */
 export async function commitGeneratedAsset(userId: string, bytes: Buffer, source: GeneratedSource, tx: GenerationTransaction, signal: AbortSignal) {
   signal.throwIfAborted();
-  const id = randomUUID(); const filename = `${source.provider}-${source.imageKind}${source.assetRole === 'original' ? '-original' : ''}-${id}.png`;
-  const key = `users/${userId}/image/${id}-${randomUUID()}.png`;
+  const webp = bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
+  const extension = webp ? 'webp' : 'png', mimeType = webp ? 'image/webp' : 'image/png';
+  const id = randomUUID(); const filename = `${source.provider}-${source.imageKind}${source.assetRole === 'original' ? '-original' : ''}-${id}.${extension}`;
+  const key = `users/${userId}/image/${id}-${randomUUID()}.${extension}`;
   const asset: GeneratedAsset = { id, ref: `@asset:${id}`, filename, source };
-  await tx.write(key, bytes, signal);
+  await tx.write(key, bytes, signal, mimeType);
   signal.throwIfAborted();
-  await tx.register(asset, key, bytes.length);
+  await tx.register(asset, key, bytes.length, mimeType);
   signal.throwIfAborted();
   return asset;
 }

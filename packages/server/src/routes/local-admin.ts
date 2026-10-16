@@ -5,12 +5,29 @@ import { authMiddleware } from "../middleware/auth.js";
 import { adminMiddleware } from "../middleware/admin.js";
 import { githubAuthConfigInput, readGitHubAuthConfig, saveGitHubAuthConfig } from "../lib/github-auth-config.js";
 import type { AppEnv } from "../lib/types.js";
+import { createImageGenerationControls, imageGenerationControlsInput } from "../lib/image-generation/admin-controls.js";
 
-export function createLocalAdminRoutes(options: {file?:string;publicOrigin?:string;adminAccountId?:string;authenticate?:MiddlewareHandler<AppEnv>;resolveIdentity?:(login:string)=>Promise<{id:number;login:string}>}={}) {
+export function createLocalAdminRoutes(options: {file?:string;imageGenerationFile?:string;publicOrigin?:string;adminAccountId?:string;authenticate?:MiddlewareHandler<AppEnv>;resolveIdentity?:(login:string)=>Promise<{id:number;login:string}>}={}) {
   const routes=new Hono<AppEnv>();
   const file=options.file||resolve("../../.env");
   const publicOrigin=new URL(options.publicOrigin||env.APP_URL).origin;
+  const imageControls=createImageGenerationControls(options.imageGenerationFile);
   routes.use("*",options.authenticate||authMiddleware,adminMiddleware);
+  routes.get("/image-generation",c=>{
+    c.header("Cache-Control","no-store");
+    try { return c.json({data:imageControls.read()}); }
+    catch { return c.json({error:"Could not load image generation controls."},503); }
+  });
+  routes.patch("/image-generation",async c=>{
+    c.header("Cache-Control","no-store");
+    const origin=c.req.header("Origin");
+    if (!origin || ![publicOrigin,new URL(env.BETTER_AUTH_URL).origin].includes(origin)) return c.json({error:"Untrusted request origin"},403);
+    let input;
+    try { input=imageGenerationControlsInput.parse(await c.req.json()); }
+    catch { return c.json({error:"Choose whether Anima and Krea image generation is enabled."},400); }
+    try { return c.json({data:imageControls.save(input)}); }
+    catch { return c.json({error:"Could not save image generation controls."},503); }
+  });
   routes.get("/authentication",c=>{
     c.header("Cache-Control","no-store");
     const saved=readGitHubAuthConfig(file);

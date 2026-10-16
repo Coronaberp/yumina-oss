@@ -7,6 +7,7 @@ import {
   recordReadTouches,
   clearReadProgress,
   readSpiralStopMessage,
+  readRepeatNudge,
   type ReadProgressVerdict,
 } from "./read-progress.js";
 
@@ -84,6 +85,70 @@ describe("read-progress: paginating a large file is progress, not a spiral", () 
       [read(["b.tsx"], 200, 200)],
     ]);
     assert.deepEqual(verdicts.map((v) => v.kind), ["progress", "progress", "progress"]);
+  });
+
+  it("allows a broad cast read to narrow to a smaller batch and then one character", () => {
+    // Saved run aeb3997a: the payload shrank from 66K to 54K to 5K chars.
+    const cast = ["sera", "ryu", "lilith", "cinder", "lupe", "maeve", "athena", "urabel", "diane", "kei", "azzara", "seira"];
+    const verdicts = run([
+      [read(["card-showcase", ...cast])],
+      [read(cast)],
+      [read(["sera"])],
+      [read(["sera"])],
+      [read(["sera"])],
+    ]);
+    assert.deepEqual(verdicts.map(v => v.kind), ["progress", "progress", "progress", "repeat", "stop"]);
+  });
+
+  it("does not mistake reading overlapping batches of new characters for a spiral", () => {
+    assert.deepEqual(run([
+      [read(["sera", "ryu"])],
+      [read(["sera", "lilith"])],
+      [read(["sera", "cinder"])],
+    ]).map(v => v.kind), ["progress", "progress", "progress"]);
+  });
+
+  it("still catches the same batch when its IDs are reordered or duplicated", () => {
+    assert.deepEqual(run([
+      [read(["sera", "ryu"])],
+      [read(["ryu", "sera"])],
+      [read(["sera", "ryu", "sera"])],
+    ]).map(v => v.kind), ["progress", "repeat", "stop"]);
+  });
+});
+
+describe("read-progress: visual audit pages", () => {
+  const audit = (args: Record<string, unknown>): ToolCall => ({ id: `tc${seq++}`, type: "function",
+    function: { name: "get_visual_audit_inputs", arguments: JSON.stringify(args) } });
+  it("counts equivalent default and clamped pages as repeated reads", () => {
+    const verdicts = run([
+      [audit({ kind: "characters", limit: 100 })],
+      [audit({ kind: "characters", limit: 20, offset: 0 })],
+      [audit({ kind: "characters" })],
+    ]);
+    assert.deepEqual(verdicts.map(v => v.kind), ["progress", "repeat", "stop"]);
+    assert.equal((verdicts[2] as {id: string}).id, "visual-audit:characters");
+    assert.match(readRepeatNudge("visual-audit:characters"), /reuse|already have/i);
+    assert.doesNotMatch(readRepeatNudge("visual-audit:characters"), /ids: \["visual-audit:/);
+  });
+  it("permits new pages and separate background reads, but detects repeated traversal", () => {
+    const verdicts = run([
+      [audit({ kind: "characters", offset: 0 })],
+      [audit({ kind: "characters", offset: 20 })],
+      [audit({ kind: "characters", offset: 40 })],
+      [audit({ kind: "backgrounds", offset: 0 })],
+      [audit({ kind: "characters", offset: 0 })],
+      [audit({ kind: "characters", offset: 20 })],
+    ]);
+    assert.deepEqual(verdicts.map(v => v.kind), ["progress", "progress", "progress", "progress", "repeat", "stop"]);
+  });
+  it("matches the executor's coercion of null and numeric-string limits", () => {
+    assert.deepEqual(run([
+      [audit({ kind: "characters", limit: null })],
+      [audit({ kind: "characters", limit: 20 })],
+      [audit({ kind: "characters", limit: "5", offset: "20" })],
+      [audit({ kind: "characters", limit: 5, offset: 20 })],
+    ]).map(v => v.kind), ["progress", "progress", "progress", "repeat"]);
   });
 });
 

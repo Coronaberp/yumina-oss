@@ -1,3 +1,4 @@
+import { Select } from "@/components/ui/select";
 import { useEffect, useMemo, useState } from "react";
 import { useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -105,15 +106,15 @@ export function ExtensionsPage() {
                   className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-white/35 focus:border-gold/30 focus:outline-none focus:ring-1 focus:ring-gold/10"
                 />
               </div>
-              <select
+              <Select compact
                 value={sort}
-                onChange={(e) => setSort(e.target.value as ExtensionSort)}
+                onValueChange={(selectedValue) => setSort(selectedValue as ExtensionSort)}
                 className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-sm text-white/80 focus:border-gold/30 focus:outline-none"
               >
                 <option value="recommended">{t("sort.recommended")}</option>
                 <option value="popular">{t("sort.popular")}</option>
                 <option value="newest">{t("sort.newest")}</option>
-              </select>
+              </Select>
             </div>
 
             {/* Category chips */}

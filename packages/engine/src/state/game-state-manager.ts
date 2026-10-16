@@ -1,3 +1,5 @@
+import { initializeChapterEvents } from "../story/chapter-events.js";
+import { activeChapter } from "../story/chapters.js";
 import type { Variable, Effect, GameState, WorldDefinition, Directive, RuleRuntimeState, RuleAction } from "../types/index.js";
 import { createEmptyRuleState } from "../rules/rule-state.js";
 import { getByPath } from "./path-utils.js";
@@ -24,8 +26,10 @@ export class GameStateManager {
   private worldId: string;
   private defaultVariables: Record<string, VariableValue>;
   private poisonSurvival: boolean;
+  private chapters: WorldDefinition["chapters"];
 
   constructor(world: WorldDefinition, existingState?: GameState) {
+    this.chapters = world.chapters;
     this.poisonSurvival = world.systems?.includes(POISON_SYSTEM) === true;
     this.variables = new Map(world.variables.map((v) => [v.id, v]));
     this.nameToId = new Map(world.variables.map((v) => [v.name, v.id]));
@@ -33,7 +37,7 @@ export class GameStateManager {
     this.defaultVariables = Object.fromEntries(
       world.variables.map((v) => [v.id, v.defaultValue])
     );
-    this.state = this.normalizeState(existingState);
+    this.state = initializeChapterEvents(world, this.normalizeState(existingState));
   }
 
   get(variableId: string): VariableValue | undefined {
@@ -214,6 +218,7 @@ export class GameStateManager {
       variables: { ...this.state.variables },
       metadata: { ...this.state.metadata },
       ruleState: this.cloneRuleState(this.state.ruleState),
+      ...(this.state.storyEvents ? { storyEvents: structuredClone(this.state.storyEvents) } : {}),
       ...(this.state.story ? { story: JSON.parse(JSON.stringify(this.state.story)) } : {}),
     };
   }
@@ -657,6 +662,7 @@ export class GameStateManager {
           : 0,
       metadata: { ...(state?.metadata ?? {}) },
       ruleState: this.cloneRuleState(state?.ruleState),
+      ...(state?.storyEvents ? { storyEvents: structuredClone(state.storyEvents) } : {}),
       ...(state?.story ? { story: JSON.parse(JSON.stringify(state.story)) } : {}),
     };
 
@@ -669,6 +675,9 @@ export class GameStateManager {
     if ("activeGreetingId" in (state ?? {})) {
       normalized.activeGreetingId = state?.activeGreetingId;
     }
+
+    if ("activeChapterId" in (state ?? {})) normalized.activeChapterId = state?.activeChapterId;
+    else normalized.activeChapterId = activeChapter({ chapters: this.chapters }, normalized)?.id;
 
     return this.poisonSurvival ? settlePoisonState(normalized) : normalized;
   }
@@ -689,4 +698,3 @@ export class GameStateManager {
     };
   }
 }
-

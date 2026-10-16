@@ -1,3 +1,4 @@
+import { confirmAction } from "@/components/ui/global-confirm-dialog";
 const apiBase = import.meta.env.VITE_API_URL || "";
 
 export interface StudioPreflightIssue {
@@ -31,7 +32,7 @@ export function preflightIssueSummary(issues: StudioPreflightIssue[], limit = 5)
   return visible.join("\n") + remaining;
 }
 
-export function confirmPreflightWarnings(warnings: StudioPreflightIssue[], action: string): boolean {
+export async function confirmPreflightWarnings(warnings: StudioPreflightIssue[], action: string): Promise<boolean> {
   if (!warnings.length) return true;
-  return window.confirm(`Preflight found ${warnings.length} warning(s) before ${action}:\n\n${preflightIssueSummary(warnings)}\n\nContinue anyway?`);
+  return (await confirmAction(`Preflight found ${warnings.length} warning(s) before ${action}:\n\n${preflightIssueSummary(warnings)}\n\nContinue anyway?`));
 }

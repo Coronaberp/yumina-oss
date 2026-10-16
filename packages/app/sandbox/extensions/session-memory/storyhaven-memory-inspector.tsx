@@ -1,6 +1,8 @@
+import { Checkbox } from "../../../src/components/ui/checkbox";
 import { useEffect, useId, useRef, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { MemorySelect } from "./memory-select";
+import { displayPersonaText, updatePersonaDisplayText } from "../../../src/lib/persona-profile";
 import type {
   StoryhavenFact,
   StoryhavenMemoryStatus,
@@ -9,6 +11,7 @@ import type {
 export interface StoryhavenMemoryInspectorProps {
   api: (action: string, payload?: Record<string, unknown>) => Promise<unknown>;
   language?: string;
+  playerName?: string;
 }
 type Settings = StoryhavenMemoryStatus["settings"];
 type Tab = "facts" | "clusters" | "lore" | "preview";
@@ -176,9 +179,11 @@ function isStatus(value: unknown): value is StoryhavenMemoryStatus {
 export function StoryhavenMemoryInspector({
   api,
   language,
+  playerName,
 }: StoryhavenMemoryInspectorProps) {
   const zh = language?.toLowerCase().startsWith("zh") ?? false;
   const tt = (en: string, cn: string) => (zh ? cn : en);
+  const display = (value: unknown) => displayPersonaText(text(value), playerName);
   const id = useId();
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -298,7 +303,7 @@ export function StoryhavenMemoryInspector({
         (factState === "expired"
           ? fact.expired_ts !== null
           : fact.expired_ts === null)) &&
-      `${fact.text} ${fact.participants.join(" ")} ${fact.location ?? ""}`
+      `${display(fact.text)} ${display(fact.participants.join(" "))} ${display(fact.location)}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -507,14 +512,13 @@ export function StoryhavenMemoryInspector({
                 {NUMBER_SETTINGS.filter(field => !["memoryBudgetTokens", "batchSize"].includes(field.key)).map(renderNumberSetting)}
               </div>
           <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
+            <Checkbox
+
               className="size-4 accent-primary"
               disabled={!!busy}
               checked={settings.clusterMultiThread === true}
-              onChange={(event) =>
-                changeSetting("clusterMultiThread", event.target.checked)
-              }
+              onCheckedChange={(checked) =>
+                changeSetting("clusterMultiThread", (checked === true))}
             />
             {tt(
               "Keep separate summaries for different story threads",
@@ -690,19 +694,18 @@ export function StoryhavenMemoryInspector({
                       className={`${inputClass} min-h-24 leading-relaxed`}
                       rows={4}
                       disabled={!!busy}
-                      value={editText}
-                      onChange={(event) => setEditText(event.target.value)}
+                      value={display(editText)}
+                      onChange={(event) => setEditText(updatePersonaDisplayText(editText, event.target.value, playerName))}
                       aria-label={tt("Edit fact", "编辑事实")}
                     />
                     <label className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
+                      <Checkbox
+
                         className="size-4 accent-primary"
                         disabled={!!busy}
                         checked={editPinned}
-                        onChange={(event) =>
-                          setEditPinned(event.target.checked)
-                        }
+                        onCheckedChange={(checked) =>
+                          setEditPinned((checked === true))}
                       />
                       {tt(
                         "Prioritize this fact in recall",
@@ -736,7 +739,7 @@ export function StoryhavenMemoryInspector({
                   </>
                 ) : (
                   <p className="break-words whitespace-pre-wrap text-xs leading-relaxed text-white/75">
-                    {fact.text}
+                    {display(fact.text)}
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -849,7 +852,7 @@ export function StoryhavenMemoryInspector({
                           key={row.id ?? index}
                           className="break-words whitespace-pre-wrap text-xs leading-relaxed text-white/60"
                         >
-                          {row.text}
+                          {display(row.text)}
                         </p>
                       ))
                     ) : (
@@ -881,10 +884,10 @@ export function StoryhavenMemoryInspector({
                 className="space-y-2 rounded-xl border border-white/10 bg-black/15 p-3"
               >
                 <h4 className="break-words text-xs font-semibold text-white/85">
-                  {text(cluster.title) || tt("Story so far", "目前的故事")}
+                  {display(cluster.title) || tt("Story so far", "目前的故事")}
                 </h4>
                 <p className="break-words whitespace-pre-wrap text-xs leading-relaxed text-white/65">
-                  {text(cluster.summary_text ?? cluster.summary)}
+                  {display(cluster.summary_text ?? cluster.summary)}
                 </p>
                 {typeof cluster.created_turn === "number" && (
                   <p className="text-[10px] text-white/35">
@@ -925,7 +928,7 @@ export function StoryhavenMemoryInspector({
                     <h4 className="break-words text-xs font-semibold text-white/85">
                       {isHidden
                         ? tt("Hidden lore", "隐藏设定")
-                        : text(entry.name) || tt("Untitled lore", "未命名设定")}
+                        : display(entry.name) || tt("Untitled lore", "未命名设定")}
                     </h4>
                     {hasOverride && (
                       <span className="text-[10px] text-primary">
@@ -946,11 +949,11 @@ export function StoryhavenMemoryInspector({
                         rows={3}
                         className={`${inputClass} leading-relaxed`}
                         disabled={!!busy}
-                        value={content}
+                        value={display(content)}
                         onChange={(event) =>
                           setOverrides((previous) => ({
                             ...previous,
-                            [loreId]: event.target.value,
+                            [loreId]: updatePersonaDisplayText(content, event.target.value, playerName),
                           }))
                         }
                         aria-label={tt(
@@ -1011,7 +1014,7 @@ export function StoryhavenMemoryInspector({
                         >
                           <p className="min-w-0 flex-1 break-words whitespace-pre-wrap text-xs leading-relaxed text-white/60">
                             {revealed
-                              ? text(secret.text) ||
+                              ? display(secret.text) ||
                                 tt("Revealed detail", "已揭示的细节")
                               : `${tt("Hidden detail", "隐藏细节")} ${secretIndex + 1}`}
                           </p>
@@ -1058,7 +1061,7 @@ export function StoryhavenMemoryInspector({
                       className="flex flex-wrap items-start gap-2 rounded-lg border border-white/10 p-3"
                     >
                       <p className="min-w-0 flex-1 break-words whitespace-pre-wrap text-xs">
-                        {text(reveal.text ?? reveal.secret_text) ||
+                        {display(reveal.text ?? reveal.secret_text) ||
                           `${tt("Revealed detail", "已揭示的细节")} ${index + 1}`}
                       </p>
                       <button
@@ -1123,7 +1126,7 @@ export function StoryhavenMemoryInspector({
                   {tt("reserved facts omitted", "条优先事实已省略")}
                 </p>
                 <p className="break-words whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 p-4 text-xs leading-relaxed text-white/75">
-                  {preview.block ||
+                  {display(preview.block) ||
                     tt("No facts match this moment.", "没有匹配此情境的事实。")}
                 </p>
                 {!!preview.droppedIds.length && (
@@ -1139,8 +1142,8 @@ export function StoryhavenMemoryInspector({
                           );
                         return (
                           <li key={factId} className="break-words">
-                            {fact?.text ||
-                              text(entry?.name) ||
+                            {display(fact?.text) ||
+                              display(entry?.name) ||
                               tt("Lore passage", "设定段落")}
                           </li>
                         );

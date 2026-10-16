@@ -1,4 +1,7 @@
 // Types
+export * from "./studio-task.js";
+export { sessionArchiveSchema, archiveMessageSchema, archiveMediaReferences, replaceArchiveMediaReferences, ARCHIVE_MAX_FILE_BYTES, ARCHIVE_MAX_MEDIA_BYTES, ARCHIVE_MAX_ASSET_BYTES } from "./session-archive.js";
+export type { SessionArchive, ArchiveMode } from "./session-archive.js";
 export { personaControlModeSchema, normalizePersonaControlMode, personaControlInstructions } from './persona-control.js';
 export type { PersonaControlMode } from './persona-control.js';
 export { NAME_STYLE_KEYS, nameConstraintsSchema, namePhoneticsSchema, nameGeneratorOptionsSchema, nameGeneratorProfileSchema, nameGeneratorProfilesSchema } from "./name-generator.js";
@@ -423,3 +426,7 @@ export type { KrewPublicConfig } from "./krew-config.js";
 export type { StoryhavenEmbeddingProfile, StoryhavenProfileInput, StoryhavenFact, StoryhavenMemoryStatus } from "./storyhaven-memory.js";
 export { describeStudioTrace, recoverStudioTrace } from "./studio-trace.js";
 export type { StudioTraceItem } from "./studio-trace.js";
+export { CODEX_STUDIO_CONTEXT_WINDOW, getStudioContextBudget } from "./studio-context.js";
+export { normalizeStudioVisualAuditPage } from "./studio-visual-audit.js";
+
+export * from "./vn-text-style.js";

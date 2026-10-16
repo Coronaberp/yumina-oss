@@ -87,3 +87,49 @@ pnpm --filter @yumina/app exec tsx --tsconfig tsconfig.app.json ../../scripts/ap
 The script refreshes the VN runtime while retaining saved character/expression maps, NPC pools and defaults, global and opening backgrounds, stat bindings, authored status layout, character showcase settings, portrait settings and extra files. It refuses custom executable asset maps instead of replacing them with empty defaults. A locked card must be unlocked deliberately before applying.
 
 Every schema field outside `rootComponent` stays intact. The script writes a private rollback snapshot, checks optimistic concurrency, and stamps the compiled source hash. Font and menu references are filled in the card's files without changing the stock template on disk; existing menu uploads are reused, including optimized WebP copies. Browser QA uses temporary sessions and intercepted synthetic generation, with no paid provider requests.
+
+Final visual comparisons and phone captures are in `qa/`. The project-root `design-qa.md` records fidelity, validation, and resolved issues.
+
+Live browser regression (temporary sessions, intercepted provider calls):
+
+```sh
+node scripts/check-vn.cjs WORLD_UUID
+```
+
+Set `YUMINA_QA_PLAYWRIGHT` and `YUMINA_QA_CHROME` to override the local runtime paths.
+
+Choose **VN — Visual Novel** or **Classic — Chat** in Custom UI → Interface. The picker also searches saved custom UIs. **Save custom UI files** stores the current entry point and every source file in your account library; the naming modal accepts long names and truncates them to 50 Unicode characters when saved. Interface changes preserve edited versions in the card so you can switch back. Saving a UI copies source files and retains their asset references; assets remain in the existing Asset Library.
+
+### Reading navigation and player references
+
+The scene counter shows the loaded assistant turn and page within that turn. The wheel browses existing pages in both directions, including earlier loaded turns. The downward caret appears only while another generated page is available. Clicking the final passage never starts generation; select an option or submit the custom response instead.
+
+VN output uses literal `{{user}}` for player references with second-person verbs (`{{user}} look`, `{{user}} are`) and `{{user}}'s` for possessives. Rendering displays “you” and “your” without rewriting stored replies. The log identifies the selected persona as `Name (You)` and uses its portrait. Thinking is an optional collapsed toggle above each reply.
+
+### Phone layout
+
+The passage and counter stay anchored at the bottom. Main-scene speaker names, dialogue and narrator actions are centered on phones as on desktop. Portrait choices appear above the passage; long lists scroll without shrinking or overlapping their buttons. Mobile choices use compact text and padding; short choices, including `...`, fit their content. The toolbar stacks each icon above its label and has at least 44px touch targets. Landscape uses a wide passage across the bottom, with choices above it on the right, like desktop. With fullscreen controls in the menu, the toolbar starts near the top without reserving a second control row.
+
+The phone dialogue log puts the portrait and name in a header, with dialogue underneath. Narration and Thinking use the full log width. The desktop composition remains based on the supplied SVGs.
+
+Portrait phones show one character at a time, centered and anchored to the scene bottom so its cut edge stays behind the reader. The sprite height follows the phone width and stays below the toolbar; its proportions remain unchanged. The background fills the screen with a centered crop and an additional 18% zoom. Landscape and desktop retain their existing composition.
+
+Legacy dialogue such as `"Thank you," *Evelia says softly.* "Please sit."` keeps both quotes attributed to Evelia, while the intervening action stays italic narration. An unrelated action, an unknown speaker, or a blank paragraph ends this inferred context; explicit speaker markers remain the reliable format for new replies.
+
+Touch-browser layout checks at 320px, 360px, 390px, landscape, and desktop:
+
+```sh
+node scripts/check-vn-mobile.cjs WORLD_UUID
+```
+
+Screenshots and the browser verification record are in `qa/mobile/`.
+
+The landscape width regression, its before/after captures, and the latest seven-size browser check are recorded in [`qa/landscape/verification.md`](./qa/landscape/verification.md).
+
+Sprite-cap checks, including rotation, desktop portrait, scene changes, and backward navigation:
+
+```sh
+node scripts/check-vn-sprites.cjs WORLD_UUID
+```
+
+Screenshots and verification records are in `qa/sprites/`. The temporary fixture uses transparent waist-up schematic cutouts, checks decoded alpha pixels, and leaves the real card's asset configuration unchanged. These are layout test fixtures, not final character art.

@@ -11,7 +11,7 @@ export type AnimaRequestOptions = { animaModel?: string; chromaColor: string; se
   samplerName?: "er_sde" | "euler"; scheduler?: "simple" | "normal" | "sgm_uniform";
   references: AnimaReferenceUpload[]; progress?: (event: { phase: 'preparing' | 'queued' | 'generating' | 'segmenting' | 'processing' | 'saving'; percent?: number }) => void };
 export type KreaRequestOptions = { imageKind: 'sprite' | 'background' | 'image'; transparent?: boolean; seed?: number; steps?: number; cfg?: number;
-  references: AnimaReferenceUpload[]; progress?: AnimaRequestOptions['progress'] };
+  references: AnimaReferenceUpload[]; textOnly?: boolean; progress?: AnimaRequestOptions['progress'] };
 export type ComfyImageDependencies = ProviderDependencies & { webSocket?: typeof WebSocket | null };
 
 async function requestValue(profile: Profile, path: string, signal: AbortSignal, fetcher: typeof fetch): Promise<unknown> {
@@ -181,6 +181,7 @@ export async function generateComfyAnimaImage(profile: Profile, prompt: string, 
 export async function generateComfyKreaImage(profile: Profile, prompt: string, signal: AbortSignal,
   options: KreaRequestOptions, dependencies: ComfyImageDependencies = {}) {
   const fetcher = dependencies.fetch ?? fetch;
+  if (options.textOnly && options.references.length) throw new GenerationError('INVALID_REFERENCE', 'Text-to-image generation requires a text description instead of image reference inputs.');
   if (options.references.length > 4) throw new GenerationError('INVALID_REFERENCE', 'Krea accepts at most four reference images. Remove one reference before starting.');
   let totalBytes = 0;
   for (const reference of options.references) {
@@ -189,14 +190,15 @@ export async function generateComfyKreaImage(profile: Profile, prompt: string, s
       throw new GenerationError('INVALID_REFERENCE', 'Krea references must be valid images totaling at most 20 MB.', 413);
   }
   options.progress?.({ phase: 'preparing' });
+  const encoder = options.textOnly ? 'CLIPTextEncode' : 'TextEncodeKrea2Reference';
   const [modelResult, encoderResult] = await Promise.all([
     requestValue(profile, 'models/diffusion_models', signal, fetcher),
-    requestValue(profile, 'object_info/TextEncodeKrea2Reference', signal, fetcher),
+    requestValue(profile, `object_info/${encoder}`, signal, fetcher),
   ]);
   if (!namesFrom(modelResult).some(value => value === KREA_MODEL || (record(value) && value.name === KREA_MODEL)))
     throw new GenerationError('KREA_MODEL_UNAVAILABLE', 'The configured local Krea2-Anime v2.0 INT4 model is not installed in ComfyUI.', 503);
-  if (!record(encoderResult) || !record(encoderResult.TextEncodeKrea2Reference))
-    throw new GenerationError('KREA_NODES_UNAVAILABLE', 'The Krea reference encoder is not installed in ComfyUI.', 503);
+  if (!record(encoderResult) || !record(encoderResult[encoder]))
+    throw new GenerationError('KREA_NODES_UNAVAILABLE', `The Krea ${options.textOnly ? 'text' : 'reference'} encoder is not installed in ComfyUI.`, 503);
 
   const clientId = randomUUID();
   const references: Array<{ filename: string; role: UploadedAnimaReference['role']; name: string }> = [];
@@ -216,7 +218,7 @@ export async function generateComfyKreaImage(profile: Profile, prompt: string, s
   }
   const seed = options.seed ?? randomUUID().replaceAll('-', '').slice(0, 13).split('').reduce((value, digit, index) => value + Number.parseInt(digit, 16) * 16 ** (12 - index), 0);
   const workflow = buildKreaReferenceWorkflow({ prompt, imageKind: options.imageKind, transparent: options.transparent, seed, steps: options.steps, cfg: options.cfg,
-    references, availableModels: namesFrom(modelResult), sourcePrefix: `illumi-krea-${clientId.replaceAll('-', '')}` });
+    references, textOnly: options.textOnly, availableModels: namesFrom(modelResult), sourcePrefix: `illumi-krea-${clientId.replaceAll('-', '')}` });
   const generationStarted = Date.now();
   let promptId: string | undefined;
   try {

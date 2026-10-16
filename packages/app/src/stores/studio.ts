@@ -1,3 +1,4 @@
+import { studioTaskSchema, type StudioTask } from "@yumina/shared";
 import { mergeStudioSteering, studioTaskStart } from "@/features/studio/lib/steering";
 import { createStudioRecoveryRequestCoordinator } from "@/lib/studio-recovery-request";
 import { mergeStudioImageJobs } from "@/features/studio/lib/image-job-state";
@@ -261,6 +262,9 @@ interface StudioState {
   agentCompaction: { status: string; beforeTokens: number; afterTokens?: number; targetTokens: number } | null;
   agentIteration: number;
   agentMaxIterations: number;
+  activeTask: { runId: string; task: StudioTask } | null;
+  taskStepLimit: number | null;
+  resumeTask: () => void;
   reasoningChars: number;
   /** Accumulated reasoning/thinking text for display */
   reasoningContent: string;
@@ -313,6 +317,7 @@ interface StudioState {
   /** Same button, but while the recovery banner is still up and a poller is
    *  already attached: poll now and reset the give-up budget. */
   nudgeRecovery: () => void;
+  detachAgent: () => void;
   stopAgent: () => void;
   approveProposal: () => void;
   rejectProposal: () => void;
@@ -340,6 +345,7 @@ interface AgentStreamCallbacks {
   scope?: StudioAgentScope;
   isActive?: () => boolean;
   onRunStarted?: (runId: string, model?: string) => void;
+  onTaskStatus?: (data: { runId: string; task: unknown }) => void;
   onSteering?: (data: { runId: string; items: unknown }) => void;
   onCompaction?: (data: { runId: string; status: string; beforeTokens: number; afterTokens?: number; targetTokens: number }) => void;
   onReasoning?: (content: string) => void;
@@ -482,7 +488,8 @@ async function tryRecoverAgentRun(
   document.addEventListener("visibilitychange", onVisibility);
 
   try {
-    while (Date.now() - start < HARD_CAP_MS) {
+    let recoveringTask = false;
+    while (recoveringTask || Date.now() - start < HARD_CAP_MS) {
       if (callbacks.isActive && !callbacks.isActive()) return true;
       await new Promise<void>((resolve) => {
         wakeResolve = resolve;
@@ -531,6 +538,7 @@ async function tryRecoverAgentRun(
         }
         callbacks.onSteering?.({ runId: recoveredRunId, items: data.steering });
         if (data.compaction) callbacks.onCompaction?.({ ...data.compaction, runId: recoveredRunId });
+        if (data.task) { recoveringTask = studioTaskSchema.safeParse(data.task).success; callbacks.onTaskStatus?.({ runId: recoveredRunId, task: data.task }); }
         callbacks.onIteration(data.iteration ?? 0, data.maxIterations ?? 0, data.historyTokens);
 
         if (data.status === "awaiting_credits" || data.creditPause?.resumable === true || data.status === "error") {
@@ -954,6 +962,9 @@ function connectAgentSSE(
                 case "text":
                   if (parsed.content) callbacks.onText(parsed.content);
                   break;
+                case "task_status":
+                  callbacks.onTaskStatus?.(parsed);
+                  break;
                 case "iteration":
                   callbacks.onIteration(parsed.iteration, parsed.maxIterations, parsed.historyTokens);
                   break;
@@ -1206,6 +1217,11 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       else set(s => ({ _currentRunId: runId, creditPause: null, creditPauseError: null, isResumingCredits: false,
         chatMessages: startStudioToolTrace(s.chatMessages, runId, streamModel || "Agent") }));
     },
+    onTaskStatus: data => {
+      if (!activeRun() || data.runId !== streamRunId) return;
+      const parsed = studioTaskSchema.safeParse(data.task);
+      if (parsed.success) set({ activeTask: { runId: data.runId, task: parsed.data } });
+    },
     onSteering: data => {
       if (!activeRun() || data.runId !== streamRunId) return;
       set(s => ({ chatMessages: mergeStudioSteering(s.chatMessages, data.runId, data.items) }));
@@ -1455,7 +1471,7 @@ export function watchStudioImageNotifications(scope: StudioAgentScope): () => vo
     image_progress: "onImageProgress", image_result: "onImageResult", done: "onDone",
     read_tools_executed: "onReadToolsExecuted", compaction: "onCompaction", steering: "onSteering",
     assistant_turn_commit: "onAssistantTurnCommit", applied: "onApplied", credits: "onCredits",
-    credits_paused: "onCreditsPaused", step_restarted: "onStepRestarted",
+    task_status: "onTaskStatus", credits_paused: "onCreditsPaused", step_restarted: "onStepRestarted",
   };
   for (const [event, callback] of Object.entries(direct)) listen(event, data => {
     const handler = callbacks?.[callback];if (typeof handler === "function") (handler as (data: unknown) => void)(data);
@@ -1492,6 +1508,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   agentCompaction: null,
   agentIteration: 0,
   agentMaxIterations: 10,
+  activeTask: null, taskStepLimit: null,
   reasoningChars: 0,
   reasoningContent: "",
   appliedCount: 0,
@@ -1668,6 +1685,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     set({
       chatMessages: updatedMessages,
+      activeTask: null,
       isChatStreaming: true,
       chatStreamContent: "",
       chatAttachments: get().chatAttachments.filter(file => !chatAttachments.includes(file)),
@@ -1710,6 +1728,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       `/api/studio/${worldId}/agent/start`,
       {
         message: finalContent,
+        ...(get().taskStepLimit ? { maxSteps: get().taskStepLimit } : {}),
         model,
         ...(conversationId && { conversationId }),
         context: { activePanel, selectedElementId, selectedElementType },
@@ -1783,11 +1802,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       if (!current()) return;
       if (!data) { set({ creditPause: null, creditPauseError: null }); return; }
       if (typeof data.id !== "string" || (runId && data.id !== runId) || data.conversationId !== conversationId) return;
+      const restoredTask = studioTaskSchema.safeParse(data.task);
+      set({ activeTask: restoredTask.success && !data.taskResumedBy ? { runId: data.id, task: restoredTask.data } : null });
       // Decide whether work was missed before restoring an image-only bubble.
       // Such a bubble must not hide a missing final answer or revive an undone turn.
       const beforeRecovery = get().chatMessages;
-      const hadRunReply = beforeRecovery.some(message => message.agentRunId === data.id
-        && !message.imageProposal && !message.imageBatchProposal && !message.activityTrace && !message.disconnected);
       const restoreImageRun = wasAbandonedHere(data.id) || beforeRecovery.at(-1)?.role === "user"
         || ["running", "awaiting_approval", "awaiting_credits"].includes(data.status) ? data.id : undefined;
       set(state => ({ chatMessages: mergeStudioSteering(state.chatMessages, data.id, data.steering) }));
@@ -1850,7 +1869,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         && wasAbandonedHere(data.id)
         && Array.isArray(data.committedTurns) && data.committedTurns.length > 0
         && !/stopped by user|superseded/i.test(String(data.error ?? ""))
-        && !hadRunReply;
+        && data.committedTurns.some((turn: { commitId?: string }) => typeof turn.commitId === "string"
+          && !beforeRecovery.some(message => message.commitId === turn.commitId));
       if (abandonedResult) forgetAbandonedRun(data.id);
       const turns = ((pause && !terminal) || abandonedResult || data.status === "error") && Array.isArray(data.committedTurns)
         ? data.committedTurns : [];
@@ -1955,12 +1975,46 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
   },
 
+  // Leaving a chat only detaches its view. The server keeps working and its
+  // durable run is reattached (or recovered) when this chat is opened again.
+  resumeTask: () => {
+    const state = get(), saved = state.activeTask;
+    if (!saved || state.isAgentWorking || state.isResumingCredits || !state.chatWorldId || !["stalled", "budget_paused", "interrupted", "stopped"].includes(saved.task.status)) return;
+    const scope = { worldId: state.chatWorldId, conversationId: state.chatConversationId };
+    studioAgentEpoch++; creditRefreshEpoch++;
+    set({ isAgentWorking: true, isChatStreaming: true, isRecovering: false, chatStreamContent: "", _currentRunId: null });
+    const controller = connectAgentSSE(`/api/studio/${encodeURIComponent(scope.worldId)}/agent/resume-task`,
+      { runId: saved.runId }, studioAgentCallbacks(scope), undefined, { preferStreamBase: true });
+    if (isActiveStudioChatScope(scope)) set({ _agentAbortController: controller }); else controller.abort();
+  },
+
+  detachAgent: () => {
+    const current = get();
+    rememberAbandonedRun(current._currentRunId ?? undefined);
+    steeringSubmissionEpoch++;
+    unacknowledgedSteering = null;
+    studioAgentEpoch++;
+    creditRefreshEpoch++;
+    current._agentAbortController?.abort();
+    flushStreamNow();
+    if (_streamFlushTimer) { clearTimeout(_streamFlushTimer); _streamFlushTimer = undefined; }
+    _textBuf = ""; _reasoningBuf = ""; _reasoningCharsBuf = 0;
+    flushRefresh();
+    set({ activeTask: null, isSendingSteering: false, isChatStreaming: false, chatStreamContent: "", isAgentWorking: false,
+      isRecovering: false, agentIteration: 0, reasoningChars: 0, reasoningContent: "", toolGenName: null, toolGenChars: 0,
+      appliedCount: 0, _agentAbortController: null, _pendingApproval: null, _pendingImage: null,
+      _pendingImageBatch: null, _currentRunId: null, creditPause: null, creditPauseError: null,
+      isResumingCredits: false, isRefreshingCreditPause: false, agentCompaction: null });
+  },
+
   stopAgent: () => {
     steeringSubmissionEpoch++;
     unacknowledgedSteering = null;
     studioAgentEpoch++;
     creditRefreshEpoch++;
     const { _agentAbortController, _currentRunId } = get();
+    const savedTask = get().activeTask;
+    if (savedTask && savedTask.runId === _currentRunId) set({ activeTask: { ...savedTask, task: { ...savedTask.task, status: "stopped", reason: "Stopped by you. Completed work is saved." } } });
     if (_agentAbortController) {
       _agentAbortController.abort();
     }
@@ -2181,11 +2235,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setActivePanel: (panel) => set({ activePanel: panel }),
 
   clearChat: () => {
-    get().stopAgent();
+    get().detachAgent();
     steeringSubmissionEpoch++;
     unacknowledgedSteering = null;
     set({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null,
-      chatMessages: [],
+      chatMessages: [], activeTask: null,
       chatWorldId: null,
       chatConversationId: null,
       isChatStreaming: false,
@@ -2323,10 +2377,11 @@ useStudioStore.subscribe((state, previous) => {
   unacknowledgedSteering = null;
   studioAgentEpoch++;
   creditRefreshEpoch++;
+  rememberAbandonedRun(previous._currentRunId ?? undefined);
   previous._agentAbortController?.abort();
   if (_streamFlushTimer) { clearTimeout(_streamFlushTimer); _streamFlushTimer = undefined; }
   _textBuf = ""; _reasoningBuf = ""; _reasoningCharsBuf = 0;
-  useStudioStore.setState({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false,
+  useStudioStore.setState({ activeTask: null, isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false,
     isRefreshingCreditPause: false, _agentAbortController: null, _currentRunId: null, _pendingImageBatch: null });
 });
 
@@ -2338,5 +2393,5 @@ useEditorStore.subscribe((state, previous) => {
   creditRefreshEpoch++;
   if (_streamFlushTimer) { clearTimeout(_streamFlushTimer); _streamFlushTimer = undefined; }
   _textBuf = ""; _reasoningBuf = ""; _reasoningCharsBuf = 0;
-  useStudioStore.setState({ isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false, isRefreshingCreditPause: false, _pendingImageBatch: null });
+  useStudioStore.setState({ activeTask: null, isSendingSteering: false, agentHistoryTokens: null, agentCompaction: null, creditPause: null, creditPauseError: null, isResumingCredits: false, isRefreshingCreditPause: false, _pendingImageBatch: null });
 });

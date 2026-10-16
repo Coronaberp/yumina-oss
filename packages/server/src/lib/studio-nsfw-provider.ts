@@ -28,6 +28,12 @@ async function resolveNsfw(userId: string, preferences: Record<string, unknown> 
     : (await resolveAdminContentProvider("nsfw")) ?? null;
 }
 
+/** Reference analysis uses the configured NSFW endpoint independently of the main Studio agent. */
+export async function resolveStudioReferenceVisionProvider(userId: string): Promise<ResolvedSavedProfile | null> {
+  const [account] = await db.select({ preferences: user.preferences }).from(user).where(eq(user.id, userId));
+  return account ? resolveNsfw(userId, account.preferences) : null;
+}
+
 /** Default is the shared host Codex login. An explicit profile is owned by the
  * caller and always uses its configured model. Story endpoint settings stay independent. */
 export async function resolveStudioNsfwProvider(userId: string): Promise<ResolvedSavedProfile | null> {

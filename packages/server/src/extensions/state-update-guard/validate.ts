@@ -142,7 +142,7 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
           requested = true;
           try {
             for await (const chunk of correction.provider.generateStream({
-              model: correction.model, singleAttempt: true, disableReasoning: true,
+              model: correction.model, singleAttempt: true, reasoningEffortOverride: "low",
               ...(formatAttempt === 0 && { responseFormat: { type: "json_object" as const } }),
               maxTokens: 4096, signal: controller.signal,
               // Story-provider transport/cache overrides may not suit another model.

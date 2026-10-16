@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Loader2, Unplug } from "lucide-react";
@@ -95,7 +96,7 @@ export function DanbooruSettings() {
       </div>
     </div>
     <label className="flex items-start gap-2 text-sm text-main">
-      <input type="checkbox" role="switch" checked={config.enabled} disabled={disabled} onChange={(e) => setConfig((value) => ({ ...value, enabled: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-primary" />
+      <Checkbox  role="switch" checked={config.enabled} disabled={disabled} onCheckedChange={(checked) => setConfig((value) => ({ ...value, enabled: (checked === true) }))} className="mt-0.5 h-4 w-4 accent-primary" />
       <span><span className="block">{label("enable", "Allow Danbooru searches")}</span><span className="block text-xs text-sub">{label("enableHint", "Anonymous search works with both credential fields empty; credentials enable authenticated access.")}</span></span>
     </label>
     <div className="grid gap-3 sm:grid-cols-2">

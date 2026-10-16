@@ -7,7 +7,7 @@ import { identityRoleMatches, explicitlyEmptyCharacterScene } from "./story-char
 
 /** Names and portrait identifiers stay available even when biographies are recalled. */
 export function storyCharacterRoster(world: WorldDefinition, state?: GameState): WorldEntry | undefined {
-  const names = world.entries.filter(e => e.role === "character" && (state?.ruleState?.toggledEntries?.[e.id] ?? e.enabled) !== false && !e.memory?.hidden)
+  const names = eligibleStoryCharacters(world, state).filter(e => e.role === "character" && (state?.ruleState?.toggledEntries?.[e.id] ?? e.enabled) !== false && !e.memory?.hidden)
     .map(e => e.name?.trim()).filter(Boolean);
   if (!names.length) return;
   return {

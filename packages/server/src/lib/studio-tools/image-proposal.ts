@@ -24,8 +24,9 @@ export function defaultStudioImageWorkflow(options: {
   imageKind: "sprite" | "background" | "image"; available: { anima: boolean; krea: boolean; codex: boolean };
   activeSource?: "comfyui" | "forgeneo" | "codex"; animaPreferred?: boolean;
 }): StudioImageWorkflowChoice | undefined {
-  if (options.requested) return options.requested;
+  if (options.requested && !(options.contentRating === "nsfw" && options.requested === "codex")) return options.requested;
   if (options.contentRating === "nsfw") return options.available.krea ? "krea" : undefined;
+  if (options.available.codex) return "codex";
   if (options.animaPreferred && options.available.anima && ["sprite", "background"].includes(options.imageKind)) return "anima";
   if (options.hasReferences) return options.available.codex ? "codex" : options.available.krea ? "krea" : undefined;
   if (options.activeSource === "codex" && options.available.codex) return "codex";

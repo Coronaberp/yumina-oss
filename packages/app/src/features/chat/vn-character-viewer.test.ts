@@ -166,3 +166,31 @@ test("summary attributes dialogue to the clicked character without adding an unr
     assert.equal(f.container.querySelector('.vn-character-card h1')!.textContent,'Sera');
   } finally {await f.dispose();}
 });
+
+test("character recap loads saved character history beyond pagination using the session summary model", async () => {
+  const historyCalls: unknown[][] = [];
+  const f = await fixture({ hasEarlierMessages: true, getCharacterHistory: async (...args: unknown[]) => {
+    historyCalls.push(args);
+    return { text: 'Sera helped the player at the OLD_UNLOADED_LIBRARY_SCENE.', partial: false, model: 'configured-summary-model', language: 'en' };
+  } });
+  try {
+    await f.click('.vn-dialogue .vn-character-link');
+    assert.deepEqual(historyCalls, [['sera', 'm1', 'Sera', 0]]);
+    assert.equal(f.calls.length, 1);
+    assert.equal((f.calls[0] as CompleteRequest & {model?: string}).model, 'configured-summary-model');
+    const prompt = JSON.stringify(f.calls[0]);
+    assert.match(prompt, /OLD_UNLOADED_LIBRARY_SCENE/);
+    assert.match(prompt, /Sera smiles/);
+    for (const hidden of ['LATER_SECRET', 'FUTURE_SECRET', 'HIDDEN_PROFILE', 'HIDDEN_THOUGHTS', 'HIDDEN_METADATA']) assert.ok(!prompt.includes(hidden), hidden);
+  } finally { await f.dispose(); }
+});
+
+test("failed character-history retrieval offers retry without generating a misleading recent-excerpt recap", async () => {
+  const f = await fixture({ getCharacterHistory: async () => { throw new Error('Saved character history is unavailable'); } });
+  try {
+    await f.click('.vn-dialogue .vn-character-link');
+    assert.equal(f.calls.length, 0);
+    assert.match(f.container.querySelector('[role="alert"]')?.textContent || '', /Saved character history is unavailable/);
+    assert.ok(f.container.querySelector('[aria-label="Retry character summary"]'));
+  } finally { await f.dispose(); }
+});

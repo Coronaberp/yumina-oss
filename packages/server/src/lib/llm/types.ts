@@ -80,7 +80,9 @@ export interface GenerateParams {
   toolChoice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
   /** Reasoning effort level for thinking models (none/low/medium/high) */
   reasoningEffort?: string;
-  /** Disable provider-default reasoning when the selected API exposes a supported opt-out. */
+  /** Internal validation calls can override profile effort without changing story settings. */
+  reasoningEffortOverride?: "low";
+  /** Disable reasoning where supported; use minimum effort for forced-thinking models. */
   disableReasoning?: boolean;
   /** Message indices for explicit cache breakpoints (provider-specific optimization) */
   cacheBreakpoints?: number[];

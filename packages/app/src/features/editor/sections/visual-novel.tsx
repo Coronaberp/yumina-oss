@@ -1,3 +1,5 @@
+import { Select } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GripVertical, ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
@@ -286,20 +288,20 @@ function VnAssetSection({ kind }: { kind: VnAssetKind }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-foreground">{t("visualNovel.npcDefaults")}</h2>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-            <input type="checkbox" role="switch" checked={defaultConfiguration.settings.disabled} disabled={defaultsDisabled} onChange={event => updateDefaults({ disabled: event.target.checked })} className="h-4 w-4 accent-primary" />
+            <Checkbox  role="switch" checked={defaultConfiguration.settings.disabled} disabled={defaultsDisabled} onCheckedChange={checked => updateDefaults({ disabled: (checked === true) })} className="h-4 w-4 accent-primary" />
             {t("visualNovel.disableNpcDefaults")}
           </label>
         </div>
-        <div role="radiogroup" aria-label={t("visualNovel.npcDefaultChoice")} className="grid gap-2 sm:grid-cols-2">
+        <RadioGroup aria-label={t("visualNovel.npcDefaultChoice")} value={defaultConfiguration.settings.mode} disabled={defaultsDisabled || defaultConfiguration.settings.disabled}
+          onValueChange={mode => updateDefaults({ mode: mode as "a" | "b" })} className="grid gap-2 sm:grid-cols-2">
           {(["a", "b"] as const).map(mode => <label key={mode} className={`rounded-lg border p-3 text-left focus-within:ring-2 focus-within:ring-primary ${defaultsDisabled || defaultConfiguration.settings.disabled ? "opacity-40" : "cursor-pointer"} ${defaultConfiguration.settings.mode === mode ? "border-primary/40 bg-primary/10" : "border-border hover:bg-accent"}`}>
             <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <input type="radio" name={`npc-default-mode-${root?.id}`} aria-label={t(mode === "a" ? "visualNovel.npcDefaultA" : "visualNovel.npcDefaultB")} checked={defaultConfiguration.settings.mode === mode} disabled={defaultsDisabled || defaultConfiguration.settings.disabled}
-                onChange={() => updateDefaults({ mode })} className="h-4 w-4 accent-primary" />
+              <RadioGroupItem value={mode} aria-label={t(mode === "a" ? "visualNovel.npcDefaultA" : "visualNovel.npcDefaultB")} />
               {t(mode === "a" ? "visualNovel.npcDefaultA" : "visualNovel.npcDefaultB")}
             </span>
             <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{t(mode === "a" ? "visualNovel.npcDefaultAHint" : "visualNovel.npcDefaultBHint")}</span>
           </label>)}
-        </div>
+        </RadioGroup>
         <p className="text-xs leading-relaxed text-muted-foreground">{t("visualNovel.npcDefaultsHint")}</p>
         {defaultConfiguration.error && <p role="alert" className="text-sm text-muted-foreground">{t("visualNovel.codeManaged")}</p>}
         {!!defaultRows.length && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -316,10 +318,10 @@ function VnAssetSection({ kind }: { kind: VnAssetKind }) {
       {kind === "backgrounds" && <div className="space-y-2">
         <label className="block space-y-1.5 text-xs text-muted-foreground">
           <span>{t("visualNovel.backgroundCollection")}</span>
-          <select value={openingId} disabled={busy || !!cropUpload} onChange={event => { setBackgroundScope(event.target.value); setError(""); }} className="min-h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40">
+          <Select compact value={openingId} disabled={busy || !!cropUpload} onValueChange={selectedValue => { setBackgroundScope(selectedValue); setError(""); }} className="min-h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40">
             <option value="">{t("visualNovel.globalBackgrounds")}</option>
             {openings.map((entry, index) => <option key={entry.id} value={entry.id}>{t("visualNovel.openingBackgrounds", { name: entry.name.trim() || t("visualNovel.openingNumber", { number: index + 1 }) })}</option>)}
-          </select>
+          </Select>
         </label>
         <p className="text-xs leading-relaxed text-muted-foreground">{t(openingId ? "visualNovel.openingBackgroundsHint" : "visualNovel.globalBackgroundsHint")}</p>
       </div>}

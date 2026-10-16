@@ -28,6 +28,7 @@ test("Anima model edits are accepted only for a queued request inside its prepar
 test("Anima workflow pairs local encoders and builds the 8-step sprite plus separate source/mask outputs", () => {
   const workflow = buildAnimaSpriteWorkflow({
     modelName: "gemCollectionAnima_moonstone.safetensors",
+    imageKind: "sprite", transparent: true,
     prompt: "1girl, happy expression",
     chromaColor: "#00d8ff",
     seed: 47,

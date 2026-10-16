@@ -1,9 +1,10 @@
 import { getParentOrigin } from "./protocol";
 
 export const SANDBOX_ASSET_READY_EVENT = "yumina:sandbox-asset-ready";
+export const SANDBOX_ASSET_LOADING_EVENT = "yumina:sandbox-asset-loading";
 // A valid transparent image keeps image error handlers from latching a failed
 // state while the parent downloads the real bytes. Fonts use their fallback.
-const PENDING_ASSET = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+const PENDING_ASSET = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#yumina-pending";
 const assets = new Map<string, { url?: string; promise: Promise<string> }>();
 let loadAsset: ((url: string) => Promise<Blob>) | undefined;
 
@@ -54,9 +55,19 @@ function bridgedAsset(ref: string): { absolute: string; entry?: { url?: string; 
       }),
     };
     assets.set(absolute, current);
+    window.dispatchEvent(new Event(SANDBOX_ASSET_LOADING_EVENT));
     entry = current;
   }
   return { absolute, entry };
+}
+
+/** A decoded transparent placeholder never means the requested media is ready. */
+export function hasPendingSandboxAssets(): boolean {
+  return [...assets.values()].some(entry => entry.url === undefined);
+}
+
+export function isPendingSandboxAssetUrl(ref: string): boolean {
+  return ref === PENDING_ASSET;
 }
 
 /** Synchronous SDK URL, refreshed when a requested asset's bytes arrive. */

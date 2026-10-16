@@ -2,10 +2,19 @@ import { createRequire } from "node:module";
 import * as nodeModule from "node:module";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 if (process.env.YUMINA_LOCAL_TEST !== "1" || process.env.DATABASE_URL !== "" || process.env.PGLITE_DATA_DIR !== "memory://") {
   throw new Error("Use scripts/test-local.mjs to start isolated server tests");
 }
+
+// An in-memory database does not isolate the storage facade. Each test worker
+// needs its own data root before env.ts or any application module evaluates.
+const testDataRoot = mkdtempSync(resolve(tmpdir(), "yumina-local-tests-"));
+process.env.YUMINA_DATA_DIR = testDataRoot;
+process.env.YUMINA_STORAGE_DIR = resolve(testDataRoot, "assets");
+process.once("exit", () => rmSync(testDataRoot, { recursive: true, force: true }));
 
 // env.ts normally reads ../../.env. Replace dotenv's loader before application
 // modules evaluate so even credentials added in future cannot leak into tests.

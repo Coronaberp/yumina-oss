@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { isS3Configured, getObject, headObject } from "../lib/s3.js";
+import { isS3Configured, getObject, headObject, getObjectBuffer, putObject } from "../lib/s3.js";
+import { createPortraitVariants } from "../lib/portrait-variant.js";
 import { Readable } from "node:stream";
 import { publicAssetCacheControl } from "../lib/public-asset-cache.js";
 import { isPublicCdnKey, resolvePublicCdnKey } from "../lib/cdn-key-policy.js";
@@ -32,6 +33,7 @@ function setCachedS3Key(assetId: string, s3Key: string): void {
 }
 
 const cdnRoutes = new Hono();
+const portraitVariant = createPortraitVariants({ head: headObject, read: getObjectBuffer, write: putObject });
 
 // Allowed S3 key prefixes (defense-in-depth against arbitrary key access)
 
@@ -95,7 +97,8 @@ cdnRoutes.get("/key/:encodedKey", async (c) => {
     return c.json({ error: "Invalid key prefix" }, 400);
   }
 
-  return streamS3Object(c, s3Key, "CDN key proxy error:");
+  const variant = c.req.query("variant") === "portrait" ? await portraitVariant(s3Key) : undefined;
+  return streamS3Object(c, variant || s3Key, "CDN key proxy error:");
 });
 
 const ENTITY_TAG = '(?:W/)?"[\\x21\\x23-\\x7e\\x80-\\xff]*"';
@@ -246,7 +249,8 @@ cdnRoutes.get("/:assetId", async (c) => {
     return c.json({ error: "Asset not found" }, 404);
   }
 
-  return streamS3Object(c, s3Key, "CDN proxy error:");
+  const variant = c.req.query("variant") === "portrait" ? await portraitVariant(s3Key) : undefined;
+  return streamS3Object(c, variant || s3Key, "CDN proxy error:");
 });
 
 export { cdnRoutes };

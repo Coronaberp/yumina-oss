@@ -8,7 +8,8 @@
  * - Game events emitted via emitEvent() on the yumina API
  */
 
-import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { observeSceneAssets } from './scene-asset-readiness';
 
 /**
  * Track every AudioContext a card creates so the host can suspend them when the
@@ -314,6 +315,7 @@ function assembleState(channels: ChannelState): SandboxState {
     language: channels.ui?.language ?? "en",
     balance: channels.ui?.balance ?? null,
     composerSendKey: channels.ui?.composerSendKey ?? "enter",
+    vnTextPreferences: channels.ui?.vnTextPreferences ?? { dialogue: {}, narration: {} },
     sendFailureNonce: channels.ui?.sendFailureNonce ?? 0,
   };
 }
@@ -988,6 +990,7 @@ export function ComponentHost() {
   // (not state) so the message handler closure stays stable across re-renders —
   // otherwise the window message listener gets re-bound on every install.
   const installedFilesKeyRef = useRef<string>("");
+  const initialSceneRevealedRef = useRef(false);
   const [rootComponent, setRootComponent] = useState<{
     filesKey: string;
     CompiledComponent: React.ComponentType<Record<string, unknown>> | null;
@@ -1550,29 +1553,26 @@ export function ComponentHost() {
     };
   }, [rootComponent?.CompiledComponent]);
 
-  // Tell the parent the world has actually painted (root installed + first
-  // frame), so it can drop its loading overlay exactly when the world's own UI
-  // is on screen — not at the boot handshake, which fires before any world
-  // content exists. Fires after a double-rAF on every (re)install, including
-  // world switches, and also when a compile-error panel is shown (that is still
-  // "something on screen", not a grey gap).
+  // Reveal a complete scene together: authenticated media bytes, decoded
+  // images, backgrounds and fonts. Only initial entry uses this loading gate.
+  // A boot handshake or a painted transparent placeholder is insufficient.
   // Gate must match the render below: with the hydration gate closed the world
   // hasn't painted yet, so reporting "rendered" would drop the parent overlay
   // onto a blank frame. Error panels are ungated (they ARE the paint).
   const canPaintRoot = !!rootComponent && (!!rootComponent.error || stateHydrated || hydrationTimedOut);
-  useEffect(() => {
-    if (!canPaintRoot) return;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        const msg: RenderedMessage = { type: "rendered" };
-        postToParentWindow(wrapMessage(msg));
-      });
+  useLayoutEffect(() => {
+    if (!canPaintRoot || !hostRef.current) return;
+    if (initialSceneRevealedRef.current) return;
+    if (rootComponent?.error) {
+      initialSceneRevealedRef.current = true;
+      postToParentWindow(wrapMessage({ type: 'rendered', assetsReady: true } satisfies RenderedMessage));
+      return;
+    }
+    return observeSceneAssets(hostRef.current, state => {
+      if (state.ready) initialSceneRevealedRef.current = true;
+      const msg: RenderedMessage = { type: 'rendered', assetsReady: state.ready, assetError: state.error };
+      postToParentWindow(wrapMessage(msg));
     });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-    };
   }, [canPaintRoot, rootComponent]);
 
   // If no root component is installed yet, stay visually empty. The parent

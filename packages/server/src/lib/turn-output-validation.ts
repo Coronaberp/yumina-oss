@@ -1,3 +1,5 @@
+import { activeChapter, chapterEventContext } from "@yumina/engine";
+import { reviewChapterEventMoments } from "./chapter-event-review.js";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { GameStateManager, ResponseParser, StructuredResponseParser, estimateTokens, preserveSetupScopedVariables, standardizeSpeakerMarkup, displayCharacterName, type GameState, type WorldDefinition, type ParseResult } from "@yumina/engine";
@@ -68,6 +70,7 @@ export function regenerationBaseline(world: WorldDefinition, current: GameState,
     const value = stored?.variables?.[key];
     if (value !== undefined) baseline.variables[key] = structuredClone(value);
   }
+  if (stored) baseline.storyEvents = structuredClone(stored.storyEvents);
   if (stored?.ruleState) baseline.ruleState = {
     ...structuredClone(stored.ruleState),
     toggledVariables: current.ruleState?.toggledVariables,
@@ -102,6 +105,7 @@ export class TurnOutputAttempt {
     identityMaxTokens?: number;
     protectedWorld?: boolean;
     identityRequest?: (request: CharacterGuardRequest) => Promise<CharacterGuardReply>;
+    eventRequest?: (request: CharacterGuardRequest) => Promise<CharacterGuardReply>;
   }, private readonly database: Pick<typeof db, "transaction" | "select" | "update"> = db) {
     this.audit = {
       version: 1, attemptId: randomUUID(), targetMessageId: args.targetId, path: args.path, outcome: "validating",
@@ -113,7 +117,10 @@ export class TurnOutputAttempt {
   }
   get enabled(): boolean { return this.args.dispatch.activeExtensions.has("state-update-guard"); }
   private get identityActive(): boolean { return eligibleStoryCharacters(this.args.world, this.args.baseline).some(e => e.content?.trim()); }
-  private get fenced(): boolean { return this.enabled || this.identityActive; }
+  // A replacement can rewind a completed event. Fence that operation too,
+  // even though the live (post-reply) baseline has no pending scene.
+  private get eventsActive(): boolean { return Boolean(activeChapter(this.args.world, this.args.baseline)?.events?.some(event => event.enabled)); }
+  private get fenced(): boolean { return this.enabled || this.identityActive || this.eventsActive; }
   get started(): boolean { return this.enabled && Boolean(this.targetHash); }
   get correctionBalance(): number | undefined { return this.committed ? this.balanceAfterCorrection : undefined; }
   get storyCharge(): { cost: number; balance: number | undefined } | undefined {
@@ -214,7 +221,7 @@ export class TurnOutputAttempt {
       }
       this.touched = new Set(ctx.parsed.effects.map(e => e.variableId.split(".")[0]!));
     }
-    if (!this.enabled) return { parsed: ctx.parsed, raw: ctx.raw };
+    if (!this.enabled) return { parsed: await this.reviewEvents(ctx), raw: ctx.raw };
     this.failedDraft = ctx.raw.slice(0, 65_536);
     if (ctx.raw.trim()) this.trackNarrativeUsage();
     this.audit.model = ctx.model;
@@ -254,7 +261,31 @@ export class TurnOutputAttempt {
         : await backgroundUsageCost({ userId: this.args.userId, ...this.correctionUsage });
     }
     this.touched = new Set(result.parsed.effects.map((effect) => effect.variableId.split(".")[0]!));
-    return { ...result, raw: final.raw };
+    return { ...result, parsed: await this.reviewEvents({ ...ctx, parsed: result.parsed }), raw: final.raw };
+  }
+
+  private async reviewEvents(ctx: Omit<TurnOutputContext, "audit" | "progress" | "recordUsage" | "mayCorrect">): Promise<ParseResult> {
+    if (!ctx.world?.chapters?.some(chapter => chapter.events?.length)) return ctx.parsed;
+    const context = chapterEventContext(ctx.world, ctx.state);
+    if (!context) return ctx.parsed;
+    for (const condition of [...context.event.conditions, ...context.scene.completionConditions]) {
+      for (const id of [condition.variableId, condition.valueRef]) if (id) this.identityReadSet.add(id.split(".")[0]!);
+    }
+    const resolved = this.args.identityProvider ?? { provider: ctx.provider, providerName: "custom" as const, isByok: this.args.apiKeyTier === "byok", apiKeyTier: this.args.apiKeyTier as ResolvedProvider["apiKeyTier"] };
+    const request = this.args.eventRequest ?? createCharacterGuardTransport({
+      userId: this.args.userId, selected: { resolved, model: this.args.model }, protectedWorld: this.args.protectedWorld,
+      maxContext: Math.min(ctx.maxContext, 16_000), signal: ctx.signal, startedAt: this.args.startedAt, reviewTimeoutMs: 20_000,
+      playerNames: ctx.playerNames, characterNames: ctx.characterNames,
+      recordUsage: async record => {
+        const id = randomUUID(), endpoint = "chapter-event-check";
+        await recordUsageLog({ id, userId: this.args.userId, sessionId: this.args.sessionId, model: record.model, ...record.usage, ...usageObservation(record.observedUsage), endpoint, apiKeyTier: record.apiKeyTier, generationTimeMs: Date.now() - this.args.startedAt });
+        const free = record.requestedModel === "openrouter/free" || record.requestedModel.endsWith(":free");
+        const cost = record.isByok || free || !record.completed ? 0 : await backgroundUsageCost({ userId: this.args.userId, model: record.model, ...record.usage });
+        this.identityCharges.push({ id, model: record.model, cost, tokens: record.usage.totalTokens, endpoint });
+      },
+    });
+    const eventEvidence = await reviewChapterEventMoments({ world: ctx.world, state: ctx.state, narrative: ctx.parsed.cleanText, request });
+    return { ...ctx.parsed, eventEvidence };
   }
 
   /** Called under the EXISTING session lock, before writes. No provider work. */
@@ -274,7 +305,7 @@ export class TurnOutputAttempt {
     if ((world?.updatedAt?.toISOString() ?? null) !== this.args.worldVersion || (this.args.checkPending && (pending?.updatedAt?.toISOString() ?? null) !== this.args.pendingVersion)) stale();
     const live = new GameStateManager(this.args.world, liveState as GameState).getSnapshot();
     const base = this.args.baseline;
-    if (this.identityActive) {
+    if (this.identityActive || this.eventsActive) {
       const gates = [
         ...this.args.world.entries.filter(e => e.role === "character").flatMap(e => e.conditions ?? []),
         ...(this.args.world.worldbooks ?? []).flatMap(b => b.activation.mode === "conditions" ? b.activation.conditions : []),
@@ -287,7 +318,7 @@ export class TurnOutputAttempt {
       if (fingerprint(live.metadata?.activeLoreSlots) !== fingerprint(base.metadata?.activeLoreSlots)) stale();
       for (const id of this.identityReadSet) if (fingerprint(live.variables[id]) !== fingerprint(base.variables[id])) stale();
     }
-    if (fingerprint([live.turnCount, live.activeGreetingId, live.activeCharacterId, live.ruleState]) !== fingerprint([base.turnCount, base.activeGreetingId, base.activeCharacterId, base.ruleState])) stale();
+    if (fingerprint([live.turnCount, live.activeGreetingId, live.activeCharacterId, live.ruleState, live.storyEvents]) !== fingerprint([base.turnCount, base.activeGreetingId, base.activeCharacterId, base.ruleState, base.storyEvents])) stale();
     for (const key of Object.keys(finalState.variables)) {
       if (this.touched.has(key) || fingerprint(finalState.variables[key]) !== fingerprint(base.variables[key])) {
         if (fingerprint(live.variables[key]) !== fingerprint(base.variables[key])) stale();

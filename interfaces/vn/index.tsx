@@ -1,3 +1,5 @@
+import { VnTextSettings, VnTextStyle } from "./text-settings";
+import { portraitRef } from "./portrait-ref";
 import { usePersonaControl, PersonaControlSetting } from './persona-control';
 import { draftPersonaChoice } from './persona-choice-assistance';
 import { styles } from "./styles";
@@ -20,6 +22,9 @@ import { ChoiceText, plainChoiceText } from "./choice-text";
 import { canSelectPersona } from "./persona-menu";
 import { LoadingStatus } from "./loading-status";
 import { ReplyMetrics } from "./reply-metrics-view";
+import { TurnPicker } from "./turn-picker";
+import { usePassageReading } from "./reading";
+import { useMetCharacters, visibleCharacterStatus } from "./character-visibility";
 
 function Control({ name, onClick, active }) {
   const icon = name === "Route" ? <span className="vn-control-icon" aria-hidden="true"><Icons.Map strokeWidth={1.2} /></span> : <span className="vn-control-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: controls[name.toLowerCase()] }} />;
@@ -37,7 +42,7 @@ function Portrait({ api, assetRef, name, player, npcGender }) {
   const variant = player ? "sage" : characters.findIndex(e => displayCharacterName(e.name) === name) % 2 === 1 ? "mauve" : "gold";
   if (!assetRef && !player && name === "NPC" && !npcGender) return null;
   const portrait = assetRef || (!player && name === "NPC" ? npcPortraits[npcGender] || npcPortraits.male : null);
-  return portrait ? <img className="vn-avatar" src={api.resolveAssetUrl(portrait)} alt="" /> : <span className="vn-avatar" aria-hidden="true" dangerouslySetInnerHTML={{ __html: fallbacks[variant] }} />;
+  return portrait ? <img className="vn-avatar" src={api.resolveAssetUrl(portraitRef(portrait))} alt="" decoding="async" /> : <span className="vn-avatar" aria-hidden="true" dangerouslySetInnerHTML={{ __html: fallbacks[variant] }} />;
 }
 
 function Thinking({ api, text }) {
@@ -53,106 +58,214 @@ function MenuIcon({ api, name }) {
 }
 
 function DialogueLog({ api, onClose, currentTurnId, onCharacter, blocked }) {
-  const messages = api.messages?.length ? api.messages : api.greetingContent ? [{ id: "greeting", role: "assistant", content: api.greetingContent }] : [];
+  // Keep the metadata cheap. Passage parsing and rich text belong to the window.
+  const PAGE_TURNS = 5, MAX_MOUNTED_TURNS = 10;
+  const messages = React.useMemo(() => api.messages?.length ? api.messages : api.greetingContent ? [{ id: "greeting", role: "assistant", content: api.greetingContent }] : [], [api.messages, api.greetingContent]);
+  const metadata = React.useMemo(() => {
+    const turnIds = new Map(), groups = [], byId = new Map();
+    let nextTurnId = "pending";
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === "assistant") nextTurnId = messages[index].id;
+      turnIds.set(messages[index].id, nextTurnId);
+    }
+    for (const message of messages) {
+      if (message.role === "system") continue;
+      const id = turnIds.get(message.id);
+      let group = byId.get(id);
+      if (!group) { group = { id, messages: [] }; byId.set(id, group); groups.push(group); }
+      group.messages.push(message);
+    }
+    return { groups, indices: new Map(groups.map((group, index) => [group.id, index])), replies: messages.filter(message => message.role === "assistant"), pending: byId.has("pending") };
+  }, [messages]);
+  const initialWindow = () => {
+    const current = metadata.indices.get(currentTurnId) ?? Math.max(0, metadata.groups.length - 1);
+    const start = Math.max(0, Math.min(current - 2, metadata.groups.length - PAGE_TURNS));
+    return { first: metadata.groups[start]?.id, last: metadata.groups[Math.min(metadata.groups.length - 1, start + PAGE_TURNS - 1)]?.id };
+  };
+  const [windowIds, setWindowIds] = React.useState(initialWindow);
   const [characters, setCharacters] = React.useState([]);
   const [turn, setTurn] = React.useState("");
-  const replies = messages.filter(message => message.role === "assistant");
+  const [loadingEarlier, setLoadingEarlier] = React.useState(false);
+  const [historyError, setHistoryError] = React.useState("");
+  const scroll = React.useRef(null), tail = React.useRef(null);
+  const cache = React.useRef(new Map()), seenSpeakers = React.useRef(new Map());
+  const pendingAnchor = React.useRef(null), remoteRequest = React.useRef(null);
+  const positionRequest = React.useRef("current"), pagingArmed = React.useRef(false), lastScrollTop = React.useRef(0);
+  const live = React.useRef(null);
+  const first = metadata.indices.get(windowIds.first) ?? 0;
+  const last = metadata.indices.get(windowIds.last) ?? Math.min(metadata.groups.length - 1, first + PAGE_TURNS - 1);
+  const selectedGroups = React.useMemo(() => turn ? metadata.groups.filter(group => group.id === turn) : metadata.groups.slice(first, last + 1), [metadata, turn, first, last]);
   const speakerKey = line => line.player ? "player" : line.kind === "dialogue" ? `character:${line.name || "NPC"}` : "narrator";
-  const turnIds = new Map();
-  let nextTurnId = "pending";
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant") nextTurnId = message.id;
-    turnIds.set(message.id, nextTurnId);
+  const rows = React.useMemo(() => selectedGroups.flatMap(group => group.messages.map(message => {
+    const swipe = message.swipes?.[message.activeSwipeIndex || 0];
+    const previous = cache.current.get(message.id);
+    if (previous && previous.content === message.content && previous.raw === swipe?.rawContent && previous.swipe === (message.activeSwipeIndex || 0) && previous.entries === api.entries && previous.userName === api.user?.name && previous.userAvatar === api.user?.avatar && previous.message === message) return previous.row;
+    const reusable = previous && previous.content === message.content && previous.raw === swipe?.rawContent && previous.swipe === (message.activeSwipeIndex || 0) && previous.entries === api.entries && previous.userName === api.user?.name && previous.userAvatar === api.user?.avatar;
+    const lines = reusable ? previous.row.lines : message.role === "user" ? [] : messagePassages(api, message);
+    const row = { message, turnId: group.id, lines };
+    cache.current.set(message.id, { row, message, content: message.content, raw: swipe?.rawContent, swipe: message.activeSwipeIndex || 0, entries: api.entries, userName: api.user?.name, userAvatar: api.user?.avatar });
+    return row;
+  })), [selectedGroups, api.entries, api.user?.name, api.user?.avatar]);
+  // Discover incidental speakers as turns are visited, without parsing older turns.
+  for (const row of rows) {
+    if (row.message.role === "user") seenSpeakers.current.set("player", { name: api.user?.name ? `${api.user.name} (You)` : "You", portrait: api.user?.avatar, player: true });
+    for (const line of row.lines) {
+      const key = speakerKey(line);
+      if (key === "narrator") seenSpeakers.current.set(key, { name: "Narration" });
+      else seenSpeakers.current.set(key, { name: line.name || "NPC", portrait: line.portrait, npcGender: line.npcGender, player: line.player });
+    }
   }
-  const rows = messages.filter(message => message.role !== "system").map(message => ({
-    message,
-    // A player's choice belongs to the reply it prompted, including retries.
-    turnId: turnIds.get(message.id),
-    lines: message.role === "user" ? [] : messagePassages(api, message),
-  }));
-  const speakers = new Map();
-  for (const row of rows) for (const line of row.lines) {
-    if (line.kind === "dialogue" && !speakers.has(speakerKey(line))) speakers.set(speakerKey(line), { name: line.name || "NPC", portrait: line.portrait, npcGender: line.npcGender, player: line.player });
-  }
-  if (rows.some(row => row.message.role === "user")) speakers.set("player", { name: api.user?.name ? `${api.user.name} (You)` : "You", portrait: api.user?.avatar, player: true });
-  if (rows.some(row => row.lines.some(line => line.kind !== "dialogue"))) speakers.set("narrator", { name: "Narration" });
   const filtered = !!turn || characters.length > 0;
-  const visible = rows.filter(row => !turn || row.turnId === turn).map(row => ({ ...row, lines: row.lines.filter(line => !characters.length || characters.includes(speakerKey(line))) })).filter(row =>
-    row.message.role === "user" ? !characters.length || characters.includes("player") : row.lines.length > 0 || !characters.length && !!row.message.swipes?.[row.message.activeSwipeIndex || 0]?.reasoningContent);
-  const toggleCharacter = key => setCharacters(selected => selected.includes(key) ? selected.filter(value => value !== key) : [...selected, key]);
+  const visible = React.useMemo(() => rows.map(row => ({ ...row, sourceLines: row.lines, lines: row.lines.filter(line => !characters.length || characters.includes(speakerKey(line))) })).filter(row => row.message.role === "user" ? !characters.length || characters.includes("player") : row.lines.length > 0 || !characters.length && !!row.message.swipes?.[row.message.activeSwipeIndex || 0]?.reasoningContent), [rows, characters]);
+  const captureAnchor = () => {
+    const node = scroll.current;
+    if (!node) return null;
+    const top = node.getBoundingClientRect().top;
+    const row = [...node.querySelectorAll("[data-message-id]")].find(element => element.getBoundingClientRect().bottom > top);
+    return row ? { id: row.dataset.messageId, offset: row.getBoundingClientRect().top - top } : null;
+  };
+  const setRange = (start, end) => setWindowIds({ first: metadata.groups[start]?.id, last: metadata.groups[end]?.id });
+  const revealEarlier = async () => {
+    if (remoteRequest.current || loadingEarlier || api.isLoadingEarlier) return;
+    setHistoryError("");
+    if (!turn && first > 0) {
+      pendingAnchor.current = captureAnchor();
+      const start = Math.max(0, first - PAGE_TURNS);
+      setRange(start, Math.min(last, start + MAX_MOUNTED_TURNS - 1));
+      return;
+    }
+    if (!api.hasEarlierMessages) return;
+    pendingAnchor.current = captureAnchor();
+    const request = { oldestId: messages[0]?.id, windowFirst: windowIds.first, filteredTurn: turn };
+    remoteRequest.current = request;
+    setLoadingEarlier(true);
+    try {
+      const loaded = await api.loadEarlierMessages();
+      if (!loaded && remoteRequest.current === request) { remoteRequest.current = null; pendingAnchor.current = null; setLoadingEarlier(false); setHistoryError("Could not load earlier dialogue. Try again."); }
+    } catch {
+      if (remoteRequest.current === request) { remoteRequest.current = null; pendingAnchor.current = null; setLoadingEarlier(false); setHistoryError("Could not load earlier dialogue. Try again."); }
+    }
+  };
+  const revealLater = () => {
+    if (turn || last >= metadata.groups.length - 1 || remoteRequest.current) return;
+    pendingAnchor.current = captureAnchor();
+    const end = Math.min(metadata.groups.length - 1, last + PAGE_TURNS);
+    setRange(Math.max(first, end - MAX_MOUNTED_TURNS + 1), end);
+  };
+  live.current = { api, onCharacter, revealEarlier, revealLater };
+  React.useEffect(() => () => { remoteRequest.current = null; }, []);
+  const openCharacter = React.useCallback((...args) => live.current.onCharacter?.(...args), []);
+  React.useLayoutEffect(() => {
+    const request = remoteRequest.current;
+    if (!request) return;
+    if (messages[0]?.id !== request.oldestId) {
+      remoteRequest.current = null; setLoadingEarlier(false);
+      if (!request.filteredTurn) {
+        const previousFirst = metadata.indices.get(request.windowFirst) ?? first;
+        const start = Math.max(0, previousFirst - PAGE_TURNS);
+        setRange(start, Math.min(last, start + MAX_MOUNTED_TURNS - 1));
+      }
+    } else if (!api.hasEarlierMessages && !api.isLoadingEarlier) {
+      remoteRequest.current = null; pendingAnchor.current = null; setLoadingEarlier(false);
+    }
+  }, [metadata, api.hasEarlierMessages, api.isLoadingEarlier]);
   React.useEffect(() => {
-    if (turn && !rows.some(row => row.turnId === turn)) setTurn("");
-  }, [turn, api.messages]);
-  const scroll = React.useRef(null);
-  const tail = React.useRef(null);
+    if (turn && !metadata.indices.has(turn)) { positionRequest.current = "current"; setTurn(""); setWindowIds(initialWindow()); }
+    if (!metadata.indices.has(windowIds.first) || !metadata.indices.has(windowIds.last)) { positionRequest.current = "current"; setWindowIds(initialWindow()); }
+    const ids = new Set(messages.map(message => message.id));
+    for (const id of cache.current.keys()) if (!ids.has(id)) cache.current.delete(id);
+  }, [metadata, turn, windowIds.first, windowIds.last]);
   React.useLayoutEffect(() => {
     const node = scroll.current;
+    if (!node || !tail.current) return;
     tail.current.style.height = "0px";
-    if (filtered) { node.scrollTop = 0; return; }
-    const target = [...node.querySelectorAll("[data-turn-id]")].find(element => element.dataset.turnId === currentTurnId);
-    if (!target) return;
-    const top = node.scrollTop + target.getBoundingClientRect().top - node.getBoundingClientRect().top;
-    // A short final turn still needs enough room to start at the viewport top.
-    const remaining = tail.current.getBoundingClientRect().top - target.getBoundingClientRect().top + (parseFloat(window.getComputedStyle(node).paddingBottom) || 0);
-    tail.current.style.height = `${Math.max(0, node.clientHeight - remaining)}px`;
-    node.scrollTop = top;
-  }, [currentTurnId, turn, characters]);
+    const target = !filtered && [...node.querySelectorAll("[data-turn-id]")].find(element => element.dataset.turnId === currentTurnId);
+    if (target) {
+      const remaining = tail.current.getBoundingClientRect().top - target.getBoundingClientRect().top + (parseFloat(window.getComputedStyle(node).paddingBottom) || 0);
+      tail.current.style.height = `${Math.max(0, node.clientHeight - remaining)}px`;
+    }
+    if (positionRequest.current) {
+      node.scrollTop = positionRequest.current === "current" && target ? node.scrollTop + target.getBoundingClientRect().top - node.getBoundingClientRect().top : 0;
+      positionRequest.current = null; pendingAnchor.current = null;
+    } else if (pendingAnchor.current && !remoteRequest.current) {
+      const anchor = pendingAnchor.current;
+      const row = [...node.querySelectorAll("[data-message-id]")].find(element => element.dataset.messageId === anchor.id);
+      if (row) node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+      pendingAnchor.current = null;
+    }
+    lastScrollTop.current = node.scrollTop;
+    pagingArmed.current = false;
+  }, [rows, characters, currentTurnId, turn]);
+  const changeTurn = value => {
+    pendingAnchor.current = null; positionRequest.current = value ? "top" : "current";
+    setTurn(value); if (!value) setWindowIds(initialWindow());
+  };
+  const changeCharacters = update => { pendingAnchor.current = null; positionRequest.current = "top"; setCharacters(update); };
+  const resetFilters = () => { positionRequest.current = "current"; pendingAnchor.current = null; setTurn(""); setCharacters([]); setWindowIds(initialWindow()); };
+  const handleScroll = event => {
+    const node = event.currentTarget, previous = lastScrollTop.current;
+    lastScrollTop.current = node.scrollTop;
+    if (!pagingArmed.current || turn || historyError) return;
+    if (node.scrollTop < previous && node.scrollTop <= 80) { pagingArmed.current = false; void live.current.revealEarlier(); }
+    else if (node.scrollTop > previous && node.scrollHeight - node.scrollTop - node.clientHeight <= 80) { pagingArmed.current = false; live.current.revealLater(); }
+  };
+  const renderedRows = React.useMemo(() => visible.map(({ message, lines, sourceLines }) => {
+    const contextFor = line => ({ messageId: message.id, lines: sourceLines.slice(0, sourceLines.indexOf(line) + 1) });
+    const swipe = message.swipes?.[message.activeSwipeIndex || 0];
+    if (message.role === "user") return <div key={message.id} data-message-id={message.id} className="vn-log-row choice">
+      <div className="vn-log-speaker"><Portrait api={api} assetRef={api.user?.avatar} player /><div className="vn-player-speaker"><SpeakerName name={api.user?.name || "You"} suffix={api.user?.name ? " (You)" : ""} className="vn-speaker-name" /><div className="vn-choice-caption">CHOICE</div></div></div>
+      <Copy api={api} text={message.content} className="vn-log-copy" />
+    </div>;
+    return <div key={message.id} data-message-id={message.id}>
+      <div data-turn-id={message.id} aria-hidden="true" />
+      {!characters.length && <Thinking api={api} key={`${message.id}:${message.activeSwipeIndex || 0}`} text={swipe?.reasoningContent} />}
+      {lines.map((line, index) => line.kind === "dialogue" ? <div key={index} className="vn-log-row">
+        <div className="vn-log-speaker"><Portrait api={api} assetRef={line.portrait} name={line.name} player={line.player} npcGender={line.npcGender} /><SpeakerName name={line.name || "NPC"} className="vn-speaker-name" /></div>
+        <Copy api={api} text={line.text} className="vn-log-copy" context={contextFor(line)} onCharacter={openCharacter} />
+      </div> : <Copy key={index} api={api} text={line.text} className="vn-narration" context={contextFor(line)} onCharacter={openCharacter} />)}
+    </div>;
+  }), [api, visible, characters, api.entries, api.user?.name, api.user?.avatar, api.renderMarkdown, api.resolveAssetUrl, openCharacter]);
+  const hasOlderLocal = !turn && first > 0, hasNewerLocal = !turn && last < metadata.groups.length - 1;
   return <section className="vn-overlay vn-log" role="dialog" aria-modal={!blocked} aria-label="Dialogue log" inert={blocked || undefined}>
     <header className="vn-log-toolbar">
-    <div className="vn-log-header">Dialogue log</div>
-    <button className="vn-close" aria-label="Close log" onClick={onClose}><Icons.X /></button>
-    <div className="vn-log-filters">
-      <div className="vn-log-filter-heading">
-        <label className="vn-log-turn-filter">Turn<select aria-label="Filter by turn" value={turn} onChange={event => setTurn(event.target.value)}>
-          <option value="">All turns</option>
-          {replies.map((message, index) => <option key={message.id} value={message.id}>Turn {index + 1}{message.id === currentTurnId ? " (current)" : ""}</option>)}
-          {rows.some(row => row.turnId === "pending") && <option value="pending">Awaiting reply</option>}
-        </select></label>
-        {filtered && <button className="vn-log-reset" onClick={() => { setTurn(""); setCharacters([]); }}>Reset filters</button>}
+      <div className="vn-log-header">Dialogue log</div>
+      <button className="vn-close" aria-label="Close log" onClick={onClose}><Icons.X /></button>
+      <div className="vn-log-filters">
+        <div className="vn-log-filter-heading">
+          <div className="vn-log-turn-filter"><span>Turn</span><TurnPicker value={turn} onChange={changeTurn} replies={metadata.replies} currentTurnId={currentTurnId} pending={metadata.pending} /></div>
+          {filtered && <button className="vn-log-reset" onClick={resetFilters}>Reset filters</button>}
+        </div>
+        <div className="vn-log-character-filters" role="group" aria-label="Filter by character">
+          <button className="vn-log-chip" aria-label="All characters" aria-pressed={!characters.length} onClick={() => changeCharacters([])}>All</button>
+          {[...seenSpeakers.current].map(([key, speaker]) => <button key={key} className="vn-log-chip" aria-pressed={characters.includes(key)} onClick={() => changeCharacters(selected => selected.includes(key) ? selected.filter(value => value !== key) : [...selected, key])}>
+            {key !== "narrator" && <Portrait api={api} assetRef={speaker.portrait} name={speaker.player ? undefined : speaker.name} player={speaker.player} npcGender={speaker.npcGender} />}
+            <span>{speaker.name}</span>
+          </button>)}
+        </div>
       </div>
-      <div className="vn-log-character-filters" role="group" aria-label="Filter by character">
-        <button className="vn-log-chip" aria-label="All characters" aria-pressed={!characters.length} onClick={() => setCharacters([])}>All</button>
-        {[...speakers].map(([key, speaker]) => <button key={key} className="vn-log-chip" aria-pressed={characters.includes(key)} onClick={() => toggleCharacter(key)}>
-          {key !== "narrator" && <Portrait api={api} assetRef={speaker.portrait} name={speaker.player ? undefined : speaker.name} player={speaker.player} npcGender={speaker.npcGender} />}
-          <span>{speaker.name}</span>
-        </button>)}
-      </div>
-    </div>
     </header>
-    <div className="vn-log-body">
-    <div className="vn-log-scroll" ref={scroll}>
-      {api.hasEarlierMessages && <button className="vn-load-earlier" disabled={api.isLoadingEarlier} onClick={() => api.loadEarlierMessages()}>{api.isLoadingEarlier ? "Loading…" : "Load earlier dialogue"}</button>}
-      {!visible.length && <div className="vn-log-empty" role="status">No dialogue matches these filters.</div>}
-      {visible.map(({ message, lines }) => {
-        const sourceLines = rows.find(row => row.message.id === message.id).lines;
-        const contextFor = line => ({ messageId: message.id, lines: sourceLines.slice(0, sourceLines.indexOf(line) + 1) });
-        const swipe = message.swipes?.[message.activeSwipeIndex || 0];
-        if (message.role === "user") return <div key={message.id} className="vn-log-row choice">
-          <div className="vn-log-speaker"><Portrait api={api} assetRef={api.user?.avatar} player /><div className="vn-player-speaker"><SpeakerName name={api.user?.name || "You"} suffix={api.user?.name ? " (You)" : ""} className="vn-speaker-name" /><div className="vn-choice-caption">CHOICE</div></div></div>
-          <Copy api={api} text={message.content} className="vn-log-copy" />
-        </div>;
-        return <React.Fragment key={message.id}>
-          <div data-turn-id={message.id} aria-hidden="true" />
-          {!characters.length && <Thinking api={api} key={`${message.id}:${message.activeSwipeIndex || 0}`} text={swipe?.reasoningContent} />}
-          {lines.map((line, index) => line.kind === "dialogue" ? <div key={index} className="vn-log-row">
-            <div className="vn-log-speaker"><Portrait api={api} assetRef={line.portrait} name={line.name} player={line.player} npcGender={line.npcGender} /><SpeakerName name={line.name || "NPC"} className="vn-speaker-name" /></div>
-            <Copy api={api} text={line.text} className="vn-log-copy" context={contextFor(line)} onCharacter={onCharacter} />
-          </div> : <Copy key={index} api={api} text={line.text} className="vn-narration" context={contextFor(line)} onCharacter={onCharacter} />)}
-        </React.Fragment>;
-      })}
+    <div className="vn-log-body"><div className="vn-log-scroll" ref={scroll} onScroll={handleScroll} onTouchMove={() => { pagingArmed.current = true; }} onKeyDown={() => { pagingArmed.current = true; }} onWheel={event => {
+      pagingArmed.current = true;
+      const node = event.currentTarget;
+      if (!turn && !historyError && event.deltaY < 0 && node.scrollTop <= 80) { pagingArmed.current = false; void live.current.revealEarlier(); }
+      else if (!turn && event.deltaY > 0 && node.scrollHeight - node.scrollTop - node.clientHeight <= 80) { pagingArmed.current = false; live.current.revealLater(); }
+    }}>
+      {(hasOlderLocal || api.hasEarlierMessages) && <button className="vn-load-earlier" disabled={loadingEarlier || api.isLoadingEarlier} onClick={() => void revealEarlier()}>{loadingEarlier || api.isLoadingEarlier ? "Loading…" : "Load earlier dialogue"}</button>}
+      {historyError && <div className="vn-log-empty" role="alert">{historyError}</div>}
+      {!visible.length && <div className="vn-log-empty" role="status">{hasOlderLocal || hasNewerLocal || api.hasEarlierMessages ? "No dialogue matches in these turns. Load more dialogue to continue filtering." : "No dialogue matches these filters."}</div>}
+      {renderedRows}
+      {hasNewerLocal && <button className="vn-load-earlier vn-load-newer" onClick={revealLater}>Load newer dialogue</button>}
       <div ref={tail} aria-hidden="true" />
-    </div>
-    </div>
+    </div></div>
   </section>;
 }
 
 function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
   const personaAvailable = canSelectPersona(api);
-  return <section className="vn-overlay" role="dialog" aria-modal="true" aria-label="Story menu">
+  return <section className="vn-overlay vn-menu-overlay" role="dialog" aria-modal="true" aria-label="Story menu">
     <button className="vn-menu-shade" onClick={onClose} aria-label="Resume story from backdrop" />
+    <button className="vn-close vn-menu-close" aria-label="Close menu" onClick={onClose}>Close<MenuIcon api={api} name="close" /></button>
     <aside className="vn-drawer">
-      <button className="vn-close vn-menu-close" aria-label="Close menu" onClick={onClose}>Close<MenuIcon api={api} name="close" /></button>
       <div className="vn-brand">{api.worldName}</div>
       <h1 className="vn-menu-title">{settings.panel === "load" ? "Load" : settings.panel === "settings" ? "Settings" : "Menu"}</h1>
       <div className="vn-rule" />
@@ -173,7 +286,7 @@ function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
           </div>
           <div className="vn-menu-action-row vn-menu-persona-row" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
             {personaAvailable && <button className="vn-menu-item vn-menu-persona" onClick={() => { onClose(); api.openPersonaManager(); }}><Icons.UserRound /><span>Persona</span></button>}
-            <button type="button" className="vn-menu-item vn-menu-export" style={{ gridColumn: personaAvailable ? 2 : "1 / -1", justifySelf: personaAvailable ? undefined : "center", width: personaAvailable ? undefined : "fit-content" }} onClick={event => event.stopPropagation()}><Icons.Download /><span>Export</span></button>
+            <button type="button" className="vn-menu-item vn-menu-export" style={{ gridColumn: personaAvailable ? 2 : "1 / -1", justifySelf: personaAvailable ? undefined : "center", width: personaAvailable ? undefined : "fit-content" }} aria-haspopup="dialog" disabled={!api.sessionId || api.readOnly || api.isStreaming} onClick={() => { onClose(); api.openSessionExport(); }}><Icons.Download /><span>Export</span></button>
           </div>
         </nav>
         <div className="vn-display-controls" aria-label="Display controls">
@@ -191,7 +304,7 @@ function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
               {checkpoint.name}<small>{new Date(checkpoint.createdAt).toLocaleString()} · {checkpoint.messageCount} messages</small>
             </button>) : <p>No saved stories yet.</p>}
           </> : <>
-            <label className="vn-setting">Dialogue size<select value={settings.textSize} onChange={e => onSetting("textSize", Number(e.target.value))}><option value={23}>Small</option><option value={27}>Default</option><option value={32}>Large</option></select></label>
+            <VnTextSettings api={api} onResetLegacy={() => onSetting("textSize", 27)} />
             <label className="vn-setting">Auto pace<select value={settings.autoDelay} onChange={e => onSetting("autoDelay", Number(e.target.value))}><option value={2500}>Fast</option><option value={4500}>Default</option><option value={7000}>Slow</option></select></label>
             <label className="vn-setting vn-setting-toggle"><span>Show token statistics</span><input type="checkbox" checked={settings.showTokenStatistics} onChange={e => onSetting("showTokenStatistics", e.target.checked)} /></label>
             <PersonaControlSetting api={api} control={settings.personaControl} busy={busy} />
@@ -267,7 +380,7 @@ export default function VN() {
   const lastMessage = (api.messages || []).at(-1);
   const openingMessages = (api.messages || []).filter(message => message.role !== "system");
   const opening = openingMessages[0];
-  const canPickRoute = !!api.sessionId && !api.readOnly && !api.hasEarlierMessages && !api.isStreaming && !waiting && openingMessages.length === 1 && opening?.role === "assistant" && !!opening.swipes?.length;
+  const canPickRoute = !!api.sessionId && api.personaSelectable !== false && !opening?.model && !api.readOnly && !api.hasEarlierMessages && !api.isStreaming && !waiting && openingMessages.length === 1 && opening?.role === "assistant" && !!opening.swipes?.length;
   const greetings = (api.entries || []).filter(entry => entry.role === "greeting" && entry.enabled !== false).sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity));
   const routes = canPickRoute ? opening.swipes.map((swipe, index) => ({ index, name: greetings[index]?.name?.trim() || `Route ${index + 1}` })) : [];
   const canRetry = (lastMessage?.role === "user" || lastMessage?.status === "failed") && (api.messages || []).some(message => message.role === "user");
@@ -332,7 +445,7 @@ export default function VN() {
     document.fonts?.ready.then(layout);
     layout();
     return () => { cancelled = true; observer?.disconnect(); window.removeEventListener("resize", layout); };
-  }, [turn, index, textSize, choices.length, hidden, spriteLimit]);
+  }, [turn, index, textSize, choices.length, hidden, spriteLimit, JSON.stringify(api.vnTextPreferences)]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -389,8 +502,14 @@ export default function VN() {
 
   React.useEffect(() => { if (panel === "routes" && !canPickRoute) setPanel(""); }, [panel, canPickRoute]);
 
+  const scrollPassage = usePassageReading(view, turn, index, line?.text, pendingPlayerLine);
+  const metCharacterIds = useMetCharacters(sceneApi, currentMessage, readLines, panel === "status");
+
   function advance() {
     if (hidden) { setHidden(false); return; }
+    if (panel || viewerOpen || error || !line) return;
+    setAuto(false);
+    if (scrollPassage()) return;
     movePage(1);
   }
 
@@ -556,6 +675,7 @@ export default function VN() {
 
   return <main className="vn" data-yumina-dialog-theme="vn" ref={view} data-scene-media={!!(background || cast.length)} style={{ "--text-size": `${textSize}px` }}>
     <style>{styles.replace("__FONT_URL__", fontRef ? api.resolveAssetUrl(fontRef) : "") + characterViewerStyles + vnDialogTheme}</style>
+    <VnTextStyle api={api} />
     {typeof background === "string" && background && <img className="vn-bg" src={api.resolveAssetUrl(background)} alt="" />}
     {!!cast.length && <div className="vn-cast" aria-label="Scene characters">{cast.map(character => <SpriteSlot key={character.key || character.name.toLowerCase()} character={character} speaker={pendingPlayerSprite ? "player" : spriteKey(line)} onExit={finishSpriteExit} />)}</div>}
     <div className="vn-shade" />
@@ -563,7 +683,7 @@ export default function VN() {
     {!hidden && <div inert={panel || viewerOpen ? true : undefined}>
       <nav className="vn-controls" aria-label="Visual novel controls">
         <Control name="Log" onClick={() => setPanel("log")} />
-        {!!routes.length && <Control name="Route" onClick={() => { setAuto(false); setPanel("routes"); }} />}
+        {canPickRoute && !!routes.length && <Control name="Route" onClick={() => { setAuto(false); if (api.openStoryRoutes) api.openStoryRoutes(); else setPanel("routes"); }} />}
         <Control name="Hide" onClick={() => setHidden(true)} />
         <Control name="Skip" onClick={() => { setAuto(false); if (pendingPlayerSprite) setPendingPlayerSprite(current => current ? { ...current, index: Math.max(0, lines.length - 1) } : current); else setCursor({ turn, index: Math.max(0, lines.length - 1) }); }} />
         <Control name="Auto" active={auto} onClick={() => setAuto(!auto)} /><Control name="Menu" onClick={() => setPanel("menu")} />
@@ -590,7 +710,7 @@ export default function VN() {
     {viewerOpen && <CharacterViewer controller={characterViewer} />}
     {panel === "routes" && canPickRoute && <Routes api={api} routes={routes} activeIndex={opening.activeSwipeIndex || 0} onClose={() => setPanel("")} onSelect={index => { if (canPickRoute) api.switchGreeting(index); setPanel(""); }} />}
     {["menu","load","settings"].includes(panel) && <Menu api={api} onClose={() => setPanel("")} setPanel={setPanel} settings={{ panel, textSize, autoDelay, showTokenStatistics, personaControl }} onSetting={onSetting} busy={busy} run={run} />}
-    {panel === "status" && <StatusSheet api={sceneApi} onClose={() => setPanel("")} onBack={() => setPanel("menu")} />}
+    {panel === "status" && <StatusSheet api={sceneApi} filterCharacters={config => visibleCharacterStatus(config, sceneApi.entries, metCharacterIds)} onClose={() => setPanel("")} onBack={() => setPanel("menu")} />}
     {panel === "memory" && <SessionMemoryModal key={api.sessionId} open onClose={() => setPanel("menu")} initialTab="storyhaven" />}
     {panel === "save" && <SaveCheckpoint key={api.sessionId} api={api} onClose={() => setPanel("menu")} />}
     {panel === "composer" && <section className="vn-overlay vn-composer" role="dialog" aria-modal="true" aria-label="Write your own choice">

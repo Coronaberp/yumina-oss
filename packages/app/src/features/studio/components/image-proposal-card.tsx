@@ -1,3 +1,5 @@
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select } from "@/components/ui/select";
 import { useEffect, useState } from "react";
 import { ImagePlus, Loader2, Sparkles, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -47,10 +49,14 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [removingReference, setRemovingReference] = useState("");
+  const eligibleAnimaModels = contentRating === "nsfw" ? animaModels.filter(model => model.nsfwCapable) : animaModels;
+  const effectiveAnimaModel = eligibleAnimaModels.find(model => model.name === animaModel)?.name
+    ?? (contentRating === "nsfw" ? eligibleAnimaModels[0]?.name ?? "" : animaModel || recommendedAnimaModel);
   const worldId = useEditorStore(s => s.serverWorldId);
   const apiBase = import.meta.env.VITE_API_URL || "";
   const backgroundJob = !!proposal.source && !!proposal.jobId && /^[0-9a-f-]{36}$/i.test(proposal.jobId);
   const updateJob = (job: { status: string; jobId: string; elapsed?: number; assetIds?: string[]; errorCode?: string; errorMessage?: string;
+    source?: StudioImageProposal["source"]; model?: string;
     referenceImages?: StudioImageProposal["referenceImages"]; referenceEditable?: boolean; assetStatus?: StudioImageProposal["assetStatus"];
     assetReason?: string; retryCount?: number; taskSummary?: StudioImageProposal["taskSummary"]; taskPreflight?: StudioImageProposal["taskPreflight"];
     animaEnabled?: boolean; animaModel?: string; animaModelEditable?: boolean; imageWorkflow?: StudioImageProposal["imageWorkflow"];
@@ -60,7 +66,8 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
     const status = job.status === "succeeded" ? "done" : job.status === "failed" ? "failed" : job.status === "cancelled" ? "cancelled" : "generating";
     useStudioStore.setState(s => ({ chatMessages: s.chatMessages.map(message =>
       message.imageProposal?.runId === proposal.runId && message.imageProposal.toolCallId === proposal.toolCallId
-        ? { ...message, imageProposal: { ...message.imageProposal, status, jobStatus: job.status, jobId: job.jobId, elapsed: job.elapsed,
+        ? { ...message, imageProposal: { ...message.imageProposal, ...(job.source ? { source: job.source } : {}), ...(job.model ? { model: job.model } : {}),
+          status, jobStatus: job.status, jobId: job.jobId, elapsed: job.elapsed,
           assetIds: job.assetIds, errorCode: job.errorCode, error: job.errorMessage ?? job.errorCode, ...(job.referenceImages ? { referenceImages: job.referenceImages } : {}),
           referenceEditable: job.referenceEditable, assetStatus: job.assetStatus, assetReason: job.assetReason, retryCount: job.retryCount,
           taskSummary: job.taskSummary, taskPreflight: job.taskPreflight, animaEnabled: job.animaEnabled,
@@ -154,7 +161,7 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
     try {
       const response = await fetch(`${apiBase}/api/studio/${worldId}/agent/image-jobs/${proposal.jobId}/generation-options`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ workflow, contentRating, ...(workflow === "anima" && animaModel ? { animaModel } : {}),
+        body: JSON.stringify({ workflow, contentRating, ...(workflow === "anima" && effectiveAnimaModel ? { animaModel: effectiveAnimaModel } : {}),
           seedMode, ...(seedMode === "fixed" ? { seed: parsedSeed } : {}), cfg, steps, transparent }),
       });
       const result = await response.json();
@@ -179,11 +186,25 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
   const estimate = Math.ceil(proposal.unitMushies * batchSize * 10) / 10;
   const pending = proposal.status === "pending";
   const queued = backgroundJob && proposal.status === "generating" && proposal.jobStatus === "queued";
-  const selectedAnima = animaModels.find(option => option.name === animaModel);
-  const nsfwCapable = workflow === "krea" || (workflow === "anima" && selectedAnima?.nsfwCapable === true);
+  const nsfwAnimaModels = animaModels.filter(model => model.nsfwCapable);
+  const nsfwAvailable = proposal.workflowOptions?.krea || (proposal.workflowOptions?.anima && nsfwAnimaModels.length > 0);
   const updateWorkflow = (value: "anima" | "krea" | "codex") => {
+    if (contentRating === "nsfw" && (value === "codex" || (value === "anima" && !nsfwAnimaModels.length))) return;
     setWorkflow(value);
-    if (value === "codex" || (value === "anima" && !selectedAnima?.nsfwCapable)) setContentRating("sfw");
+    if (value === "anima" && contentRating === "nsfw") setAnimaModel(effectiveAnimaModel);
+  };
+  const updateContentRating = (value: "sfw" | "nsfw") => {
+    if (value === "nsfw" && !nsfwAvailable) return;
+    setContentRating(value);
+    if (value === "sfw") {
+      if (proposal.workflowOptions?.codex) setWorkflow("codex");
+    } else if (workflow === "anima" && nsfwAnimaModels.length) {
+      setAnimaModel(nsfwAnimaModels.find(model => model.name === animaModel)?.name ?? nsfwAnimaModels[0]!.name);
+    } else if (proposal.workflowOptions?.krea) {
+      setWorkflow("krea");
+    } else {
+      setWorkflow("anima"); setAnimaModel(nsfwAnimaModels[0]!.name);
+    }
   };
   const canConfirm = interactive && pending && prompt.trim().length > 0;
   const buttonClass = "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11";
@@ -217,6 +238,9 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
       {!!proposal.referenceImages?.length && (
         <div className="mt-2">
           <p className="text-muted-foreground">{t("studio.aiChat.imageProposal.references", { defaultValue: "Reference images ({{count}})", count: proposal.referenceImages.length })}</p>
+          {proposal.contentRating === "nsfw" && <p className="mt-1 text-[10px] text-muted-foreground">
+            {t("studio.aiChat.imageProposal.textOnlyReferences", { defaultValue: "Text-to-image only. The vision model describes these references for the prompt." })}
+          </p>}
           <div className="mt-1 flex flex-wrap gap-2">
             {proposal.referenceImages.map((ref, index) => <div key={ref.key} className="flex w-20 flex-col items-center gap-1">
               <button type="button" className="rounded-md cursor-zoom-in focus-visible:ring-2 focus-visible:ring-ring"
@@ -269,40 +293,42 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
         <div className="mt-3 space-y-2 rounded-lg border border-border/70 bg-background/60 p-2.5">
           <p className="font-medium text-foreground">Generation options</p>
           <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-            <span>Workflow</span>
-            <select aria-label="Image generation workflow" value={workflow} onChange={event => updateWorkflow(event.target.value as "anima" | "krea" | "codex")}
+            <span>Content rating</span>
+            <Select compact aria-label="Image content rating" value={contentRating} onValueChange={selectedValue => updateContentRating(selectedValue as "sfw" | "nsfw")}
               disabled={savingOptions} className="min-h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground">
-              {proposal.workflowOptions.anima && <option value="anima">Anima · canonical reference</option>}
-              {proposal.workflowOptions.krea && <option value="krea">Krea2-Anime v2.0 INT4 · reference follow-up · NSFW-capable</option>}
-              {proposal.workflowOptions.codex && <option value="codex">Codex image generation · GPT-6.1 Sol · xhigh</option>}
-            </select>
+              <option value="sfw">SFW</option><option value="nsfw" disabled={!nsfwAvailable}>NSFW</option>
+            </Select>
           </label>
+          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+            <span>Image generator</span>
+            <Select compact aria-label="Image generation workflow" value={workflow} onValueChange={selectedValue => updateWorkflow(selectedValue as "anima" | "krea" | "codex")}
+              disabled={savingOptions} className="min-h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground">
+              {(proposal.workflowOptions.anima || proposal.workflowOptions.krea) && <optgroup label="NSFW-capable">
+                {proposal.workflowOptions.anima && <option value="anima" disabled={contentRating === "nsfw" && !nsfwAnimaModels.length}>Anima</option>}
+                {proposal.workflowOptions.krea && <option value="krea">Krea</option>}
+              </optgroup>}
+              {proposal.workflowOptions.codex && contentRating !== "nsfw" && <optgroup label="SFW">
+                <option value="codex">Codex</option>
+              </optgroup>}
+            </Select>
+          </label>
+          {contentRating === "nsfw" && <p className="text-[11px] text-muted-foreground">SFW-only generators are excluded. References are described by the vision model for text-to-image generation.</p>}
           {workflow === "anima" && <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
             <span>Local Anima checkpoint</span>
-            <select aria-label="Local Anima checkpoint" value={animaModel || recommendedAnimaModel}
-              disabled={savingOptions || loadingAnimaModels || animaModels.length === 0}
-              onChange={event => { const nextModel = event.target.value;setAnimaModel(nextModel);
-                if (contentRating === "nsfw" && !animaModels.find(option => option.name === nextModel)?.nsfwCapable) setContentRating("sfw"); }}
+            <Select compact aria-label="Local Anima checkpoint" value={effectiveAnimaModel}
+              disabled={savingOptions || loadingAnimaModels || eligibleAnimaModels.length === 0}
+              onValueChange={selectedValue => setAnimaModel(selectedValue)}
               className="min-h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-60">
               {loadingAnimaModels && <option value="">Loading installed checkpoints…</option>}
-              {!loadingAnimaModels && animaModels.map(option => <option key={option.name} value={option.name}>
+              {!loadingAnimaModels && eligibleAnimaModels.map(option => <option key={option.name} value={option.name}>
                 {option.name}{option.nsfwCapable ? " · NSFW-capable" : " · SFW"}
               </option>)}
-            </select>
-            <span>Choose any installed Anima checkpoint.</span>
+            </Select>
+            <span>{contentRating === "nsfw" ? "Only NSFW-capable checkpoints are available." : "Choose any installed Anima checkpoint."}</span>
           </label>}
-          {nsfwCapable
-            ? <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-              <span>Content rating</span>
-              <select aria-label="Image content rating" value={contentRating} onChange={event => setContentRating(event.target.value as "sfw" | "nsfw")}
-                disabled={savingOptions} className="min-h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground">
-                <option value="sfw">SFW</option><option value="nsfw">NSFW · local model only</option>
-              </select>
-            </label>
-            : <p className="text-[11px] text-muted-foreground">SFW-only workflow.</p>}
           {proposal.imageKind === "sprite" && <label className="flex items-start gap-2 text-[11px] text-muted-foreground">
-            <input type="checkbox" checked={transparent} disabled={savingOptions}
-              onChange={event => setTransparent(event.target.checked)} className="mt-0.5 accent-primary" />
+            <Checkbox  checked={transparent} disabled={savingOptions}
+              onCheckedChange={checked => setTransparent((checked === true))} className="mt-0.5 accent-primary" />
             <span><span className="font-medium text-foreground">Transparent background</span><br />Extract a cutout only when you need alpha transparency. Leave off to preserve the generated background.</span>
           </label>}
           {workflow === "anima" || workflow === "krea" ? <div className="grid grid-cols-2 gap-2">
@@ -318,10 +344,10 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
             </label>
             <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               Seed
-              <select value={seedMode} disabled={savingOptions} onChange={event => setSeedMode(event.target.value as "random" | "fixed")}
+              <Select compact value={seedMode} disabled={savingOptions} onValueChange={selectedValue => setSeedMode(selectedValue as "random" | "fixed")}
                 className="min-h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground">
                 <option value="random">Random seed</option><option value="fixed">Fixed seed</option>
-              </select>
+              </Select>
             </label>
             {seedMode === "fixed" && <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               Seed value
@@ -354,17 +380,17 @@ function ImageProposalForm({ proposal, interactive, onConfirm, onDecline }: Imag
           {!configuredProvider && <div className="mt-2 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               {t("studio.aiChat.imageProposal.aspect")}
-              <select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)} disabled={!interactive}
+              <Select compact value={aspectRatio} onValueChange={(selectedValue) => setAspectRatio(selectedValue)} disabled={!interactive}
                 className="min-h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground">
                 {aspectOptions.map((a) => <option key={a} value={a}>{a}</option>)}
-              </select>
+              </Select>
             </label>
             <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               {t("studio.aiChat.imageProposal.count")}
-              <select value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} disabled={!interactive}
+              <Select compact value={batchSize} onValueChange={(selectedValue) => setBatchSize(Number(selectedValue))} disabled={!interactive}
                 className="min-h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground">
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </Select>
             </label>
             <span className="ml-auto flex flex-col items-end gap-0.5 text-right">
               <span className="tabular-nums text-foreground">

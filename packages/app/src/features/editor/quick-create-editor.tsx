@@ -1,3 +1,6 @@
+import { confirmAction } from "@/components/ui/global-confirm-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select } from "@/components/ui/select";
 import { StoryStructureTabs } from "./components/story-structure-tabs";
 import { LoreMemoryFields } from "./components/lore-memory-fields";
 import { GreetingNameField } from "./components/greeting-name-field";
@@ -1897,9 +1900,9 @@ function MoreDisclosure({ onOpenFullEditor }: { onOpenFullEditor: () => void }) 
             <h4 className="text-sm font-semibold">{t("simple.more.language.title")}</h4>
             <p className="mt-0.5 text-[11px] text-muted-foreground/60">{t("simple.more.language.hint")}</p>
           </div>
-          <select
+          <Select compact
             value={language ?? ""}
-            onChange={(e) => setLanguage(e.target.value || null)}
+            onValueChange={(selectedValue) => setLanguage(selectedValue || null)}
             className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">—</option>
@@ -1912,7 +1915,7 @@ function MoreDisclosure({ onOpenFullEditor }: { onOpenFullEditor: () => void }) 
             <option value="de">Deutsch</option>
             <option value="pt">Português</option>
             <option value="ru">Русский</option>
-          </select>
+          </Select>
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground/60">
@@ -2265,9 +2268,9 @@ function FileEditorCard({
         {onDelete && !readOnly && (
           <button
             type="button"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
-              if (confirm(t("simple.more.visual.confirmDelete", { name: filename }))) onDelete();
+              if ((await confirmAction(t("simple.more.visual.confirmDelete", { name: filename })))) onDelete();
             }}
             className="shrink-0 rounded-md p-1 text-muted-foreground/30 hover:bg-destructive/10 hover:text-destructive"
             title={t("simple.character.delete")}
@@ -2334,9 +2337,9 @@ function BundleGroupCard({
         </div>
         <button
           type="button"
-          onClick={(e) => {
+          onClick={async (e) => {
             e.stopPropagation();
-            if (confirm(t("simple.more.visual.confirmUninstall", { name: display }))) onUninstall();
+            if ((await confirmAction(t("simple.more.visual.confirmUninstall", { name: display })))) onUninstall();
           }}
           className="shrink-0 rounded-md p-1 text-muted-foreground/30 hover:bg-destructive/10 hover:text-destructive"
           title={t("simple.more.visual.uninstall")}
@@ -2593,10 +2596,10 @@ function SimpleBgmCard() {
               className="min-w-0 flex-1 bg-transparent text-sm font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
             />
             <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-              <input
-                type="checkbox"
+              <Checkbox
+
                 checked={primary.loop ?? true}
-                onChange={(e) => updateAudioTrack(primary.id, { loop: e.target.checked })}
+                onCheckedChange={(checked) => updateAudioTrack(primary.id, { loop: (checked === true) })}
                 className="h-3.5 w-3.5 rounded border-border bg-card text-emerald-400 focus:ring-emerald-400/30"
               />
               {t("simple.more.bgm.loop")}

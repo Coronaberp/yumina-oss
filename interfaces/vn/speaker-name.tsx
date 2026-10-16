@@ -1,6 +1,10 @@
-/** Abbreviate log labels only; canonical names still identify portraits and sprites. */
-export function shortSpeakerName(name: string): string {
+/** Log columns use short labels; stacked phone rows can show up to 80 characters. */
+export function shortSpeakerName(name: string, stacked = false): string {
   const full = name.trim();
+  if (stacked) {
+    const characters = Array.from(full);
+    return characters.length > 80 ? characters.slice(0, 80).join("") + "...." : full;
+  }
   const parenthesis = full.search(/[（(]/u);
   if (parenthesis >= 0) return full.slice(0, parenthesis).trim() || full;
   const characters = Array.from(full);
@@ -9,7 +13,16 @@ export function shortSpeakerName(name: string): string {
 
 export function SpeakerName({ name = "", suffix = "", className, truncate = true }) {
   const label = React.useRef(null);
-  const visible = (truncate ? shortSpeakerName(name) : name.trim()) + suffix;
+  const [stacked, setStacked] = React.useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width:600px) and (orientation:portrait)").matches);
+  React.useLayoutEffect(() => {
+    const media = window.matchMedia?.("(max-width:600px) and (orientation:portrait)");
+    if (!media) return;
+    const update = () => setStacked(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const visible = (truncate ? shortSpeakerName(name, stacked) : name.trim()) + suffix;
   React.useLayoutEffect(() => {
     const container = label.current;
     const text = container?.firstElementChild;

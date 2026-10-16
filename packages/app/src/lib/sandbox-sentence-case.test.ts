@@ -17,10 +17,10 @@ function rendered(raw: string): Element {
 test("interrupted dialogue and narration start with capitals without changing the source", () => {
   const source = 'you,\n\n*ryu said flatly, her voice dropping.*\n\nare the single most expensive mistake. which is an achievement, of a sort.';
   const root = rendered(source);
-  assert.equal(root.textContent, 'You,Ryu said flatly, her voice dropping.Are the single most expensive mistake. Which is an achievement, of a sort.');
+  assert.equal(root.textContent, 'You,\nRyu said flatly, her voice dropping.\nAre the single most expensive mistake. Which is an achievement, of a sort.');
   assert.equal(root.querySelector("em")!.textContent, "Ryu said flatly, her voice dropping.");
   assert.ok(source.startsWith("you,"));
-  assert.equal(renderMarkdown("are the single most expensive mistake."), "Are the single most expensive mistake.");
+  assert.equal(rendered("are the single most expensive mistake.").textContent, "Are the single most expensive mistake.");
 });
 
 test("sentence boundaries cross emphasis and quotes without capitalizing other words", () => {
@@ -31,7 +31,7 @@ test("sentence boundaries cross emphasis and quotes without capitalizing other w
 
 test("soft line breaks preserve continuations and blank lines start paragraphs", () => {
   assert.equal(rendered("hello\nmy friend.\nwelcome back.\n\na new paragraph.").textContent,
-    "Hellomy friend.Welcome back.A new paragraph.");
+    "Hellomy friend.Welcome back.\nA new paragraph.");
   assert.equal(rendered("https://example.com。 next. user@example.com！ again.").textContent,
     "https://example.com。 Next. user@example.com！ Again.");
 });
@@ -48,7 +48,7 @@ test("code, addresses, image attributes and embedded HTML keep their exact case"
   assert.equal(inline.querySelector("code")!.textContent, "lowerCase. keepThis()");
   assert.equal(inline.textContent, "lowerCase. keepThis() stays literal. Next sentence.");
   const block = rendered('```js\nconst lowerCase = "hello. world";\n```');
-  assert.equal(block.querySelector("code")!.textContent, 'const lowerCase = "hello. world";');
+  assert.equal(block.querySelector("code")!.textContent, 'const lowerCase = "hello. world";\n');
   assert.equal(rendered('https://example.com/lowerCase stays valid. visit user@example.com now.').textContent,
     'https://example.com/lowerCase stays valid. Visit user@example.com now.');
   const image = rendered('![lower case](https://example.com/lowerCase.png) hello.');

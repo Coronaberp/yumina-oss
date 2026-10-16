@@ -2,13 +2,16 @@ import type { Effect, AudioEffect } from "../types/index.js";
 import { ThinkingTagFilter } from "./thinking-tag-filter.js";
 import { parseLeadingSpeakerTag } from "../prompts/speaker-tag.js";
 import { stripStateReceipts } from "./state-receipt.js";
+import { stripAngleMarkup } from "./angle-markup.js";
 import { extractResponseChoices } from "./response-choices.js";
-import { stripGameStateDump, stripVariableUpdateTags } from "./response-metadata.js";
+import { normalizeAngleVariableDirectives, stripGameStateDump, stripVariableUpdateTags } from "./response-metadata.js";
 import { stripZeroWidthSpaces } from "./text-normalization.js";
 import { isActiveDirectiveFence, isPresentationLiteral, presentationLiteralRanges, maskPresentationLiterals } from "./presentation-literals.js";
 import { standardizeSpeakerMarkup } from "./presentation-markup.js";
 
 export interface ParseResult {
+  /** Attached only by the server review; never read from model output. */
+  eventEvidence?: import("../story/chapter-event-schema.js").ChapterEventEvidence;
   cleanText: string;
   effects: Effect[];
   audioEffects: AudioEffect[];
@@ -47,6 +50,7 @@ export class ResponseParser {
   }
 
   parse(responseText: string, jsonVarId?: string, declaredVariables?: readonly string[]): ParseResult {
+    responseText = normalizeAngleVariableDirectives(responseText, declaredVariables);
     responseText = standardizeSpeakerMarkup(stripZeroWidthSpaces(responseText), [], false);
     const effects: Effect[] = [];
     const audioEffects: AudioEffect[] = [];
@@ -112,7 +116,7 @@ export class ResponseParser {
       .replace(/^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim, "")
       .replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 
-    return { cleanText: literals.restore(cleanText), effects, audioEffects,
+    return { cleanText: stripAngleMarkup(literals.restore(cleanText)).trim(), effects, audioEffects,
       ...(speakerTag.speaker ? { speaker: speakerTag.speaker } : {}),
       ...(choiceResult.choices !== undefined ? { choices: choiceResult.choices } : {}),
     };

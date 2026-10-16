@@ -220,15 +220,17 @@ test("Log combines multiple character chips with stable turn selection and reset
   ];
   const { dom, restore, root, container, render } = await renderFixture(state.api);
   const changeTurn = async (value: string) => {
-    const select = container.querySelector<HTMLSelectElement>(".vn-log-turn-filter select")!;
-    await act(async () => { select.value = value; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>(`.vn-turn-option[data-value="${value}"]`)!.click());
   };
   const logText = () => container.querySelector(".vn-log-scroll")!.textContent!;
   try {
     await render();
     const reading = container.querySelector(".vn-dialogue")!.textContent;
     await act(async () => button(container, "Log").click());
-    assert.deepEqual(Array.from(container.querySelectorAll(".vn-log-turn-filter option")).map(option => option.textContent), ["All turns", "Turn 1", "Turn 2 (current)"]);
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
+    assert.deepEqual(Array.from(container.querySelectorAll(".vn-turn-option > span:first-child")).map(option => option.textContent), ["All turns", "Turn 1", "Turn 2 (current)"]);
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
     const chips = container.querySelector<HTMLElement>(".vn-log-character-filters")!;
     assert.equal(chips.querySelectorAll(".vn-avatar").length, 3, "characters and the player have portrait chips");
     await act(async () => button(chips, "Alice").click());
@@ -273,8 +275,8 @@ test("Log turn filters retain message IDs when earlier history is loaded and inc
   };
   const { dom, restore, root, container, render } = await renderFixture(state.api);
   const selectTurn = async (value: string) => {
-    const select = container.querySelector<HTMLSelectElement>(".vn-log-turn-filter select")!;
-    await act(async () => { select.value = value; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>(`.vn-turn-option[data-value="${value}"]`)!.click());
   };
   try {
     await render();
@@ -283,15 +285,14 @@ test("Log turn filters retain message IDs when earlier history is loaded and inc
     assert.doesNotMatch(container.querySelector(".vn-log-scroll")!.textContent!, /Unanswered choice/);
     await act(async () => button(container, "Load earlier dialogue").click());
     await render();
-    assert.equal(container.querySelector<HTMLSelectElement>(".vn-log-turn-filter select")!.value, "recent");
-    assert.equal(container.querySelector('.vn-log-turn-filter option[value="recent"]')!.textContent, "Turn 2 (current)");
+    assert.match(container.querySelector('.vn-turn-trigger')!.textContent!, /Turn 2 \(current\)/);
     assert.equal(container.querySelectorAll(".vn-log-scroll [data-turn-id]").length, 1);
     await selectTurn("pending");
     assert.match(container.querySelector(".vn-log-scroll")!.textContent!, /Unanswered choice/);
     assert.equal(container.querySelectorAll(".vn-log-scroll [data-turn-id]").length, 0);
     state.api.messages = [...state.api.messages, { ...state.message, id: "completed" }];
     await render();
-    assert.equal(container.querySelector<HTMLSelectElement>(".vn-log-turn-filter select")!.value, "", "a completed pending reply returns to all turns");
+    assert.match(container.querySelector('.vn-turn-trigger')!.textContent!, /All turns/, "a completed pending reply returns to all turns");
   } finally {
     await act(async () => root.unmount()); dom.window.close(); restore();
   }
@@ -303,7 +304,9 @@ test("Log filters include a preview greeting and unknown NPC dialogue", async ()
   try {
     await render();
     await act(async () => button(container, "Log").click());
-    assert.equal(container.querySelector('.vn-log-turn-filter option[value="greeting"]')!.textContent, "Turn 1 (current)");
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
+    assert.equal(container.querySelector('.vn-turn-option[data-value="greeting"] > span')!.textContent, "Turn 1 (current)");
+    await act(async () => container.querySelector<HTMLButtonElement>('.vn-turn-trigger')!.click());
     await act(async () => button(container.querySelector(".vn-log-character-filters")!, "NPC").click());
     assert.match(container.querySelector(".vn-log-scroll")!.textContent!, /Hello there/);
     assert.doesNotMatch(container.querySelector(".vn-log-scroll")!.textContent!, /Preview opening/);

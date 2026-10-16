@@ -1,3 +1,4 @@
+import { Checkbox } from "../../../src/components/ui/checkbox";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AlertCircle, Brain, Check, FileText, Layers3, Loader2, Pencil, Pin, RefreshCw, Save, Settings2, Trash2, X } from "lucide-react";
 import type { SessionMemoryPayload, SessionMemoryUsageSummary, SessionSummaryCompactionMetadata, SessionSummaryImplementation, SessionSummaryLanguage, SessionSummaryPayload } from "@yumina/shared";
@@ -10,6 +11,7 @@ import { SandboxPlatformOverlay } from "../../platform-overlay-portal";
 import { focusGuardDialog as focusDialog, installGuardFocusScope as installDialogFocusScope } from "../state-update-guard/focus";
 import { SESSION_MEMORY_MODAL_STYLES } from "./session-memory-modal-styles";
 import { MemorySelect } from "./memory-select";
+import { displayPersonaText, updatePersonaDisplayText } from "../../../src/lib/persona-profile";
 
 const DEFAULT_CONTEXT_MODEL = "google/gemini-2.5-flash-lite";
 // The zero-cost play model (see @yumina/shared YUMINA_MODELS "Yumina Free").
@@ -865,10 +867,10 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
           <span className="block text-[11px] font-semibold text-white/72">{args.title}</span>
           <span className="block text-[10px] leading-relaxed text-white/25">{args.meta}</span>
         </span>
-        <input
-          type="checkbox"
+        <Checkbox
+
           checked={args.checked}
-          onChange={(e) => args.onChange(e.target.checked)}
+          onCheckedChange={(checked) => args.onChange((checked === true))}
           className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
         />
       </label>
@@ -1092,7 +1094,7 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
 
           <div className="yumina-memory-content">
             {contextTab === "storyhaven" ? (
-              <StoryhavenMemoryInspector key={api.sessionId} api={api.storyhavenMemory} language={api.language} />
+              <StoryhavenMemoryInspector key={api.sessionId} api={api.storyhavenMemory} language={api.language} playerName={api.user?.name} />
             ) : loading ? (
               <div className="flex items-center justify-center py-16 text-white/40">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1256,8 +1258,8 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                       {editingPinned ? (
                         <div className="mt-3 space-y-2">
                           <textarea
-                            value={pinnedDraft}
-                            onChange={(e) => setPinnedDraft(e.target.value.slice(0, PINNED_MAX_CHARS))}
+                            value={displayPersonaText(pinnedDraft, api.user?.name)}
+                            onChange={(e) => setPinnedDraft(updatePersonaDisplayText(pinnedDraft, e.target.value, api.user?.name).slice(0, PINNED_MAX_CHARS))}
                             maxLength={PINNED_MAX_CHARS}
                             spellCheck={false}
                             placeholder={tt("e.g. Lina died in chapter 3 — she never returns. The player is 24 and lives alone.", "例如：莉娜在第三章已经死了，不会再出场。主角 24 岁，独居。")}
@@ -1289,7 +1291,7 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                         </div>
                       ) : pinnedText ? (
                         <div className="mt-3 whitespace-pre-wrap rounded-lg bg-black/25 p-3 text-xs leading-relaxed text-white/75">
-                          {pinnedText}
+                          {displayPersonaText(pinnedText, api.user?.name)}
                         </div>
                       ) : (
                         <p className="mt-3 text-[11px] leading-relaxed text-white/30">
@@ -1300,7 +1302,7 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
 
                     {!editingMemory ? (
                       hasAnyMemory ? (
-                        <MemoryTextView text={memoryText} />
+                        <MemoryTextView text={displayPersonaText(memoryText, api.user?.name)} />
                       ) : (
                         <p className="rounded-xl border border-dashed border-white/[0.08] px-4 py-6 text-center text-xs leading-relaxed text-white/30">
                           {tt("No memory yet. Keep playing or generate it now.", "暂无记忆。继续游玩或点击「重新生成」。")}
@@ -1312,8 +1314,8 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                           {tt("Edit what the AI remembers.", "编辑 AI 需要记住的内容。")}
                         </p>
                         <textarea
-                          value={memoryDraft}
-                          onChange={(e) => setMemoryDraft(e.target.value)}
+                          value={displayPersonaText(memoryDraft, api.user?.name)}
+                          onChange={(e) => setMemoryDraft(updatePersonaDisplayText(memoryDraft, e.target.value, api.user?.name))}
                           spellCheck={false}
                           placeholder={tt("Core facts, relationships, goals, promises, world state, risks...", "核心事实、人物关系、目标、承诺、世界状态、风险……")}
                           className="min-h-[420px] w-full resize-y rounded-xl border border-white/[0.08] bg-black/25 p-4 text-xs leading-relaxed text-white/75 outline-none placeholder:text-white/25 focus:border-primary/35"
@@ -1475,7 +1477,7 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                     {!editingSummary ? (
                       summaryDraft.trim() ? (
                         <div className="min-h-[200px] w-full whitespace-pre-wrap rounded-xl border border-white/[0.08] bg-black/25 p-4 text-xs leading-relaxed text-white/75">
-                          {summaryDraft}
+                          {displayPersonaText(summaryDraft, api.user?.name)}
                         </div>
                       ) : (
                         <div className="rounded-xl border border-dashed border-white/[0.08] px-4 py-10 text-center text-xs leading-relaxed text-white/30">
@@ -1484,8 +1486,8 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                       )
                     ) : (
                       <textarea
-                        value={summaryDraft}
-                        onChange={(e) => setSummaryDraft(e.target.value)}
+                        value={displayPersonaText(summaryDraft, api.user?.name)}
+                        onChange={(e) => setSummaryDraft(updatePersonaDisplayText(summaryDraft, e.target.value, api.user?.name))}
                         spellCheck={false}
                         placeholder={tt("Story summary…", "剧情摘要…")}
                         className="min-h-[470px] w-full resize-y rounded-xl border border-white/[0.08] bg-black/25 p-4 text-xs leading-relaxed text-white/75 outline-none placeholder:text-white/25 focus:border-primary/35"
@@ -1560,8 +1562,8 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                                   {editingSnippetId === snippet.id ? (
                                     <div className="space-y-2">
                                       <textarea
-                                        value={snippetDraft}
-                                        onChange={(e) => setSnippetDraft(e.target.value)}
+                                        value={displayPersonaText(snippetDraft, api.user?.name)}
+                                        onChange={(e) => setSnippetDraft(updatePersonaDisplayText(snippetDraft, e.target.value, api.user?.name))}
                                         spellCheck={false}
                                         rows={4}
                                         className="w-full resize-y rounded-lg border border-white/[0.08] bg-black/25 p-2.5 text-xs leading-relaxed text-white/75 outline-none focus:border-primary/35"
@@ -1585,7 +1587,7 @@ export function SessionMemoryModal({ open, onClose, initialTab = 'systems' }: Se
                                       </div>
                                     </div>
                                   ) : (
-                                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-white/72">{snippet.text}</p>
+                                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-white/72">{displayPersonaText(snippet.text, api.user?.name)}</p>
                                   )}
                                 </article>
                               ))}

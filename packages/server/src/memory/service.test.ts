@@ -75,6 +75,22 @@ function emptyRepos() {
   };
   return { repositories, batches, inserts, scene, cursor: () => cursor };
 }
+test('a failed extraction leaves its transcript batch available for a successful retry', async () => {
+ const state=emptyRepos(); let failing=true;
+ const service=createMemoryService({repositories:state.repositories,
+  model:{complete:async()=>{if(failing)throw new Error('memory_model_request_failed');return '{"facts":[],"char_state":{"doing":"waiting","location":"town","npcs":[]}}';}},
+  embedding:{embed:async()=>[1],embedQuery:async()=>[1]}});
+ await assert.rejects(service.extractSettled(context(6)), /memory_model_request_failed/);
+ assert.equal(state.cursor(),0);assert.deepEqual(state.batches,[]);assert.deepEqual(state.scene,[]);
+ failing=false;await service.extractSettled(context(6));
+ assert.equal(state.cursor(),5);assert.equal(state.batches.length,1);
+});
+test('invalid extraction JSON cannot be committed as an empty successful batch', async () => {
+ const state=emptyRepos();
+ const service=createMemoryService({repositories:state.repositories,model:{complete:async()=> 'not JSON'},embedding:{embed:async()=>[1],embedQuery:async()=>[1]}});
+ await assert.rejects(service.extractSettled(context(6)));
+ assert.equal(state.cursor(),0);assert.deepEqual(state.batches,[]);assert.deepEqual(state.scene,[]);
+});
 test('request-bounded recall counts its headings and never expands a zero budget', async () => {
  const state=emptyRepos();
  state.repositories.vectors.searchLoreChunks=async()=>[];

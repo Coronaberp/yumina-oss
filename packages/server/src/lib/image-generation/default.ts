@@ -1,7 +1,8 @@
 import { buildGreenScreenPrompt, removeGreenBackground } from '../image-sources/green-screen.js';
 import { imageGenerationRepository } from './repository.js';
 import { generatedImageStorage } from './storage.js';
-import { createImageGenerationService } from './service.js';
+import { createImageGenerationService, assertLocalImageGenerationEnabled } from './service.js';
+import { localImageGenerationEnabled } from './admin-controls.js';
 import { createCodexImageService, codexImagesEnabled, CODEX_IMAGE_LABEL } from './codex-service.js';
 import { env } from '../env.js';
 import { GenerationError, type GenerationInput, type ImageProvider } from './config.js';
@@ -9,8 +10,12 @@ import { loadStudioImageReferenceInputs } from '../studio-image-references.js';
 import { selectAdaptiveChromaColor } from '../image-sources/adaptive-sprite.js';
 import { checkLocalImageRequest } from './local-image-safety.js';
 import { animaModelSupportsNsfw } from './anima-workflow.js';
+import { createNsfwReferencePrompt } from './reference-prompt.js';
+import { resolveStudioReferenceVisionProvider } from '../studio-nsfw-provider.js';
+const prepareNsfwPrompt = createNsfwReferencePrompt({ resolveProvider: resolveStudioReferenceVisionProvider,
+  loadReferences: (userId, input) => loadStudioImageReferenceInputs(userId, input.worldId, input.referenceImages ?? [], input.signal) });
 export const imageGenerationService = createImageGenerationService({ repository: imageGenerationRepository,
-  storage: generatedImageStorage, buildGreenScreenPrompt, removeGreenBackground });
+  storage: generatedImageStorage, buildGreenScreenPrompt, removeGreenBackground, prepareNsfwPrompt, localGenerationEnabled: localImageGenerationEnabled });
 export const getImageGenerationConfig = (userId: string) => imageGenerationService.getConfig(userId);
 export const getImageGenerationStatus = (userId: string) => imageGenerationService.getStatus(userId);
 export const generateConfiguredImage = (userId: string, input: Parameters<typeof imageGenerationService.generate>[1]) => imageGenerationService.generate(userId, input);
@@ -31,6 +36,7 @@ export async function generateStudioImage(userId: string, input: Omit<Generation
     return codexImages.generate(userId, { ...input, provider: undefined });
   }
   if (input.imageWorkflow === 'codex') throw new GenerationError('INVALID_WORKFLOW', 'Choose the Codex image path for Codex image generation.');
+  if (provider === 'comfyui') assertLocalImageGenerationEnabled(localImageGenerationEnabled());
 
   const workflow = input.imageWorkflow ?? (provider === 'comfyui' && state.configs.comfyui.workflowMode === 'anima' ? 'anima' : undefined);
   const localNsfwCapable = provider === 'comfyui' && (workflow === 'krea'

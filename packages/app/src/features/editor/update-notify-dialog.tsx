@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Megaphone, X } from "lucide-react";
@@ -88,10 +89,10 @@ export function UpdateNotifyDialog({ worldId, worldName, onClose, held = false }
         />
 
         <label className="mt-3 flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
+
             checked={isMajor}
-            onChange={(e) => setIsMajor(e.target.checked)}
+            onCheckedChange={(checked) => setIsMajor((checked === true))}
             disabled={sending}
             className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500"
           />

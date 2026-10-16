@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -482,10 +483,10 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
           error={confirmError}
           extra={
             <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-background/40 px-3 py-2.5 text-sm transition-colors hover:bg-background/70">
-              <input
-                type="checkbox"
+              <Checkbox
+
                 checked={makeSafetySnapshot}
-                onChange={(e) => setMakeSafetySnapshot(e.target.checked)}
+                onCheckedChange={(checked) => setMakeSafetySnapshot((checked === true))}
                 className="mt-0.5 h-4 w-4 cursor-pointer rounded border-border bg-input accent-primary"
               />
               <span className="flex-1">

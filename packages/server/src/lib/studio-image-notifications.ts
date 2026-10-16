@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { agentRuns, generationJobs, user, worlds } from "../db/schema.js";
+import { studioConversationScope } from "./studio-run-scope.js";
 import { resolveStudioNsfwProvider } from "./studio-nsfw-provider.js";
 import { resolveWorkingSchema } from "./pending-edit.js";
 import { migrateWorldDefinition } from "@yumina/engine";
@@ -47,7 +48,7 @@ export function createStudioImageNotifications(launch?: (params: NotificationPar
           sql`${generationJobs.params}->>'notifyAgent' = 'true'`, sql`${generationJobs.params}->>'notificationRunId' IS NULL`,
           sql`${generationJobs.params}->>'notificationSkipped' IS NULL`, inArray(generationJobs.status, ["succeeded", "failed"]))).for("update");
         if (!jobs.length) return null;
-        const [latest] = await tx.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.worldId, worldId))).orderBy(desc(agentRuns.createdAt)).limit(1);
+        const [latest] = await tx.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.worldId, worldId), studioConversationScope(source.conversationId))).orderBy(desc(agentRuns.createdAt)).limit(1);
         const origin = (latest?.context?.studioImageNotification as { taskRunId?: string } | undefined)?.taskRunId;
         const superseded = latest && latest.id !== taskRunId && origin !== taskRunId;
         if (superseded || /stopped by user|superseded/i.test(source.error ?? "") || (origin === taskRunId && /stopped by user|superseded/i.test(latest?.error ?? ""))) {

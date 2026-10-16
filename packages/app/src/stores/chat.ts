@@ -1,3 +1,4 @@
+import { canSelectStoryOpening } from "@/lib/can-select-story-opening";
 import { findReplyRecoveryAnchor, hasReplyAfterAnchor } from "../features/chat/reply-recovery";
 import { pendingChoicesFromMessages } from "../features/chat/pending-choices";
 import { parseGenerateChoicesResponse } from "../lib/choices-response";
@@ -2559,8 +2560,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   switchGreeting: (index: number) => {
-    const { messages, session, isStreaming } = get();
-    if (!session || isStreaming) return;
+    const state = get();
+    const { messages } = state;
+    if (!canSelectStoryOpening(state)) return;
 
     // Find the first assistant message (the greeting)
     const greetingMsg = messages.find((m) => m.role === "assistant");

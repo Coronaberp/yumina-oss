@@ -1,3 +1,4 @@
+import { chapterSchema, chapterIssues, type StoryChapter } from "@yumina/engine";
 /**
  * Studio AI Executor
  *
@@ -45,7 +46,7 @@ function suggestSimilarIds(target: string, allIds: string[]): string {
 
 export interface SchemaChange {
   action: "create" | "update" | "delete";
-  entityType: "entry" | "variable" | "rule" | "behavior" | "route" | "ending" | "customUI" | "audio" | "settings" | "worldbook" | "loreBinding";
+  entityType: "entry" | "variable" | "rule" | "behavior" | "chapter" | "route" | "ending" | "customUI" | "audio" | "settings" | "worldbook" | "loreBinding";
   id?: string;
   data?: Record<string, unknown>;
 }
@@ -173,6 +174,9 @@ export function executeReadEntities(
   const paginated = offset_lines !== undefined || limit_lines !== undefined;
 
   for (const id of ids) {
+    if (id === "chapters") { results[id] = world.chapters ?? []; continue; }
+    const chapter = (world.chapters ?? []).find(item => item.id === id);
+    if (chapter) { results[id] = { ...chapter, _type: "chapter" }; continue; }
     // Search across all entity types
     const route = (world.routes ?? []).find((item) => item.id === id);
     if (route) { results[id] = { ...route, _type: "route" }; continue; }
@@ -496,6 +500,7 @@ function isSystemPath(path: string): boolean {
  */
 export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx?: boolean }): ValidateWorldResult {
   const issues: ValidationIssue[] = [];
+  for (const message of chapterIssues(world)) issues.push({ severity: "error", code: "chapter-definition-invalid", entity: { type: "chapter", id: "chapters" }, message, fix: "Repair the chapter, greeting, lorebook or variable references in Chapters." });
   const variableIds = new Set(world.variables.map((v) => v.id));
   const entryIds = world.entries.map((e) => e.id);
   const behaviorIds = (world.reactions ?? []).map((r) => r.id);
@@ -519,6 +524,7 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
 
   // ── Duplicate-ID check (cross-type) ──
   const allIds: { id: string; type: string }[] = [
+    ...(world.chapters ?? []).map(chapter => ({ id: chapter.id, type: "chapter" })),
     ...entryIds.map((id) => ({ id, type: "entry" })),
     ...world.variables.map((v) => ({ id: v.id, type: "variable" })),
     ...behaviorIds.map((id) => ({ id, type: "behavior" })),
@@ -1045,6 +1051,8 @@ function applySingleChange(
         return applyBehaviorChange(draft, change.action, id, data, index);
       case "rule":
         return applyRuleChange(draft, change.action, id, data, index);
+      case "chapter":
+        return applyStoryCollectionChange(draft, "chapters", chapterSchema, change.action, id, data, index);
       case "route":
         return applyStoryCollectionChange(draft, "routes", storyRouteSchema, change.action, id, data, index);
       case "ending":
@@ -1107,22 +1115,27 @@ function applySingleChange(
   }
 }
 
-function applyStoryCollectionChange<T extends StoryRoute | StoryEnding>(
+function applyStoryCollectionChange<T extends StoryRoute | StoryEnding | StoryChapter>(
   draft: WorldDefinition,
-  collection: "routes" | "endings",
-  schema: typeof storyRouteSchema | typeof storyEndingSchema,
+  collection: "routes" | "endings" | "chapters",
+  schema: typeof storyRouteSchema | typeof storyEndingSchema | typeof chapterSchema,
   action: string,
   id: string,
   data: Record<string, unknown>,
   index: number,
 ): ChangeResult {
-  const base = { index, action, entityType: collection === "routes" ? "route" : "ending", id };
+  const base = { index, action, entityType: collection === "routes" ? "route" : collection === "chapters" ? "chapter" : "ending", id };
   const current = (draft[collection] ?? []) as T[];
   const found = current.findIndex((item) => item.id === id);
   if (action === "delete") {
     if (found < 0) return { ...base, status: "error", error: `${collection === "routes" ? "Route" : "Ending"} not found: "${id}"` };
     current.splice(found, 1);
+    if (collection === "chapters") {
+      for (const chapter of draft.chapters ?? []) chapter.nextChapterIds = chapter.nextChapterIds.filter(next => next !== id);
+      for (const book of draft.worldbooks ?? []) if (book.chapterIds) book.chapterIds = book.chapterIds.filter(chapter => chapter !== id);
+    }
     if (collection === "routes") draft.routes = current as StoryRoute[];
+    else if (collection === "chapters") draft.chapters = current as StoryChapter[];
     else draft.endings = current as StoryEnding[];
     return { ...base, status: "success" };
   }
@@ -1134,6 +1147,7 @@ function applyStoryCollectionChange<T extends StoryRoute | StoryEnding>(
   if (found >= 0) current[found] = parsed.data as T;
   else current.push(parsed.data as T);
   if (collection === "routes") draft.routes = current as StoryRoute[];
+    else if (collection === "chapters") draft.chapters = current as StoryChapter[];
     else draft.endings = current as StoryEnding[];
   return { ...base, status: "success" };
 }
@@ -1188,6 +1202,13 @@ function ensureFolderExists(
   return resolvedId;
 }
 
+/** Match the editor's explicit character tag without guessing from prose.
+ * Only new entries use this fallback; updates preserve omitted roles. */
+function newEntryRole(data: Record<string, unknown>): WorldEntry["role"] | undefined {
+  return (data.role as WorldEntry["role"] | undefined)
+    ?? (toStringArray(data.tags).some(tag => /^characters?$/i.test(tag.trim())) ? "character" : undefined);
+}
+
 function applyEntryChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
   const base = { index, action, entityType: "entry", id };
 
@@ -1230,7 +1251,7 @@ function applyEntryChange(draft: WorldDefinition, action: string, id: string, da
       id,
       name: (data.name as string) ?? "New Entry",
       content: (data.content as string) ?? "",
-      role: (data.role as WorldEntry["role"]) ?? "custom",
+      role: newEntryRole(data) ?? "custom",
       portrait: typeof data.portrait === "string" ? data.portrait : undefined,
       alwaysSend: (data.alwaysSend as boolean) ?? defaults.alwaysSend,
       keywords: toStringArray(data.keywords),
@@ -2007,6 +2028,7 @@ function applyWorldbookChange(draft: WorldDefinition, action: string, id: string
       activation: data.activation !== undefined ? normalizeWorldbookActivation(data.activation) : { mode: "always" },
       order: (data.order as number) ?? maxOrder + 1,
       color: data.color as string | undefined,
+      chapterIds: Array.isArray(data.chapterIds) ? data.chapterIds.filter((id): id is string => typeof id === "string") : undefined,
     };
     draft.worldbooks.push(newBook);
     return { ...base, status: "success" };
@@ -2037,6 +2059,7 @@ function applyWorldbookChange(draft: WorldDefinition, action: string, id: string
 }
 
 function applyWorldbookUpdates(book: Worldbook, data: Record<string, unknown>): void {
+  if (data.chapterIds !== undefined) book.chapterIds = Array.isArray(data.chapterIds) ? data.chapterIds.filter((id): id is string => typeof id === "string") : [];
   if (data.name !== undefined) book.name = data.name as string;
   if (data.description !== undefined) book.description = data.description as string;
   if (data.enabled !== undefined) book.enabled = data.enabled as boolean;
@@ -2193,6 +2216,7 @@ export function resolveEntityType(
   world: WorldDefinition,
   id: string,
 ): SchemaChange["entityType"] | null {
+  if ((world.chapters ?? []).some(item => item.id === id)) return "chapter";
   if ((world.routes ?? []).some((item) => item.id === id)) return "route";
   if ((world.endings ?? []).some((item) => item.id === id)) return "ending";
   if (world.entries.find((e) => e.id === id)) return "entry";
@@ -2210,6 +2234,7 @@ export function resolveEntityType(
 }
 
 const TOOL_TO_ENTITY_TYPE: Record<string, SchemaChange["entityType"]> = {
+  write_chapter: "chapter",
   write_route: "route",
   write_ending: "ending",
   write_entry: "entry",
@@ -2280,14 +2305,14 @@ export function toolCallsToSchemaChanges(
       continue;
     }
 
-    if (name === "write_route" || name === "write_ending") {
+    if (name === "write_chapter" || name === "write_route" || name === "write_ending") {
       const id = typeof args.id === "string" ? args.id.trim() : "";
       if (!id) {
         results.push({ toolCallId: tc.id, toolName: name, error: `${name} requires a non-empty 'id' string` });
         continue;
       }
       const { id: _id, ...data } = args;
-      results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType: name === "write_route" ? "route" : "ending", id, data } });
+      results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType: name === "write_chapter" ? "chapter" : name === "write_route" ? "route" : "ending", id, data } });
       continue;
     }
 
@@ -2362,6 +2387,11 @@ export function toolCallsToSchemaChanges(
     if (!id || typeof id !== "string") {
       results.push({ toolCallId: tc.id, toolName: name, error: `Missing or invalid 'id' field for ${name}` });
       continue;
+    }
+    // Resolve before character-name validation, not just when persisting.
+    if (entityType === "entry" && data.role === undefined && !world.entries.some(entry => entry.id === id)) {
+      const role = newEntryRole(data);
+      if (role !== undefined) data.role = role;
     }
     results.push({ toolCallId: tc.id, toolName: name, change: { action: "create", entityType, id: id as string, data } });
   }

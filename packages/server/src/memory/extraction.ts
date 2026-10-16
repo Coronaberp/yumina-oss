@@ -57,7 +57,11 @@ export function validateSecretRevealDecision(data:unknown):SecretRevealDecision 
 export function loadJson(raw:string):unknown {return parsePythonJson(stripJsonFence(raw));}
 function truthy(value:unknown):boolean {return value instanceof PythonFloat?value.value!==0:pythonTruthy(value);}
 function loadArray(raw:string):unknown[] {let data:unknown;try{data=loadJson(raw);}catch(e){throw new Error(`not valid JSON: ${(e as Error).message}`);}if(!Array.isArray(data))throw new Error('expected a JSON array');return data;}
-export type ExtractionConfig=Pick<MemoryAlgorithmConfig,'maxFactsPerBatch'>;
+export type ExtractionConfig=Pick<MemoryAlgorithmConfig,'maxFactsPerBatch'> & {
+ /** Persistent extraction must distinguish failed calls from valid empty facts.
+  * The default retains the source library's display-only fallback behavior. */
+ requireSuccess?:boolean;
+};
 export function parseExtractResponse(raw:string,options:ExtractionConfig={}):[FactDraft[],CharStateDraft] {
  const data=loadJson(raw);
  if(data===null||typeof data!=='object'||Array.isArray(data)||data instanceof PythonFloat)throw new Error('expected a JSON object with facts and char_state');
@@ -92,7 +96,7 @@ async function callValidated<T>(prompt:string,parse:(raw:string)=>T,model:Memory
  try{return parse(raw);}catch(firstError){if(firstError instanceof TypeError)throw firstError;const retry=`${prompt}\n\nYour previous reply was invalid: ${(firstError as Error).message}\nReply again with only the corrected JSON array.`;return parse(await model.complete(retry,{signal}));}
 }
 export async function runExtract(transcript:string,charName:string,userName:string,language:string,model:MemoryModel,castNames?:string[]|null,signal?:AbortSignal,options:ExtractionConfig={}):Promise<[FactDraft[],CharStateDraft]> {
- try{return await callValidated(buildExtractPrompt(transcript,charName,userName,language,castNames),raw=>parseExtractResponse(raw,options),model,signal);}catch{return [[],{doing:'',location:'',npcs:[]}];}
+ try{return await callValidated(buildExtractPrompt(transcript,charName,userName,language,castNames),raw=>parseExtractResponse(raw,options),model,signal);}catch(error){if(options.requireSuccess)throw error;return [[],{doing:'',location:'',npcs:[]}];}
 }
 export async function runReconcile(drafts:FactDraft[],neighbors:PromptNeighbor[][],model:MemoryModel,signal?:AbortSignal):Promise<ReconcileDecision[]> {
  if(!drafts.length)return [];const valid=new Set(neighbors.flat().map(n=>n.id));

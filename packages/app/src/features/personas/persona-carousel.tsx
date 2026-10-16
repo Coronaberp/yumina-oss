@@ -1,3 +1,4 @@
+import { confirmAction } from "@/components/ui/global-confirm-dialog";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -114,7 +115,7 @@ export function PersonaCarousel({ onEdit, sessionSelection, disabled = false }: 
   };
 
   const handleDelete = async (persona: Persona) => {
-    if (!confirm(t("persona.deleteConfirm"))) return;
+    if (!(await confirmAction(t("persona.deleteConfirm")))) return;
     await deletePersona(persona.id);
   };
 

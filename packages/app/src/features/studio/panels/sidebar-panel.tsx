@@ -1,3 +1,4 @@
+import { Checkbox } from "@/components/ui/checkbox";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Variable } from "@yumina/engine";
@@ -132,12 +133,11 @@ export function SidebarPanel() {
                 key={section.key}
                 className="flex cursor-pointer items-start gap-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
+
                   checked={sectionVisibility[section.key]}
-                  onChange={(event) =>
-                    setSectionVisibility(section.key, event.target.checked)
-                  }
+                  onCheckedChange={(checked) =>
+                    setSectionVisibility(section.key, (checked === true))}
                   className="mt-0.5 h-3.5 w-3.5 rounded border-border bg-background"
                 />
                 <span className="min-w-0">

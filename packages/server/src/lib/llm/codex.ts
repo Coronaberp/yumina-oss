@@ -4,15 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
+import { CODEX_STUDIO_CONTEXT_WINDOW } from "@yumina/shared";
 import type { ChatMessage, GenerateParams, LLMProvider, Model, StreamChunk, ToolCall } from "./types.js";
+import { parseCodexRpcLine, type CodexRpcMessage } from "./codex-protocol.js";
 
 export const CODEX_STUDIO_MODEL = "codex/gpt-6-luna";
 export const CODEX_STUDIO_EFFORT = "max";
 export const CODEX_IMAGE_MODEL = "gpt-6.1-sol";
 export const CODEX_IMAGE_EFFORT = "xhigh";
 export const NSFW_IMAGE_REQUEST_ERROR = "This request is NSFW. Image generation is disabled for NSFW requests.";
-const CONTEXT_WINDOW = 1_050_000;
-type RpcMessage = { id?: number | string; method?: string; params?: any; result?: any; error?: { message?: string } };
+const CONTEXT_WINDOW = CODEX_STUDIO_CONTEXT_WINDOW;
+type RpcMessage = CodexRpcMessage;
 const sessions = new Map<string, CodexSession>();
 const sessionKey = (conversationId: string, generationId?: string) => conversationId + (generationId ? ":run:" + generationId : "");
 
@@ -77,14 +79,17 @@ class CodexSession {
       if (this.requests.size) this.fail(new Error("Codex exited before generation completed."));
     });
     this.lines.on("line", line => {
+      let message: RpcMessage | undefined;
       try {
-        const message = JSON.parse(line) as RpcMessage;
-        if (!message.method && typeof message.id === "number" && this.requests.has(message.id)) {
-          const pending = this.requests.get(message.id)!; this.requests.delete(message.id);
-          if (message.error) pending.reject(new Error(`${pending.method} failed: ${message.error.message ?? "Codex request failed."}`));
-          else pending.resolve(message.result);
-        } else { this.events.push(message); this.wake?.(); }
-      } catch { this.fail(new Error("Codex returned an invalid protocol message.")); }
+        message = parseCodexRpcLine(line, [...this.requests.values()].map(request => request.method).join(", ") || undefined);
+      } catch (error) { this.fail(error instanceof Error ? error : new Error("Codex stdout could not be decoded.")); return; }
+      if (!message) return;
+      // Do not relabel dispatch exceptions as JSON parsing failures.
+      if (!message.method && typeof message.id === "number" && this.requests.has(message.id)) {
+        const pending = this.requests.get(message.id)!; this.requests.delete(message.id);
+        if (message.error) pending.reject(new Error(`${pending.method} failed: ${message.error.message ?? "Codex request failed."}`));
+        else pending.resolve(message.result);
+      } else { this.events.push(message); this.wake?.(); }
     });
   }
   private fail(error: Error) {
@@ -148,7 +153,8 @@ class CodexSession {
   async initialize(params: GenerateParams) {
     this.previousSystem = systemText(params.messages);
     this.previousUsers = params.messages.filter(message => message.role === "user").map(message => JSON.stringify(message));
-    const settings = await this.connect("gpt-6-luna", CODEX_STUDIO_EFFORT);
+    const effort = params.reasoningEffortOverride ?? CODEX_STUDIO_EFFORT;
+    const settings = await this.connect("gpt-6-luna", effort);
     const tools = params.availableTools ?? selectedTools(params);
     const thread = await this.rpc("thread/start", {
       model: "gpt-6-luna", allowProviderModelFallback: false, ephemeral: true, cwd: this.directory,
@@ -170,7 +176,7 @@ class CodexSession {
         return { type: "text", text: "[Attached image " + images.length + "]" };
       }) };
     });
-    await this.rpc("turn/start", { threadId: this.threadId, model: "gpt-6-luna", effort: CODEX_STUDIO_EFFORT,
+    await this.rpc("turn/start", { threadId: this.threadId, model: "gpt-6-luna", effort,
       input: [{ type: "text", text: JSON.stringify(history) }, ...images] });
   }
   async imageThread(settings: any, instructions: string, prompt: string, images: boolean, outputSchema?: unknown, referenceImages: string[] = []) {
@@ -330,6 +336,7 @@ export class CodexProvider implements LLMProvider {
         await session.initialize(params);
       }
       const allowed = new Set(selectedTools(params).map(tool => tool.function.name));
+      let unavailableCalls = 0;
       while (true) {
         const event = await session.nextEvent(), data = event.params;
         if (data?.threadId && data.threadId !== session.threadId) continue;
@@ -342,13 +349,18 @@ export class CodexProvider implements LLMProvider {
         } else if (event.method === "item/tool/call") {
           // Capture parallel requests before yielding control to Studio's loop.
           await new Promise(resolve => setTimeout(resolve, 25));
-          const calls = [event];
+          let calls = [event];
           for (let index = 0; index < session.events.length;) {
             const queued = session.events[index]!;
             if (queued.method === "item/tool/call" && queued.params?.threadId === session.threadId) calls.push(...session.events.splice(index, 1));
             else index++;
           }
-          if (calls.some(call => !allowed.has(call.params?.tool))) throw new Error("Codex requested an unavailable tool; the request was stopped.");
+          for (const call of calls.filter(call => !allowed.has(call.params?.tool))) {
+            if (++unavailableCalls > 3) throw new Error("Codex repeatedly requested an unavailable tool. Retry this request.");
+            session.send({ id: call.id, result: { success: false, contentItems: [{ type: "inputText", text: "That tool is not available for this request and was not executed. " + toolPolicy(params) }] } });
+          }
+          calls = calls.filter(call => allowed.has(call.params?.tool));
+          if (!calls.length) continue;
           session.pendingTools = calls;
           for (let index = 0; index < calls.length; index++) {
             const call = calls[index]!.params;
@@ -368,7 +380,7 @@ export class CodexProvider implements LLMProvider {
     } catch (error) {
       if (params.signal?.aborted) throw error;
       console.error("[Codex] Studio turn failed:", error);
-      yield { type: "error", content: error instanceof Error ? error.stack ?? error.message : "Codex generation failed." };
+      yield { type: "error", content: error instanceof Error ? error.message : "Codex generation failed." };
     } finally {
       if (session) {
         session.busy = false;

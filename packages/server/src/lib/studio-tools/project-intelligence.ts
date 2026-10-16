@@ -7,6 +7,7 @@ import {
   type VnAssetMap,
 } from "@yumina/engine";
 import { executeValidateWorld } from "./tool-executor.js";
+import { normalizeStudioVisualAuditPage } from "@yumina/shared";
 
 export const VN_PERIODS = ["day", "evening", "night"] as const;
 export type VnPeriod = (typeof VN_PERIODS)[number];
@@ -228,8 +229,7 @@ export interface VisualAuditInput {
 
 export function getVisualAuditInputs(world: WorldDefinition, kind: VisualAuditKind, offset = 0, limit = 20) {
   const vn = readVnAssets(world);
-  const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.min(20, Math.max(1, Math.floor(limit)));
+  const { offset: safeOffset, limit: safeLimit } = normalizeStudioVisualAuditPage(offset, limit);
   const all: VisualAuditInput[] = kind === "characters"
     ? characterCoverage(world, vn).flatMap((character) => {
         const description = world.entries.find((entry) => entry.id === character.characterId)?.content.slice(0, 4000) ?? "";

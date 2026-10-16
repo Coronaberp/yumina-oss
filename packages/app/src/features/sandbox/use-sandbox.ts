@@ -36,8 +36,12 @@ export function useSandbox(opts: {
   sandboxUrlOverride?: string;
 }) {
   const [ready, setReady] = useState(false);
-  // True once the world's root component has actually painted (not just booted).
+  // True when the displayed scene and its assets can paint together.
   const [rendered, setRendered] = useState(false);
+  const [assetError, setAssetError] = useState(false);
+  // Readiness is latched for this iframe's lifetime. Root reinstalls and
+  // ordinary state updates must never cover an already interactive story.
+  const initiallyRenderedRef = useRef(false);
   const bridgeRef = useRef<SandboxBridge | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const onApiCallRef = useRef(opts.onApiCall);
@@ -65,7 +69,12 @@ export function useSandbox(opts: {
       onDiag: (event, data) => onDiagRef.current?.(event, data),
       onComposerDraft: (text) => onComposerDraftRef.current?.(text),
       onPlayInteraction: () => onPlayInteractionRef.current?.(),
-      onRendered: () => setRendered(true),
+      onRendered: (ready, failed) => {
+        if (initiallyRenderedRef.current) return;
+        if (ready) initiallyRenderedRef.current = true;
+        setRendered(ready);
+        setAssetError(failed);
+      },
     });
     bridgeRef.current = bridge;
 
@@ -79,7 +88,9 @@ export function useSandbox(opts: {
       bridge.destroy();
       bridgeRef.current = null;
       setReady(false);
+      initiallyRenderedRef.current = false;
       setRendered(false);
+      setAssetError(false);
     };
   }, []);
 
@@ -144,6 +155,7 @@ export function useSandbox(opts: {
   return {
     ready,
     rendered,
+    assetError,
     iframeRefCallback,
     sandboxUrl: withParentOrigin(opts.sandboxUrlOverride ?? SANDBOX_URL),
     pushTheme,

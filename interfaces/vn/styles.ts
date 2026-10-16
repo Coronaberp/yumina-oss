@@ -63,7 +63,8 @@ export const styles = `
   .vn-log-row,.vn-log-row.choice{grid-template-columns:minmax(0,1fr);gap:10px;margin-bottom:24px;min-height:0}
   .vn-log-speaker,.vn-log-row.choice .vn-log-speaker{flex-direction:row;align-items:center;gap:10px;padding:0;height:auto;font-size:16px;line-height:24px}
   .vn-avatar{width:32px;height:32px;margin-top:0}
-  .vn-speaker-name{max-width:none}
+  .vn-log .vn-speaker-name{max-width:none;white-space:normal}
+  .vn-log .vn-speaker-name .vn-name-text{display:block;white-space:normal;overflow-wrap:anywhere}
   .vn-log-copy{padding-top:0;font-size:18px;line-height:28px}
   .vn-log-row:has(+.vn-narration){margin-bottom:12px}
   .vn-narration,.vn-thinking,.vn-load-earlier{margin-left:0}

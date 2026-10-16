@@ -10,6 +10,8 @@ export const MEMORY_APP_DDL = [
   `ALTER TABLE storyhaven_memory_sessions ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0`,
   `ALTER TABLE storyhaven_memory_sessions ADD COLUMN IF NOT EXISTS source_hash TEXT`,
   `ALTER TABLE storyhaven_memory_sessions ADD COLUMN IF NOT EXISTS reset_epoch BIGINT NOT NULL DEFAULT 0`,
+  `ALTER TABLE storyhaven_memory_sessions ADD COLUMN IF NOT EXISTS story_model TEXT`,
+  `ALTER TABLE storyhaven_memory_sessions ADD COLUMN IF NOT EXISTS story_profile_id TEXT`,
   `INSERT INTO storyhaven_memory_sessions(session_id,backend) SELECT id,'legacy' FROM play_sessions ON CONFLICT DO NOTHING`,
   `CREATE OR REPLACE FUNCTION storyhaven_memory_session_created() RETURNS TRIGGER AS $$ BEGIN
     INSERT INTO storyhaven_memory_sessions(session_id,backend) VALUES(NEW.id,CASE WHEN EXISTS(SELECT 1 FROM storyhaven_memory_accounts WHERE user_id=NEW.user_id) THEN 'storyhaven' ELSE 'legacy' END) ON CONFLICT DO NOTHING;

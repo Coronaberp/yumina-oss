@@ -11,6 +11,7 @@ import { studioImageReferenceGuidance } from "./studio-image-references.js";
 import { integrateReadyStudioImageTasks } from "./studio-image-workflow.js";
 import { animaModelSupportsNsfw, canChangeAnimaModel } from "./image-generation/anima-workflow.js";
 import { studioImageNotifications } from "./studio-image-notifications.js";
+import { CODEX_IMAGE_LABEL } from "./image-generation/codex-service.js";
 
 const TEMPLATE = "studio-configured-image";
 type Job = typeof generationJobs.$inferSelect;
@@ -21,7 +22,7 @@ const describe = (job: Job) => {
     assetStatus?: string; assetReason?: string; taskPreflight?: unknown; progressPhase?: string; progressPercent?: number };
   const animaEnabled = params.proposal?.animaEnabled === true;
   const workflowEditable = job.status === "queued" && Number.isFinite(params.preparationUntil) && (params.preparationUntil ?? 0) > Date.now();
-  return { jobId: job.id, status: job.status, assetIds: job.assetIds ?? [],
+  return { jobId: job.id, status: job.status, source: params.proposal?.source, model: params.proposal?.model, assetIds: job.assetIds ?? [],
     refs: (job.assetIds ?? []).map(id => `@asset:${id}`), errorCode: job.errorCode, errorMessage: job.errorMessage,
     referenceImages: params.proposal?.referenceImages ?? [], referencePrepareUntil: params.referencePrepareUntil,
     referenceEditable: job.status === "queued" && (params.referencePrepareUntil ?? 0) > Date.now(), target: params.proposal?.target,
@@ -70,7 +71,9 @@ export function createConfiguredImageJobs(generate = generateStudioImage) {
     const params = job.params as unknown as Options & { requestId: string; retryCount?: number };
     try {
       controller.signal.throwIfAborted();
-      const referenceGuidance = params.proposal.referenceImages?.length || params.proposal.styleInstructions
+      const referenceGuidance = params.proposal.contentRating === "nsfw"
+        ? (params.proposal.styleInstructions ? `\n\nProject visual style:\n${params.proposal.styleInstructions}` : "")
+        : params.proposal.referenceImages?.length || params.proposal.styleInstructions
         ? `\n\n${studioImageReferenceGuidance(params.proposal.referenceImages ?? [], params.proposal.styleInstructions)}` : "";
       let lastProgressWrite = 0;
       const progress = (value: { phase: string; percent?: number }) => {
@@ -208,6 +211,7 @@ export function createConfiguredImageJobs(generate = generateStudioImage) {
       if (!canChangeAnimaModel({ status: job.status, animaEnabled: params.proposal.animaEnabled === true,
         preparationUntil: params.preparationUntil })) return describe(job);
       if (!installedModels.includes(model)) return null;
+      if (params.proposal.contentRating === "nsfw" && !animaModelSupportsNsfw(model)) return null;
       const nextParams = { ...job.params, proposal: { ...params.proposal, animaModel: model } };
       const [updated] = await tx.update(generationJobs).set({ params: nextParams })
         .where(and(eq(generationJobs.id, jobId), eq(generationJobs.status, "queued"))).returning();
@@ -225,12 +229,13 @@ export function createConfiguredImageJobs(generate = generateStudioImage) {
     if (!canChangeAnimaModel({ status: job.status, animaEnabled: proposal.workflowOptions !== undefined || proposal.animaEnabled === true,
       preparationUntil: params.preparationUntil })) return describe(job);
     if (!proposal.workflowOptions?.[options.workflow] || (options.seedMode === "fixed" && options.seed === undefined)
-      || (options.workflow === "krea" && (proposal.referenceImages?.length ?? 0) > 4)) return null;
+      || (options.workflow === "krea" && options.contentRating !== "nsfw" && (proposal.referenceImages?.length ?? 0) > 4)) return null;
     const model = options.workflow === "anima" ? options.animaModel ?? proposal.animaModel : undefined;
     if (options.workflow === "anima" && (!model || !installedAnimaModels.includes(model))) return null;
     const nsfwCapable = options.workflow === "krea" || (options.workflow === "anima" && !!model && animaModelSupportsNsfw(model));
     if (options.contentRating === "nsfw" && !nsfwCapable) return null;
     const nextProposal: ImageProposal = { ...proposal, source: options.workflow === "codex" ? "codex" : "comfyui",
+      model: options.workflow === "codex" ? CODEX_IMAGE_LABEL : options.workflow === "krea" ? "Krea2-Anime v2.0 INT4 · local" : "ComfyUI",
       imageWorkflow: options.workflow, animaEnabled: options.workflow === "anima", contentRating: options.contentRating,
       transparent: proposal.imageKind === "sprite" && options.transparent, seedMode: options.seedMode,
       ...(options.seedMode === "fixed" ? { seed: options.seed } : { seed: undefined }), cfg: options.cfg, steps: options.steps,

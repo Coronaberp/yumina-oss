@@ -44,6 +44,8 @@ interface UiState {
    *  call is routed sandbox → world-renderer → this store). Transient — excluded
    *  from persistence so it never auto-reopens on reload. */
   personaManagerOpen: boolean;
+  sessionExportOpen: boolean;
+  storyRoutesOpen: boolean;
   /** In-play "share this playthrough" overlay. Opened from the composer "+"
    *  menu (sandbox → world-renderer → this store). Transient — not persisted. */
   sharePlaythroughOpen: boolean;
@@ -71,6 +73,10 @@ interface UiState {
   closeSessionManager: () => void;
   openPersonaManager: () => void;
   closePersonaManager: () => void;
+  openStoryRoutes: () => void;
+  closeStoryRoutes: () => void;
+  openSessionExport: () => void;
+  closeSessionExport: () => void;
   openSharePlaythrough: () => void;
   closeSharePlaythrough: () => void;
   openTipModal: () => void;
@@ -123,6 +129,8 @@ export const useUiStore = create<UiState>()(
       dismissedEventPromos: [],
       sessionManagerOpen: false,
       personaManagerOpen: false,
+      sessionExportOpen: false,
+      storyRoutesOpen: false,
       sharePlaythroughOpen: false,
       tipModalOpen: false,
       guestContentLevel: "safe" satisfies ContentLevel as ContentLevel,
@@ -148,6 +156,10 @@ export const useUiStore = create<UiState>()(
       closeSessionManager: () => set({ sessionManagerOpen: false }),
       openPersonaManager: () => set({ personaManagerOpen: true }),
       closePersonaManager: () => set({ personaManagerOpen: false }),
+      openStoryRoutes: () => set({ storyRoutesOpen: true }),
+      closeStoryRoutes: () => set({ storyRoutesOpen: false }),
+      openSessionExport: () => set({ sessionExportOpen: true }),
+      closeSessionExport: () => set({ sessionExportOpen: false }),
       openSharePlaythrough: () => set({ sharePlaythroughOpen: true }),
       closeSharePlaythrough: () => set({ sharePlaythroughOpen: false }),
       openTipModal: () => set({ tipModalOpen: true }),
@@ -171,7 +183,7 @@ export const useUiStore = create<UiState>()(
       name: "yumina-ui",
       // Don't persist the transient persona-manager overlay flag, or it would
       // auto-reopen on the next page load.
-      partialize: ({ personaManagerOpen: _omit, sharePlaythroughOpen: _omit2, tipModalOpen: _omit3, ...rest }) => rest,
+      partialize: ({ personaManagerOpen: _omit, sharePlaythroughOpen: _omit2, tipModalOpen: _omit3, sessionExportOpen: _omit4, storyRoutesOpen: _omit5, ...rest }) => rest,
       // Migrate the legacy "r18" guestContentLevel value (persisted before the
       // sensitive-content rename) so old browser caches don't keep round-tripping it.
       // Also drop the retired sidebar-collapse keys so old persisted state can't
@@ -181,6 +193,8 @@ export const useUiStore = create<UiState>()(
         const {
           sidebarCollapsed: _legacySidebarCollapsed,
           hasSeenCollapseHint: _legacyHasSeenCollapseHint,
+          sessionExportOpen: _legacyExportOpen,
+          storyRoutesOpen: _legacyRoutesOpen,
           ...persisted
         } = persistedState as Partial<UiState> & {
           guestContentLevel?: unknown;

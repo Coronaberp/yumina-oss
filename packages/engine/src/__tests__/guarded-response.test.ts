@@ -53,8 +53,18 @@ function fixture(extra: Partial<Variable>[] = []) {
 const codes = (r: ReturnType<typeof parseGuardedResponse>) => r.diagnostics.map((d) => d.code);
 
 describe("State Update Guard acknowledgement", () => {
+  it("hides malformed yield receipts without treating them as acknowledgement or applying their batch", () => {
+    const result = fixture().parse('Story.\n[health: subtract 4]\n<yield>yumina-state version="1" status="updated" count="1"</yield>');
+    expect(result).toMatchObject({ outcome: 'invalid', cleanText: 'Story.', effects: [] });
+    expect(codes(result)).toContain('missing_receipt');
+  });
   it("hides variable-update wrappers without changing guarded operations or receipt counts", () => {
     const result = fixture().parse(`The clerk waits.\n<variable-updates>\n[energy: subtract 1]\n</variable-updates>\n${updated(1)}`);
+    expect(result).toMatchObject({ outcome: "valid-updates", cleanText: "The clerk waits.", declaredCount: 1 });
+    expect(result.effects).toEqual([{ variableId: "energy", operation: "subtract", value: 1 }]);
+  });
+  it("hides square-bracket variable-update headings while still applying their actual operations", () => {
+    const result = fixture().parse(`The clerk waits.\n[Variable-updates]\n[energy: subtract 1]\n[/Variable-updates]\n${updated(1)}`);
     expect(result).toMatchObject({ outcome: "valid-updates", cleanText: "The clerk waits.", declaredCount: 1 });
     expect(result.effects).toEqual([{ variableId: "energy", operation: "subtract", value: 1 }]);
   });

@@ -1,3 +1,13 @@
+import { canSelectStoryOpening } from "@/lib/can-select-story-opening";
+import { useUserProfileStore } from "@/stores/user-profile";
+import { saveVnTextPreferences } from "@/lib/vn-text-preferences";
+import { normalizeVnText } from "@yumina/shared";
+import { withVnTextSettings } from "@/features/editor/lib/vn-text-template";
+import { upgradeVnPortraitFiles } from "./vn-portrait-upgrade";
+import { upgradeVnMetadataFiles } from "./vn-metadata-upgrade";
+import vnPortraitSource from "../../../../../interfaces/vn/portrait-ref.ts?raw";
+import vnAngleSource from "../../../../../interfaces/vn/angle-markup.ts?raw";
+import { stripAngleMarkup, stripStateReceipts } from "@yumina/engine";
 import { ChatAssetPicker } from "./chat-asset-picker";
 import { readChatAsset } from "@/lib/chat-asset-input";
 import { chatImageCopy as chatInputCopy } from "@/lib/chat-image-input";
@@ -30,6 +40,10 @@ import { visibleSessionVariables } from "./visible-variables";
 import { currentStatusFiles } from "@/features/editor/lib/status-template-upgrade";
 import { upgradeVnLoadingFiles } from "./vn-loading-progress";
 import vnLoadingSource from "../../../../../interfaces/vn/loading-status.tsx?raw";
+import { upgradeVnReadingFiles } from "./vn-reading-upgrade";
+import vnReadingSource from "../../../../../interfaces/vn/reading.ts?raw";
+import { upgradeVnCharacterVisibilityFiles } from "./vn-character-visibility-upgrade";
+import vnCharacterVisibilitySource from "../../../../../interfaces/vn/character-visibility.ts?raw";
 import { isCompiledValid, type CompiledRoot } from "@/features/studio/lib/compiled-format";
 import { absoluteImageUrl } from "@/lib/asset-url";
 import type { YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
@@ -202,7 +216,7 @@ export function WorldRenderer({
   const modelFallback = useChatStore((s) => s.modelFallback?.sessionId === sessionId ? s.modelFallback : null);
   const files = useMemo(() => {
     const adapted = adaptOncinGalleryFiles(worldId, incomingFiles);
-    return adapted ? upgradeVnLoadingFiles(currentStatusFiles(adapted), vnLoadingSource) : adapted;
+    return adapted ? upgradeVnMetadataFiles(upgradeVnPortraitFiles(withVnTextSettings(upgradeVnCharacterVisibilityFiles(upgradeVnReadingFiles(upgradeVnLoadingFiles(currentStatusFiles(adapted), vnLoadingSource), vnReadingSource), vnCharacterVisibilitySource)), vnPortraitSource), vnAngleSource) : adapted;
   }, [worldId, incomingFiles]);
   const bgmVolume = useAudioStore((s) => s.bgmVolume);
   const sfxVolume = useAudioStore((s) => s.sfxVolume);
@@ -224,6 +238,7 @@ export function WorldRenderer({
   const composerSendKey = useUiStore((s) => s.composerSendKey ?? "enter");
   const uiFontSize = useUiStore((s) => s.fontSize ?? "default");
   const uiFontScale = FONT_SIZE_SCALE[uiFontSize] ?? 1;
+  const vnTextPreferences = useUserProfileStore(s => s.profile?.preferences.vnTextPreferences);
   const isImmersive = useUiStore((s) => s.theaterMode);
   const [systemFullscreen, setSystemFullscreen] = useState(() => Boolean(document.fullscreenElement));
   const canSystemFullscreen = Boolean(document.fullscreenEnabled && document.documentElement.requestFullscreen);
@@ -539,6 +554,12 @@ export function WorldRenderer({
         }
         case "openPersonaManager":
           useUiStore.getState().openPersonaManager();
+          return;
+        case "openStoryRoutes":
+          if (mode === "session" && sessionIdRef.current === useChatStore.getState().session?.id && capabilities.canUseSessionApis && canSelectStoryOpening(useChatStore.getState())) useUiStore.getState().openStoryRoutes();
+          return;
+        case "openSessionExport":
+          if (mode === "session" && sessionIdRef.current && capabilities.canUseSessionApis && !useChatStore.getState().readOnly) useUiStore.getState().openSessionExport();
           return;
         case "sharePlaythrough":
           useUiStore.getState().openSharePlaythrough();
@@ -879,6 +900,8 @@ export function WorldRenderer({
             };
           });
         }
+        case "setVnTextPreferences":
+          return saveVnTextPreferences(args[0]);
         case "getStateGuardSettings":
         case "setStateGuardSettings": {
           const sid = sessionIdRef.current;
@@ -899,6 +922,27 @@ export function WorldRenderer({
             const result = await response.json();
             if (!response.ok) throw new Error(result.error ?? "Content flag request failed");
             return result.data;
+          });
+        }
+        case 'getCharacterHistory': {
+          const sid = sessionIdRef.current, [characterId, beforeMessageId, label, swipeIndex] = args;
+          if (!sid || mode !== 'session' || !capabilities.canUseSessionApis || [characterId, beforeMessageId, label].some(value => typeof value !== 'string')) return Promise.reject(new Error('Saved character history is unavailable'));
+          const query = new URLSearchParams({ characterId: String(characterId), beforeMessageId: String(beforeMessageId), label: String(label), ...(typeof swipeIndex === 'number' ? { swipeIndex: String(swipeIndex) } : {}) });
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/character-history?${query}`, { credentials: 'include', signal: AbortSignal.timeout(20_000) }).then(async response => {
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error ?? 'Could not load saved character history');
+            return result.data;
+          });
+        }
+        case 'getCharacterEncounters': {
+          const sid = sessionIdRef.current, beforeMessageId = args[0];
+          if (!sid || mode !== 'session' || !capabilities.canUseSessionApis || typeof beforeMessageId !== 'string') return Promise.resolve([]);
+          return fetch(`${apiBase}/api/sessions/${encodeURIComponent(sid)}/character-encounters?beforeMessageId=${encodeURIComponent(beforeMessageId)}`, {
+            credentials: 'include', signal: AbortSignal.timeout(20_000),
+          }).then(async response => {
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error ?? 'Could not load character encounters');
+            return result.data.characterIds;
           });
         }
         case 'getPersonaControlMode':
@@ -1539,6 +1583,7 @@ export function WorldRenderer({
   const {
     ready: sandboxReady,
     rendered: worldRendered,
+    assetError: sceneAssetError,
     iframeRefCallback,
     sandboxUrl,
     installRoot,
@@ -1599,32 +1644,22 @@ export function WorldRenderer({
     if (saved) restoreComposerDraft(saved);
   }, [worldRendered, sessionId, restoreComposerDraft]);
 
+  const transcriptRestoredForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (worldRendered) restoreTranscriptPosition(api.currentUser?.id ?? "guest", sessionId);
+    const accountId = api.currentUser?.id ?? "guest";
+    const scope = JSON.stringify([accountId, sessionId]);
+    // A later expression/background load must not reset the player's scroll.
+    if (!worldRendered || transcriptRestoredForRef.current === scope) return;
+    transcriptRestoredForRef.current = scope;
+    restoreTranscriptPosition(accountId, sessionId);
   }, [worldRendered, sessionId, api.currentUser?.id, restoreTranscriptPosition]);
 
-  // ── Loading overlay: keep a spinner up until the world actually paints ──
-  // worldRendered flips when the sandbox reports its root component's first
-  // paint (component-host posts "rendered" after a double-rAF). Gating on this
-  // instead of the boot handshake removes the "spinner gone -> grey gap -> pop-in"
-  // that the opacity-on-ready gate produced.
-  const [revealed, setRevealed] = useState(false);
-  useEffect(() => {
-    if (worldRendered) setRevealed(true);
-  }, [worldRendered]);
-  // Safety net: once the iframe runtime has booted, reveal after a grace window
-  // even if no paint signal arrives (e.g. a stale cached sandbox build that
-  // predates the "rendered" message, or a world that renders nothing) — so we
-  // never cover the iframe forever.
-  useEffect(() => {
-    if (!sandboxReady) return;
-    const t = window.setTimeout(() => setRevealed(true), 5000);
-    return () => window.clearTimeout(t);
-  }, [sandboxReady]);
+  // Keep the loading screen until the sandbox confirms a complete scene,
+  // including media downloads, image decode and fonts. Later assets load inline.
+  const revealed = worldRendered;
 
   // ── Boot watchdog: the iframe document itself failing to load ─────────────
-  // The safety net above only arms once the runtime has booted, so it cannot
-  // cover the case where the sandbox DOCUMENT never arrives — a 503 during a
+  // Asset readiness cannot cover the case where the sandbox DOCUMENT never arrives — a 503 during a
   // deploy swap, a dropped connection, an edge hiccup. There is no `error`
   // event to hook either: a 503 still *loads* (the error page renders), so the
   // only observable symptom is a ready handshake that never comes. Left alone
@@ -1937,7 +1972,7 @@ export function WorldRenderer({
       error: (api as any).error ?? null,
       readOnly: (api as any).readOnly ?? false,
       checkpoints: (api as any).checkpoints ?? [],
-      greetingContent: (api as any).greetingContent ?? null,
+      greetingContent: typeof (api as any).greetingContent === 'string' ? stripAngleMarkup(stripStateReceipts((api as any).greetingContent)) : null,
       selectedModel: (api as any).selectedModel ?? "",
       modelFallback,
       userPlan: (api as any).userPlan ?? "free",
@@ -1963,6 +1998,7 @@ export function WorldRenderer({
       capabilities,
       composerSendKey,
       uiFontScale,
+      vnTextPreferences: normalizeVnText(vnTextPreferences),
       sendFailureNonce: (api as any).sendFailureNonce ?? 0,
     };
     pushIfChanged("ui", data);
@@ -1997,6 +2033,7 @@ export function WorldRenderer({
           background: "var(--color-background, #121316)",
           colorScheme: "dark",
           opacity: revealed ? 1 : 0,
+          pointerEvents: revealed ? 'auto' : 'none',
           transition: "opacity 150ms ease",
         }}
       />
@@ -2012,22 +2049,24 @@ export function WorldRenderer({
       {!revealed && (
         <div
           className="absolute inset-0 flex items-center justify-center"
+          role="status"
+          aria-label={sceneAssetError ? 'Scene assets could not load' : 'Loading scene'}
           style={{
             background: "var(--color-background, #121316)",
-            pointerEvents: bootFailed ? "auto" : "none",
+            pointerEvents: "auto",
           }}
         >
-          {bootFailed ? (
+          {bootFailed || sceneAssetError ? (
             <div className="flex max-w-xs flex-col items-center gap-3 px-6 text-center">
               <p className="text-sm text-muted-foreground">
-                {i18n.t(
+                {sceneAssetError ? 'Some scene assets could not load. Check your connection and try again.' : i18n.t(
                   "chat:view.sandboxBootFailed",
                   "Couldn't load this world's interface. Check your connection and try again.",
                 )}
               </p>
               <button
                 type="button"
-                onClick={retryBoot}
+                onClick={sceneAssetError ? () => window.location.reload() : retryBoot}
                 className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
               >
                 {i18n.t("chat:view.retry", "Retry")}
@@ -2038,6 +2077,7 @@ export function WorldRenderer({
             // still running, and swapping it for an error would be a lie.
             <div className="flex max-w-xs flex-col items-center gap-3 px-6 text-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+              <p className="text-sm text-muted-foreground">{i18n.t('chat:view.loadingScene', 'Loading scene…')}</p>
               {bootSlow && (
                 <p className="text-xs text-muted-foreground">
                   {i18n.t(

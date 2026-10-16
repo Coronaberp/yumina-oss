@@ -33,6 +33,19 @@ test("saved assistant metadata cannot become a final VN page, while original raw
   assert.equal(slimMessages([user])[0], user);
 });
 
+test("malformed yield receipts never enter a saved VN dialogue log, with original raw output retained", () => {
+  const content = '*Lupe listens.*\n\n<yield>yumina-state version="1" status="updated" count="4"</yield>';
+  const original = msg({ content, activeSwipeIndex: 0, swipes: [{ content, rawContent: content }] });
+  const [out] = slimMessages([original]);
+  assert.equal(out.content, '*Lupe listens.*');
+  const swipe = (out.swipes as Array<Record<string, unknown>>)[0]!;
+  assert.equal(swipe.content, '*Lupe listens.*');
+  assert.equal(swipe.rawContent, content);
+  assert.equal(original.content, content);
+  const player = { role: 'user', content };
+  assert.equal(slimMessages([player])[0], player);
+});
+
 test("slimMessages keeps message-level stateSnapshot (renderers + compacted display read it)", () => {
   const [out] = slimMessages([msg()]);
   assert.deepEqual(out.stateSnapshot, { variables: { hp: 10 } });
@@ -132,4 +145,26 @@ test("message-only audit enrichment cannot take an active swipe's unrelated orig
   assert.equal((out.stateValidation as StateValidationAudit).originalRaw, undefined);
   assert.deepEqual((out.stateValidation as StateValidationAudit).variableNames, { health: "Health" });
   assert.equal(Object.hasOwn(audit, "variableNames"), false);
+});
+
+
+test("choice handoff metadata is absent from VN and chat display while raw output and player text stay exact", () => {
+  const content = '*The librarian waits.*\n\n<Yield>Choices follow</yield>';
+  const original = msg({ content, activeSwipeIndex: 0, swipes: [{ content, rawContent: content }] });
+  const [out] = slimMessages([original]);
+  assert.equal(out.content, '*The librarian waits.*');
+  assert.equal((out.swipes as Array<Record<string, unknown>>)[0]!.content, '*The librarian waits.*');
+  assert.equal((out.swipes as Array<Record<string, unknown>>)[0]!.rawContent, content);
+  assert.equal(original.content, content);
+  const user = { role: 'user', content };
+  assert.equal(slimMessages([user])[0], user);
+});
+
+
+test("unknown angle tags cannot leak from old saved messages, while raw content remains intact", () => {
+  const content = 'Before\n<Yunmina-state version="1" status="updated" count="3"/>\n<another-control>After</another-control>';
+  const original = msg({ content, activeSwipeIndex: 0, swipes: [{ content, rawContent: content }] });
+  const [out] = slimMessages([original]);
+  assert.equal(out.content, 'Before\n\nAfter');
+  assert.equal((out.swipes as Array<Record<string, unknown>>)[0]!.rawContent, content);
 });

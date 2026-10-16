@@ -23,7 +23,8 @@ function withProfileSettings(provider: LLMProvider, metadata?: ApiKeyMetadata | 
         temperature: metadata?.temperature ?? params.temperature,
         topP: metadata?.topP ?? params.topP,
         topK: metadata?.topK ?? params.topK,
-        reasoningEffort: params.disableReasoning ? "none" : metadata?.reasoningEffort ?? params.reasoningEffort ?? AI_GENERATION_DEFAULTS.reasoningEffort,
+        disableReasoning: params.reasoningEffortOverride ? false : params.disableReasoning,
+        reasoningEffort: params.reasoningEffortOverride ?? (params.disableReasoning ? "none" : metadata?.reasoningEffort ?? params.reasoningEffort ?? AI_GENERATION_DEFAULTS.reasoningEffort),
       });
       if (property === "getContextWindow" && hasLimit) return async () => {
         const detected = await target.getContextWindow?.();

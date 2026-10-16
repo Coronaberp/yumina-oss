@@ -148,10 +148,11 @@ export function sceneSprites(api, readLines, limit) {
   let scene = "", order = 0;
   for (const line of readLines) {
     if (line.scene && line.scene !== scene) { cast.clear(); scene = line.scene; }
-    if (!line.name) continue;
-    const key = spriteKey(line);
+    const name = line.name || line.stageName;
+    if (!name) continue;
+    const key = spriteKey({ ...line, name });
     const previous = cast.get(key);
-    cast.set(key, { name: line.name, emotion: line.emotion, ...(line.player ? { player: true } : {}), ...(line.npcGender ? { key, npcGender: line.npcGender, npcId: line.npcId } : {}), first: previous?.first ?? order, last: order++ });
+    cast.set(key, { name, emotion: line.emotion, ...(line.player ? { player: true } : {}), ...(line.npcGender ? { key, npcGender: line.npcGender, npcId: line.npcId } : {}), first: previous?.first ?? order, last: order++ });
   }
   return [...cast.values()].map(character => ({ ...character, emotion: normalizeSpriteExpression(character.emotion || api.variables?.[`${character.name.toLowerCase()}-emotion`]), ...spriteDetailsFor(api, character) }))
     .filter(character => character.src).sort((a, b) => b.last - a.last).slice(0, limit)

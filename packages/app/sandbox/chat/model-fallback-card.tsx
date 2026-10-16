@@ -1,3 +1,4 @@
+import { Checkbox } from "../../src/components/ui/checkbox";
 import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertCircle, ArrowRightLeft, ChevronDown, Loader2 } from "lucide-react";
@@ -57,7 +58,7 @@ export function ModelFallbackCard({ notice }: { notice: ModelFallbackNotice }) {
             <summary className="w-fit cursor-pointer py-1 hover:text-muted-foreground">{t("compactOptions")}</summary>
             <div className="mt-1 space-y-2 border-l border-border/50 pl-3 text-muted-foreground">
               {canRemember && <label className="flex min-h-8 cursor-pointer items-center gap-2">
-                <input type="checkbox" checked={remember} disabled={busy || !canUseBackup} onChange={(e) => setRemember(e.target.checked)} className="h-3.5 w-3.5 shrink-0 accent-primary" />
+                <Checkbox  checked={remember} disabled={busy || !canUseBackup} onCheckedChange={(checked) => setRemember((checked === true))} className="h-3.5 w-3.5 shrink-0 accent-primary" />
                 <span>{t("remember")}</span>
               </label>}
               <p>{t("rememberHint")}</p>

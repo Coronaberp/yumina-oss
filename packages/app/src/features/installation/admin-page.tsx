@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Github, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AdminImageGeneration } from "./admin-image-generation";
 
 interface GitHubSettings {clientId:string;secretConfigured:boolean;ownerLogin:string;ownerGitHubId:string;callbackUrl:string;authMode:string;signInMethod:string;activeGitHubConfigured:boolean;restartRequired?:boolean}
 export function LocalAdminPage() {
@@ -19,7 +20,8 @@ export function LocalAdminPage() {
   };
   return <div data-scroll-restoration-id="local-admin" className="h-full overflow-y-auto">
     <div className="mx-auto w-full max-w-[1000px] space-y-6 px-4 py-8 pb-20 sm:px-8 sm:py-10 sm:pb-20">
-      <header className="mb-8"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 shrink-0 text-gold" aria-hidden="true" /><h1 className="text-3xl font-black tracking-tight text-main sm:text-4xl">Administration</h1></div><p className="mt-2 text-sm text-sub">Manage sign-in for this Yumina installation.</p></header>
+      <header className="mb-8"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 shrink-0 text-gold" aria-hidden="true" /><h1 className="text-3xl font-black tracking-tight text-main sm:text-4xl">Administration</h1></div><p className="mt-2 text-sm text-sub">Manage sign-in and image generation for this Yumina installation.</p></header>
+      <AdminImageGeneration />
       {error&&<p role="alert" className="rounded-lg border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-300">{error}</p>}
       {notice&&<p role="status" className="rounded-lg border border-gold/30 bg-gold/10 p-3 text-sm text-gold">{notice}</p>}
       {!settings&&!error&&<p role="status" className="text-sub">Loading authentication settings…</p>}

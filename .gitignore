@@ -31,3 +31,7 @@ worlds/
 *.log
 .DS_Store
 Thumbs.db
+
+# Additional local development and deployment files
+**/.yumina-deploy-backups/
+work/

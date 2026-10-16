@@ -21,7 +21,10 @@ import {
   parseLeadingSpeakerTag,
   isPartialLeadingSpeakerTag,
 } from "@yumina/engine";
-import { dialogueSpans, plainDialogue, speechAttribution } from "./dialogue-spans";
+import { speechAttribution } from "./dialogue-spans";
+import { chatDialogueSpans } from "./chat-dialogue-spans";
+import { markedSpeakerPassages } from "./speaker-markers";
+import { hasMarkdownBlockStructure } from "../../src/lib/chat-markdown-blocks";
 
 export { displayCharacterName, isPartialLeadingSpeakerTag };
 
@@ -128,6 +131,10 @@ export interface SpeakerSection {
   text: string;
   /** Prose to render, with an explicit `Name:` label moved into the header. */
   content: string;
+  emotion?: string;
+  npcGender?: string;
+  npcId?: string;
+  scene?: string;
 }
 
 /** Split the display text, never the raw provider output: display rules and
@@ -137,6 +144,40 @@ export function splitSpeakerSections(
   entries: ReadonlyArray<SpeakerEntry> | null | undefined,
   content: string,
   rawContent = content,
+  options: { streaming?: boolean } = {},
+): SpeakerSection[] {
+  // Keep the original once-only tag's legacy behavior. Three-field engine
+  // markers carry speaker identity until the next marker, across paragraphs.
+  const display = parseLeadingSpeakerTag(content).text;
+  const characters = (entries ?? []).filter(e => e.role === "character" && e.enabled !== false);
+  const names = characters.map(e => displayCharacterName(e.name));
+  const passages = markedSpeakerPassages(display, names, rawContent, !!options.streaming);
+  if (!passages) return splitLegacySpeakerSections(entries, content, rawContent);
+  const sections: SpeakerSection[] = [];
+  let pendingSource = "";
+  for (const passage of passages) {
+    const name = passage.marker?.name;
+    const character = name ? characters.find(e => displayCharacterName(e.name) === canonicalCharacterName(names, name)) : undefined;
+    const speaker = name ? name.toLowerCase() === NARRATOR_SPEAKER ? null : character ? toSpeaker(character) : { name: "NPC", portrait: null } : undefined;
+    const parts = splitLegacySpeakerSections(entries, passage.text, rawContent, speaker);
+    pendingSource += passage.sourcePrefix;
+    if (!parts.length) { pendingSource += passage.text; continue; }
+    parts[0]!.text = pendingSource + parts[0]!.text;
+    pendingSource = "";
+    for (const part of parts) sections.push({ ...part,
+      ...(passage.marker ? { emotion: part.speaker ? passage.marker.emotion : "normal", npcGender: passage.marker.npcGender, npcId: passage.marker.npcId } : {}),
+      ...(passage.scene ? { scene: passage.scene } : {}),
+    });
+  }
+  if (pendingSource && sections.length) sections.at(-1)!.text += pendingSource;
+  return sections;
+}
+
+function splitLegacySpeakerSections(
+  entries: ReadonlyArray<SpeakerEntry> | null | undefined,
+  content: string,
+  rawContent: string,
+  forcedSpeaker?: Speaker | null,
 ): SpeakerSection[] {
   const contentTag = parseLeadingSpeakerTag(content);
   content = contentTag.text;
@@ -220,11 +261,22 @@ export function splitSpeakerSections(
   };
   for (let i = 0; i < starts.length; i++) {
     const text = content.slice(starts[i], starts[i + 1] ?? content.length);
-    const label = explicitLabel(text);
+    const label = forcedSpeaker === undefined ? explicitLabel(text) : null;
     const prose = label?.content ?? text;
+    if (hasMarkdownBlockStructure(prose)) {
+      append(forcedSpeaker !== undefined ? forcedSpeaker : label?.speaker ?? null, text, prose);
+      continue;
+    }
     const named = paragraphCharacter(prose);
-    let context = label ? label.speaker : named ? toSpeaker(named) : i === 0 && hasInitialSpeaker ? initialSpeaker : characters.length === 1 ? toSpeaker(characters[0]!) : null;
-    const spans = isIndentedCode(prose) ? [{ kind: "literal" as const, text: prose, end: prose.length }] : dialogueSpans(prose);
+    let context = forcedSpeaker !== undefined ? forcedSpeaker : label ? label.speaker : named ? toSpeaker(named) : i === 0 && hasInitialSpeaker ? initialSpeaker : characters.length === 1 ? toSpeaker(characters[0]!) : null;
+    const spans = isIndentedCode(prose) ? [{ kind: "literal" as const, text: prose, end: prose.length }] : chatDialogueSpans(prose);
+    const adjacentAttribution = (index: number) => {
+      const neighbor = spans[index];
+      // Unquoted roleplay needs an explicit, adjacent italic speech
+      // attribution. A mentioned name or an ordinary action is not enough.
+      return neighbor?.kind === "action" && /^(?:\*(?!\*)|_(?!_))/.test(neighbor.text)
+        ? speechAttribution(neighbor.text, names) : null;
+    };
     let previousDialogueEnd = 0;
     let pendingText = "";
     let pendingContent = "";
@@ -246,25 +298,33 @@ export function splitSpeakerSections(
         const adjacent = preceding.slice(Math.max(...[".", "!", "?", "\n"].map(boundary => preceding.lastIndexOf(boundary))) + 1).replace(/^[\s*_]+/, "");
         const before = speechAttribution(adjacent, names);
         const attribution = before.matched ? before : speechAttribution(prose.slice(span.end), names);
-        if (!label && attribution.matched) {
+        if (forcedSpeaker === undefined && !label && attribution.matched) {
           const attributed = characters.find(e => displayCharacterName(e.name) === attribution.name);
           context = attributed ? toSpeaker(attributed) : null;
         }
         resolved = label ? label.speaker : context;
-        if (!resolved && !(label && !label.speaker) && !(i === 0 && tag.speaker === NARRATOR_SPEAKER)) resolved = npc;
+        if (!resolved && forcedSpeaker === undefined && !(label && !label.speaker) && !(i === 0 && tag.speaker === NARRATOR_SPEAKER)) resolved = npc;
         previousDialogueEnd = span.end;
       } else if (span.kind === "action") {
         // Bold text under an explicit dialogue label remains emphasized
         // speech; single-asterisk stage directions remain narration.
-        if (label && /^(?:\*\*|__)/.test(span.text)) resolved = label.speaker;
+        if (/^(?:\*\*|__)/.test(span.text)) resolved = forcedSpeaker !== undefined ? forcedSpeaker : label?.speaker ?? null;
         const actor = paragraphCharacter(span.text);
-        if (!label && actor) context = toSpeaker(actor);
-      } else if (span.kind === "text" && (label || (i === 0 && hasInitialSpeaker))) {
-        // Plain `Name: dialogue` remains compatible. Unlabelled prose and
-        // all italic actions are narrator text, even in one-character worlds.
-        resolved = label ? label.speaker : initialSpeaker;
+        if (forcedSpeaker === undefined && !label && actor) context = toSpeaker(actor);
+      } else if (span.kind === "text" && (forcedSpeaker !== undefined || label || (i === 0 && hasInitialSpeaker))) {
+        // Explicit labels retain ownership of plain speech. Italic actions
+        // remain narrator text, even in one-character worlds.
+        resolved = forcedSpeaker !== undefined ? forcedSpeaker : label ? label.speaker : initialSpeaker;
+      } else if (span.kind === "text") {
+        const before = adjacentAttribution(j - 1);
+        const after = adjacentAttribution(j + 1);
+        const attribution = after?.matched ? after : before;
+        if (attribution?.matched && attribution.name && !(before?.matched && after?.matched && before.name !== after.name)) {
+          const attributed = characters.find(e => displayCharacterName(e.name) === attribution.name);
+          resolved = attributed ? toSpeaker(attributed) : npc;
+        }
       }
-      append(resolved, pendingText + source, pendingContent + (span.kind === "dialogue" ? plainDialogue(span.text) : span.text));
+      append(resolved, pendingText + source, pendingContent + span.text);
       pendingText = ""; pendingContent = "";
     }
     if (pendingText) {

@@ -1,3 +1,4 @@
+import { Select } from "@/components/ui/select";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, ChevronDown, ShieldAlert, X } from "lucide-react";
@@ -210,13 +211,12 @@ export function BgmConfigPanel() {
                         {t("audio.when")}
                       </span>
                       <div className="relative flex-1">
-                        <select
+                        <Select compact
                           value={rule.triggerType ?? "variable"}
-                          onChange={(e) =>
+                          onValueChange={(selectedValue) =>
                             updateConditionalBGM(rule.id, {
-                              triggerType: e.target.value,
-                            })
-                          }
+                              triggerType: selectedValue,
+                            })}
                           className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/50 [&>option]:bg-popover"
                         >
                           {TRIGGER_TYPE_OPTIONS.map((opt) => (
@@ -224,7 +224,7 @@ export function BgmConfigPanel() {
                               {t(opt.labelKey as any)}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       </div>
                     </div>
@@ -235,18 +235,17 @@ export function BgmConfigPanel() {
                         <>
                           <div className="mb-3">
                             <div className="relative inline-block">
-                              <select
+                              <Select compact
                                 value={rule.conditionLogic}
-                                onChange={(e) =>
+                                onValueChange={(selectedValue) =>
                                   updateConditionalBGM(rule.id, {
-                                    conditionLogic: e.target.value,
-                                  })
-                                }
+                                    conditionLogic: selectedValue,
+                                  })}
                                 className="rounded-lg border border-border bg-card px-3 py-1.5 text-[12px] text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/50 pr-7 [&>option]:bg-popover"
                               >
                                 <option value="all">{t("audio.allConditionsMet")}</option>
                                 <option value="any">{t("audio.anyConditionMet")}</option>
-                              </select>
+                              </Select>
                               <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
                             </div>
                           </div>
@@ -342,13 +341,12 @@ export function BgmConfigPanel() {
                         {t("audio.play")}
                       </span>
                       <div className="relative flex-1">
-                        <select
+                        <Select compact
                           value={rule.targetTrackId}
-                          onChange={(e) =>
+                          onValueChange={(selectedValue) =>
                             updateConditionalBGM(rule.id, {
-                              targetTrackId: e.target.value,
-                            })
-                          }
+                              targetTrackId: selectedValue,
+                            })}
                           className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/50 [&>option]:bg-popover"
                         >
                           <option value="">{t("audio.selectTrack")}</option>
@@ -357,7 +355,7 @@ export function BgmConfigPanel() {
                               {tr.name}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       </div>
                     </div>
@@ -417,13 +415,12 @@ export function BgmConfigPanel() {
                           {t("audio.onEnd")}
                         </span>
                         <div className="relative flex-1">
-                          <select
+                          <Select compact
                             value={rule.fallback}
-                            onChange={(e) =>
+                            onValueChange={(selectedValue) =>
                               updateConditionalBGM(rule.id, {
-                                fallback: e.target.value,
-                              })
-                            }
+                                fallback: selectedValue,
+                              })}
                             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/50 [&>option]:bg-popover"
                           >
                             <option value="default">{t("audio.returnToDefault")}</option>
@@ -433,7 +430,7 @@ export function BgmConfigPanel() {
                                 Play: {tr.name}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                           <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                         </div>
                       </div>

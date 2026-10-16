@@ -11,6 +11,7 @@ export type KreaWorkflowOptions = {
   imageKind: "sprite" | "background" | "image";
   transparent?: boolean;
   references: KreaReference[];
+  textOnly?: boolean;
   seed: number;
   steps?: number;
   cfg?: number;
@@ -48,6 +49,7 @@ function referencePrompt(references: KreaReference[]) {
 
 /** API-format Krea2-Anime v2.0 INT4 graph matching the local ComfyUI node contract. */
 export function buildKreaReferenceWorkflow(options: KreaWorkflowOptions): KreaApiWorkflow {
+  if (options.textOnly && options.references.length) throw new GenerationError("INVALID_REFERENCE", "Text-to-image generation cannot include image reference conditioning.");
   if (!options.availableModels.map(installedName).includes(KREA_MODEL))
     throw new GenerationError("KREA_MODEL_UNAVAILABLE", "The configured local Krea2-Anime v2.0 INT4 model is not installed in ComfyUI.", 503);
   if (options.references.length > 4) throw new GenerationError("INVALID_REFERENCE", "Krea accepts at most four project references.");
@@ -66,7 +68,7 @@ export function buildKreaReferenceWorkflow(options: KreaWorkflowOptions): KreaAp
     "1": node("UNETLoader", { unet_name: KREA_MODEL, weight_dtype: "default" }),
     "2": node("CLIPLoader", { clip_name: KREA_CLIP, type: "krea2", device: "cpu" }),
     "3": node("VAELoader", { vae_name: KREA_VAE }),
-    "5": node("TextEncodeKrea2Reference", { clip: ["2", 0], prompt }),
+    "5": options.textOnly ? node("CLIPTextEncode", { clip: ["2", 0], text: prompt }) : node("TextEncodeKrea2Reference", { clip: ["2", 0], prompt }),
     "6": node("ConditioningZeroOut", { conditioning: ["5", 0] }),
     "7": node("EmptyLatentImage", { width: 832, height: 1216, batch_size: 1 }),
     "8": node("KSampler", { model: ["1", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0],

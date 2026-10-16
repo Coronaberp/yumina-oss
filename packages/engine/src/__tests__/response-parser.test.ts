@@ -874,3 +874,16 @@ describe("ResponseParser speaker tag", () => {
     expect(r.effects).toEqual([{ variableId: "speaker", operation: "set", value: "Mia" }]);
   });
 });
+
+
+describe("angle markup is never story display", () => {
+  it("hides unknown and misspelled XML tags, retaining inner prose and actual state effects", () => {
+    const result = new ResponseParser().parse('Before\n<Yunmina-state version="1" status="updated" count="3"/>\n<unknown-control>After</unknown-control>\n<energy: subtract 1>', undefined, ['energy']);
+    expect(result.cleanText).toBe('Before\n\nAfter');
+    expect(result.effects).toEqual([{ variableId: 'energy', operation: 'subtract', value: 1 }]);
+  });
+  it("preserves code examples, autolinks and comparisons", () => {
+    const text = '2 < 3, 5 > 4. <https://example.com>\n`<example/>`\n```xml\n<example/>\n```';
+    expect(new ResponseParser().parse(text).cleanText).toBe(text);
+  });
+});

@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { GameStateManager, ReactionEvaluator, runReactionChain, buildTurnCompleteEvent } from "@yumina/engine";
+import { chapterSchema, advanceChapterEvents, chapterEventContext, GameStateManager, ReactionEvaluator, runReactionChain, buildTurnCompleteEvent } from "@yumina/engine";
 import type { GameState, WorldDefinition } from "@yumina/engine";
-import { normalizeGameState, reconcileTurnState } from "./game-state.js";
+import { mergeGameStatePatch, normalizeGameState, reconcileTurnState } from "./game-state.js";
 import { generationBaseline, regenerationState, reconcileRegenerationState } from "./regeneration-state.js";
 
 const world = { id: "w", variables: [
@@ -20,6 +20,26 @@ const add = (s: GameState, value: number) => {
 };
 
 describe("regeneration replaces the prior reply", () => {
+  it("rewinds event moments, rewards and lore toggles and rejects client-forged progress", () => {
+    const card = { ...world, entries: [{ id: "seraph", name: "Seraph", enabled: false }], chapters: [chapterSchema.parse({ id: "c", name: "Chapter", events: [{ id: "e", name: "Event", enabled: true, scenes: [{ id: "s", name: "Scene", requiredMoments: [{ id: "m", description: "The gate opens." }] }], effects: [{ variableId: "meter", operation: "add", value: 10 }], entryChanges: [{ entryId: "seraph", enabled: true }] }] })] } as WorldDefinition;
+    const manager = new GameStateManager(card, { ...initial(), activeChapterId: "c" });
+    const baseline = manager.getSnapshot();
+    const evidence = { chapterId: "c", eventId: "e", sceneId: "s", narrative: "The gate opens.", moments: [{ momentId: "m", quote: "The gate opens." }] };
+    const changes = advanceChapterEvents(card, manager, evidence), after = manager.getSnapshot();
+    assert.equal(after.variables.meter, 10); assert.equal(after.ruleState!.toggledEntries.seraph, true);
+    const forged = mergeGameStatePatch(card, baseline, { storyEvents: after.storyEvents });
+    assert.deepEqual(forged.storyEvents, baseline.storyEvents);
+    for (const reply of [{ generationState: json(baseline), stateSnapshot: json(after) }, { stateSnapshot: json(after), stateChanges: changes }]) {
+      const before = regenerationState(card, after, reply, json(baseline));
+      assert.deepEqual(before.storyEvents, baseline.storyEvents);
+      assert.equal(before.ruleState!.toggledEntries.seraph, undefined); assert.equal(before.variables.meter, 0);
+      const replacement = new GameStateManager(card, before);
+      assert.equal(chapterEventContext(card, before)?.scene.id, "s");
+      advanceChapterEvents(card, replacement, evidence); advanceChapterEvents(card, replacement, evidence);
+      assert.equal(replacement.get("meter"), 10);
+      assert.equal(after.variables.meter, 10);
+    }
+  });
   it("repeated rerolls start from the same baseline without advancing turns", () => {
     const baseline = initial();
     let after = add(baseline, 10);

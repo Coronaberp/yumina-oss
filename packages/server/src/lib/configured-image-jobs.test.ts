@@ -7,6 +7,31 @@ import { user, userAssets, worlds, agentRuns, generationJobs } from "../db/schem
 import { createConfiguredImageJobs } from "./configured-image-jobs.js";
 import { GenerationError, type GeneratedAsset } from "./image-generation/config.js";
 
+for (const imageKind of ["sprite", "background"] as const) test(`queued NSFW ${imageKind} rejects SFW-only workflows and Anima checkpoints without changing its rating`, async t => {
+  const uid = crypto.randomUUID(), wid = crypto.randomUUID(), rid = crypto.randomUUID();
+  await db.insert(user).values({ id: uid, name: "NSFW selection QA", email: `${uid}@test.local` });
+  await db.insert(worlds).values({ id: wid, creatorId: uid, name: "QA", status: "draft", schema: {} });
+  await db.insert(agentRuns).values({ id: rid, userId: uid, worldId: wid, model: "codex/gpt-6-luna" });
+  const jobs = createConfiguredImageJobs(async () => assert.fail("Selection must not start generation"));
+  t.after(async () => { jobs.stop(); await db.delete(user).where(eq(user.id, uid)); });
+  const adultModel = "anima-nsfw.safetensors", safeModel = "anima-base.safetensors";
+  const submitted = await jobs.submit({ userId: uid, worldId: wid, runId: rid, callId: "nsfw-selection", proposal: {
+    source: "comfyui", imageWorkflow: "anima", contentRating: "nsfw", animaEnabled: true, animaModel: adultModel,
+    workflowOptions: { anima: true, krea: true, codex: true }, imageKind, prompt: "Selection fixture",
+    model: "ComfyUI", aspectRatio: "1:1", batchSize: 1,
+  } });
+  assert.equal(await jobs.setAnimaModel(uid, submitted.jobId, wid, safeModel, [safeModel, adultModel]), null);
+  assert.equal(await jobs.updateGenerationOptions(uid, submitted.jobId, wid, {
+    workflow: "codex", contentRating: "nsfw", seedMode: "random", cfg: 1, steps: 8, transparent: false,
+  }, [safeModel, adultModel]), null);
+  const current = (await jobs.get(uid, submitted.jobId, wid))!;
+  assert.equal(current.imageWorkflow, "anima"); assert.equal(current.contentRating, "nsfw"); assert.equal(current.animaModel, adultModel);
+  const changed = (await jobs.updateGenerationOptions(uid, submitted.jobId, wid, {
+    workflow: "krea", contentRating: "nsfw", seedMode: "random", cfg: 1, steps: 8, transparent: false,
+  }, [safeModel, adultModel]))!;
+  assert.equal(changed.source, "comfyui"); assert.equal(changed.model, "Krea2-Anime v2.0 INT4 · local");
+});
+
 test("approved image queues immediately, continues independently, and replay never generates twice", async t => {
   const uid = crypto.randomUUID(), wid = crypto.randomUUID(), rid = crypto.randomUUID(), aid = crypto.randomUUID();
   await db.insert(user).values({ id: uid, name: "Background image QA", email: uid + "@test.local" });

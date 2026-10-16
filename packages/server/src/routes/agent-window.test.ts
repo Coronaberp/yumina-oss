@@ -18,6 +18,15 @@ function toolTurn(step: number, resultChars: number): ChatMessage[] {
 }
 
 describe("agent context window", () => {
+  it("keeps a 225K Codex history and still honors a smaller endpoint budget", () => {
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < 10; i++) messages.push({ role: i % 2 ? "assistant" : "user", content: filler(90_000) });
+    assert.equal(buildWindowedMessages(messages, "codex/gpt-6-luna"), messages);
+    assert.equal(buildWindowedMessages(messages, "codex/gpt-6-luna", 600_000), messages);
+    const limited = buildWindowedMessages(messages, "codex/gpt-6-luna", 50_000);
+    assert.ok(limited.length < messages.length);
+    assert.equal(limited.at(-1), messages.at(-1));
+  });
   it("honors an endpoint history budget smaller than the model family default", () => {
     const messages: ChatMessage[] = [{ role: "user", content: "Update the current character." }];
     for (let step = 0; step < 12; step++) messages.push(...toolTurn(step, 4000));

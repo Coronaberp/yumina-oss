@@ -37,6 +37,7 @@ import { renderStudioMarkdown } from "@/lib/studio-markdown";
 import { StreamingText } from "../components/streaming-text";
 import { StudioProfilePicker } from "../components/studio-profile-picker";
 import { ProposalCard } from "../components/proposal-card";
+import { TaskStatusCard } from "../components/task-status-card";
 import { CreditPauseCard } from "../components/credit-pause-card";
 import { ImageProposalCard } from "../components/image-proposal-card";
 import { QuestionAnswerCard } from "../components/question-answer-card";
@@ -272,6 +273,9 @@ function ContextUsageBar({
 // ── Main Panel ──
 
 export function AiChatPanel() {
+  const activeTask = useStudioStore(s => s.activeTask);
+  const taskStepLimit = useStudioStore(s => s.taskStepLimit);
+  const resumeTask = useStudioStore(s => s.resumeTask);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const { t } = useTranslation(["editor", "common"]);
   const [input, setInput] = useState("");
@@ -535,10 +539,10 @@ export function AiChatPanel() {
     const stillCurrent = () => isCurrentStudioWorld(requestedWorldId) && conversationLoadRef.current === loadId;
     conversationLoadingRef.current = true;
     setIsConversationLoading(true);
-    // Stop any running agent and clear stale state before loading a different conversation
+    // Detach the old view; its server task keeps running in that conversation.
     const store = useStudioStore.getState();
     if (store.isAgentWorking || store.isResumingCredits || store._pendingApproval || store._pendingImage) {
-      store.stopAgent();
+      store.detachAgent();
     }
     try {
       const res = await fetch(`${apiBase}/api/studio/${requestedWorldId}/conversations/${convId}`, { credentials: "include" });
@@ -566,10 +570,9 @@ export function AiChatPanel() {
         });
         return;
       }
-      // Loading another conversation must not orphan a task that started while
-      // its request was pending (for example from a second mounted AI panel).
+      // Detach a stream that attached while this request was pending.
       const currentStore = useStudioStore.getState();
-      if (currentStore.isAgentWorking || currentStore.isResumingCredits || currentStore._pendingApproval || currentStore._pendingImage) currentStore.stopAgent();
+      if (currentStore.isAgentWorking || currentStore.isResumingCredits || currentStore._pendingApproval || currentStore._pendingImage) currentStore.detachAgent();
       useStudioStore.setState({
         chatMessages: data.messages,
         chatWorldId: requestedWorldId,
@@ -1279,9 +1282,19 @@ export function AiChatPanel() {
           />
         )}
 
+        {activeTask && <TaskStatusCard task={activeTask.task} working={isAgentWorking} allowContinue={!creditPause} onContinue={resumeTask} />}
         <div ref={messagesEndRef} />
       </div>
 
+      <details className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer">Task limits{taskStepLimit ? ` · ${taskStepLimit} steps` : " · continue while progressing"}</summary>
+        <label className="mt-2 flex items-center gap-2">Optional step limit
+          <input aria-label="Optional step limit" type="number" min={1} max={100000} value={taskStepLimit ?? ""} disabled={isAgentWorking}
+            onChange={event => { const value = event.target.value === "" ? null : Number(event.target.value); useStudioStore.setState({ taskStepLimit: value !== null && Number.isInteger(value) && value >= 1 && value <= 100000 ? value : null }); }}
+            placeholder="No step limit" className="min-h-9 w-28 rounded-md border border-border bg-background px-2 text-foreground" />
+        </label>
+        <p className="mt-1">Leave blank to keep working while making progress. A set limit pauses the task and saves its checklist.</p>
+      </details>
       {/* Agent status bar */}
       {isAgentWorking && !hasPendingApproval && (
         isRecovering ? (
