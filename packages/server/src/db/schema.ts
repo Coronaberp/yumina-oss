@@ -1129,6 +1129,20 @@ export const userAssets = pgTable("user_assets", {
   index("user_assets_user_id_idx").on(t.userId),
 ]);
 
+// A library file its owner deleted while saved card versions still pointed at
+// it. The library row is gone (no listing, no quota); the bytes stay so those
+// versions still render if restored. The retained-asset sweeper removes the
+// bytes once no version holds them. `row` is the deleted user_assets row.
+export const retainedUserAssetFiles = pgTable("retained_user_asset_files", {
+  assetId: text("asset_id").primaryKey(),
+  userId: text("user_id").notNull(),
+  url: text("url").notNull(),
+  row: jsonb("row").$type<Record<string, unknown>>().notNull(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("retained_user_asset_files_url_idx").on(t.url),
+]);
+
 export const assetReferences = pgTable("asset_references", {
   id: text("id")
     .primaryKey()

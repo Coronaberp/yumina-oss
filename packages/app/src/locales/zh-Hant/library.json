@@ -407,8 +407,10 @@
     "deleteBundleFailed": "無法刪除資源包",
     "downloadBundleFailed": "無法下載資源包",
     "deleteAssetFailed": "無法刪除素材",
+    "deleteAssetVersioned": "已儲存的卡片歷史版本仍在使用這個素材，保留這些歷史版本期間無法刪除。",
 
     "deleteAssetInUse": "這張圖還是《{{name}}》的封面，先把那張卡的封面換掉再刪。",
+    "deleteAssetUsedByCard": "《{{name}}》還在用這個檔案，先從那張卡裡拿掉再刪。",
     "renameAssetFailed": "無法重新命名素材",
     "moveAssetFailed": "無法移動素材",
     "createFolderFailed": "無法建立資料夾",

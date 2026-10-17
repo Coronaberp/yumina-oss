@@ -79,6 +79,8 @@ export async function runPlaytest(opts: {
   userId: string;
   worldId: string;
   moves: string[];
+  /** Player model, independent of the Studio assistant model. */
+  model?: string;
   /** After each turn: the panel follows along. */
   onTurn?: (info: { sessionId: string; index: number; total: number; turn: PlaytestTurn }) => Promise<void> | void;
   /** Before the first move: the session exists, the opening is on screen. */
@@ -87,6 +89,12 @@ export async function runPlaytest(opts: {
 }): Promise<PlaytestResult> {
   const [row] = await db.select().from(user).where(eq(user.id, opts.userId)).limit(1);
   if (!row) throw new Error("Creator not found");
+  const aiConfig = row.preferences?.aiConfig as { selectedModel?: unknown } | undefined;
+  const selectedModel = opts.model ?? aiConfig?.selectedModel;
+  // Never let an omitted model silently select the premium global default.
+  if (typeof selectedModel !== "string" || !selectedModel.trim()) {
+    throw new Error("Choose a play model before running an automatic playtest.");
+  }
   const who = row as unknown as AppEnv["Variables"]["user"];
   const { sessionRoutes, messageRoutes } = await loadRoutes();
 
@@ -100,7 +108,7 @@ export async function runPlaytest(opts: {
   let finalState: unknown;
   for (const [index, move] of opts.moves.entries()) {
     if (opts.shouldStop?.()) break;
-    const response = await call(messageRoutes, "POST", "/sessions/:sessionId/messages", `/sessions/${sessionId}/messages`, who, { content: move });
+    const response = await call(messageRoutes, "POST", "/sessions/:sessionId/messages", `/sessions/${sessionId}/messages`, who, { content: move, model: selectedModel });
     let turn: PlaytestTurn;
     if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
       const failure = await response.json().catch(() => null) as { error?: string } | null;

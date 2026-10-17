@@ -419,8 +419,10 @@
     "deleteBundleFailed": "Couldn't delete bundle",
     "downloadBundleFailed": "Couldn't download bundle",
     "deleteAssetFailed": "Couldn't delete asset",
+    "deleteAssetVersioned": "This asset is used by saved card history and can't be deleted while that history is retained.",
 
     "deleteAssetInUse": "This image is still the cover of “{{name}}”. Change that cover first.",
+    "deleteAssetUsedByCard": "“{{name}}” still uses this file. Remove it from that card first.",
     "renameAssetFailed": "Couldn't rename asset",
     "moveAssetFailed": "Couldn't move asset",
     "createFolderFailed": "Couldn't create folder",

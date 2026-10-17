@@ -419,8 +419,10 @@
     "deleteBundleFailed": "No se pudo eliminar el paquete",
     "downloadBundleFailed": "No se pudo descargar el paquete",
     "deleteAssetFailed": "No se pudo eliminar el archivo",
+    "deleteAssetVersioned": "Este archivo se usa en el historial guardado de una tarjeta y no se puede eliminar mientras se conserve ese historial.",
 
     "deleteAssetInUse": "Esta imagen sigue siendo la portada de «{{name}}». Cambia esa portada primero.",
+    "deleteAssetUsedByCard": "«{{name}}» todavía usa este archivo. Quítalo primero de esa tarjeta.",
     "renameAssetFailed": "No se pudo renombrar el archivo",
     "moveAssetFailed": "No se pudo mover el archivo",
     "createFolderFailed": "No se pudo crear la carpeta",

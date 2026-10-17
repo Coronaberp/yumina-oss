@@ -32,6 +32,7 @@ test("playtest makes a throwaway session, reports progress, and hands the turns 
     periodStart: new Date(), periodEnd: new Date(Date.now() + 86400000) });
   const [conversation] = await db.insert(studioConversations).values({ userId, worldId }).returning();
   const [run] = await db.insert(agentRuns).values({ userId, worldId, conversationId: conversation!.id,
+    context: { playtestModel: "openrouter/free" },
     model: "test/play", status: "running", messages: [{ role: "user", content: "试玩一下" }] }).returning();
 
   const calls: GenerateParams[] = [];
@@ -52,6 +53,7 @@ test("playtest makes a throwaway session, reports progress, and hands the turns 
   };
   const app = new Hono();
   app.post("/loop", c => streamAgentLoop(c, { userId, worldId, world, runId: run!.id, conversationId: conversation!.id,
+    context: { playtestModel: "openrouter/free" },
     model: "test/play", provider, isByok: true, apiKeyTier: "regular", iteration: 0, maxIterations: 4, tools: STUDIO_TOOLS,
     messages: [{ role: "user", content: "试玩一下" }] }));
   const response = await app.request("/loop", { method: "POST" });

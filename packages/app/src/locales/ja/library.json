@@ -405,8 +405,10 @@
     "deleteBundleFailed": "バンドルを削除できません",
     "downloadBundleFailed": "バンドルをダウンロードできません",
     "deleteAssetFailed": "アセットを削除できません",
+    "deleteAssetVersioned": "このアセットは保存されたカードの履歴で使用されているため、その履歴が保持されている間は削除できません。",
 
     "deleteAssetInUse": "この画像は「{{name}}」のカバーとして使われています。先にカバーを変更してください。",
+    "deleteAssetUsedByCard": "「{{name}}」がまだこのファイルを使っています。先にそのカードから外してください。",
     "renameAssetFailed": "アセット名を変更できません",
     "moveAssetFailed": "アセットを移動できません",
     "createFolderFailed": "フォルダを作成できません",

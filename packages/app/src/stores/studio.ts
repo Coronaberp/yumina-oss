@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useEditorStore } from "./editor";
+import { useConfigStore } from "./config";
 import { useCreditStore } from "@/edition/slots.state";
 import { serializeStudioChatMessages } from "@/features/studio/lib/types";
 import type { StudioImageProposal, StudioImageBatchProposal } from "@/features/studio/lib/types";
@@ -1737,6 +1738,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         model,
         ...(conversationId && { conversationId }),
         context: {
+          playtestModel: useConfigStore.getState().selectedModel,
           activePanel,
           selectedElementId,
           selectedElementType,

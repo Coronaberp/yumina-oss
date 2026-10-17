@@ -58,6 +58,15 @@ CREATE INDEX IF NOT EXISTS world_versions_world_hash_idx ON world_versions(world
 ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS asset_ids text[];
 ALTER TABLE world_versions ADD COLUMN IF NOT EXISTS asset_paths text[];
 CREATE INDEX IF NOT EXISTS world_versions_asset_ids_idx ON world_versions USING gin (asset_ids);
+-- Library files deleted while a saved version still references them.
+CREATE TABLE IF NOT EXISTS retained_user_asset_files (
+  asset_id text PRIMARY KEY,
+  user_id text NOT NULL,
+  url text NOT NULL,
+  row jsonb NOT NULL,
+  deleted_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS retained_user_asset_files_url_idx ON retained_user_asset_files (url);
 `;
 
 /** The worlds table as the app builds it, for tests that stand a database up

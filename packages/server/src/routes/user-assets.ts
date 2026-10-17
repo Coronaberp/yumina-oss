@@ -1,5 +1,6 @@
 import { assetIsVersioned } from "../lib/world-version-store.js";
 import { worldsUsingAsCover } from "../lib/asset-cover-use.js";
+import { retainUserAsset, urlServedElsewhere, worldsUsingAssetContent } from "../lib/retained-user-assets.js";
 import { userAssetFilters } from "../lib/user-asset-filters.js";
 import { detachGenerationAsset } from "../lib/generation/asset-receipts.js";
 import { Hono } from "hono";
@@ -899,22 +900,28 @@ userAssetRoutes.delete("/:id", async (c) => {
     return c.json({ error: "Asset not found" }, 404);
   }
 
-  // A live cover (any card, any language) must not turn into a broken image.
-  // Checked before the version lock: it scans worlds and doesn't need it.
-  const covers = await worldsUsingAsCover(db, assetId, rows[0]!.url);
-  if (covers.length) return c.json({ error: "This image is still a card's cover.", code: "ASSET_IN_USE", worlds: covers }, 409);
+  // A live cover (any card, any language) or a card's current content must not
+  // turn into a broken image. Checked before the version lock: these scan
+  // worlds and don't need it.
+  const url = rows[0]!.url;
+  const covers = await worldsUsingAsCover(db, assetId, url);
+  if (covers.length) return c.json({ error: "This image is still a card's cover.", code: "ASSET_IN_USE", reason: "cover", worlds: covers }, 409);
+  const users = await worldsUsingAssetContent(db, currentUser.id, assetId, url);
+  if (users.length) return c.json({ error: "A card still uses this file.", code: "ASSET_IN_USE", reason: "content", worlds: users }, 409);
 
+  // Only saved versions still holding the file keep its bytes (retention);
+  // the library entry goes either way.
   const retained = await db.transaction(async tx => {
     await tx.execute(sql`LOCK TABLE world_versions IN SHARE ROW EXCLUSIVE MODE`);
-    if (await assetIsVersioned(tx, assetId, rows[0]!.url)) return true;
-    if (isS3Configured()) await deleteObject(rows[0]!.url);
+    const versioned = await assetIsVersioned(tx, assetId, url);
+    if (versioned) await retainUserAsset(tx, assetId);
+    else if (isS3Configured() && !(await urlServedElsewhere(tx, url, assetId))) await deleteObject(url);
     await detachGenerationAsset(tx, currentUser.id, assetId);
     await tx.delete(userAssets).where(eq(userAssets.id, assetId));
-    return false;
+    return versioned;
   });
-  if (retained) return c.json({ error: "This asset is retained by a saved version and cannot be deleted.", code: "ASSET_VERSIONED" }, 409);
 
-  return c.json({ data: { deleted: true } });
+  return c.json({ data: { deleted: true, retained } });
 });
 
 export { userAssetRoutes };

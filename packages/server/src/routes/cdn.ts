@@ -194,11 +194,14 @@ async function serveAssetById(c: Context, assetId: string, preserveBytes = false
 
   // Check in-memory cache first
   const s3Key = await resolvePublicCdnKey(getCachedS3Key(assetId) ?? null, async () => {
-    // Single query across both tables
+    // Single query across the asset tables; a deleted library file that saved
+    // versions still reference keeps serving from retention.
     const result = await db.execute(sql`
       SELECT url FROM assets WHERE id = ${assetId}
       UNION ALL
       SELECT url FROM user_assets WHERE id = ${assetId}
+      UNION ALL
+      SELECT url FROM retained_user_asset_files WHERE asset_id = ${assetId}
       LIMIT 1
     `);
 

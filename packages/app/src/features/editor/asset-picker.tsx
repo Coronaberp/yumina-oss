@@ -43,11 +43,15 @@ const apiBase = import.meta.env.VITE_API_URL || "";
 
 export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSelect, onClose }: AssetPickerProps) {
   const { t } = useTranslation("editor");
-  const { assets, loading, uploading, uploadingCount, uploadProgress: progress, fetchAssets, uploadAsset } = useAssetStore();
+  const { assets, loading, fetchAssets } = useAssetStore();
   const {
     assets: globalAssets,
     loading: globalLoading,
     fetchAssets: fetchGlobalAssets,
+    uploadAsset,
+    uploading,
+    uploadingCount,
+    uploadProgress: progress,
   } = useUserAssetStore();
   const [search, setSearch] = useState("");
   const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
@@ -56,16 +60,40 @@ export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSele
 
   useEffect(() => {
     fetchAssets(worldId);
-    fetchGlobalAssets(filterType && filterType !== "media" ? { type: filterType } : undefined);
+    fetchGlobalAssets({ page: 1, ...(filterType && filterType !== "media" ? { type: filterType } : {}) });
   }, [worldId, fetchAssets, fetchGlobalAssets, filterType]);
+
+  const handleSelectAsset = useCallback(
+    async (asset: Asset | UserAsset) => {
+      // Personal uploads must be linked before a card can use them.
+      if (!assets.some((a) => a.id === asset.id)) {
+        let linked = false;
+        try {
+          const res = await fetch(`${apiBase}/api/worlds/${worldId}/asset-refs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ assetId: asset.id }),
+          });
+          linked = res.ok;
+        } catch {
+          linked = false;
+        }
+        if (!linked) {
+          feedback.error(t("assetPicker.linkFailed", "Couldn't add this asset to the card. Try again."));
+          return;
+        }
+      }
+      onSelect(`@asset:${asset.id}`, asset.type);
+    },
+    [worldId, assets, onSelect, t]
+  );
 
   const uploadSingleFile = useCallback(async (file: File) => {
     const { type } = getUploadMetadata(file, filterType === "media" ? undefined : filterType);
-    const asset = await uploadAsset(worldId, file, type);
-    if (asset) {
-      onSelect(`@asset:${asset.id}`, type);
-    }
-  }, [filterType, onSelect, uploadAsset, worldId]);
+    const asset = await uploadAsset(file, type);
+    if (asset) await handleSelectAsset(asset);
+  }, [filterType, handleSelectAsset, uploadAsset]);
 
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,35 +160,6 @@ export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSele
     }
     return true;
   });
-
-  const handleSelectAsset = useCallback(
-    async (asset: Asset | UserAsset) => {
-      // If it's a global asset, auto-create reference for this world
-      const isGlobal = !assets.some((a) => a.id === asset.id);
-      if (isGlobal) {
-        // Without the reference the card can't resolve the asset for anyone
-        // else, so a failed link must not select it.
-        let linked = false;
-        try {
-          const res = await fetch(`${apiBase}/api/worlds/${worldId}/asset-refs`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ assetId: asset.id }),
-          });
-          linked = res.ok;
-        } catch {
-          linked = false;
-        }
-        if (!linked) {
-          feedback.error(t("assetPicker.linkFailed", "Couldn't add this asset to the card. Try again."));
-          return;
-        }
-      }
-      onSelect(`@asset:${asset.id}`, asset.type);
-    },
-    [worldId, assets, onSelect, t]
-  );
 
   const isLoading = loading || globalLoading;
 

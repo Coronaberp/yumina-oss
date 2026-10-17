@@ -526,10 +526,16 @@ export function LibraryAssetsTab({
     setBulkDeleting(true);
     const ids = Array.from(selectedAssetIds);
     const results = await Promise.allSettled(ids.map((id) => deleteAsset(id)));
-    const failed = results.filter((r) => r.status === "rejected").length;
+    const failedIds = ids.filter((_, index) => {
+      const result = results[index]!;
+      return result.status === "rejected" || !result.value;
+    });
+    const failed = failedIds.length;
     const success = ids.length - failed;
     // T0 on a clean sweep — the tiles are gone. Speak only when some survived.
-    if (failed > 0) {
+    // The store explains expected failures (including protected history). Do not
+    // replace that reason with a generic summary; only catch unexpected throws.
+    if (results.some((r) => r.status === "rejected")) {
       feedback.error(
         success === 0
           ? t("bulk.deletedFailed")
@@ -538,8 +544,8 @@ export function LibraryAssetsTab({
     }
     setBulkDeleting(false);
     setConfirmBulkDelete(false);
-    setBulkMode(false);
-    setSelectedAssetIds(new Set());
+    setBulkMode(failed > 0);
+    setSelectedAssetIds(new Set(failedIds));
   }, [deleteAsset, selectedAssetIds, t]);
 
   const handleBulkMove = useCallback(async (folderId: string | null) => {

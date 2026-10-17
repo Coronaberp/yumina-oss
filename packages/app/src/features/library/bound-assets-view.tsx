@@ -274,9 +274,14 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
     setBulkBusy(true);
     try {
       const results = await Promise.allSettled(pendingDeleteIds.map((id) => deleteAsset(id)));
-      const failed = results.filter((r) => r.status === "rejected").length;
+      const deletedIds = pendingDeleteIds.filter((_, index) => {
+        const result = results[index]!;
+        return result.status === "fulfilled" && result.value;
+      });
+      const failedIds = pendingDeleteIds.filter((id) => !deletedIds.includes(id));
+      const failed = failedIds.length;
       // T0 when everything went: the tiles are gone from the grid.
-      if (failed > 0) {
+      if (results.some((r) => r.status === "rejected")) {
         const success = pendingDeleteIds.length - failed;
         feedback.error(
           success === 0
@@ -284,11 +289,11 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
             : t("bulk.deletedPartial", { success, total: pendingDeleteIds.length, failed }),
         );
       }
-      await refreshAfterMutation(folderId, pendingDeleteIds);
+      setSelectedIds(new Set(failedIds));
+      await refreshAfterMutation(folderId, deletedIds);
     } finally {
       setBulkBusy(false);
       setPendingDeleteIds([]);
-      setSelectedIds(new Set());
     }
   }, [pendingDeleteIds, manageFolderId, expandedId, deleteAsset, refreshAfterMutation, t]);
 

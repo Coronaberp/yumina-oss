@@ -394,6 +394,7 @@ agentRoutes.post("/:worldId/agent/start", async (c) => {
       selectedElementType?: string;
       /** Canvas ids the creator pointed the assistant at. */
       focusIds?: string[];
+      playtestModel?: string;
       /** The creator pressed Start on a proposed job. */
       jobApproved?: boolean;
       /** New requests discuss first unless the creator explicitly chooses Build. */
@@ -1786,6 +1787,7 @@ export interface AgentLoopParams {
     selectedElementId?: string;
     selectedElementType?: string;
     focusIds?: string[];
+    playtestModel?: string;
     jobApproved?: boolean;
     mode?: "build" | "advise";
     buildProposal?: StudioBuildProposal;
@@ -3035,6 +3037,7 @@ export function streamAgentLoop(c: Parameters<typeof streamSSE>[0], params: Agen
               const result = await runPlaytest({
                 userId,
                 worldId: params.worldId,
+                model: context?.playtestModel,
                 moves,
                 // A game turn is progress: the idle watchdog must not take a
                 // run that is waiting on the card's own model for a stall.
