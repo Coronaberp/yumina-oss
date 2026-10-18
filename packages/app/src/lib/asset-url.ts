@@ -160,6 +160,16 @@ export function originalImageUrl(url: string): string {
   return m ? `${m[1]}${m[2]}` : url;
 }
 
+/** Managed card motion is discovered from bytes, including unmarked legacy WebP assets. */
+export function coverPreviewUrl(ref: string): string | undefined {
+  const url = resolveImageUrl(ref);
+  const base = cdnBase();
+  if (!url || !servesCloudflareImages(base)) return undefined;
+  const path = url.startsWith("/cdn/") ? url : base && url.startsWith(`${base}/cdn/`) ? url.slice(base.length) : "";
+  if (!/^\/cdn\/(?:key\/[A-Za-z0-9_-]+|[0-9a-f-]{36})$/i.test(path)) return undefined;
+  return `${base}${path}/cover-preview`;
+}
+
 /**
  * `<img onError>` handler for any src produced by `cardImageUrl`: swap back to
  * the untransformed original. The transform endpoint does not exist off

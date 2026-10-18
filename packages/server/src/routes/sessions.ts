@@ -439,6 +439,24 @@ sessionRoutes.get("/", async (c) => {
   return c.json({ data: resolved });
 });
 
+// GET /api/sessions/recent-worlds — the five worlds the user played last, one
+// row each. Seeds the drawer's "Recently played" when this browser has no
+// local list (new device, cleared storage).
+sessionRoutes.get("/recent-worlds", async (c) => {
+  const currentUser = c.get("user");
+  const rd = await readOwn(currentUser.id);
+  const lastPlayedAt = sql<Date>`max(${playSessions.updatedAt})`;
+  const rows = await rd
+    .select({ id: worlds.id, name: worlds.name, thumbnailUrl: worlds.thumbnailUrl, lastPlayedAt })
+    .from(playSessions)
+    .innerJoin(worlds, eq(playSessions.worldId, worlds.id))
+    .where(and(eq(playSessions.userId, currentUser.id), eq(playSessions.ephemeral, false)))
+    .groupBy(worlds.id)
+    .orderBy(desc(lastPlayedAt))
+    .limit(5);
+  return c.json({ data: rows.map((r) => ({ ...r, thumbnailUrl: resolveImageCdn(r.thumbnailUrl) })) });
+});
+
 // GET /api/sessions/:id — get session with messages
 sessionRoutes.get("/:id", async (c) => {
   const currentUser = c.get("user");

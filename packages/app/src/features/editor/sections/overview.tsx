@@ -35,7 +35,7 @@ import { LiveCanonGroup } from "@/features/studio/panels/blueprint/live-canon";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
-const FROM_ASSET_TIMEOUT_MS = 20_000;
+const FROM_ASSET_TIMEOUT_MS = 60_000;
 
 function fetchWithTimeout(input: RequestInfo, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();

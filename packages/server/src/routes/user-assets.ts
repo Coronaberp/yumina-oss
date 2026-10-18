@@ -15,6 +15,7 @@ import {
   deleteObject,
   headObject,
   copyObject,
+  putObject,
   storageKind,
 } from "../lib/s3.js";
 import type { AppEnv } from "../lib/types.js";
@@ -23,7 +24,8 @@ import { PLANS } from "../lib/plan-config.js";
 import { ensureWallet } from "../lib/credit-service.js";
 import { resolveEffectivePlanWithEventEntitlements } from "../lib/event-plan-entitlements.js";
 import { env } from "../lib/env.js";
-import { resizeUploadedImageInBackground } from "../lib/image-resize.js";
+import { discardDirectImageUpload, prepareStoredImage } from "../lib/image-resize.js";
+import { validateImageUploadSize } from "../lib/image-upload-policy.js";
 import { uploadOperationId, validUploadRequestId } from "../lib/asset-upload-operation.js";
 import { sessionMedia } from "../lib/session-media.js";
 import { mediaRows, mediaPrefix } from "../lib/session-media-service.js";
@@ -473,6 +475,7 @@ userAssetRoutes.post("/upload-url", async (c) => {
   const assetType = body.type;
 
   const contentType = normalizeAssetMimeType(body.filename, body.contentType);
+  if (contentType.startsWith("image/")) validateImageUploadSize(body.sizeBytes);
 
   // Active content is refused for EVERY asset type. Previously `other` had an
   // empty allowlist and the `allowed.length > 0` guard short-circuited it away,
@@ -566,9 +569,9 @@ userAssetRoutes.post("/upload-url", async (c) => {
   }
 
   const safeName = sanitizeFilename(body.filename);
-  const key = `users/${currentUser.id}/${assetType}/${operationId ?? crypto.randomUUID()}-${safeName}`;
+  const key = `users/${currentUser.id}/${assetType}/${contentType.startsWith("image/") ? "pending/" : ""}${operationId ?? crypto.randomUUID()}-${safeName}`;
 
-  const uploadUrl = await generateUploadUrl(key, contentType);
+  const uploadUrl = await generateUploadUrl(key, contentType, contentType.startsWith("image/") ? { contentLength: validateImageUploadSize(body.sizeBytes), expiresIn: 600 } : undefined);
 
   return c.json({
     data: {
@@ -647,10 +650,10 @@ userAssetRoutes.post("/", async (c) => {
   }
 
   const id = body.requestId ? uploadOperationId(currentUser.id, "file", body.requestId) : crypto.randomUUID();
-  if (!privatePipeline && body.requestId && body.key !== `users/${currentUser.id}/${body.type}/${id}-${sanitizeFilename(body.filename)}`) {
+  if (!privatePipeline && body.requestId && body.key !== `users/${currentUser.id}/${body.type}/${id}-${sanitizeFilename(body.filename)}` && body.key !== `users/${currentUser.id}/${body.type}/pending/${id}-${sanitizeFilename(body.filename)}`) {
     return c.json({ error: "Invalid asset key for request" }, 400);
   }
-  const registeredKey = privatePipeline ? `users/${currentUser.id}/registered/${createHash("sha256").update(body.key).digest("hex")}` : body.key;
+  const registeredKey = privatePipeline || mimeType.startsWith("image/") ? `users/${currentUser.id}/registered/${createHash("sha256").update(body.key).digest("hex")}` : body.key;
   const existingCondition = and(eq(userAssets.userId, currentUser.id), body.requestId ? eq(userAssets.id, id) : eq(userAssets.url, registeredKey));
   // A committed upload remains retryable after its temporary object is cleaned.
   const [reconciled] = await db.select().from(userAssets).where(existingCondition).limit(1);
@@ -665,6 +668,9 @@ userAssetRoutes.post("/", async (c) => {
   if (normalizeAssetMimeType(body.filename, inspected.contentType) !== mimeType) {
     return c.json({ error: "Uploaded content type does not match" }, 400);
   }
+  const normalized = mimeType.startsWith("image/") ? await prepareStoredImage(body.key, mimeType) : null;
+  if (normalized && normalized.inputBytes !== inspected.contentLength) return c.json({ error: "Uploaded image changed. Please upload again." }, 409);
+  const settledSize = normalized?.sizeBytes ?? inspected.contentLength;
   const storageLimit = await getUserStorageLimit(currentUser.id);
   const settled = await db.transaction(async (tx) => {
     await sessionMedia.lockOwner(tx, currentUser.id);
@@ -675,7 +681,7 @@ userAssetRoutes.post("/", async (c) => {
       return { error: "Upload reservation expired or does not match", status: 409 as const };
     }
     const usage = await sessionMedia.usage(currentUser.id, tx);
-    if (usage.used + usage.reserved - Number(reservation?.input_bytes ?? 0) + inspected.contentLength > storageLimit) {
+    if (usage.used + usage.reserved - Number(reservation?.input_bytes ?? 0) + settledSize > storageLimit) {
       return { error: "Storage limit reached", status: 413 as const };
     }
     if (!privatePipeline) {
@@ -685,12 +691,13 @@ userAssetRoutes.post("/", async (c) => {
       if (admission !== "admitted") return { error: "Upload limit reached", status: admission === "limit" ? 429 as const : 409 as const };
     }
     // The verified copy is immutable to callers holding the original PUT URL.
-    if (privatePipeline) {
+    if (normalized) await putObject(registeredKey, normalized.buffer, normalized.contentType, { signal: AbortSignal.timeout(30_000) });
+    else if (privatePipeline) {
       await copyObject(body.key, registeredKey, inspected.etag!, inspected);
     }
     const [inserted] = await tx.insert(userAssets).values({
       id, userId: currentUser.id, type: body.type as AssetType, filename: body.filename,
-      url: registeredKey, sizeBytes: inspected.contentLength, mimeType, folderId,
+      url: registeredKey, sizeBytes: settledSize, mimeType, folderId,
     }).returning();
     if (reservation) await tx.execute(sql`UPDATE session_media_uploads SET status='complete',reserved_bytes=0 WHERE id=${reservation.id}`);
     await tx.execute(sql`UPDATE creative_upload_admissions SET completed_at=clock_timestamp()
@@ -700,11 +707,8 @@ userAssetRoutes.post("/", async (c) => {
   if ("error" in settled) return c.json({ error: settled.error }, settled.status);
   const result = settled.asset;
 
-  // Cap oversized image masters in place — new uploads only, same URL + format,
-  // transparency preserved. Fire-and-forget: never blocks the upload response.
-  if (settled.inserted && body.type === "image") {
-    resizeUploadedImageInBackground(result!.url, mimeType, result!.id);
-  }
+  if (settled.inserted && normalized) await discardDirectImageUpload(body.key, privatePipeline
+    ? `${mediaPrefix(currentUser.id)}pending/` : `users/${currentUser.id}/${body.type}/pending/`);
 
   const origin = getCdnOrigin();
 

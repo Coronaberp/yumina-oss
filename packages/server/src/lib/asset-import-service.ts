@@ -1,3 +1,5 @@
+import { prepareImportedImage } from "./image-upload-policy.js";
+import { HTTPException } from "hono/http-exception";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { ASSET_ARCHIVE_LIMITS, isAssetArchiveFilename, type AssetImportJob } from "@yumina/shared";
@@ -278,6 +280,8 @@ export function createAssetImportService({ db, storage, quota, uploadPolicy }: A
       if (!entry) return;
       if (file.size !== Number(entry.size_bytes) || file.mimeType !== entry.mime_type) throw new AssetImportError("ARCHIVE_INVALID");
       try {
+        const normalized = file.mimeType.startsWith("image/") ? await prepareImportedImage(data, file.mimeType, signal) : null;
+        const storedBytes = normalized?.buffer ?? data;
         await db.transaction(async tx => {
           await quota.lockOwner(tx, job.user_id);
           await lockAssetImportLease(tx, job);
@@ -286,13 +290,13 @@ export function createAssetImportService({ db, storage, quota, uploadPolicy }: A
           const target = await destination(tx, job, entry.path);
           if (target) {
             const usage = await quota.usage(job.user_id, tx);
-            if (usage.used + usage.reserved > limit) throw new AssetImportError("ARCHIVE_QUOTA_EXCEEDED", 413);
+            if (usage.used + usage.reserved + storedBytes.length - file.size > limit) throw new AssetImportError("ARCHIVE_QUOTA_EXCEEDED", 413);
             signal.throwIfAborted();
             // Stable per-entry key + same-transaction status makes retries idempotent,
             // including a PUT that succeeded just before the process was interrupted.
-            await storage.write(assetKey(job, entry), data, entry.mime_type);
+            await storage.write(assetKey(job, entry), storedBytes, entry.mime_type);
             signal.throwIfAborted();
-            await tx.execute(sql`INSERT INTO user_assets(id,user_id,type,filename,url,size_bytes,mime_type,folder_id) VALUES(${entry.asset_id},${job.user_id},${entry.asset_type},${target.filename},${assetKey(job, entry)},${data.length},${entry.mime_type},${target.folder})`);
+            await tx.execute(sql`INSERT INTO user_assets(id,user_id,type,filename,url,size_bytes,mime_type,folder_id) VALUES(${entry.asset_id},${job.user_id},${entry.asset_type},${target.filename},${assetKey(job, entry)},${storedBytes.length},${entry.mime_type},${target.folder})`);
           }
           await tx.execute(sql`UPDATE asset_import_entries SET status=${target ? "succeeded" : "skipped"},error_code=NULL WHERE job_id=${job.id} AND ordinal=${entry.ordinal}`);
           await tx.execute(sql`UPDATE asset_import_jobs SET reserved_bytes=GREATEST(0,reserved_bytes-${file.size}),updated_at=now() WHERE id=${job.id}`);
@@ -300,7 +304,7 @@ export function createAssetImportService({ db, storage, quota, uploadPolicy }: A
       } catch (error) {
         signal.throwIfAborted();
         if (error instanceof AssetImportError && error.code === "ARCHIVE_INTERRUPTED") throw error;
-        const code = error instanceof AssetImportError ? error.code : "ARCHIVE_STORAGE_ERROR";
+        const code = error instanceof AssetImportError ? error.code : error instanceof HTTPException && error.status !== 503 ? "ARCHIVE_INVALID" : "ARCHIVE_STORAGE_ERROR";
         // Keep owner -> job -> entry lock order on failure, too. A worker whose
         // lease expired cannot mark files failed under a replacement worker.
         await db.transaction(async tx => {

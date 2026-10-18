@@ -15,7 +15,8 @@ import { resolveImageCdn } from "../lib/cdn-url.js";
 import type { AppEnv } from "../lib/types.js";
 import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { applyWorldCover } from "../lib/pending-edit.js";
-import { resizeUploadedImageInBackground } from "../lib/image-resize.js";
+import { discardDirectImageUpload, publishStoredImage } from "../lib/image-resize.js";
+import { validateImageUploadSize } from "../lib/image-upload-policy.js";
 
 const assetRoutes = new Hono<AppEnv>();
 const ASSET_TYPES = ["image", "video", "audio", "font", "txt", "other"] as const;
@@ -94,6 +95,7 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
     filename: string;
     contentType?: string;
     type: string;
+    sizeBytes?: number;
   }>();
 
   if (!body.filename || !body.type) {
@@ -119,9 +121,10 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
 
   // Generate S3 key
   const safeName = sanitizeFilename(body.filename);
-  const key = `worlds/${worldId}/${assetType}/${crypto.randomUUID()}-${safeName}`;
+  const key = `worlds/${worldId}/${assetType}/${contentType.startsWith("image/") ? "pending/" : ""}${crypto.randomUUID()}-${safeName}`;
 
-  const uploadUrl = await generateUploadUrl(key, contentType);
+  const size = contentType.startsWith("image/") ? validateImageUploadSize(body.sizeBytes) : undefined;
+  const uploadUrl = await generateUploadUrl(key, contentType, size ? { contentLength: size, expiresIn: 600 } : undefined);
 
   return c.json({
     data: {
@@ -161,6 +164,8 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
   }
 
   const mimeType = normalizeAssetMimeType(body.filename, body.mimeType);
+  if (body.type === "image" && !ALLOWED_MIME_TYPES.image!.includes(mimeType)) return c.json({ error: "Only JPEG, PNG, WebP and GIF images are allowed" }, 400);
+  const normalized = mimeType.startsWith("image/") ? await publishStoredImage(body.key, `worlds/${worldId}/image/processed`, mimeType) : null;
 
   const [result] = await db
     .insert(assets)
@@ -168,20 +173,16 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
       worldId,
       type: body.type,
       filename: body.filename,
-      url: body.key, // Store S3 key, not presigned URL
-      sizeBytes: body.sizeBytes,
+      url: normalized?.key ?? body.key,
+      sizeBytes: normalized?.sizeBytes ?? body.sizeBytes,
       mimeType,
     })
     .returning();
 
-  // Cap oversized in-game image art in place — new uploads only, same URL +
-  // format, transparency preserved. Fire-and-forget: never blocks the response.
-  if (body.type === "image") {
-    resizeUploadedImageInBackground(result!.url, mimeType);
-  }
+  if (normalized) await discardDirectImageUpload(body.key, `worlds/${worldId}/${body.type}/pending/`);
 
   // Return with CDN URL
-  const downloadUrl = resolveImageCdn(body.key) ?? "";
+  const downloadUrl = resolveImageCdn(result!.url) ?? "";
 
   return c.json(
     {
@@ -300,7 +301,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
 
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean }>();
+  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean; sizeBytes?: number }>();
 
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
@@ -321,8 +322,8 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
   // marker only changes how the cover is rendered; GIFs are always treated as
   // animated and need no marker.
   const marker = body.animated === true && ext.toLowerCase() !== "gif" ? ".anim" : "";
-  const key = `worlds/${worldId}/thumbnail/${crypto.randomUUID()}${marker}.${ext}`;
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  const key = `worlds/${worldId}/thumbnail/pending/${crypto.randomUUID()}${marker}.${ext}`;
+  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: validateImageUploadSize(body.sizeBytes), expiresIn: 600 });
 
   return c.json({ data: { uploadUrl, key } });
 });
@@ -343,11 +344,14 @@ assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
 
   // For a published world the cover is a material change: hold it for re-review
   // instead of overwriting the live cover.
-  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: body.key, target: body.target, discoverPreview });
+  if (!(await verifyWorldOwnership(worldId, currentUser.id))) return c.json({ error: "World not found or not authorized" }, 404);
+  const normalized = await publishStoredImage(body.key, `worlds/${worldId}/thumbnail/processed`);
+  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: normalized.key, target: body.target, discoverPreview });
   if (!applied.ok) {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);
   }
 
+  await discardDirectImageUpload(body.key, `worlds/${worldId}/thumbnail/pending/`);
   return c.json({ data: { thumbnailUrl: applied.thumbnailUrl, heldForReview: applied.held, previousUpdatedAt: applied.previousUpdatedAt, updatedAt: applied.updatedAt } });
 });
 
@@ -403,7 +407,8 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
     return c.json({ error: "Asset not found" }, 404);
   }
 
-  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: s3Key, target: body.target, discoverPreview });
+  const normalized = await publishStoredImage(s3Key, `worlds/${worldId}/thumbnail/processed`);
+  const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: normalized.key, target: body.target, discoverPreview });
   if (!applied.ok) {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);
   }
@@ -475,14 +480,15 @@ assetRoutes.post("/worlds/:worldId/gallery/from-asset", async (c) => {
     return c.json({ error: "Maximum 8 gallery images allowed" }, 400);
   }
 
-  const updatedImages = [...currentImages, s3Key];
+  const normalized = await publishStoredImage(s3Key, `worlds/${worldId}/gallery/processed`);
+  const updatedImages = [...currentImages, normalized.key];
 
   await db
     .update(worlds)
     .set({ galleryImages: updatedImages, updatedAt: new Date() })
     .where(eq(worlds.id, worldId));
 
-  return c.json({ data: { url: resolveImageCdn(s3Key) ?? s3Key, galleryImages: updatedImages } });
+  return c.json({ data: { url: resolveImageCdn(normalized.key) ?? normalized.key, galleryImages: updatedImages } });
 });
 
 export { assetRoutes };

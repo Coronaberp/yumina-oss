@@ -1,3 +1,4 @@
+import { validateImageUploadSize } from "../lib/image-upload-policy.js";
 import { Hono } from "hono";
 import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { diffWorldSchemas } from "@yumina/engine";
@@ -52,7 +53,9 @@ studioRoutes.post("/upload-url", async (c) => {
   const ext = body.filename.split(".").pop() ?? "png";
   const key = `studio-chat/${currentUser.id}/${crypto.randomUUID()}.${ext}`;
 
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  const imageSize = validateImageUploadSize(body.fileSize);
+  if (imageSize > 10 * 1024 * 1024) return c.json({ error: "Image too large (max 10 MB)" }, 413);
+  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: imageSize, expiresIn: 600 });
 
   return c.json({
     data: {

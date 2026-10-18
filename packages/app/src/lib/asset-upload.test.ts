@@ -171,7 +171,7 @@ test("large, animated and unreadable PNGs complete the uploader with original by
   }
 });
 
-test("cover resizing runs only for proven still images", async () => {
+test("cover JPEG resizing preserves PNG transparency and animation originals", async () => {
   const originals = ["document", "createImageBitmap"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   let decodes = 0;
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
@@ -186,8 +186,8 @@ test("cover resizing runs only for proven still images", async () => {
   } });
   try {
     const unknown = pngFile(true, Buffer.alloc(300 * 1024));
-    const still = pngFile();
-    for (const file of [still, pngFile(true), unknown]) {
+    const still = new File(["jpeg-original-content"], "photo.jpg", { type: "image/jpeg" });
+    for (const file of [still, pngFile(), pngFile(true), unknown]) {
       let uploaded: unknown;
       await uploadAssetWithPresignedUrl({
         file, resizeImageMaxDimension: 100,
@@ -438,4 +438,56 @@ test("isAnimatedImageFile leaves still images to the downscale", async () => {
   assert.equal(await isAnimatedImageFile(riffWebp("VP8X", 0x10)), false);
   assert.equal(await isAnimatedImageFile(pngFile()), false);
   assert.equal(await isAnimatedImageFile(new Blob(["\xff\xd8\xff"], { type: "image/jpeg" })), false);
+});
+
+
+test("busy image registration retries only confirmation with the same payload", async () => {
+  let transfers = 0, registrations = 0;
+  const bodies: unknown[] = [];
+  const result = await uploadAssetWithPresignedUrl({
+    file: new File(["image"], "hero.png", { type: "image/png" }), prepareUrl: "/prepare", registerUrl: "/register",
+    registerBody: { key: "pending", requestId: "stable" },
+    fetchImpl: async (input, init) => {
+      if (input === "/prepare") return Response.json({ data: { uploadUrl: "/storage", key: "pending" } });
+      if (input === "/storage") { transfers++; return new Response(null, { status: 200 }); }
+      registrations++; bodies.push(init?.body);
+      return registrations < 3
+        ? Response.json({ error: "Busy", code: "IMAGE_PROCESSOR_BUSY" }, { status: 503, headers: { "Retry-After": "0" } })
+        : Response.json({ data: { id: "finished" } });
+    },
+  });
+  assert.deepEqual(result, { id: "finished" });
+  assert.equal(transfers, 1);
+  assert.equal(registrations, 3);
+  assert(bodies.every(body => body === bodies[0]));
+});
+
+test("registration busy retry is bounded and other server failures are never replayed", async () => {
+  for (const busy of [true, false]) {
+    let registrations = 0;
+    await assert.rejects(uploadAssetWithPresignedUrl({
+      file: new File(["image"], "hero.png", { type: "image/png" }), prepareUrl: "/prepare", registerUrl: "/register", registerBody: {},
+      fetchImpl: async input => {
+        if (input === "/prepare") return Response.json({ data: { uploadUrl: "/storage", key: "pending" } });
+        if (input === "/storage") return new Response(null, { status: 200 });
+        registrations++;
+        return Response.json({ error: "Unavailable", code: busy ? "IMAGE_PROCESSOR_BUSY" : "OTHER_FAILURE" }, { status: 503, headers: { "Retry-After": "0" } });
+      },
+    }), (error: unknown) => error instanceof AssetUploadError && error.stage === "register" && error.status === 503);
+    assert.equal(registrations, busy ? 11 : 1);
+  }
+});
+
+test("registration timeout cancels a busy retry wait without re-uploading", async () => {
+  let registrations = 0;
+  await assert.rejects(uploadAssetWithPresignedUrl({
+    file: new File(["a"], "a.png", { type: "image/png" }), prepareUrl: "/prepare", registerUrl: "/register", registerBody: {}, registerTimeoutMs: 10,
+    fetchImpl: async input => {
+      if (input === "/prepare") return Response.json({ data: { uploadUrl: "/storage", key: "pending" } });
+      if (input === "/storage") return new Response(null, { status: 200 });
+      registrations++;
+      return Response.json({ error: "Busy", code: "IMAGE_PROCESSOR_BUSY" }, { status: 503, headers: { "Retry-After": "3" } });
+    },
+  }), (error: unknown) => error instanceof AssetUploadError && error.stage === "register");
+  assert.equal(registrations, 1);
 });

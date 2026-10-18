@@ -994,6 +994,8 @@ export type PromptPackEntry = {
   content: string;
   position: "first" | "after-char" | "chat" | "last";
   depth?: number;
+  /** `last` only: send as a system message instead of the default user role. */
+  role?: "system";
 };
 export type PromptPackSnapshot = {
   title: string;

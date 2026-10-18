@@ -1,3 +1,4 @@
+import { afterSessionHistory, whenSessionHistorySettled, withSessionHistoryMutation } from "../lib/session-history-operations";
 import { create } from "zustand";
 import { feedback } from "@/lib/feedback";
 import { toPillText } from "@/lib/feedback-policy";
@@ -19,6 +20,8 @@ import {
   whenSessionStateSettled,
 } from "../lib/session-state-queue";
 import { useConfigStore } from "./config";
+import { useUiStore } from "./ui";
+import { resolveImageUrl } from "@/lib/asset-url";
 import { useCreditStore, syncCreditsFromMessageResponse, handleStreamCreditError } from "@/edition/slots.state";
 import { useUserProfileStore } from "./user-profile";
 import { fallbackDecision, fallbackRecord, parseFallbackError, type ModelFallbackRetry } from "../lib/model-fallback";
@@ -1015,6 +1018,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: null,
         lastSendFailure: null,
       });
+      // Every way into a story counts as playing it: a saved link, a reload,
+      // a new session started from the play header, not just the Play button.
+      if (!data.readOnly && !data.ephemeral && data.world?.id && data.userId === data.currentUser?.id) {
+        useUiStore.getState().recordRecentPlayedWorld({
+          id: data.world.id,
+          name: data.world.name ?? "",
+          thumbnailUrl: resolveImageUrl(data.world.thumbnailUrl) ?? null,
+        });
+      }
 
       // Prime asset preload links in the parent <head> so the browser starts
       // fetching priority images in parallel with the sandbox iframe boot.
@@ -1620,7 +1632,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // sit in "streaming" until the flush finished.
     const preflight = new AbortController();
     set({ abortController: preflight });
-    void whenSessionStateSettled()
+    void Promise.all([whenSessionStateSettled(), whenSessionHistorySettled(session.id)])
       .catch(() => {})
       .then(() => {
         if (preflight.signal.aborted) return; // stopped while the flush drained
@@ -1672,7 +1684,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       lastSendFailure: null,
     });
 
-    const controller = connectSSE(
+    const controller = afterSessionHistory(session.id, () => connectSSE(
       `${apiBase}/api/messages/${messageId}/regenerate`,
       {
         method: "POST",
@@ -1877,7 +1889,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         },
       }
-    );
+    ));
 
     set({ abortController: controller });
   },
@@ -1919,7 +1931,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       lastSendFailure: null,
     });
 
-    const controller = connectSSE(
+    const controller = afterSessionHistory(session.id, () => connectSSE(
       `${apiBase}/api/sessions/${session.id}/messages`,
       {
         method: "POST",
@@ -2133,7 +2145,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         },
       }
-    );
+    ));
 
     set({ abortController: controller });
   },
@@ -2203,34 +2215,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
         retryAction(() => void get().revertLastExchange()),
       );
 
-    try {
-      const res = await fetch(`${apiBase}/api/sessions/${session.id}/revert`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Revert failed" }));
-        console.warn("Revert failed:", (err as { error: string }).error);
+    return withSessionHistoryMutation(session.id, async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/sessions/${session.id}/revert`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Revert failed" }));
+          console.warn("Revert failed:", (err as { error: string }).error);
+          fail();
+          return;
+        }
+        const { data } = await res.json();
+        if (get().session?.id !== session.id) return;
+        get().applyRuntimeResult(session.id, data, "restore");
+        const newGameState = ((data.state as Record<string, unknown>)
+          ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
+        set({
+          messages: data.messages ?? [],
+          messageTotal: data.messageTotal ?? data.messages?.length ?? 0,
+          hasEarlierMessages: (data.messageTotal ?? 0) > (data.messages?.length ?? 0),
+          isLoadingEarlier: false,
+          gameState: newGameState,
+          pendingChoices: [],
+          pendingSilentChanges: [],
+        });
+      } catch {
         fail();
-        return;
       }
-      const { data } = await res.json();
-      if (get().session?.id !== session.id) return;
-      get().applyRuntimeResult(session.id, data, "restore");
-      const newGameState = ((data.state as Record<string, unknown>)
-        ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
-      set({
-        messages: data.messages ?? [],
-        messageTotal: data.messageTotal ?? data.messages?.length ?? 0,
-        hasEarlierMessages: (data.messageTotal ?? 0) > (data.messages?.length ?? 0),
-        isLoadingEarlier: false,
-        gameState: newGameState,
-        pendingChoices: [],
-        pendingSilentChanges: [],
-      });
-    } catch {
-      fail();
-    }
+    });
   },
 
   revertToMessage: async (messageId: string) => {
@@ -2242,36 +2256,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
         retryAction(() => void get().revertToMessage(messageId)),
       );
 
-    try {
-      const res = await fetch(`${apiBase}/api/sessions/${session.id}/revert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ messageId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Revert failed" }));
-        console.warn("Revert failed:", (err as { error: string }).error);
+    return withSessionHistoryMutation(session.id, async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/sessions/${session.id}/revert`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ messageId }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Revert failed" }));
+          console.warn("Revert failed:", (err as { error: string }).error);
+          fail();
+          return;
+        }
+        const { data } = await res.json();
+        if (get().session?.id !== session.id) return;
+        get().applyRuntimeResult(session.id, data, "restore");
+        const newGameState = ((data.state as Record<string, unknown>)
+          ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
+        set({
+          messages: data.messages ?? [],
+          messageTotal: data.messageTotal ?? data.messages?.length ?? 0,
+          hasEarlierMessages: (data.messageTotal ?? 0) > (data.messages?.length ?? 0),
+          isLoadingEarlier: false,
+          gameState: newGameState,
+          pendingChoices: [],
+          pendingSilentChanges: [],
+        });
+      } catch {
         fail();
-        return;
       }
-      const { data } = await res.json();
-      if (get().session?.id !== session.id) return;
-      get().applyRuntimeResult(session.id, data, "restore");
-      const newGameState = ((data.state as Record<string, unknown>)
-        ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
-      set({
-        messages: data.messages ?? [],
-        messageTotal: data.messageTotal ?? data.messages?.length ?? 0,
-        hasEarlierMessages: (data.messageTotal ?? 0) > (data.messages?.length ?? 0),
-        isLoadingEarlier: false,
-        gameState: newGameState,
-        pendingChoices: [],
-        pendingSilentChanges: [],
-      });
-    } catch {
-      fail();
-    }
+    });
   },
 
   branchFromMessage: async (messageId: string) => {
@@ -2697,6 +2713,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isStreaming: true, streamingContent: `[speaker: ${upNext.name}]\n`, streamStartTime: Date.now() });
       let data: Record<string, unknown> | undefined;
       try {
+        await whenSessionHistorySettled(sessionId);
+        if (get().session?.id !== sessionId || !get().isStreaming) return;
         const response = await fetch(`${apiBase}/api/sessions/${sessionId}/group-reply`, {
           method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
           body: JSON.stringify({ ...(model ? { model } : {}), ...(get().liveScene ? { scene: get().liveScene } : {}) }),
@@ -2751,7 +2769,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // queued operation — a later PATCH reads the post-switch variables).
     const tracker = { sessionId: session.id, writes: new Map<string, unknown>() };
     sessionConfirmationWrites.add(tracker);
-    return queueSessionStateOperation(async (signal) => {
+    return withSessionHistoryMutation(session.id, () => queueSessionStateOperation(async (signal) => {
       const res = await fetch(`${apiBase}/api/messages/${greetingMsg.id}/swipe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2784,7 +2802,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // them on screen and sends them to the server.
         restoreOptimisticWrites(tracker);
       }
-    }, 30_000)
+    }, 30_000))
       .catch(() => {})
       .finally(() => sessionConfirmationWrites.delete(tracker));
   },

@@ -2,6 +2,7 @@ import "./utc-init.js"; // MUST be first — pins the process to UTC before any 
 import { discoverRoutes } from "./routes/discover.js";
 import fs from "node:fs";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { Context } from "hono";
 import { compress } from "hono/compress";
 import { serve } from "@hono/node-server";
@@ -152,6 +153,7 @@ const VITE_DEV_SERVER_ORIGIN = process.env.VITE_DEV_SERVER_ORIGIN ?? "http://loc
 // Global error handler — log + capture unhandled exceptions so they reach
 // both Railway logs and PostHog error tracking (same pane as client errors).
 app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
   const queryTimeout = findDatabaseQueryTimeout(err);
   if (queryTimeout) {
     return c.json({ error: "Database response timed out. Refresh to check whether the operation completed.",

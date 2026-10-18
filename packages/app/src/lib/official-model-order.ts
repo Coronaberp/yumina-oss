@@ -14,7 +14,6 @@ export function orderOfficialModels(
     pinned: readonly string[];
     favoritesOnly: boolean;
     recent: readonly string[];
-    description: (model: PlayModel) => string;
   },
 ): PlayModel[] {
   const query = options.query.trim().toLocaleLowerCase();
@@ -23,7 +22,7 @@ export function orderOfficialModels(
   return models.filter(m =>
     (options.tier === "all" || m.tier === options.tier)
     && (!options.favoritesOnly || pins.has(m.id))
-    && (!query || `${m.name} ${m.id} ${options.description(m)}`.toLocaleLowerCase().includes(query)),
+    && (!query || `${m.name} ${m.id}`.toLocaleLowerCase().includes(query)),
   ).sort((a, b) => {
     let difference = 0;
     switch (options.sort) {

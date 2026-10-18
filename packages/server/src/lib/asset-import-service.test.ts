@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -580,5 +581,28 @@ test("an invalid suffix never leaves a reusable partial manifest, and zero-byte 
     assert.equal(Number((await f.pg.query<{ bytes: string }>("SELECT bytes FROM test_upload_admissions")).rows[0]!.bytes), 0);
     await f.service.processNext();
     assert.equal((await f.service.detail("alice", emptyFile.id)).succeeded, 1);
+  } finally { await f.pg.close(); }
+});
+
+test("archive images are normalized, accounted at stored size, and invalid images never publish", async () => {
+  const f = await fixture();
+  try {
+    const png = await sharp({ create: { width: 3840, height: 2160, channels: 4, background: "#45678980" } }).png().toBuffer();
+    const { id } = await f.prepare(zipFixture([{ name: "hero.png", data: png }, { name: "invalid.png", data: "not an image" }, { name: "sound.mp3", data: "audio bytes" }]));
+    await f.service.start("alice", id, { preserveFolders: false, conflict: "rename" });
+    await f.service.processNext();
+    const result = await f.service.detail("alice", id);
+    assert.equal(result.status, "partial");
+    assert.equal(result.succeeded, 2);
+    assert.equal(result.failed, 1);
+    assert.equal(result.failures[0]?.path, "invalid.png");
+    const rows = (await f.pg.query<{ filename: string; url: string; size_bytes: number }>("SELECT filename,url,size_bytes FROM user_assets ORDER BY filename")).rows;
+    const hero = rows.find(row => row.filename === "hero.png")!;
+    const stored = f.objects.get(hero.url)!;
+    const meta = await sharp(stored).metadata();
+    assert.deepEqual([meta.width, meta.height, meta.hasAlpha], [1920, 1080, true]);
+    assert.equal(Number(hero.size_bytes), stored.length);
+    assert.equal(f.objects.get(rows.find(row => row.filename === "sound.mp3")!.url)!.toString(), "audio bytes");
+    assert.equal((await f.media.usage("alice")).used, rows.reduce((sum, row) => sum + Number(row.size_bytes), 0));
   } finally { await f.pg.close(); }
 });

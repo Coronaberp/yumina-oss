@@ -34,6 +34,9 @@ interface UiState {
   mobileNavOpen: boolean;
   theaterMode: boolean;
   recentPlayedWorlds: RecentPlayedWorld[];
+  /** The list lives only in this browser. Once it has held anything (or been
+   *  seeded from the server), an empty list means the player cleared it. */
+  recentPlayedSeeded: boolean;
   invitePanelDismissed: boolean;
   /** Community-event promo popups the user has dismissed, keyed by event id.
    *  Per-browser (localStorage) — a different browser/device shows it again.
@@ -74,6 +77,7 @@ interface UiState {
   toggleTheaterMode: () => void;
   recordRecentPlayedWorld: (world: RecentPlayedWorldInput) => void;
   removeRecentPlayedWorld: (worldId: string) => void;
+  seedRecentPlayedWorlds: (worlds: RecentPlayedWorld[]) => void;
   dismissInvitePanel: () => void;
   dismissEventPromo: (eventId: string) => void;
   openSessionManager: () => void;
@@ -131,6 +135,7 @@ export const useUiStore = create<UiState>()(
       mobileNavOpen: false,
       theaterMode: false,
       recentPlayedWorlds: [],
+      recentPlayedSeeded: false,
       invitePanelDismissed: false,
       dismissedEventPromos: [],
       sessionManagerOpen: false,
@@ -177,12 +182,19 @@ export const useUiStore = create<UiState>()(
           const deduped = s.recentPlayedWorlds.filter((item) => item.id !== normalized.id);
           return {
             recentPlayedWorlds: [normalized, ...deduped].slice(0, MAX_RECENT_PLAYED_WORLDS),
+            recentPlayedSeeded: true,
           };
         }),
       removeRecentPlayedWorld: (worldId) =>
         set((s) => ({
           recentPlayedWorlds: s.recentPlayedWorlds.filter((item) => item.id !== worldId),
         })),
+      seedRecentPlayedWorlds: (worlds) =>
+        set((s) =>
+          s.recentPlayedSeeded || s.recentPlayedWorlds.length > 0
+            ? { recentPlayedSeeded: true }
+            : { recentPlayedWorlds: worlds.slice(0, MAX_RECENT_PLAYED_WORLDS), recentPlayedSeeded: true }
+        ),
     }),
     {
       name: "yumina-ui",

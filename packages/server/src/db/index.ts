@@ -32,7 +32,7 @@ import { runtimeIdentity } from "../lib/runtime-identity.js";
 import { runExclusive } from "../lib/leader.js";
 import { startClockAlignedInterval } from "../lib/clock-aligned-interval.js";
 import { setReadAfterWriteFlag } from "../lib/read-after-write.js";
-import { invalidateEngagementStatsCache } from "../lib/engagement.js";
+import { invalidateEngagementStatsCache, publishDiscoveryStats } from "../lib/engagement.js";
 
 // Fix: pg driver interprets `timestamp without time zone` as local time,
 // but Neon stores UTC. Force UTC interpretation so timestamps are correct
@@ -3751,6 +3751,30 @@ async function refreshWorldEngagementStats(): Promise<number> {
     "total_play_minutes_30d",
   ]);
 
+  // Discovery-facing play counts (see DiscoveryStats in lib/engagement.ts):
+  // a reader's FIRST session on a story only, this week and last week.
+  // Best effort: on failure the hand-tuned terms keep the raw counts.
+  try {
+    const firstPlays = rowsOf(await executeReplicaAggregate(sql`
+      SELECT ps.world_id,
+        (COUNT(*) FILTER (WHERE ps.created_at >= now() - interval '7 days'))::int AS starts,
+        (COUNT(*) FILTER (WHERE ps.created_at >= now() - interval '7 days'
+          AND ps.playtime_seconds >= ${QUALIFIED_PLAY_SECONDS}))::int AS qualified,
+        (COUNT(*) FILTER (WHERE ps.created_at < now() - interval '7 days'))::int AS prev
+      FROM play_sessions ps
+      WHERE ps.created_at >= now() - interval '14 days'
+        AND ps.user_id IS NOT NULL AND COALESCE(ps.ephemeral, false) = false
+        AND NOT EXISTS (
+          SELECT 1 FROM play_sessions p2
+          WHERE p2.user_id = ps.user_id AND p2.world_id = ps.world_id AND p2.created_at < ps.created_at)
+      GROUP BY ps.world_id
+    `));
+    await publishDiscoveryStats("plays", Object.fromEntries(firstPlays.map((r) =>
+      [String(r.world_id), [Number(r.starts), Number(r.qualified), Number(r.prev)] as [number, number, number]])));
+  } catch (err) {
+    console.warn("[Rollup] first-play discovery stats unavailable; raw counts remain", err instanceof Error ? err.message : err);
+  }
+
   const readiness = await executeReplicaAggregate(sql`
     SELECT MIN(created_at) <= now() - (${FEED_EVENTS_READY_DAYS}::int * interval '1 day') AS ready
     FROM feed_events
@@ -3779,20 +3803,38 @@ async function refreshWorldEngagementStats(): Promise<number> {
       -- before the growth campaign makes it worth attacking.)
       WITH valid AS (
         SELECT fe.feed_request_id, fe.world_id, fe.event_type,
-               MIN(fe.created_at) AS created_at
+               MIN(fe.created_at) AS created_at, MIN(fe.position) AS position
         FROM feed_events fe
         JOIN feed_serves fs ON fs.id = fe.feed_request_id
         WHERE fe.created_at >= now() - interval '30 days'
           AND fe.event_type IN ('impression', 'click')
           AND fs.world_ids ? fe.world_id
         GROUP BY fe.feed_request_id, fe.world_id, fe.event_type
+      ), banded AS (
+        -- Slot band of each event; the click curve over bands weights exposure.
+        SELECT v.*, CASE WHEN v.position IS NULL OR v.position < 0 THEN 3
+          WHEN v.position < 4 THEN 0 WHEN v.position < 8 THEN 1 WHEN v.position < 12 THEN 2
+          WHEN v.position < 24 THEN 3 WHEN v.position < 48 THEN 4 WHEN v.position < 96 THEN 5
+          WHEN v.position < 160 THEN 6 ELSE 7 END AS band
+        FROM valid v
+      ), curve AS (
+        SELECT band, (COUNT(*) FILTER (WHERE event_type = 'click'))::float
+          / NULLIF(COUNT(*) FILTER (WHERE event_type = 'impression'), 0) AS ctr
+        FROM banded GROUP BY band
+      ), overall AS (
+        SELECT (COUNT(*) FILTER (WHERE event_type = 'click'))::float
+          / NULLIF(COUNT(*) FILTER (WHERE event_type = 'impression'), 0) AS ctr
+        FROM banded
       )
       SELECT v.world_id,
         (COUNT(*) FILTER (WHERE v.event_type = 'impression' AND v.created_at >= now() - interval '7 days'))::int AS impressions_7d,
         (COUNT(*) FILTER (WHERE v.event_type = 'click' AND v.created_at >= now() - interval '7 days'))::int AS clicks_7d,
         (COUNT(*) FILTER (WHERE v.event_type = 'impression'))::int AS impressions_total,
-        (COUNT(*) FILTER (WHERE v.event_type = 'click'))::int AS clicks_total
-      FROM valid v
+        (COUNT(*) FILTER (WHERE v.event_type = 'click'))::int AS clicks_total,
+        COALESCE(SUM(sqrt(GREATEST(COALESCE(c.ctr, o.ctr), 1e-4) / NULLIF(o.ctr, 0)))
+          FILTER (WHERE v.event_type = 'impression' AND v.created_at >= now() - interval '7 days'), 0)::float AS weighted_impressions_7d
+      FROM banded v
+      JOIN curve c USING (band) CROSS JOIN overall o
       JOIN worlds w ON w.id = v.world_id AND w.is_published = true AND w.status = 'published'
       GROUP BY v.world_id
     `));
@@ -3802,6 +3844,10 @@ async function refreshWorldEngagementStats(): Promise<number> {
       "impressions_total",
       "clicks_total",
     ]);
+
+    // Slot-weighted exposure for the hand-tuned terms (see DiscoveryStats in
+    // lib/engagement.ts), computed by the same scan.
+    await publishDiscoveryStats("impressions", Object.fromEntries(feedRows.map((r) => [String(r.world_id), Number(r.weighted_impressions_7d ?? 0)])));
   }
 
   await invalidateEngagementStatsCache();

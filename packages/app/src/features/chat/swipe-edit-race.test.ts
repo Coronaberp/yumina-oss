@@ -79,9 +79,9 @@ test("message list: edit waits for the swipe switch to land, then edits exactly 
       editMessage: async (...args: unknown[]) => { edits.push(args); return true; },
       showToast: (message: string) => { toasts.push(message); },
     };
-    const render = async (messages: unknown[]) => {
+    const render = async (messages: unknown[], isStreaming = false) => {
       await act(async () => root.render(createElement(YuminaContext.Provider,
-        { value: { ...api, messages } as unknown as typeof base }, createElement(MessageList, { rendererComponent: null }))));
+        { value: { ...api, messages, isStreaming } as unknown as typeof base }, createElement(MessageList, { rendererComponent: null }))));
     };
     const button = (title: string) => {
       const found = [...container.querySelectorAll<HTMLButtonElement>(`button[title="${title}"]`)].pop();
@@ -115,6 +115,28 @@ test("message list: edit waits for the swipe switch to land, then edits exactly 
     await act(async () => save.click());
     assert.deepEqual(edits, [["a1", "First version", { swipeIndex: 0 }]]);
     assert.deepEqual(toasts, []);
+
+    // An already-open edit cannot save while another action starts generating.
+    await act(async () => button("Edit").click());
+    await render([user, reply(0)], true);
+    const blockedSave = [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => /Save/.test(b.textContent ?? ""))!;
+    assert.equal(blockedSave.disabled, true);
+    await act(async () => blockedSave.click());
+    assert.equal(edits.length, 1);
+    assert.equal(button("Delete").disabled, true);
+    assert.equal(button("Edit").disabled, true);
+    assert.equal(button("Revert to here").disabled, true);
+    assert.equal(button("Copy").disabled, false);
+    await render([user, reply(0)]);
+    assert.equal(button("Delete").disabled, false);
+
+    // A confirmation opened before generation cannot remain actionable.
+    await act(async () => button("Delete").click());
+    assert.match(document.body.textContent!, /Delete this message/);
+    await render([user, reply(0)], true);
+    assert.doesNotMatch(document.body.textContent!, /Delete this message/);
+    await render([user, reply(0)]);
+    assert.equal(button("Delete").disabled, false);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

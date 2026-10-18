@@ -273,7 +273,7 @@ export function ProfileAiSettings() {
                   </span>
                   {currentModel && (
                     <span className="ml-2 text-[11px] text-white/35">
-                      {t(currentModel.descKey as any)} · {currentModelAvgCost}
+                      {currentModelAvgCost}
                     </span>
                   )}
                 </div>

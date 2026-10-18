@@ -1,3 +1,5 @@
+import sharp from "sharp";
+import { createImageUploadProcessor } from "../lib/image-upload-storage.js";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { readFileSync } from "node:fs";
@@ -28,6 +30,13 @@ let alterCopiedMime = false;
 const client = new PGlite();
 const database = { db: drizzle(client) as unknown as DrizzleDB };
 const objects = new Map<string, {contentType:string;contentLength:number;etag:string}>();
+const imageBytes = new Map<string, Buffer>();
+const imageProcessor = createImageUploadProcessor({
+  head: async key => objects.get(key)!,
+  read: async key => imageBytes.get(key)!,
+  write: async () => {},
+  remove: async key => { objects.delete(key); imageBytes.delete(key); },
+});
 const service = createSessionMediaService(database.db, {
   signUpload: async key => key, signRead: async key => key,
   read: async () => Buffer.alloc(0), write: async () => {},
@@ -65,13 +74,17 @@ const mocks: Record<string, unknown> = {
       if (objects.get(destination)!.contentType !== expected!.contentType) throw new Error("Copied object metadata changed");
     },
     deleteObject: async (key:string) => { objects.delete(key); },
+    putObject: async (key:string, bytes:Buffer, contentType:string) => {
+      imageBytes.set(key, bytes);
+      objects.set(key, { contentType, contentLength: bytes.length, etag: "processed" });
+    },
   },
   "../lib/session-media.js": { sessionMedia: service },
   "../lib/env.js": { env: { BETTER_AUTH_URL: "https://yumina.test" } },
   "../lib/credit-service.js": { ensureWallet: async () => ({ plan: "free" }) },
   "../lib/event-plan-entitlements.js": { resolveEffectivePlanWithEventEntitlements: async () => plan },
   "../lib/plan-config.js": { PLANS: Object.fromEntries(["free","go","plus","pro","ultra","internal"].map(id => [id, { get storageCap() { return storageCap; } }])) },
-  "../lib/image-resize.js": { resizeUploadedImageInBackground: () => {} },
+  "../lib/image-resize.js": imageProcessor,
   "../lib/generation/asset-receipts.js": { detachGenerationAsset: async () => {} },
 };
 new Function("require", "module", "exports", transform(readFileSync(file, "utf8"), { transforms: ["typescript", "imports"] }).code)((id: string) => mocks[id] ?? require(id), module, module.exports);
@@ -322,4 +335,33 @@ test("real ordinary routes and archive confirmation consume one shared hourly le
   await archives.processNext();
   assert.equal((await archives.detail(owner,id)).status,"completed");
   assert.equal((await service.usage(owner)).used,2);
+});
+
+
+test("image registration normalizes bytes, settles actual quota and reconciles after source cleanup", async () => {
+  owner = "image-owner"; backend = "s3"; storageCap = 100 * 1024 * 1024;
+  await client.query('INSERT INTO "user"(id) VALUES($1)', [owner]);
+  const png = await sharp({ create: { width: 3840, height: 2160, channels: 4, background: "#23456780" } }).png().toBuffer();
+  const request = { requestId: crypto.randomUUID(), filename: "hero.png", type: "image", contentType: "image/png", sizeBytes: png.length };
+  const prepared = await post("/upload-url", request);
+  assert.equal(prepared.status, 200, await prepared.clone().text());
+  const key = (await data(prepared)).key;
+  objects.set(key, { contentType: "image/png", contentLength: png.length, etag: "original" });
+  imageBytes.set(key, png);
+  const body = { ...request, key, mimeType: "image/png" };
+  const response = await post("/", body);
+  assert.equal(response.status, 201, await response.clone().text());
+  const result = await data(response);
+  assert.notEqual(result.key, key);
+  const stored = imageBytes.get(result.key)!;
+  const meta = await sharp(stored).metadata();
+  assert.deepEqual([meta.width, meta.height, meta.hasAlpha], [1920, 1080, true]);
+  assert.equal((await service.usage(owner)).used, stored.length);
+  assert.equal((await service.usage(owner)).reserved, 0);
+  assert.equal(objects.has(key), false);
+  const retry = await post("/", body);
+  assert.equal(retry.status, 201);
+  assert.deepEqual(await data(retry), result);
+  const tooLarge = await post("/upload-url", { ...request, requestId: crypto.randomUUID(), sizeBytes: 20 * 1024 * 1024 + 1 });
+  assert.equal(tooLarge.status, 413);
 });

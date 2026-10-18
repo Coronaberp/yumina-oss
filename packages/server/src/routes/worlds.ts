@@ -20,6 +20,8 @@ import { canonicalWorldPath, findWorldById, isPubliclyVisible } from "../lib/wor
 import { worlds, user, assetReferences, userLibrary, worldPendingEdits, worldUpdates, follows, reviews, worldRatings, contentTranslations, worldReviewSubmissions } from "../db/schema.js";
 import { estimateTokens } from "@yumina/engine";
 import { generateUploadUrl } from "../lib/s3.js";
+import { discardDirectImageUpload, publishStoredImage } from "../lib/image-resize.js";
+import { validateImageUploadSize } from "../lib/image-upload-policy.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { MAX_REVIEW_CONTENT, clampWorldTags, OFFICIAL_WORLD_TAGS, PLAYED_TAG_FILTER_THRESHOLD, MAX_DYNAMIC_FILTER_TAGS } from "@yumina/shared";
 import { canonicalizeTag } from "@yumina/shared";
@@ -3089,15 +3091,16 @@ worldRoutes.post("/:id/gallery/upload-url", authMiddleware, async (c) => {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
 
-  const body = await c.req.json<{ filename: string; contentType: string }>();
+  const body = await c.req.json<{ filename: string; contentType: string; sizeBytes?: number }>();
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
   }
 
   const ext = body.filename.split(".").pop() ?? "png";
-  const key = `worlds/${worldId}/gallery/${crypto.randomUUID()}.${ext}`;
+  const key = `worlds/${worldId}/gallery/pending/${crypto.randomUUID()}.${ext}`;
 
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(body.contentType)) return c.json({ error: "Only JPEG, PNG, WebP and GIF images are allowed" }, 400);
+  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: validateImageUploadSize(body.sizeBytes), expiresIn: 600 });
   return c.json({ data: { uploadUrl, key } });
 });
 
@@ -3125,7 +3128,8 @@ worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
     return c.json({ error: "Maximum 8 gallery images allowed" }, 400);
   }
 
-  const updatedImages = [...currentImages, body.key];
+  const normalized = await publishStoredImage(body.key, `worlds/${worldId}/gallery/processed`);
+  const updatedImages = [...currentImages, normalized.key];
 
   await db
     .update(worlds)
@@ -3133,7 +3137,8 @@ worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
     .where(eq(worlds.id, worldId));
 
   // Return CDN URL for the new image
-  const url = resolveImageCdn(body.key) ?? body.key;
+  await discardDirectImageUpload(body.key, `worlds/${worldId}/gallery/pending/`);
+  const url = resolveImageCdn(normalized.key) ?? normalized.key;
 
   return c.json({ data: { url, galleryImages: updatedImages } });
 });

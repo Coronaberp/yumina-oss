@@ -659,11 +659,12 @@ export function MessageList({ rendererComponent: ownRenderer, rendererEpoch, des
 
   // ── Edit handlers ──
   const handleStartEdit = useCallback((message: SandboxMessage) => {
+    if (api.isStreaming) return;
     if (!canStartEdit(message.id, new Set(switchingSwipes.keys()))) return;
     editTargetRef.current = editTargetFor(message);
     setEditingMessageId(message.id);
     setEditContent(message.content);
-  }, [switchingSwipes]);
+  }, [switchingSwipes, api.isStreaming]);
 
   const handleCancelEdit = useCallback(() => {
     editTargetRef.current = null;
@@ -691,7 +692,7 @@ export function MessageList({ rendererComponent: ownRenderer, rendererEpoch, des
   }, [messages, editingMessageId, editContent, api, t]);
 
   const handleSaveEdit = useCallback(async (messageId: string) => {
-    if (savingEditRef.current) return;
+    if (savingEditRef.current || api.isStreaming) return;
     const target = editTargetRef.current;
     if (!target || target.messageId !== messageId) return;
     savingEditRef.current = messageId;
@@ -867,7 +868,7 @@ export function MessageList({ rendererComponent: ownRenderer, rendererEpoch, des
                   isLastAssistant={isLastAssistant}
                   isLastMessage={isLastMessage}
                   onEditStart={() => handleStartEdit(message)}
-                  editDisabled={swipeSwitching}
+                  editDisabled={swipeSwitching || api.isStreaming}
                 />
               </MessageBubble>
             </div>

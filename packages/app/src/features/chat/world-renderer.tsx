@@ -1,3 +1,4 @@
+import { withSessionHistoryMutation } from "@/lib/session-history-operations";
 import { readLegacyGallery } from './legacy-gallery-migration';
 import { ChatAssetPicker } from "./chat-asset-picker";
 import { readChatAsset } from "@/lib/chat-asset-input";
@@ -743,11 +744,11 @@ export function WorldRenderer({
           return Promise.resolve(currentApi.switchGreeting?.(args[0] as number)).then(() => true, () => false);
         case "swipeMessage": {
           const sid = sessionIdRef.current;
-          if (!sid) return Promise.resolve({});
+          if (!sid || useChatStore.getState().isStreaming || useChatStore.getState().session?.id !== sid) return Promise.resolve({});
           const [swipeMsgId, direction] = args as [string, "left" | "right"];
           if (isPendingMessageId(swipeMsgId)) return Promise.resolve({});
           const apiBase = import.meta.env.VITE_API_URL || "";
-          return fetch(`${apiBase}/api/messages/${swipeMsgId}/swipe`, {
+          return withSessionHistoryMutation(sid, () => fetch(`${apiBase}/api/messages/${swipeMsgId}/swipe`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -769,7 +770,7 @@ export function WorldRenderer({
               store.applyRuntimeResult(sid, data, "restore");
             }
             return data;
-          }).catch(() => ({}));
+          }).catch(() => ({})));
         }
         case "navigateTo":
           currentApi.navigateTo?.(args[0] as string);
@@ -865,11 +866,9 @@ export function WorldRenderer({
         // ── Message revert / branch ──
         case "revertToMessage": {
           const sid = sessionIdRef.current;
-          if (!sid) return Promise.resolve(undefined);
+          if (!sid || useChatStore.getState().isStreaming || useChatStore.getState().session?.id !== sid) return Promise.resolve(undefined);
           if (isPendingMessageId(args[0])) return Promise.resolve(undefined);
-          return import("@/stores/chat").then((m) =>
-            m.useChatStore.getState().revertToMessage(args[0] as string)
-          );
+          return useChatStore.getState().revertToMessage(args[0] as string);
         }
         case "branchFromMessage": {
           const sid = sessionIdRef.current;
@@ -947,14 +946,14 @@ export function WorldRenderer({
         // ── Chat actions ──
         case "editMessage": {
           const sid = sessionIdRef.current;
-          if (!sid) return Promise.resolve(false);
+          if (!sid || useChatStore.getState().isStreaming || useChatStore.getState().session?.id !== sid) return Promise.resolve(false);
           const [messageId, content, editOptions] = args as [string, string, { swipeIndex?: unknown } | undefined];
           if (isPendingMessageId(messageId)) return Promise.resolve(false);
           // The variant the edit box was opened on. The server refuses the
           // save if another variant became active in between, instead of
           // writing this text over it (edit-target.ts).
           const expectedSwipeIndex = typeof editOptions?.swipeIndex === "number" ? editOptions.swipeIndex : undefined;
-          return fetch(`${apiBase}/api/messages/${messageId}`, {
+          return withSessionHistoryMutation(sid, () => fetch(`${apiBase}/api/messages/${messageId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -967,6 +966,11 @@ export function WorldRenderer({
             // The server row is the truth for the edit; it already clears the
             // guard audit, which is stale once the text changed.
             store.updateMessage(messageId, data);
+            return true;
+          }).catch(() => false)).then((success) => {
+            if (!success) return false;
+            const store = useChatStore.getState();
+            if (store.session?.id !== sid) return false;
             const msgs = store.messages;
             const lastMsg = msgs[msgs.length - 1];
             const secondToLast = msgs[msgs.length - 2];
@@ -983,18 +987,19 @@ export function WorldRenderer({
         }
         case "deleteMessage": {
           const sid = sessionIdRef.current;
-          if (!sid) return Promise.resolve(false);
+          if (!sid || useChatStore.getState().isStreaming || useChatStore.getState().session?.id !== sid) return Promise.resolve(false);
           const [msgId] = args as [string];
           if (isPendingMessageId(msgId)) return Promise.resolve(false);
-          return fetch(`${apiBase}/api/messages/${msgId}`, {
+          return withSessionHistoryMutation(sid, () => fetch(`${apiBase}/api/messages/${msgId}`, {
             method: "DELETE",
             credentials: "include",
           }).then(async (r) => {
             if (!r.ok) return false;
             const store = (await import("@/stores/chat")).useChatStore.getState();
+            if (store.session?.id !== sid) return false;
             store.removeMessage(msgId);
             return true;
-          }).catch(() => false);
+          }).catch(() => false));
         }
         case "illustrateMessage": {
           const [msgId, note, fine] = args as [string, string | undefined, boolean | undefined];

@@ -12,7 +12,7 @@ export interface UploadProgress {
   bytesPerSecond: number;
 }
 
-const DEFAULT_REGISTER_TIMEOUT_MS = 20_000;
+const DEFAULT_REGISTER_TIMEOUT_MS = 60_000;
 const MIN_STORAGE_TIMEOUT_MS = 120_000; // 2 minutes base
 const TIMEOUT_PER_MB_MS = 10_000; // +10 seconds per MB
 const MAX_STORAGE_RETRIES = 1;
@@ -217,6 +217,24 @@ async function withRetry(
   }
 }
 
+/** Wait within the registration deadline, without re-uploading already transferred bytes. */
+function waitForUploadRetry(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("Upload cancelled", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
 /** XHR-based upload that reports progress with speed — used in browsers when onProgress is provided */
 function uploadWithXhr(
   url: string,
@@ -382,9 +400,8 @@ async function downscaleImageFile(file: File, maxDimension: number, quality: num
   if (
     typeof document === "undefined" ||
     typeof createImageBitmap === "undefined" ||
-    !file.type.startsWith("image/") ||
-    file.type === "image/gif" ||
-    file.type === "image/svg+xml"
+    // Preserve PNG alpha and animated WebP for server-side processing.
+    file.type !== "image/jpeg"
   ) {
     return file;
   }
@@ -563,29 +580,36 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   onStage?.("register");
   const registerTimeout = createUploadTimeout(registerTimeoutMs, signal);
   try {
-    const registerResponse = await f(registerUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: registerCredentials,
-      body: JSON.stringify(payload),
-      signal: registerTimeout.signal,
-    });
+    for (let attempt = 0; ; attempt++) {
+      const registerResponse = await f(registerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: registerCredentials,
+        body: JSON.stringify(payload),
+        signal: registerTimeout.signal,
+      });
 
-    const registerPayload = await parseApiResponse<T>(registerResponse);
+      const registerPayload = await parseApiResponse<T>(registerResponse);
+      if (registerResponse.status === 503 && registerPayload?.code === "IMAGE_PROCESSOR_BUSY" && attempt < 10) {
+        const seconds = Number(registerResponse.headers.get("Retry-After") ?? 3);
+        await waitForUploadRetry(Math.min(5000, Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : 3000)), registerTimeout.signal);
+        continue;
+      }
 
-    if (!registerResponse.ok) {
-      throw new AssetUploadError(
-        "register",
-        getApiErrorMessage(registerPayload, "Failed to register asset"),
-        { status: registerResponse.status }
-      );
+      if (!registerResponse.ok) {
+        throw new AssetUploadError(
+          "register",
+          getApiErrorMessage(registerPayload, "Failed to register asset"),
+          { status: registerResponse.status }
+        );
+      }
+
+      if (registerPayload?.data === undefined) {
+        throw new AssetUploadError("register", "Failed to register asset");
+      }
+
+      return registerPayload.data;
     }
-
-    if (registerPayload?.data === undefined) {
-      throw new AssetUploadError("register", "Failed to register asset");
-    }
-
-    return registerPayload.data;
   } catch (error) {
     if (error instanceof AssetUploadError) throw error;
 

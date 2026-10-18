@@ -47,6 +47,7 @@ export function Sidebar() {
   const closeMobileNav = useUiStore((s) => s.closeMobileNav);
   const recentPlayedWorlds = useUiStore((s) => s.recentPlayedWorlds);
   const removeRecentPlayedWorld = useUiStore((s) => s.removeRecentPlayedWorld);
+  const recentPlayedSeeded = useUiStore((s) => s.recentPlayedSeeded);
   const worlds = useWorldsStore((s) => s.worlds);
   const profile = useUserProfileStore((s) => s.profile);
   const plan = useCreditStore((s) => s.plan);
@@ -100,6 +101,23 @@ export function Sidebar() {
 
     return liveWorld?.thumbnailUrl ?? schemaAvatar ?? world.thumbnailUrl ?? null;
   }
+
+  // The list is kept in this browser only; on a new device or after the
+  // browser cleared site data, fill it from the player's sessions once.
+  useEffect(() => {
+    if (!mobileNavOpen || !isAuthenticated || recentPlayedSeeded) return;
+    let cancelled = false;
+    void fetch(`${import.meta.env.VITE_API_URL || ""}/api/sessions/recent-worlds`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { data?: { id: string; name: string; thumbnailUrl: string | null; lastPlayedAt: string }[] } | null) => {
+        if (cancelled || !Array.isArray(body?.data)) return;
+        useUiStore.getState().seedRecentPlayedWorlds(
+          body.data.map((world) => ({ id: world.id, name: world.name, thumbnailUrl: world.thumbnailUrl, playedAt: world.lastPlayedAt })),
+        );
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [mobileNavOpen, isAuthenticated, recentPlayedSeeded]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;

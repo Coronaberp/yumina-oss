@@ -31,6 +31,7 @@ import { splitBySpeaker } from "./speaker-split";
 import { RefusalBar, isRefusedReply } from "./player-prompts";
 import { TurnImageState } from "./turn-image-state";
 import { TurnImageCard } from "./turn-image-card";
+import { PortraitViewer, usePortraitViewer } from "./portrait-viewer";
 import { splitTurnImages, splitTurnVideos } from "./turn-image-embeds";
 
 function cn(...inputs: ClassValue[]) {
@@ -266,6 +267,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
     () => (isUser || isSystem ? null : resolveSpeaker(api.entries, speakerSource, aiFrames, api.worldbooks)),
     [api.entries, api.worldbooks, aiFrames, isUser, isSystem, speakerSource],
   );
+  const portraitViewer = usePortraitViewer();
 
   // Auto-resize edit textarea
   useLayoutEffect(() => {
@@ -338,6 +340,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
         dimmed && "opacity-50",
       )}
     >
+      {portraitViewer.open && <PortraitViewer portrait={portraitViewer.open} t={t} onClose={portraitViewer.close} />}
       <div className={cn("w-full min-w-0", isUser && "play-user-message-shell")}>
         {/* Name label — a character portrait + name when the world says who is
             speaking, otherwise the plain role label on role changes. */}
@@ -354,14 +357,16 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                 muted
                 loop
                 playsInline
-                className="h-8 w-8 shrink-0 rounded-full border border-border object-cover"
+                {...portraitViewer.faceProps({ src: speaker.portrait ?? "", video: speaker.video.idle || speaker.video.speaking, name: speaker.name }, t)}
+                className="h-8 w-8 shrink-0 cursor-zoom-in rounded-full border border-border object-cover"
               />
             ) : speaker.portrait && (
               <img
                 src={speaker.portrait}
                 alt=""
                 draggable={false}
-                className="h-8 w-8 shrink-0 rounded-full border border-border object-cover"
+                {...portraitViewer.faceProps({ src: speaker.portrait, name: speaker.name }, t)}
+                className="h-8 w-8 shrink-0 cursor-zoom-in rounded-full border border-border object-cover"
               />
             )}
             <p className="play-message-role flex items-center text-xs font-medium text-primary/70">
@@ -487,7 +492,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                 </button>
                 <button
                   onClick={onSaveEdit}
-                  disabled={isSavingEdit}
+                  disabled={isSavingEdit || api.isStreaming}
                   className="flex h-7 items-center gap-1.5 rounded-md bg-primary/15 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/25 active:bg-primary/25 disabled:pointer-events-none disabled:opacity-60 [@media(hover:none)]:min-h-10"
                 >
                   {/* Check icon (inline SVG) */}
@@ -566,7 +571,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                 return seg.speaker ? (
                   <div key={i} className="flex items-start gap-2" data-speaker={seg.speaker}>
                     {who?.portrait
-                      ? <img src={who.portrait} alt="" draggable={false} className="mt-0.5 h-7 w-7 shrink-0 rounded-full border border-border object-cover" />
+                      ? <img src={who.portrait} alt="" draggable={false} {...portraitViewer.faceProps({ src: who.portrait, name: seg.speaker }, t)} className="mt-0.5 h-7 w-7 shrink-0 cursor-zoom-in rounded-full border border-border object-cover" />
                       : <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[11px] font-semibold">{seg.speaker.slice(0, 1)}</span>}
                     <div className="min-w-0 flex-1">
                       <p className="play-message-role mb-0.5 text-xs font-medium text-primary/70">{seg.speaker}</p>

@@ -779,12 +779,11 @@ function OfficialView({
     infoTrigger.current = event.currentTarget;
     setInfo(current => current === kind ? null : kind);
   };
-  const getDesc = (m: (typeof PLAY_MODELS)[number]) => t(`aiProvider.models.${m.descKey?.split(".").pop()}` as any, { ns: "profile", defaultValue: "" }) || formatModelId(m.id);
   // Same-price versions of one series share a row; the row sits where its
   // best-ranked version would have, and a filter keeps only matching versions.
   const groups = groupPlayModels(orderOfficialModels(PLAY_MODELS, {
     tier: activeTier, query, sort, pinned: pinnedModels, favoritesOnly,
-    recent: recentlyUsed, description: getDesc, popularityScores: popularity.scores,
+    recent: recentlyUsed, popularityScores: popularity.scores,
   }));
   const cost = (m: (typeof PLAY_MODELS)[number]) => {
     if (m.avgCostMushies === 0) return t("modelBrowser.free");
@@ -855,7 +854,6 @@ function OfficialView({
                 {isSelected && !locked && <Check aria-hidden="true" className={cn("h-3 w-3 shrink-0 self-center",meta.color)} />}
                 <span className={cn("shrink-0 whitespace-nowrap text-[11px] tabular-nums",m.avgCostMushies === 0 ? "text-emerald-400/80" : "text-gold/75")}>{cost(m)}</span>
               </div>
-              <p className="mt-1 text-xs leading-snug text-white/55">{getDesc(m)}</p>
               {(locked || hasGrokTrial || m.badge || variants.some(v => v.model.id === recommendedModel)) && <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
                 {variants.some(v => v.model.id === recommendedModel) && <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary" data-author-recommended>{t("modelBrowser.authorRecommended")}</span>}
                 {locked && <span className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-white/60"><Lock className="h-3 w-3" />{t(`planName.${m.minPlan}` as never,{ns:"common"})}</span>}

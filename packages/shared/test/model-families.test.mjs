@@ -29,7 +29,7 @@ test('the live catalog shows one Claude Opus row with every version, newest firs
 });
 
 test('a family sits where its first listed member was, and a version whose price drifted gets its own row', () => {
-  const base = { scope: 'play', tier: 'ultra', minPlan: 'plus', avgCostMushies: 1, descKey: 'x', inputPrice: 5, outputPrice: 25 };
+  const base = { scope: 'play', tier: 'ultra', minPlan: 'plus', avgCostMushies: 1, inputPrice: 5, outputPrice: 25 };
   const models = [
     { ...base, id: 'a/cheap', name: 'Cheap', tier: 'budget' },
     { ...base, id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7' },
@@ -45,7 +45,7 @@ test('a family sits where its first listed member was, and a version whose price
 });
 
 test('a family with one version left after filtering is an ordinary row under its own name', () => {
-  const base = { scope: 'play', tier: 'ultra', minPlan: 'plus', avgCostMushies: 1, descKey: 'x', inputPrice: 5, outputPrice: 25 };
+  const base = { scope: 'play', tier: 'ultra', minPlan: 'plus', avgCostMushies: 1, inputPrice: 5, outputPrice: 25 };
   const groups = groupPlayModels([{ ...base, id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7' }]);
   assert.deepEqual(groups.map(g => [g.key, g.name, g.variants.length]), [['anthropic/claude-opus-4.7', 'Claude Opus 4.7', 1]]);
 });

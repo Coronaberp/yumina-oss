@@ -273,6 +273,8 @@ export async function copyObject(
 
 /** Delete an object (missing objects are not an error on either backend). */
 export async function deleteObject(key: string): Promise<void> {
+  // Preview artifacts share the master's owner prefix and are removed with it.
+  if (!key.includes(".cover-previews/")) await deletePrefix(`${key}.cover-previews/`);
   if (useLocal()) return getLocalDiskStorage().deleteObject(key);
   const command = new DeleteObjectCommand({
     Bucket: env.AWS_S3_BUCKET_NAME,

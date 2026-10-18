@@ -72,7 +72,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ filename: file.name, contentType: file.type }),
+        body: JSON.stringify({ filename: file.name, contentType: file.type, sizeBytes: file.size }),
       });
 
       if (!urlRes.ok) throw new Error("Failed to get upload URL");

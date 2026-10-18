@@ -137,6 +137,23 @@ export interface WorldEngagementStat {
    * slate composer, not the per-user scorer. */
   returners30d: number;
   totalPlayMinutes30d: number;
+  discovery?: DiscoveryStats;
+}
+
+/** The counts the hand-tuned terms read: discovery-facing when published,
+ * raw otherwise (each half falls back independently). */
+export function discoveryCounts(stat: WorldEngagementStat, globals: EngagementGlobals) {
+  const d = stat.discovery, g = globals.discovery;
+  const feed = d?.impressions7d !== undefined && (g?.ctr ?? 0) > 0;
+  const plays = d?.starts7d !== undefined && (g?.qualifiedRate ?? 0) > 0;
+  return {
+    impressions7d: feed ? d!.impressions7d! : stat.impressions7d,
+    ctr: feed ? g!.ctr! : globals.ctr,
+    starts7d: plays ? d!.starts7d! : stat.playsStarted7d,
+    qualified7d: plays ? d!.qualified7d ?? 0 : stat.qualifiedPlays7d,
+    prev7d: plays ? d!.prev7d ?? 0 : stat.playsPrev7d,
+    qualifiedRate: plays ? g!.qualifiedRate! : globals.qualifiedRate,
+  };
 }
 
 export interface EngagementGlobals {
@@ -144,6 +161,27 @@ export interface EngagementGlobals {
   ctr: number;
   /** Global qualified-play rate (qualified7d/starts7d across the catalog). */
   qualifiedRate: number;
+  /** Catalog rates over the discovery-facing stats (see DiscoveryStats). */
+  discovery?: { ctr?: number; qualifiedRate?: number };
+}
+
+/** Discovery-facing counts (2026-10-18), used by the hand-tuned CTR /
+ * quality / trending terms and exploration, never by the model (its inputs
+ * keep the raw columns so serving matches what it was trained on).
+ * - impressions7d: slot-weighted exposure. A view in a top slot counts more
+ *   than a deep one, by the square root of the measured click curve (top 4
+ *   slots ~52 clicks/1k views vs ~15 at 160+), so a card that merely holds
+ *   the top isn't credited with the slot's clicks. Square root because part
+ *   of the curve is real quality; the logged top-12 shuffle replaces it with
+ *   the causal curve.
+ * - starts7d / qualified7d / prev7d: first sessions only. 37% of play
+ *   starts were readers returning to a story they already play (64% of those
+ *   pass 5 min vs 46% of first sessions), which rewarded loyalty, not discovery. */
+export interface DiscoveryStats {
+  impressions7d?: number;
+  starts7d?: number;
+  qualified7d?: number;
+  prev7d?: number;
 }
 
 /**
@@ -207,6 +245,10 @@ export interface EngagementContext {
    * the user is tapping RIGHT NOW get boosted on the next page. */
   sessionCentroid: number[] | null;
   sessionTags: Set<string>;
+  /** In-visit negatives (2026-10-18 experiment, see sessionNegativesArm):
+   * unit centroid of stories this reader opened a preview of in the last
+   * ~45 minutes and did NOT play. Hand-tuned term only, never a model input. */
+  sessionNegativeCentroid?: number[] | null;
   /** Profile tier — set by the handler after the profile loads (both load
    * in parallel). Feeds the ranker model's tier features. */
   tier: "cold" | "warm" | "mature" | null;
@@ -369,7 +411,11 @@ const EXPLORE_PRIOR_IMPRESSIONS = 100;
  * been shown yet. Never zero, so the posterior keeps a spread. */
 export function exploreValuePrior(stats: Iterable<WorldEngagementStat | undefined>, globals: EngagementGlobals): number {
   let qualified = 0, impressions = 0;
-  for (const stat of stats) if (stat && stat.impressions7d > 0) { qualified += stat.qualifiedPlays7d; impressions += stat.impressions7d; }
+  for (const stat of stats) {
+    if (!stat) continue;
+    const c = discoveryCounts(stat, globals);
+    if (c.impressions7d > 0) { qualified += c.qualified7d; impressions += c.impressions7d; }
+  }
   const fallback = Math.max(globals.ctr * globals.qualifiedRate, 1e-4);
   return impressions > 0 ? Math.min(1, Math.max(qualified / impressions, 1e-4)) : fallback;
 }
@@ -383,9 +429,11 @@ export function exploreValuePrior(stats: Iterable<WorldEngagementStat | undefine
  * Deterministic per seed, so pages within one visit agree with each other.
  * This is the data-driven form of Roblox's "test and expand", using the
  * five-minute rollups the ranker already holds. */
-export function exploreValueSample(stat: WorldEngagementStat | undefined, prior: number, seed: string): number {
-  const impressions = Math.max(0, stat?.impressions7d ?? 0);
-  const qualified = Math.min(Math.max(0, stat?.qualifiedPlays7d ?? 0), impressions);
+export function exploreValueSample(stat: WorldEngagementStat | undefined, prior: number, seed: string,
+  globals?: EngagementGlobals): number {
+  const counts = stat && globals ? discoveryCounts(stat, globals) : undefined;
+  const impressions = Math.max(0, counts?.impressions7d ?? stat?.impressions7d ?? 0);
+  const qualified = Math.min(Math.max(0, counts?.qualified7d ?? stat?.qualifiedPlays7d ?? 0), impressions);
   const n = impressions + EXPLORE_PRIOR_IMPRESSIONS;
   const mean = Math.min(1, Math.max(0, (qualified + EXPLORE_PRIOR_IMPRESSIONS * prior) / n));
   const sd = Math.sqrt(Math.max(mean * (1 - mean), 1e-8) / n);
@@ -415,20 +463,23 @@ export function exploreRotationScore(worldId: string, now: Date, rotationSeed?: 
  * 1k-world catalog. */
 const ROTATION_JITTER = 10;
 
-/** Learned-model lift (engage_v2): same ln-ratio shape as the CTR term.
- * Regression model (current) → ratio of predicted MINUTES to the model's
- * eval-set baseline (a world expected to generate 5min when the typical
- * world generates ~0.5min gets a big lift). Legacy binary model → ratio of
- * predicted P(click) to the global click prior. Either way it replaces the
- * ctr/quality/velocity heuristics (they're the model's own features, so
- * keeping them too would double-count). */
+/** Learned-model lift (engage_v2): same ln-ratio shape as the CTR term,
+ * ADDED to the full engage_v1 score (2026-10-18). Regression model →
+ * ratio of predicted minutes to the model's own average-card baseline.
+ * Legacy binary model → ratio of predicted P(click) to the global click prior.
+ *
+ * Why on top instead of replacing the heuristics: the offline replay of
+ * 10-13..10-15 (991 readers, 836 cards that led to play) scored
+ * engage_v1 + 90·lift at +18% NDCG@24 vs served [+12%, +24%], while dropping
+ * the behaviour terms (what engage_v2 did since PR #420) scored −6%
+ * [−11%, −1%]; live, engage_v2 readers started fewer stories from Discover. */
 const MODEL_WEIGHT = 90;
 const MODEL_LN_MIN = -1.0;
 const MODEL_LN_MAX = 1.6;
-/** Smoothing added to both sides of the predicted-minutes ratio so a world
- * predicted at ~0 minutes doesn't produce ln(0), and tiny absolute
- * differences near zero don't swing the lift. Matches the ~0.5min baseline
- * scale. */
+/** Fallback smoothing for the predicted-minutes ratio when a model carries
+ * no baseline. Normally the smoothing IS the model's baseline: models predict
+ * ~0.015 min per seen card, and a fixed 0.5 min squashed a 3× better card to
+ * +6 points (2026-10-17: 98% of cards got −3..+9 of a −90..+144 range). */
 const MODEL_VALUE_PRIOR_MIN = 0.5;
 
 /** Session-adaptation weights: embedding similarity to what the user
@@ -443,6 +494,27 @@ const SESSION_COSINE_FLOOR = 0.3;
 const SESSION_COSINE_CAP = 0.85;
 const SESSION_WINDOW_MINUTES = 45;
 const SESSION_MAX_WORLDS = 8;
+/** Preview-without-play push-down. 65% of opened previews end without a
+ * play; until 2026-10-18 the session signal only knew what was tapped, so a
+ * rejected story pulled its look-alikes UP. Floor 0.5: only close neighbours
+ * of what was rejected move, not the whole genre. Weight sized under the
+ * positive session term (50) so a story that is both liked-adjacent and
+ * rejected-adjacent nets out near zero. */
+const SESSION_NEGATIVE_WEIGHT = 35;
+const SESSION_NEGATIVE_COSINE_FLOOR = 0.5;
+const SESSION_NEGATIVE_COSINE_CAP = 0.85;
+/** A preview read for this long and rejected is a weaker "no" than a glance. */
+const SESSION_NEGATIVE_LONG_LOOK_MS = 10_000;
+
+/** 50/50 by a fixed hash of the actor (`user:<id>` / `guest:<id>`), so a
+ * readout can rebuild the groups offline. DISCOVERY_SESSION_NEGATIVES_PERCENT
+ * overrides (0 = off, 100 = everyone). */
+export function sessionNegativesArm(actor: string | null | undefined, percent = process.env.DISCOVERY_SESSION_NEGATIVES_PERCENT): boolean {
+  if (!actor) return false;
+  const p = percent === undefined || percent === "" ? 50 : Number(percent);
+  if (!Number.isFinite(p) || p <= 0) return false;
+  return fnvHash01(`sessneg1:${actor}`) * 100 < Math.min(100, p);
+}
 
 /** Flat boost for candidates surfaced by the co_played recall route — an
  * ALS neighbor of the user's 5 most recent worlds. Sized between the tag
@@ -680,8 +752,7 @@ export function scoreEngagement(
   const stat = ctx.stats.get(candidate.id);
   const useModel = ctx.variant === "engage_v2" && ctx.model !== null;
 
-  // ── Learned model (v2) — replaces the ctr/quality/velocity heuristics
-  // (they're its input features; keeping them too would double-count).
+  // ── Learned model (v2) — a measured nudge on top of every engage_v1 term.
   let model = 0;
   let modelApplied = false;
   let ctr = 0;
@@ -694,10 +765,11 @@ export function scoreEngagement(
         // regression: raw = predicted log1p(minutes). tweedie: the handle
         // already returns expected minutes. Lift = predicted minutes vs the
         // model's average-world baseline (the time-value objective).
-        const predictedMin = ctx.model!.kind === "tweedie" ? raw : Math.expm1(raw);
+        const predictedMin = Math.max(0, ctx.model!.kind === "tweedie" ? raw : Math.expm1(raw));
         const baseline = ctx.model!.valueBaseline;
+        const smoothing = baseline > 0 ? baseline : MODEL_VALUE_PRIOR_MIN;
         model = MODEL_WEIGHT * clampLn(
-          (predictedMin + MODEL_VALUE_PRIOR_MIN) / (baseline + MODEL_VALUE_PRIOR_MIN),
+          (predictedMin + smoothing) / (baseline + smoothing),
           MODEL_LN_MIN,
           MODEL_LN_MAX,
         );
@@ -713,22 +785,23 @@ export function scoreEngagement(
       modelApplied = false;
     }
   }
-  if (!modelApplied) {
-    if (stat && stat.impressions7d >= CTR_MIN_IMPRESSIONS && ctx.globals.ctr > 0) {
+  const counts = stat ? discoveryCounts(stat, ctx.globals) : undefined;
+  if (counts) {
+    if (counts.impressions7d >= CTR_MIN_IMPRESSIONS && counts.ctr > 0) {
       const smoothed =
-        (stat.clicks7d + CTR_PRIOR_IMPRESSIONS * ctx.globals.ctr) /
-        (stat.impressions7d + CTR_PRIOR_IMPRESSIONS);
-      ctr = CTR_WEIGHT * clampLn(smoothed / ctx.globals.ctr, CTR_LN_MIN, CTR_LN_MAX);
+        (stat!.clicks7d + CTR_PRIOR_IMPRESSIONS * counts.ctr) /
+        (counts.impressions7d + CTR_PRIOR_IMPRESSIONS);
+      ctr = CTR_WEIGHT * clampLn(smoothed / counts.ctr, CTR_LN_MIN, CTR_LN_MAX);
     }
-    if (stat && stat.playsStarted7d >= QUALITY_MIN_PLAYS && ctx.globals.qualifiedRate > 0) {
+    if (counts.starts7d >= QUALITY_MIN_PLAYS && counts.qualifiedRate > 0) {
       const smoothed =
-        (stat.qualifiedPlays7d + QUALITY_PRIOR_PLAYS * ctx.globals.qualifiedRate) /
-        (stat.playsStarted7d + QUALITY_PRIOR_PLAYS);
-      quality = QUALITY_WEIGHT * clampLn(smoothed / ctx.globals.qualifiedRate, QUALITY_LN_MIN, QUALITY_LN_MAX);
+        (counts.qualified7d + QUALITY_PRIOR_PLAYS * counts.qualifiedRate) /
+        (counts.starts7d + QUALITY_PRIOR_PLAYS);
+      quality = QUALITY_WEIGHT * clampLn(smoothed / counts.qualifiedRate, QUALITY_LN_MIN, QUALITY_LN_MAX);
     }
-    if (stat && stat.playsStarted7d + stat.playsPrev7d >= VELOCITY_MIN_TOTAL_PLAYS) {
+    if (counts.starts7d + counts.prev7d >= VELOCITY_MIN_TOTAL_PLAYS) {
       velocity = VELOCITY_WEIGHT * clampLn(
-        (stat.playsStarted7d + 3) / (stat.playsPrev7d + 3),
+        (counts.starts7d + 3) / (counts.prev7d + 3),
         VELOCITY_LN_MIN,
         VELOCITY_LN_MAX,
       );
@@ -737,11 +810,10 @@ export function scoreEngagement(
 
   // Fatigue follows the measured decay of a card's click rate with repeated
   // unclicked showings (fatigueKeep); ctx.fatigue keeps the legacy threshold
-  // map for the exposure_unclicked_impressions snapshot input only.
-  // When the learned model scored the card it already saw the exposure,
-  // session, craft, co-play and latent inputs (buildRankerFeatures); adding
-  // the heuristic terms on top would count them twice. Rotation jitter stays.
-  const fatiguePenalty = modelApplied ? 0 : fatigueDiscount(ctx.exposure.get(candidate.id));
+  // map for the exposure_unclicked_impressions snapshot input only. Kept on
+  // in engage_v2 too: without it, 19.6% of v2's top 24 were cards ignored 3+
+  // times (v1: 15.5%).
+  const fatiguePenalty = fatigueDiscount(ctx.exposure.get(candidate.id));
 
   // Exploration moved OUT of the additive score (owner decision
   // 2026-08-19): an unproven card must never buy its way into premium top
@@ -760,7 +832,7 @@ export function scoreEngagement(
   // user tapped in the last ~45 minutes. This is the no-quiz cold start —
   // the second page already knows what the first page taught us.
   let session = 0;
-  if (!modelApplied && ctx.sessionCentroid && candidate.embedding && candidate.embedding.length === ctx.sessionCentroid.length) {
+  if (ctx.sessionCentroid && candidate.embedding && candidate.embedding.length === ctx.sessionCentroid.length) {
     const normalized = l2Normalize(candidate.embedding);
     if (normalized) {
       const cos = dot(ctx.sessionCentroid, normalized);
@@ -769,7 +841,16 @@ export function scoreEngagement(
       session += SESSION_VECTOR_WEIGHT * adjusted * adjusted;
     }
   }
-  if (!modelApplied && ctx.sessionTags.size > 0 && Array.isArray(candidate.tags) && candidate.tags.length > 0) {
+  if (ctx.sessionNegativeCentroid && candidate.embedding && candidate.embedding.length === ctx.sessionNegativeCentroid.length) {
+    const normalized = l2Normalize(candidate.embedding);
+    if (normalized) {
+      const cos = dot(ctx.sessionNegativeCentroid, normalized);
+      const range = SESSION_NEGATIVE_COSINE_CAP - SESSION_NEGATIVE_COSINE_FLOOR;
+      const adjusted = Math.max(0, Math.min(1, (cos - SESSION_NEGATIVE_COSINE_FLOOR) / range));
+      session -= SESSION_NEGATIVE_WEIGHT * adjusted * adjusted;
+    }
+  }
+  if (ctx.sessionTags.size > 0 && Array.isArray(candidate.tags) && candidate.tags.length > 0) {
     let shared = 0;
     for (const tag of candidate.tags) {
       if (ctx.sessionTags.has(tag.trim().toLowerCase())) shared += 1;
@@ -782,7 +863,7 @@ export function scoreEngagement(
   // asked. Signed match: a minimalist's feed demotes heavy-UI cards just
   // as a craft-lover's feed lifts them.
   let craft = 0;
-  if (!modelApplied && ctx.craft && ctx.craft.sampleSize >= CRAFT_MIN_SAMPLE) {
+  if (ctx.craft && ctx.craft.sampleSize >= CRAFT_MIN_SAMPLE) {
     const itemTier = customUiTier(candidate.customUiLoc);
     craft += CRAFT_UI_WEIGHT * (1 - Math.abs(ctx.craft.uiTier - itemTier) / 3 - 0.5);
     craft += CRAFT_AUDIO_WEIGHT * (ctx.craft.audio - 0.5) * (candidate.hasAudio ? 1 : -1);
@@ -795,7 +876,7 @@ export function scoreEngagement(
 
   // ── Co-play affinity (v1 + v2): "players like you play this" — folded
   // into the grid ranking rather than shown as a labeled shelf.
-  const coPlay = !modelApplied && candidate.candidateSource?.includes("co_played") ? CO_PLAY_BONUS : 0;
+  const coPlay = candidate.candidateSource?.includes("co_played") ? CO_PLAY_BONUS : 0;
 
   // ── Behavioral latent affinity (v1 + v2): dot product of the user's and
   // the world's ALS latent vectors (both unit-normalized → cosine). This is
@@ -804,7 +885,7 @@ export function scoreEngagement(
   // creator, or content-embedding connection exists. New/low-play worlds
   // have no latent vector; the content vectorScore term handles those.
   let latent = 0;
-  if (!modelApplied && ctx.userLatent) {
+  if (ctx.userLatent) {
     const worldVec = ctx.worldLatent.get(candidate.id);
     if (worldVec && worldVec.length === ctx.userLatent.length) {
       const cos = dot(ctx.userLatent, worldVec); // both already unit-normalized
@@ -955,18 +1036,31 @@ async function readStatsSnapshot(db: Database): Promise<StatsSnapshot> {
     throw err; // The bounded local cache supplies last-good or empty fallback.
   }
 
-  let imp = 0, clk = 0, starts = 0, qualified = 0;
+  const [effImpressions, newPlays] = await Promise.all([readDiscoveryStats("impressions"), readDiscoveryStats("plays")]);
+  let imp = 0, clk = 0, starts = 0, qualified = 0, effImp = 0, newStarts = 0, newQualified = 0;
   for (const r of rows) {
     imp += r.impressions7d;
     clk += r.clicks7d;
     starts += r.playsStarted7d;
     qualified += r.qualifiedPlays7d;
+    const discovery: DiscoveryStats = {};
+    if (effImpressions) discovery.impressions7d = Number(effImpressions[r.worldId] ?? 0);
+    const plays = newPlays?.[r.worldId];
+    if (newPlays) Object.assign(discovery, { starts7d: Number(plays?.[0] ?? 0), qualified7d: Number(plays?.[1] ?? 0), prev7d: Number(plays?.[2] ?? 0) });
+    if (effImpressions || newPlays) r.discovery = discovery;
+    effImp += discovery.impressions7d ?? 0;
+    newStarts += discovery.starts7d ?? 0;
+    newQualified += discovery.qualified7d ?? 0;
   }
   const snapshot: StatsSnapshot = {
     rows,
     globals: {
       ctr: imp > 0 ? clk / imp : 0,
       qualifiedRate: starts > 0 ? qualified / starts : 0,
+      ...(effImpressions || newPlays ? { discovery: {
+        ...(effImp > 0 ? { ctr: clk / effImp } : {}),
+        ...(newStarts > 0 ? { qualifiedRate: newQualified / newStarts } : {}),
+      } } : {}),
     },
   };
 
@@ -976,6 +1070,31 @@ async function readStatsSnapshot(db: Database): Promise<StatsSnapshot> {
     redis.set(STATS_CACHE_KEY, JSON.stringify(snapshot), "EX", STATS_CACHE_TTL_SEC, "NX").catch(() => {});
   }
   return snapshot;
+}
+
+// Discovery-facing counts published by the rollup (db/index.ts) next to the
+// world_engagement_stats table, so the model's raw inputs stay untouched.
+const DISCOVERY_STATS_KEYS = { impressions: "rec:engstats:effimp:v1", plays: "rec:engstats:newplays:v1" } as const;
+const DISCOVERY_STATS_TTL_SEC = 3 * 3600;
+type DiscoveryStatsPayload = { impressions: Record<string, number>; plays: Record<string, [number, number, number]> };
+
+export async function publishDiscoveryStats<K extends keyof DiscoveryStatsPayload>(kind: K, values: DiscoveryStatsPayload[K]): Promise<void> {
+  if (!redis) return;
+  try {
+    await redis.set(DISCOVERY_STATS_KEYS[kind], JSON.stringify(values), "EX", DISCOVERY_STATS_TTL_SEC);
+  } catch (err) {
+    warnOnce(`discovery stats publish (${kind})`, err);
+  }
+}
+
+async function readDiscoveryStats<K extends keyof DiscoveryStatsPayload>(kind: K): Promise<DiscoveryStatsPayload[K] | null> {
+  if (!redis) return null;
+  try {
+    const raw = await redis.get(DISCOVERY_STATS_KEYS[kind]);
+    return raw ? JSON.parse(raw) as DiscoveryStatsPayload[K] : null;
+  } catch {
+    return null; // raw counts remain
+  }
 }
 
 // v1 had no publication generation and must never be consumed by this reader.
@@ -1247,6 +1366,45 @@ async function loadSessionSignals(
   }
 }
 
+/** Stories this actor previewed in the last ~45 minutes without playing,
+ * as a weighted unit centroid of their embeddings (a glance under 10 s
+ * counts fully, a longer look half). Null when there are none. */
+export async function loadSessionNegatives(db: Database, actorId: string): Promise<number[] | null> {
+  try {
+    const result = await db.execute(sql`
+      SELECT world_id, MIN((payload->>'durationMs')::float) FILTER (WHERE event_type = 'preview_dwell') AS dwell_ms
+      FROM discovery_events
+      WHERE actor_id = ${actorId}
+        AND occurred_at > now() - (${SESSION_WINDOW_MINUTES}::int * interval '1 minute')
+        AND event_type IN ('preview_dwell', 'play_intent', 'session_started')
+        AND world_id <> ''
+      GROUP BY world_id
+      HAVING bool_or(event_type = 'preview_dwell') AND NOT bool_or(event_type IN ('play_intent', 'session_started'))
+      ORDER BY MAX(occurred_at) DESC
+      LIMIT ${SESSION_MAX_WORLDS}
+    `);
+    const rejected = ((result as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [])
+      .map(r => ({ id: String(r.world_id), weight: Number(r.dwell_ms) >= SESSION_NEGATIVE_LONG_LOOK_MS ? 0.5 : 1 }));
+    if (!rejected.length) return null;
+    const idArray = sql`ARRAY[${sql.join(rejected.map(r => sql`${r.id}`), sql`,`)}]::text[]`;
+    const vectors = await db.execute(sql`SELECT id, embedding FROM worlds WHERE id = ANY(${idArray})`);
+    const weightOf = new Map(rejected.map(r => [r.id, r.weight]));
+    const sum: number[] = [];
+    for (const row of (vectors as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? []) {
+      const vec = parseVec(row.embedding);
+      const normalized = vec ? l2Normalize(vec) : null;
+      if (!normalized) continue;
+      const w = weightOf.get(String(row.id)) ?? 0;
+      if (sum.length === 0) sum.push(...normalized.map(x => x * w));
+      else if (sum.length === normalized.length) for (let i = 0; i < sum.length; i++) sum[i]! += w * normalized[i]!;
+    }
+    return sum.length ? l2Normalize(sum) : null;
+  } catch (err) {
+    warnOnce("discovery_events(session negatives)", err);
+    return null;
+  }
+}
+
 /**
  * Load everything the ranker needs beyond the taste profile. Dismissals
  * load for BOTH arms (product behavior, not an experiment); stats, fatigue
@@ -1263,7 +1421,8 @@ export async function loadEngagementContext(
   const treatment = variant !== "control";
   // A guest's session taste comes from the discovery log by actor id.
   const guestActor = !userId && opts?.actor && opts.actor.startsWith("guest:") ? opts.actor : null;
-  const [dismissed, snapshot, exposure, session, worldLatent, userLatent] = await Promise.all([
+  const negativesActor = treatment ? (userId ? `user:${userId}` : guestActor) : null;
+  const [dismissed, snapshot, exposure, session, worldLatent, userLatent, sessionNegatives] = await Promise.all([
     userId ? loadDismissedWorldIds(db, userId) : Promise.resolve(new Set<string>()),
     treatment ? loadStatsSnapshot(db) : Promise.resolve<StatsSnapshot | null>(null),
     treatment && userId ? loadExposureMap(db, userId) : Promise.resolve(new Map<string, ExposureStat>()),
@@ -1273,6 +1432,7 @@ export async function loadEngagementContext(
     // Guests have no user vector, so world factors cannot affect their score.
     treatment && userId ? loadWorldLatentSnapshot(db) : Promise.resolve(emptyWorldLatentSnapshot()),
     treatment && userId ? loadUserLatent(db, userId) : Promise.resolve<UserLatentSnapshot | null>(null),
+    negativesActor && sessionNegativesArm(negativesActor) ? loadSessionNegatives(db, negativesActor) : Promise.resolve(null),
   ]);
 
   let matchingWorldLatent = worldLatent;
@@ -1285,6 +1445,7 @@ export async function loadEngagementContext(
   ctx.fatigue = fatigueFromExposure(exposure);
   ctx.sessionCentroid = session.centroid;
   ctx.sessionTags = session.tags;
+  ctx.sessionNegativeCentroid = sessionNegatives;
   // Independent reads can straddle an atomic trainer commit. Only a coherent
   // pair reaches scoring; stale/error fallbacks must pass the same check.
   if (userLatent && matchingWorldLatent.updatedAt === userLatent.updatedAt) {

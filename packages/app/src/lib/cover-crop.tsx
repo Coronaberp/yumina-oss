@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
-import { resolveImageUrl, originalImageUrl, cardImageUrl, isAnimatedImageRef } from "./asset-url";
+import { resolveImageUrl, originalImageUrl, cardImageUrl, isAnimatedImageRef, coverPreviewUrl } from "./asset-url";
 import {
   defaultCropImageRenderer,
   type CoverCropSettings,
@@ -61,51 +61,88 @@ export function CroppedImage({
 }: CroppedImageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceAspect, setSourceAspect] = useState<number | null>(null);
   const [targetAspect, setTargetAspect] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
   // When a /cdn-cgi/image/ transform URL 404s (transformations toggled off),
   // fall back to the untransformed original instead of a broken cover.
   const [fallbackSrc, setFallbackSrc] = useState<string | null>(null);
+  const [posterFailed, setPosterFailed] = useState(false);
   useEffect(() => {
     setFallbackSrc(null);
+    setPosterFailed(false);
   }, [src]);
   // An animated cover paints its first frame first (a ~20KB still), and the
   // animation is layered on top once the card is on screen. Before this the
   // slot stayed dark until a multi-MB GIF had fully downloaded.
-  const animated = !!width && !fallbackSrc && isAnimatedImageRef(src);
+  const previewUrl = width ? coverPreviewUrl(src) : undefined;
+  const animated = !!width && !fallbackSrc && (!!previewUrl || isAnimatedImageRef(src));
   // Size through the CF resizer when a display width is given; on a transform
   // 404 the onError handler swaps to the untransformed original (see below).
-  const sized = width ? cardImageUrl(src, width, { still: animated }) : undefined;
+  const posterUrl = (pixels: number) => {
+    const url = cardImageUrl(src, pixels, { still: animated });
+    return previewUrl ? url?.replace(",onerror=redirect", "") : url;
+  };
+  const sized = width ? posterUrl(width) : undefined;
   const resolvedSrc = fallbackSrc ?? sized ?? resolveImageUrl(src) ?? src;
   const srcSet = !fallbackSrc && width && sized
-    ? `${sized} 1x, ${cardImageUrl(src, width * 2, { still: animated }) ?? sized} 2x`
+    ? `${sized} 1x, ${posterUrl(width * 2) ?? sized} 2x`
     : undefined;
   const [inView, setInView] = useState(false);
   const [motionLoaded, setMotionLoaded] = useState(false);
   const [motionFailed, setMotionFailed] = useState(false);
+  const [preview, setPreview] = useState<{ url: string; kind: string } | null>(null);
   useEffect(() => {
     setMotionLoaded(false);
     setMotionFailed(false);
+    setPreview(null);
+    setInView(false);
   }, [src]);
   useEffect(() => {
     const element = containerRef.current;
-    if (!animated || !element || inView) return;
+    if (!animated || !element) return;
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     if (typeof IntersectionObserver === "undefined") {
       setInView(true);
       return;
     }
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        setInView(true);
-        observer.disconnect();
-      }
-    }, { rootMargin: "200px" });
+      setInView(entries.some((e) => e.isIntersecting));
+    }, { rootMargin: "0px" });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [animated, inView]);
-  const motionSrc = animated && inView && !motionFailed ? cardImageUrl(src, width) : undefined;
+  }, [animated, src]);
+  useEffect(() => {
+    if (!previewUrl || !inView) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const inspect = async () => {
+      try {
+        const response = await fetch(previewUrl, { signal: controller.signal });
+        if (!response.ok) return;
+        const result = await response.json() as { kind?: string };
+        if (controller.signal.aborted) return;
+        setPreview({ url: previewUrl, kind: result.kind ?? "still" });
+        if (result.kind === "pending" && ++attempts < 18) timer = setTimeout(inspect, 5000);
+      } catch { /* The first frame stays visible; never load an unchecked master. */ }
+    };
+    void inspect();
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
+  }, [previewUrl, inView]);
+  const managedKind = preview?.url === previewUrl ? preview?.kind : undefined;
+  useEffect(() => {
+    if (posterFailed && managedKind === "static") setFallbackSrc(resolveImageUrl(src) ?? src);
+  }, [posterFailed, managedKind, src]);
+  const motionSrc = animated && inView && !motionFailed && (!previewUrl || managedKind === "original") ? cardImageUrl(src, width) : undefined;
+  const videoSrc = previewUrl && managedKind === "video" && !motionFailed ? `${previewUrl}.mp4` : undefined;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (inView) void video.play().catch(() => {});
+    else video.pause();
+  }, [inView, videoSrc]);
   const imageLayoutStyle = useMemo(
     () => renderer.getImageStyle({ crop, sourceAspect, targetAspect }),
     [crop, renderer, sourceAspect, targetAspect],
@@ -197,8 +234,9 @@ export function CroppedImage({
           imgProps.onLoad?.(event);
         }}
         onError={(event) => {
+          setPosterFailed(true);
           const original = originalImageUrl(resolvedSrc);
-          if (original !== resolvedSrc) {
+          if (!previewUrl && original !== resolvedSrc) {
             // Transform endpoint unavailable — retry with the original image.
             setFallbackSrc(original);
             return;
@@ -225,6 +263,14 @@ export function CroppedImage({
           // The still underneath stays; a failed animation just never fades in.
           onError={() => setMotionFailed(true)}
         />
+      )}
+      {videoSrc && inView && (
+        <video key={videoSrc} ref={videoRef} src={videoSrc} muted loop autoPlay playsInline
+          preload="metadata" aria-hidden="true"
+          className={cn("pointer-events-none absolute max-w-none select-none transition-opacity duration-500", motionLoaded ? "opacity-100" : "opacity-0", imgClassName)}
+          style={imageLayoutStyle}
+          onLoadedData={() => setMotionLoaded(true)}
+          onError={() => setMotionFailed(true)} />
       )}
       {overlay}
     </div>
