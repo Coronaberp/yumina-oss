@@ -64,3 +64,14 @@ test("incomplete named directives stay hidden while bracketed prose stays readab
   assert.equal(stripDirectivesForSandbox("[speaker: Riveria Ljos Alf] She nods. [relations.Riveria Ljos Alf: +1]"),
     "[speaker: Riveria Ljos Alf]\n She nods. ");
 });
+
+test("streaming retains named directives in literal examples alongside active updates", () => {
+  for (const literal of [
+    '`[relations.Riveria Ljos Alf: +1]`',
+    '“[relations.リリ・アーデ: merge {"trust": 30}]”',
+  ]) {
+    assert.equal(stripDirectives(literal), literal);
+    assert.equal(stripDirectivesForSandbox(`[speaker: Riveria] ${literal} [relations.Riveria Ljos Alf: +1]`),
+      `[speaker: Riveria]\n ${literal} `);
+  }
+});

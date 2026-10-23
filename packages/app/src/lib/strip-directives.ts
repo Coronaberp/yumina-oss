@@ -2,7 +2,7 @@
  * Strips state-change directives from streaming text so they are never visible to the user.
  * Uses the same patterns as the engine's ResponseParser.
  */
-import { isPartialLeadingSpeakerTag, parseLeadingSpeakerTag, stripAngleMarkup, stripAngleVariableDirectives, stripVariableUpdateTags } from "@yumina/engine";
+import { isPartialLeadingSpeakerTag, maskPresentationLiterals, parseLeadingSpeakerTag, stripAngleMarkup, stripAngleVariableDirectives, stripVariableUpdateTags } from "@yumina/engine";
 
 // [variableId: operation value]
 const STANDARD = /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|merge|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
@@ -20,7 +20,8 @@ const STRUCTURAL_XML = /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSO
 const TRAILING_INCOMPLETE = /\[[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*:[^\]]*$/u;
 
 export function stripDirectives(text: string, declaredVariables: readonly string[] = []): string {
-  const clean = stripVariableUpdateTags(stripAngleVariableDirectives(text, declaredVariables, true))
+  const literals = maskPresentationLiterals(text);
+  const clean = stripVariableUpdateTags(stripAngleVariableDirectives(literals.text, declaredVariables, true))
     .replace(UPDATE_VAR, "")
     .replace(AUDIO, "")
     .replace(JSON_DIR, "")
@@ -28,7 +29,7 @@ export function stripDirectives(text: string, declaredVariables: readonly string
     .replace(STANDARD, "")
     .replace(STRUCTURAL_XML, "")
     .replace(TRAILING_INCOMPLETE, "");
-  return stripAngleMarkup(clean, true);
+  return literals.restore(stripAngleMarkup(clean, true));
 }
 
 /**
