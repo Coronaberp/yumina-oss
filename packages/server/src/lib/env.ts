@@ -85,6 +85,11 @@ const envSchema = z.object({
   // decrypting). Set it on a fresh install so rotating the auth secret never
   // bricks every stored provider key. Changing it AFTER keys exist invalidates them.
   ENCRYPTION_KEY: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
+  // Comma-separated retired key material, tried after ENCRYPTION_KEY when
+  // decrypting. Rotate by moving the old value here (for a deployment that
+  // never set ENCRYPTION_KEY, that is the old BETTER_AUTH_SECRET), re-encrypt
+  // the rows, then drop it.
+  ENCRYPTION_KEY_PREVIOUS: z.preprocess(emptyToUndefined, z.string().optional()),
   // Stable, comma-separated HMAC keys for deleted-identity tombstones. Put a
   // new key first and retain old keys while rotating. Falls back to the auth
   // secret for existing deployments, but production should set this explicitly.
