@@ -5,8 +5,8 @@
  * `${PUBLIC_ORIGIN}/storage/upload?token=…`; the browser then PUTs the raw
  * file body here exactly as it would to S3 (cross-origin in dev, no cookies).
  * The token — HMAC-signed with the auth secret, 1 h expiry — carries the key
- * and content type and is the whole authorization, so this route runs with
- * no auth middleware and never reads a cookie.
+ * and content type, plus optional exact body length, and is the whole
+ * authorization, so this route runs with no auth middleware and never reads a cookie.
  *
  * Mounted at `/storage`, outside `/api/*`, so the 5 MB API body cap does not
  * apply; the ceiling here is YUMINA_MAX_UPLOAD_MB (default 512 MB).
@@ -52,8 +52,9 @@ storageRoutes.put("/upload", async (c) => {
   }
 
   const storage = getLocalDiskStorage();
+  const maxBytes = Math.min(storage.maxUploadBytes, claims.contentLength ?? storage.maxUploadBytes);
   const declared = Number(c.req.header("content-length"));
-  if (Number.isFinite(declared) && declared > storage.maxUploadBytes) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     return c.json({ error: "Upload too large" }, 413);
   }
 
@@ -61,12 +62,13 @@ storageRoutes.put("/upload", async (c) => {
   if (!body) return c.json({ error: "Missing request body" }, 400);
 
   try {
-    const { size } = await storage.writeFromStream(claims.key, claims.contentType, body);
+    const { size } = await storage.writeFromStream(claims.key, claims.contentType, body, maxBytes, claims.contentLength);
     return c.json({ ok: true, key: claims.key, size });
   } catch (err) {
     const status = storageErrorStatus(err);
     if (status === 413) return c.json({ error: "Upload too large" }, 413);
-    if (status === 400) return c.json({ error: "Invalid upload key" }, 400);
+    if (status === 400) return c.json({ error: err instanceof Error && err.name === "InvalidUploadLength"
+      ? "Upload length does not match the upload token" : "Invalid upload key" }, 400);
     console.error("[storage] upload failed:", err);
     return c.json({ error: "Upload failed" }, 500);
   }

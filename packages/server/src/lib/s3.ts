@@ -26,7 +26,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "node:stream";
 import { env, IS_DEV, IS_LOCAL_EDITION, PUBLIC_ORIGIN, STORAGE_DIR } from "./env.js";
-import { LocalDiskStorage } from "./storage/local-disk.js";
+import { LocalDiskStorage, type UploadTokenClaims } from "./storage/local-disk.js";
 import { copyAndVerifyObject, type VerifiedCopyMetadata } from "./s3-copy-verification.js";
 
 export type StorageKind = "s3" | "local" | "none";
@@ -66,7 +66,7 @@ export function getLocalDiskStorage(): LocalDiskStorage {
 }
 
 /** Verify a `/storage/upload?token=` token minted by `generateUploadUrl` in local mode. */
-export function verifyUploadToken(token: string): { key: string; contentType: string } | null {
+export function verifyUploadToken(token: string): Omit<UploadTokenClaims, "exp"> | null {
   return getLocalDiskStorage().verifyUploadToken(token);
 }
 
@@ -111,7 +111,7 @@ export async function generateUploadUrl(
   if (useLocal()) {
     // Private session uploads need signed size limits and private read URLs.
     if (key.startsWith("private-session-media/")) throw new Error("MEDIA_NOT_CONFIGURED");
-    return getLocalDiskStorage().generateUploadUrl(key, contentType);
+    return getLocalDiskStorage().generateUploadUrl(key, contentType, options);
   }
   const command = new PutObjectCommand({
     Bucket: env.AWS_S3_BUCKET_NAME,
