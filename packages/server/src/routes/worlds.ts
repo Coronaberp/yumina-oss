@@ -2883,15 +2883,19 @@ worldRoutes.post("/:id/gallery/upload-url", authMiddleware, async (c) => {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
 
-  const body = await c.req.json<{ filename: string; contentType: string }>();
+  const body = await c.req.json<{ filename: string; contentType: string; sizeBytes?: number }>();
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
+  }
+  if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0)) {
+    return c.json({ error: "Invalid file size" }, 400);
   }
 
   const ext = body.filename.split(".").pop() ?? "png";
   const key = `worlds/${worldId}/gallery/${crypto.randomUUID()}.${ext}`;
 
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  const uploadUrl = await generateUploadUrl(key, body.contentType, body.sizeBytes !== undefined
+    ? { contentLength: body.sizeBytes, expiresIn: 600 } : undefined);
   return c.json({ data: { uploadUrl, key } });
 });
 

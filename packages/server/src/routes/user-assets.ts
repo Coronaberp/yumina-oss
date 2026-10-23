@@ -508,7 +508,8 @@ userAssetRoutes.post("/upload-url", async (c) => {
   const safeName = sanitizeFilename(body.filename);
   const key = `users/${currentUser.id}/${assetType}/${operationId ?? crypto.randomUUID()}-${safeName}`;
 
-  const uploadUrl = await generateUploadUrl(key, contentType);
+  const uploadUrl = await generateUploadUrl(key, contentType, body.sizeBytes !== undefined
+    ? { contentLength: body.sizeBytes, expiresIn: 600 } : undefined);
 
   return c.json({
     data: {

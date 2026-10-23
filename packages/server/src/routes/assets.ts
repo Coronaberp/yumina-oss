@@ -95,10 +95,14 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
     filename: string;
     contentType?: string;
     type: string;
+    sizeBytes?: number;
   }>();
 
   if (!body.filename || !body.type) {
     return c.json({ error: "filename and type are required" }, 400);
+  }
+  if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0)) {
+    return c.json({ error: "Invalid file size" }, 400);
   }
 
   if (!isAssetType(body.type)) {
@@ -122,7 +126,8 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
   const safeName = sanitizeFilename(body.filename);
   const key = `worlds/${worldId}/${assetType}/${crypto.randomUUID()}-${safeName}`;
 
-  const uploadUrl = await generateUploadUrl(key, contentType);
+  const uploadUrl = await generateUploadUrl(key, contentType, body.sizeBytes !== undefined
+    ? { contentLength: body.sizeBytes, expiresIn: 600 } : undefined);
 
   return c.json({
     data: {
@@ -305,10 +310,13 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
 
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean }>();
+  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean; sizeBytes?: number }>();
 
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
+  }
+  if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0)) {
+    return c.json({ error: "Invalid file size" }, 400);
   }
 
   if (!ALLOWED_MIME_TYPES.image!.includes(body.contentType)) {
@@ -327,7 +335,8 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
   // animated and need no marker.
   const marker = body.animated === true && ext.toLowerCase() !== "gif" ? ".anim" : "";
   const key = `worlds/${worldId}/thumbnail/${crypto.randomUUID()}${marker}.${ext}`;
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  const uploadUrl = await generateUploadUrl(key, body.contentType, body.sizeBytes !== undefined
+    ? { contentLength: body.sizeBytes, expiresIn: 600 } : undefined);
 
   return c.json({ data: { uploadUrl, key } });
 });
