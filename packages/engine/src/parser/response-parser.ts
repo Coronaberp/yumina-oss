@@ -36,7 +36,9 @@ export class ResponseParser {
   private varWrapperPattern = /\[\s*var:\s*([\w\p{L}\p{N}.$-]+)\s+(set|add|subtract|multiply|toggle|append|\+|-|\*)\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/giu;
   // JSON directives use a bracket-balancing scanner, not a regex — non-greedy
   // regexes mis-terminate on nested `[]`/`{}` inside the value (e.g. `"comments":[]`).
-  private jsonVarIdPattern = /[\w\p{L}\p{N}.$-]+/u;
+  // Character-name keys may contain middle dots and, after a path dot, spaces.
+  // The root stays space-free so bracketed prose is not treated as a directive.
+  private jsonVarIdPattern = /[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*/u;
   private jsonOps = ["set", "merge", "push", "delete"] as const;
 
   constructor(pattern?: RegExp) {
@@ -44,7 +46,7 @@ export class ResponseParser {
     // before `]` — LLMs sometimes emit `[ varId: set "x" ]` with padding.
     // Match [variableId: operation] patterns
     this.pattern =
-      pattern ?? /\[\s*([\w\p{L}\p{N}.$-]+):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/gu;
+      pattern ?? /\[\s*([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[^\]"]+)?\s*\]/gu;
     // Match [audio: trackId action] patterns — optional chain:targetId suffix
     this.audioPattern = /\[\s*audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\s*\]/gu;
   }

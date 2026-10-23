@@ -47,3 +47,20 @@ test("all streamed angle-tag prefixes are hidden without depending on their spel
   assert.equal(stripDirectives('<unknown: set "evening">'), '');
   assert.equal(stripDirectives('<unknown>Kept prose</unknown>'), 'Kept prose');
 });
+
+test("streaming hides directives for dotted character names and scalar merges", () => {
+  assert.equal(stripDirectives("她笑了。[relations.艾丝·华伦斯坦: +20]"), "她笑了。");
+  assert.equal(stripDirectives("他点头。[relations.韦尔夫·克罗佐: merge 20]"), "他点头。");
+  assert.equal(stripDirectives('好。[relations.リリ・アーデ: merge {"trust": 30}]'), "好。");
+  assert.equal(stripDirectives("She nods. [relations.Riveria Ljos Alf: +1]"), "She nods. ");
+  assert.equal(stripDirectives("Asiente. [relations.Bell Cranel: merge 20]"), "Asiente. ");
+});
+
+test("incomplete named directives stay hidden while bracketed prose stays readable", () => {
+  for (const tail of ["[relations.艾丝·华伦斯坦: +", "[relations.Riveria Ljos Alf: merge {"]) {
+    assert.equal(stripDirectives("She waits. " + tail), "She waits. ");
+  }
+  assert.equal(stripDirectives("[Chapter One: Begin] The road."), "[Chapter One: Begin] The road.");
+  assert.equal(stripDirectivesForSandbox("[speaker: Riveria Ljos Alf] She nods. [relations.Riveria Ljos Alf: +1]"),
+    "[speaker: Riveria Ljos Alf]\n She nods. ");
+});

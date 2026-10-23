@@ -77,7 +77,7 @@ export function presentationLiteralRanges(text: string): LiteralRange[] {
     }
     // Quotes inside an actual bracketed control are JSON payload, not a prose
     // quote. Leave the complete payload available to its existing validator.
-    if (/^\[\s*[\w\p{L}\p{N}.$-]+(?:\[\d+\][\w\p{L}\p{N}.$-]*)*\s*:/u.test(rest)) {
+    if (/^\[\s*[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*|\[\d+\])*\s*:/u.test(rest)) {
       let depth = 0, quoted = false, end = i;
       for (; end < text.length; end++) {
         const char = text[end];
