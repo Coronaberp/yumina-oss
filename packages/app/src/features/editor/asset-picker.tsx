@@ -48,7 +48,7 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
 
   useEffect(() => {
     fetchAssets(worldId);
-    fetchGlobalAssets(filterType ? { type: filterType } : undefined);
+    fetchGlobalAssets({ page: 1, ...(filterType ? { type: filterType } : {}) });
   }, [worldId, fetchAssets, fetchGlobalAssets, filterType]);
 
   const uploadSingleFile = useCallback(async (file: File) => {

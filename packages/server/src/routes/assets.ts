@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { assets, worlds, userAssets, worldPendingEdits } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -388,7 +388,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
   const assetRows = await db
     .select({ url: assets.url, type: assets.type })
     .from(assets)
-    .where(eq(assets.id, body.assetId));
+    .where(and(eq(assets.id, body.assetId), eq(assets.worldId, worldId)));
 
   if (assetRows.length > 0) {
     if (assetRows[0]!.type !== "image") {
@@ -399,7 +399,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
     const userRows = await db
       .select({ url: userAssets.url, type: userAssets.type })
       .from(userAssets)
-      .where(eq(userAssets.id, body.assetId));
+      .where(and(eq(userAssets.id, body.assetId), or(eq(userAssets.userId, currentUser.id), eq(userAssets.isPublic, true))));
 
     if (userRows.length > 0) {
       if (userRows[0]!.type !== "image") {
@@ -445,7 +445,7 @@ assetRoutes.post("/worlds/:worldId/gallery/from-asset", async (c) => {
   const assetRows = await db
     .select({ url: assets.url, type: assets.type })
     .from(assets)
-    .where(eq(assets.id, body.assetId));
+    .where(and(eq(assets.id, body.assetId), eq(assets.worldId, worldId)));
 
   if (assetRows.length > 0) {
     if (assetRows[0]!.type !== "image") {
@@ -456,7 +456,7 @@ assetRoutes.post("/worlds/:worldId/gallery/from-asset", async (c) => {
     const userRows = await db
       .select({ url: userAssets.url, type: userAssets.type })
       .from(userAssets)
-      .where(eq(userAssets.id, body.assetId));
+      .where(and(eq(userAssets.id, body.assetId), or(eq(userAssets.userId, currentUser.id), eq(userAssets.isPublic, true))));
 
     if (userRows.length > 0) {
       if (userRows[0]!.type !== "image") {
