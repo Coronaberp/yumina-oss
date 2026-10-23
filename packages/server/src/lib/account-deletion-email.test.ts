@@ -39,7 +39,7 @@ for (const copy of locales) {
     assert.ok(text.includes(url));
     assert.ok(text.includes(copy.expires));
     for (const paragraph of details.matchAll(/<h2\b[^>]*>[^<]*<\/h2>\s*<p\b[^>]*>([^<]*)<\/p>/g)) {
-      assert.ok(text.includes(paragraph[1]), "plain text retains deletion, cooldown and retention policies");
+      assert.ok(text.includes(paragraph[1]!), "plain text retains deletion, cooldown and retention policies");
     }
   });
 
