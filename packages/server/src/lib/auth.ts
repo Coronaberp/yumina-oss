@@ -4,7 +4,10 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { usernameAuthPlugin } from "./auth-username.js";
 import { jwt } from "better-auth/plugins/jwt";
 import { oauthProvider } from "@better-auth/oauth-provider";
-import { MCP_PATHS, MCP_SCOPE, mcpResourceUrl } from "./mcp-oauth.js";
+import { MCP_PATHS, mcpResourceUrl } from "./mcp-oauth.js";
+import {
+  ALL_OAUTH_SCOPES, APP_ACCESS_TOKEN_LIFETIME, DYNAMIC_CLIENT_SCOPES, FIRST_PARTY_APP_SCOPES, aiGatewayResourceUrl,
+} from "./app-oauth.js";
 import { and, eq, like } from "drizzle-orm";
 import { env, IS_LOCAL_EDITION, PUBLIC_ORIGIN } from "./env.js";
 import * as schema from "../db/schema.js";
@@ -208,7 +211,17 @@ export const auth = betterAuth({
   }),
   // The jwt plugin's own GET /token would mint session JWTs beside OAuth;
   // every OAuth token comes from /oauth2/token instead.
-  disabledPaths: ["/token"],
+  // The OAuth client CRUD endpoints are off: any signed-in account could
+  // otherwise make itself a client holding any scope (ai:chat included) and
+  // rename or re-point it at will. Outside AIs use open registration, which is
+  // limited to DYNAMIC_CLIENT_SCOPES; first-party apps are rows seeded by SQL.
+  disabledPaths: [
+    "/token",
+    "/oauth2/create-client",
+    "/oauth2/update-client",
+    "/oauth2/client/rotate-secret",
+    "/oauth2/delete-client",
+  ],
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
   trustedOrigins: process.env.NODE_ENV !== "production"
@@ -396,18 +409,29 @@ export const auth = betterAuth({
       jwt: { issuer: new URL(env.BETTER_AUTH_URL).origin, expirationTime: "15m" },
       disableSettingJwtHeader: true,
     }),
-    // Yumina as an OAuth 2.1 authorization server for the card MCP
-    // (routes/agent-api.ts): an outside AI registers itself, the creator signs
-    // in and allows it on /oauth/consent, and the AI gets an access token for
-    // the MCP endpoint — no card token to paste.
+    // Yumina as an OAuth 2.1 authorization server:
+    //  - the card MCP (routes/agent-api.ts): an outside AI registers itself,
+    //    the creator signs in and allows it on /oauth/consent, and the AI gets
+    //    an access token for the MCP endpoint — no card token to paste;
+    //  - first-party apps (game mods, the desktop app; lib/app-oauth.ts):
+    //    Authorization Code + PKCE with a loopback redirect, and an access
+    //    token for the AI gateway (routes/ai-gateway.ts) billed to the player.
+    // Open registration can only ever hold DYNAMIC_CLIENT_SCOPES (the plugin
+    // checks a registration's scopes against clientRegistrationAllowedScopes,
+    // and authorize checks a request against the client row's own scopes), so
+    // ai:chat / wallet:read / quests need a client row seeded by SQL.
     oauthProvider({
       loginPage: "/login",
       consentPage: "/oauth/consent",
-      scopes: ["openid", "profile", "offline_access", MCP_SCOPE],
-      clientRegistrationDefaultScopes: ["openid", "profile", "offline_access", MCP_SCOPE],
+      scopes: ALL_OAUTH_SCOPES,
+      clientRegistrationDefaultScopes: DYNAMIC_CLIENT_SCOPES,
+      clientRegistrationAllowedScopes: DYNAMIC_CLIENT_SCOPES,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
-      validAudiences: MCP_PATHS.map((p) => mcpResourceUrl(p)),
+      validAudiences: [...MCP_PATHS.map((p) => mcpResourceUrl(p)), aiGatewayResourceUrl()],
+      // A token that can spend mushies is short-lived; the app refreshes it
+      // (refresh tokens rotate; a reused one revokes the app's whole family).
+      scopeExpirations: Object.fromEntries(FIRST_PARTY_APP_SCOPES.map((scope) => [scope, APP_ACCESS_TOKEN_LIFETIME])),
     }),
   ],
   emailAndPassword: {

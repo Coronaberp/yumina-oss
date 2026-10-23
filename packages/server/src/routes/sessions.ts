@@ -34,6 +34,7 @@ import { enqueueLifetimePlaytime } from "../lib/lifetime-playtime-sql.js";
 import type { GameState, WorldDefinition, WorldEntry } from "@yumina/engine";
 import { GameStateManager, PromptBuilder, migrateWorldDefinition, ReactionEvaluator, runReactionChain, buildActionFiredEvent, preserveSetupScopedVariables, renewSocialEpoch } from "@yumina/engine";
 import { mergeGameStatePatch, normalizeGameState } from "../lib/game-state.js";
+import { activeStateChanges, rewindState } from "../lib/snapshot.js";
 import { runQuietTick } from "../lib/quiet-station.js";
 import { runGroupReply } from "../lib/group-reply.js";
 import { runAiCall } from "../lib/ai-call.js";
@@ -1186,7 +1187,9 @@ export async function revertSession(args: {
 }): Promise<{
   status: number;
   body: {
-    data?: { state: Record<string, unknown>; messages: unknown[]; messageTotal: number };
+    /** variablesRestored is false when no snapshot survives at or before the
+     *  target, so the live variables were kept instead of rewound. */
+    data?: { state: Record<string, unknown>; messages: unknown[]; messageTotal: number; variablesRestored: boolean };
     error?: string;
   };
 }> {
@@ -1287,28 +1290,47 @@ export async function revertSession(args: {
     // silently wipe every variable back to its default). Mirrors branchSession's
     // backward walk so revert and branch restore state identically.
     let restoredState: Record<string, unknown> | null = null;
+    let variablesRestored = true;
     if (targetIdx >= 0) {
       // The tail has been deleted in this transaction, so the newest surviving
       // snapshot is the backward walk's result. Still bound the read to the
       // retained target (resolved in PostgreSQL to keep microsecond precision)
       // so a row appended by a concurrent writer can never be picked up.
       const targetId = allMessages[targetIdx]!.id;
-      const [snapshot] = await tx.select({ stateSnapshot: messages.stateSnapshot })
+      const target = sql`(SELECT created_at, id FROM messages WHERE session_id = ${sessionId} AND id = ${targetId})`;
+      const [snapshot] = await tx.select({ id: messages.id, stateSnapshot: messages.stateSnapshot })
         .from(messages)
         .where(and(eq(messages.sessionId, sessionId), isNotNull(messages.stateSnapshot),
-          sql`(${messages.createdAt}, ${messages.id}) <= (SELECT created_at, id FROM messages
-            WHERE session_id = ${sessionId} AND id = ${targetId})`))
+          sql`(${messages.createdAt}, ${messages.id}) <= ${target}`))
         .orderBy(desc(messages.createdAt), desc(messages.id)).limit(1);
-      restoredState = snapshot?.stateSnapshot ?? null;
+      if (snapshot) {
+        // Past the retention window the snapshot is a sparse checkpoint: roll
+        // it forward through the replies between it and the target. Only the
+        // active swipe's ledger is read, not the swipes' text.
+        const replies = await tx.select({
+          role: messages.role,
+          stateChanges: sql<unknown>`COALESCE(
+            NULLIF(${messages.swipes} -> COALESCE(${messages.activeSwipeIndex}, 0) -> 'stateChanges', 'null'::jsonb),
+            ${messages.stateChanges})`,
+        }).from(messages)
+          .where(and(eq(messages.sessionId, sessionId), eq(messages.role, "assistant"),
+            sql`(${messages.createdAt}, ${messages.id}) > (SELECT created_at, id FROM messages
+              WHERE session_id = ${sessionId} AND id = ${snapshot.id})`,
+            sql`(${messages.createdAt}, ${messages.id}) <= ${target}`))
+          .orderBy(asc(messages.createdAt), asc(messages.id));
+        restoredState = rewindState([{ role: "assistant", stateSnapshot: snapshot.stateSnapshot }, ...replies]);
+      }
     }
 
     if (!restoredState) {
       if (targetIdx >= 0 && session.state) {
         // The target message survives but its snapshot (and every older one) was
-        // dropped by the per-session snapshot cap. Don't zero the player's
-        // variables — fall back to the live session state, mirroring
-        // branchSession's fallback. Better to keep progress than reset to default.
+        // dropped by the per-session snapshot cap (history pruned before
+        // checkpoints existed). Don't zero the player's variables — fall back to
+        // the live session state, mirroring branchSession's fallback, and tell
+        // the client the variables did not move.
         restoredState = session.state as Record<string, unknown>;
+        variablesRestored = false;
       } else {
         // Full reset (no target), or a session that genuinely has no state —
         // re-initialize from world defaults.
@@ -1374,7 +1396,7 @@ export async function revertSession(args: {
 
     const page = await loadMessagePage(tx, sessionId, SESSION_MESSAGES_WINDOW);
     return { status: 200, body: { data: {
-      state: restoredState, messages: page.messages, messageTotal: targetIdx + 1,
+      state: restoredState, messages: page.messages, messageTotal: targetIdx + 1, variablesRestored,
     } }, invalidation };
   });
   if ("invalidation" in result) await result.invalidation?.runAfter();
@@ -1559,7 +1581,11 @@ export async function branchSession(args: {
 }): Promise<{
   status: 201 | 400 | 404 | 500;
   body: {
-    data?: { sessionId: string; name: string | null; parentSessionId: string | null; branchedFromMessageId: string | null };
+    data?: {
+      sessionId: string; name: string | null; parentSessionId: string | null; branchedFromMessageId: string | null;
+      /** False when no snapshot survives at or before the branch point (the parent's live variables were kept). */
+      variablesRestored: boolean;
+    };
     error?: string;
   };
 }> {
@@ -1594,16 +1620,16 @@ export async function branchSession(args: {
   // snippets' source-message ids — can be remapped onto the branch's own rows.
   const idMap = new Map(messagesToCopy.map((m) => [m.id, randomUUID()]));
 
-  // Determine the state snapshot at the branch point.
-  // Walk backwards from the branch message to find the latest stateSnapshot.
-  let branchState: Record<string, unknown> = parent.state as Record<string, unknown>;
-  for (let i = branchIdx; i >= 0; i--) {
-    const snap = messagesToCopy[i]!.stateSnapshot as Record<string, unknown> | null;
-    if (snap) {
-      branchState = snap;
-      break;
-    }
-  }
+  // Determine the state at the branch point: the latest stateSnapshot at or
+  // before it, rolled forward to it when that snapshot is a sparse checkpoint
+  // (same rewind as revertSession). With none left, keep the parent's live
+  // state and tell the client the variables did not move.
+  const rewound = rewindState(messagesToCopy.map((m) => ({
+    role: m.role,
+    stateSnapshot: m.stateSnapshot as Record<string, unknown> | null,
+    stateChanges: activeStateChanges(m),
+  })));
+  const branchState: Record<string, unknown> = rewound ?? parent.state as Record<string, unknown>;
 
   // Load world def to normalize the branch state against the current schema
   // (variables the world no longer declares get dropped; missing defaults are
@@ -1868,6 +1894,7 @@ export async function branchSession(args: {
         name: newSession.name,
         parentSessionId: newSession.parentSessionId,
         branchedFromMessageId: newSession.branchedFromMessageId,
+        variablesRestored: rewound !== null,
       },
     },
   };

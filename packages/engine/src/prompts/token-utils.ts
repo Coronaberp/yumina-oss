@@ -156,6 +156,13 @@ function estimateCjkAware(text: string): number {
   return Math.ceil(cjk + ascii / 4);
 }
 
+/** The character heuristic on its own: one cheap pass, no tokenizer, the same
+ *  answer for every model. For measures that must stay put across models and
+ *  cost little over a whole history (the history trimmer's step grid). */
+export function estimateTokensByChars(text: string): number {
+  return text ? estimateCjkAware(text) : 0;
+}
+
 /**
  * Estimate token count for budgeting decisions (lorebook trimming, history
  * windowing, etc.).

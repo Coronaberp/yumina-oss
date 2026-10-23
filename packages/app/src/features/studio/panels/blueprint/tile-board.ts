@@ -284,6 +284,9 @@ export function tileBoardLayout(
     /** Room to keep beside a frame for something laid out by hand — the
      *  card's letterhead. */
     reserve?: (frameId: string) => { w: number; h: number };
+    /** The widths every tile, the card's included, may take. A phone gives
+     *  one: the width its screen reads at full size. */
+    widths?: readonly number[];
   },
 ): FrameBox[] {
   const sized = frames.map((frame) =>
@@ -291,7 +294,7 @@ export function tileBoardLayout(
       ? tileFrame(frame, heightAt, {
           ...opts,
           headerH: typeof opts.headerH === "function" ? opts.headerH(frame.id) : opts.headerH,
-          ...(frame.id === "frame:card" ? { widths: CARD_TILE_WIDTHS } : {}),
+          ...(frame.id === "frame:card" && !opts.widths ? { widths: CARD_TILE_WIDTHS } : {}),
         })
       : { id: frame.id, width: FRAME_COLLAPSED_W, height: FRAME_COLLAPSED_H, x: 0, y: 0, blocks: {}, open: false as const },
   );

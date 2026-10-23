@@ -8,7 +8,7 @@ import { checkpointWorld } from "../lib/world-version-store.js";
 import { VERSION_METADATA_FIELDS, versionMetadata } from "../lib/world-version-content.js";
 import { worldVersionRoutes } from "./world-versions.js";
 import { lockWorldForSave } from "../lib/world-save-transaction.js";
-import { captureAutomaticVersion, capturePublishVersion, latestLiveVersionId, lockVersionDraft } from "../lib/world-version-history.js";
+import { captureAutomaticVersion, captureEditCheckpoint, capturePublishVersion, latestLiveVersionId, lockVersionDraft } from "../lib/world-version-history.js";
 import { communityMuteMiddleware } from "../middleware/community-mute.js";
 import { requireUnmuted } from "../middleware/user-mute.js";
 import { Hono } from "hono";
@@ -271,7 +271,7 @@ const hubWorldListSelect = {
   ageRating: worlds.ageRating,
   targetAudience: worlds.targetAudience,
   visibility: worlds.visibility,
-  downloadCount: aggregatedCounters.downloadCount,
+  downloadCount: aggregatedCounters.displayDownloadCount,
   tags: worlds.tags,
   announcement: worlds.announcement,
   totalTokens: worlds.totalTokens,
@@ -391,7 +391,7 @@ worldRoutes.get("/", authMiddleware, async (c) => {
       ageRating: worlds.ageRating,
       targetAudience: worlds.targetAudience,
       visibility: worlds.visibility,
-      downloadCount: aggregatedCounters.downloadCount,
+      downloadCount: aggregatedCounters.displayDownloadCount,
       tags: worlds.tags,
       announcement: worlds.announcement,
       totalTokens: worlds.totalTokens,
@@ -531,7 +531,7 @@ worldRoutes.get("/mine/shareable", authMiddleware, async (c) => {
       tags: worlds.tags,
       language: worlds.language,
       updatedAt: worlds.updatedAt,
-      downloadCount: aggregatedCounters.downloadCount,
+      downloadCount: aggregatedCounters.displayDownloadCount,
     })
     .from(worlds)
     .where(and(...conditions))
@@ -1618,7 +1618,7 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
         ageRating: worlds.ageRating,
         targetAudience: worlds.targetAudience,
         visibility: worlds.visibility,
-        downloadCount: aggregatedCounters.downloadCount,
+        downloadCount: aggregatedCounters.displayDownloadCount,
         messageCount: aggregatedCounters.messageCount,
         favoriteCount: aggregatedCounters.favoriteCount,
         tags: worlds.tags,
@@ -2224,6 +2224,16 @@ worldRoutes.patch("/:id", authMiddleware, async (c) => {
           eq(worldReviewSubmissions.decision, "pending"),
           eq(worldReviewSubmissions.submissionType, "edit"),
         ));
+    }
+    // The card saves itself, so history marks the spot instead of a Save
+    // button: keep the working copy this save overwrites, once per stretch.
+    if (liveRow && (parsed.data.schema !== undefined || holdPlan?.upsert)) {
+      const working = existingPending ?? liveRow;
+      await captureEditCheckpoint(tx, liveRow, {
+        schema: working.schema as Record<string, unknown>,
+        thumbnailUrl: working.thumbnailUrl ?? null,
+        ageRating: working.ageRating ?? "all",
+      });
     }
     if (holdPlan) await applyHoldPlan(holdPlan, tx);
     const rows = await tx

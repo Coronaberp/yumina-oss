@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Sparkles,
   Radio,
+  ChevronRight,
 } from "lucide-react";
 import { FieldError } from "@/components/ui/field-error";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
@@ -24,6 +25,7 @@ import {
 } from "@yumina/shared";
 import { useEditorStore } from "@/stores/editor";
 import { formatTimeAgo } from "@/lib/format-time";
+import { foldAutosaves } from "./version-history-fold";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -450,7 +452,9 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
             <div className="space-y-5">
               {automaticVersions.length > 0 && <section>
                 <h4 className="mb-3 text-xs font-semibold text-muted-foreground">{t("versionHistory.automaticTitle", { count: automaticVersions.length })}</h4>
-                <ul className="space-y-2">{automaticVersions.map(renderVersion)}</ul>
+                <ul className="space-y-2">{foldAutosaves(automaticVersions).map((item) => item.kind === "version"
+                  ? renderVersion(item.version)
+                  : <AutosaveRun key={item.versions[0]!.id} versions={item.versions} locale={i18n.language} renderVersion={renderVersion} />)}</ul>
               </section>}
               {manualVersions.length > 0 && <section>
                 <h4 className="mb-3 text-xs font-semibold text-muted-foreground">{t("versionHistory.savedListTitle", { count: used })}</h4>
@@ -540,6 +544,40 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
   );
 }
 
+function AutosaveRun({ versions, locale, renderVersion }: {
+  versions: WorldVersion[];
+  locale: string;
+  renderVersion: (v: WorldVersion) => React.ReactNode;
+}) {
+  const { t } = useTranslation("editor");
+  const [open, setOpen] = useState(false);
+  // Newest first, as the list is.
+  const latest = new Date(versions[0]!.createdAt);
+  const earliest = new Date(versions[versions.length - 1]!.createdAt);
+  const full = new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+  const sameDay = earliest.toDateString() === latest.toDateString();
+  return (
+    <li className="rounded-xl border border-border bg-background/30">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 rounded-xl px-4 py-3 text-left transition-colors hover:bg-primary/[0.04]"
+      >
+        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`} />
+        <span className="text-sm font-semibold text-foreground">
+          {t("versionHistory.autosaveRun", { count: versions.length })}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          · {full.format(earliest)}–{sameDay ? time.format(latest) : full.format(latest)}
+        </span>
+      </button>
+      {open && <ul className="space-y-2 px-3 pb-3">{versions.map(renderVersion)}</ul>}
+    </li>
+  );
+}
+
 interface VersionRowProps {
   version: WorldVersion;
   busy: boolean;
@@ -563,6 +601,7 @@ function VersionRow({ version, busy, locale, onRestore, onMakeLive, onDelete }: 
     : source === "live" ? t("versionHistory.source.live")
     : source === "backup" ? t("versionHistory.source.backup")
     : source === "incoming" ? t("versionHistory.source.incoming")
+    : source === "autosave" ? t("versionHistory.source.autosave")
     : null;
   // The server names every automatic checkpoint "Saved version · <ISO>"
   // regardless of source, and a source this dialog has no copy for used to

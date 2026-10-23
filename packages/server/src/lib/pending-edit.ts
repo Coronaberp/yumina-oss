@@ -332,6 +332,15 @@ export async function applyWorldCover(args: {
     const state = await readVersionState(tx, worldId);
     if (!state || state.creatorId !== creatorId) return { ok: false as const, status: 404 as const, error: "World not found or not authorized" };
     const previous = state.row.updatedAt ? new Date(String(state.row.updatedAt)) : null;
+    const targetKey = args.target === "landscape" ? (state.working.schema as Record<string, unknown>).landscapeCover : state.working.metadata.thumbnailUrl;
+    if (targetKey === newKey) {
+      // A lost upload response can be retried after the creator has cropped or
+      // submitted this cover. Do not clear its crop or withdraw its review.
+      const liveKey = args.target === "landscape" ? (state.live.schema as Record<string, unknown>).landscapeCover : state.live.metadata.thumbnailUrl;
+      const revision = previous?.toISOString() ?? new Date().toISOString();
+      return { ok: true as const, thumbnailUrl: resolved, held: state.status === "published" && liveKey !== newKey,
+        previousUpdatedAt: previous?.toISOString() ?? null, updatedAt: revision };
+    }
     const updatedAt = nextWorldSaveTime(previous);
     // Both revisions go back to the editor: if the one this write replaced is
     // the one it holds, the new one is its own and the next save is not a

@@ -18,7 +18,7 @@ import { setSessionPersonaLock } from "./resolve-persona.js";
 import { regenerateStorySummaryForSession } from "./session-compaction.js";
 import { regenerateSessionMemoryForSession, retrySessionMemoryForSession, scheduleSessionMemoryIncrementalUpdate } from "./session-memory.js";
 
-const model = "google/gemini-2.5-flash-lite";
+const model = "google/gemini-3.1-flash-lite";
 const output = "## Story So Far\nThe cafe is open.\n## Major Open Threads\n- A visitor is waiting for tea.\n## Important Past Events\n- The door was unlocked.";
 
 // Exercise real database selection, persona switching, job queues and persistence.

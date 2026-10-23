@@ -44,7 +44,7 @@
     "home": "Yumina梦坞",
     "discover": "发现",
     "community": "社区",
-    "bundles": "资源包",
+    "bundles": "模块与提示词",
     "create": "创建",
     "library": "库",
     "quests": "任务",
@@ -71,7 +71,7 @@
   "search": {
     "hub": "搜索世界、角色、故事...",
     "library": "搜索库...",
-    "bundles": "搜索资源包、作者或功能..."
+    "bundles": "搜索卡片模块、作者或功能..."
   },
   "aria": {
     "showSidebar": "显示侧边栏",

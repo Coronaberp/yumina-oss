@@ -223,6 +223,9 @@ test("buildInventory names a custom AI slot and whether code implements it", () 
   let inv = buildInventory(world, []);
   assert.match(inv, /CUSTOM SLOTS/);
   assert.match(inv, /CUSTOM AI \(自定义\).*NOT IMPLEMENTED YET/);
+  assert.match(inv, /contract: api\.callAi\(".+", input\) → text/);
+  book.station = { kind: "custom", name: "Mina", takes: "the message the player just sent", output: [{ name: "mood", type: "choice", options: ["warm", "cold"] }, { name: "reply", type: "text" }] };
+  assert.match(buildInventory(world, []), /contract: api\.callAi\("Mina", input\) — input: the message the player just sent → \{ mood: "warm" \| "cold", reply: text \}/);
   (world as { rootComponent?: unknown }).rootComponent = {
     id: "r", name: "x", entryFile: "index.tsx", updatedAt: "",
     files: { "index.tsx": `await api.ai.complete({ messages, worldbookIds: ["${book.id}"] });` },
@@ -247,4 +250,15 @@ test("extractKeywords survives a pasted multi-megabyte document", () => {
   assert.ok(keywords.length > 0 && keywords.length <= 300);
   assert.equal(new Set(keywords).size, keywords.length);
   assert.ok(keywords.includes("dragon") && keywords.includes("城堡"));
+});
+
+test("buildInventory tells the assistant which variables a declared game owns", () => {
+  const world = blackboardWorld();
+  (world as { game?: unknown }).game = { name: "Hades II", inputs: ["hp", "room"], outputs: ["boon"] };
+  const inv = buildInventory(world, []);
+  assert.match(inv, /GAME INTERFACE — this card is a character inside Hades II/);
+  assert.match(inv, /the game writes: hp, room/);
+  assert.match(inv, /into: boon/);
+  (world as { game?: unknown }).game = null;
+  assert.doesNotMatch(buildInventory(world, []), /GAME INTERFACE/);
 });

@@ -36,30 +36,12 @@ export function StoryAiSettings({ showAll = false }: { showAll?: boolean }) {
       hint={t("blueprint.storyAi.hint")}
       right={showAll ? (
         <button type="button" onClick={requestOpenAiCalls} data-open-ai-calls className="text-[11px] font-normal text-foreground/55 underline-offset-2 hover:text-foreground hover:underline">
-          {t("blueprint.aiCalls.view")}
+          {t("blueprint.aiCalls.viewAll")}
         </button>
       ) : undefined}
     >
-      <Field label={t("blueprint.storyAi.recommendedModel")} hint={t("blueprint.storyAi.recommendedModelHint")}>
-        <DraftInput
-          list={listId}
-          value={recommended}
-          onCommit={(raw) => setSettings("recommendedModel", raw.trim() || undefined)}
-          placeholder={t("blueprint.storyAi.recommendedModelNone")}
-          spellCheck={false}
-          data-recommended-model
-          className={inputClass}
-        />
-        <datalist id={listId}>
-          {PLAY_MODELS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </datalist>
-        {unknown && (
-          <p className="flex items-start gap-1 text-[11px] leading-snug text-amber-200/90">
-            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
-            {t("blueprint.storyAi.recommendedUnknown")}
-          </p>
-        )}
-      </Field>
+      {/* Who sets them comes first (owner, 10/17): it is the choice the
+          rest of the group follows from. */}
       <Row label={t("blueprint.storyAi.sampling")} hint={t("blueprint.storyAi.samplingHint")} wide>
         <Segmented<Policy>
           label={t("blueprint.storyAi.sampling")}
@@ -99,6 +81,26 @@ export function StoryAiSettings({ showAll = false }: { showAll?: boolean }) {
           </Row>
         </>
       )}
+      <Field label={t("blueprint.storyAi.recommendedModel")} hint={t("blueprint.storyAi.recommendedModelHint")}>
+        <DraftInput
+          list={listId}
+          value={recommended}
+          onCommit={(raw) => setSettings("recommendedModel", raw.trim() || undefined)}
+          placeholder={t("blueprint.storyAi.recommendedModelNone")}
+          spellCheck={false}
+          data-recommended-model
+          className={inputClass}
+        />
+        <datalist id={listId}>
+          {PLAY_MODELS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </datalist>
+        {unknown && (
+          <p className="flex items-start gap-1 text-[11px] leading-snug text-amber-200/90">
+            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+            {t("blueprint.storyAi.recommendedUnknown")}
+          </p>
+        )}
+      </Field>
       <p className="pt-1 text-[11px] leading-relaxed text-foreground/45">{t("blueprint.storyAi.alwaysPlayer")}</p>
     </Group>
   );

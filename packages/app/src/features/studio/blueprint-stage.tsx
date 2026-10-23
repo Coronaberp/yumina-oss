@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { useStudioStore } from "@/stores/studio";
 import { useEditorStore, type EditorSection } from "@/stores/editor";
 import { ComponentsSection } from "@/features/editor/sections/components";
+import { STUDIO_FOCUS_COVER_EVENT, type CoverSettingsTarget, type StudioFocusCoverDetail } from "@/features/editor/lib/cover-settings-target";
 import { VariantTabBar } from "@/features/editor/variant-tab-bar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
@@ -48,6 +49,7 @@ import {
   MechanicPacksPanel,
   CodeViewPanel,
   OverviewPanel,
+  OverviewCoverPanel,
   PlaytestPanel,
   GenerationAtelierPanel,
 } from "./panels";
@@ -184,6 +186,9 @@ export function BlueprintStage({
   }, []);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState<StageDrawer | null>(null);
+  /** The publish dialog's 去设置封面: the overview page opens on the cover
+   *  field. `visit` remounts it so a second click focuses again. */
+  const [coverFocus, setCoverFocus] = useState<{ cover: CoverSettingsTarget; visit: number } | null>(null);
   /** Which page the centre shows. The blueprint stays mounted underneath the
    *  frontend page so its layout, selection and undo history survive a look at
    *  the card — the same reason the drill drawer overlays rather than swaps. */
@@ -323,6 +328,25 @@ export function BlueprintStage({
     return () => window.removeEventListener("yumina:studio-stage-open-panel", handler);
   }, [openDrill]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const { worldId, cover } = (event as CustomEvent<StudioFocusCoverDetail>).detail;
+      const store = useEditorStore.getState();
+      // A translation's cover is set on its own page in the classic editor;
+      // the canvas's overview is the primary card's.
+      if (worldId !== store.serverWorldId) return;
+      if (store.variants.find(v => v.id === store.serverWorldId)?.isPrimaryVariant === false) return;
+      event.preventDefault();
+      setCoverFocus(prev => ({ cover, visit: (prev?.visit ?? 0) + 1 }));
+      openDrill("overview");
+    };
+    window.addEventListener(STUDIO_FOCUS_COVER_EVENT, handler);
+    return () => window.removeEventListener(STUDIO_FOCUS_COVER_EVENT, handler);
+  }, [openDrill]);
+  useEffect(() => {
+    if (drawer?.kind !== "panel" || drawer.panelId !== "overview") setCoverFocus(null);
+  }, [drawer]);
+
   // "Open the code" from the frontend inspector. The panel it targets may not
   // be mounted yet, so the line is parked for it to claim rather than shouted
   // at a listener that does not exist for another frame.
@@ -403,6 +427,9 @@ export function BlueprintStage({
 
   const drawerMeta = drawer?.kind === "panel" ? DRAWER_PANELS[drawer.panelId] : null;
   const DrawerComponent = drawerMeta?.component;
+  const drawerBody = DrawerComponent && (drawer?.kind === "panel" && drawer.panelId === "overview" && coverFocus
+    ? <OverviewCoverPanel key={coverFocus.visit} cover={coverFocus.cover} />
+    : <DrawerComponent {...STUB_PANEL_PROPS} />);
 
   // ── The frame. One centre with two pages, one right column with one
   // identity, and an index that floats instead of taking width.
@@ -684,7 +711,7 @@ export function BlueprintStage({
               {drawerMeta && <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground"><drawerMeta.icon className="h-3.5 w-3.5 shrink-0 text-amber-400" /><span className="truncate">{t(drawerMeta.titleKey as never)}</span></span>}
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
-              <DrawerComponent {...STUB_PANEL_PROPS} />
+              {drawerBody}
             </div>
           </div>,
           document.body,
@@ -698,7 +725,7 @@ export function BlueprintStage({
               <span className={dockTitle}>{t(drawerMeta!.titleKey as never)}</span>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
-              <DrawerComponent {...STUB_PANEL_PROPS} />
+              {drawerBody}
             </div>
           </div>
         )}

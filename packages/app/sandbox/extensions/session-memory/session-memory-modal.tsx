@@ -7,7 +7,7 @@ import { pickLang } from "../../chat/i18n";
 import { ModelPickerModal, ModelTrigger } from "../../chat/model-picker-modal";
 import { SandboxPlatformOverlay } from "../../platform-overlay-portal";
 
-const DEFAULT_CONTEXT_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_CONTEXT_MODEL = "google/gemini-3.1-flash-lite";
 // The zero-cost play model (see @yumina/shared YUMINA_MODELS "Yumina Free").
 // Kept as a literal: the sandbox bundle avoids importing the full registry here.
 const FREE_CONTEXT_MODEL = "openrouter/free";

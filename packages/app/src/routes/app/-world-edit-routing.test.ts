@@ -68,7 +68,7 @@ test("every way between 简单 / 完整 / 画布 (the 画布 pill and the ⋮ it
   const opens = (serverMode: "simple" | "advanced") => {
     const mode = resolveEditorMode(serverMode, getEditorMode("card"), getGlobalEditorMode());
     if (mode === "simple") return "simple";
-    return shouldOpenVisual({ mode, last: getEditorSurface(), allowed: true, guest: false }) ? "visual" : "classic";
+    return shouldOpenVisual({ mode, last: getEditorSurface(), allowed: true, guest: false, phone: false }) ? "visual" : "classic";
   };
   try {
     // 简单模式 in the canvas's or 完整's ⋮ menu.

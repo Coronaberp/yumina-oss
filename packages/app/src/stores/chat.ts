@@ -221,6 +221,14 @@ function chatPill(key: string, fallback: string, vars?: Record<string, unknown>)
   return toPillText(i18n.t(key, { ns: "chat", defaultValue: fallback, ...vars }));
 }
 
+/** Revert/branch to a point older than any kept variable record leaves the
+ *  variables where they were; the server says so with variablesRestored: false. */
+function noticeVariablesKept(data: { variablesRestored?: boolean } | undefined): void {
+  if (data?.variablesRestored === false) {
+    feedback.notice(chatPill("feedback.variablesKept", "Too far back to restore the variables, so they keep their current values"));
+  }
+}
+
 /** Recipe R7: an unanchored failure the user can ask us to try again. */
 function retryAction(onClick: () => void): { label: string; onClick: () => void } {
   return { label: i18n.t("action.retry", { ns: "common", defaultValue: "Retry" }), onClick };
@@ -2241,6 +2249,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           pendingChoices: [],
           pendingSilentChanges: [],
         });
+        noticeVariablesKept(data);
       } catch {
         fail();
       }
@@ -2284,6 +2293,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           pendingChoices: [],
           pendingSilentChanges: [],
         });
+        noticeVariablesKept(data);
       } catch {
         fail();
       }
@@ -2311,8 +2321,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         fail();
         return null;
       }
-      // No pill on success: the caller navigates into the new branch.
+      // No pill on success: the caller navigates into the new branch. The one
+      // exception is a branch point too old to carry its variables.
       const { data } = await res.json();
+      noticeVariablesKept(data);
       return (data?.sessionId as string | undefined) ?? null;
     } catch {
       fail();

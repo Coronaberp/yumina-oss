@@ -7,8 +7,9 @@
 // src/extensions/session-memory/hooks.ts — adding another extension never
 // touches this file or routes/messages.ts.
 
+import { setImmediate } from "node:timers/promises";
 import { eq, and, lte, desc, sql } from "drizzle-orm";
-import { estimateTokens } from "@yumina/engine";
+import { estimateTokens, PromptBuilder } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
 import { db } from "../db/index.js";
 import { messages } from "../db/schema.js";
@@ -49,6 +50,9 @@ export interface TurnMemory {
   historyConditions: ReturnType<typeof collectHistoryConditions>;
   /** True when this turn resets the story (send path: character-creation). */
   freshStart: boolean;
+  /** This prompt's raw history against its budget, set by the overflow pass
+   *  so post-turn work can fold before the next prompt overflows. */
+  rawHistory?: { budget: number; tokens: number };
 }
 
 /** Resolve every installed session-local world overlay before lore matching. */
@@ -252,11 +256,28 @@ export async function compactTurnOverflowIfNeeded(args: {
   // actually exceeds its budget. Under budget, trimming needs no help and
   // the background path keeps the summary fresh.
   const suffixStart = suffixCount > 0 ? Math.max(args.historyStart, contextMessages.length - suffixCount) : contextMessages.length;
-  const promptRawHistoryOverflows =
+  const promptRawHistoryTokens =
     await countPromptTokensCooperatively(contextMessages.slice(args.historyStart, suffixStart), model, finalRawHistoryBudget + nonRawHistoryTokens)
-      - nonRawHistoryTokens
-    > finalRawHistoryBudget;
-  if (!promptRawHistoryOverflows) return args.historyStart;
+      - nonRawHistoryTokens;
+  turn.rawHistory = { budget: finalRawHistoryBudget, tokens: promptRawHistoryTokens };
+  if (promptRawHistoryTokens <= finalRawHistoryBudget) return args.historyStart;
+
+  // Trimming steps: an overflowing history starts at a step boundary, short
+  // of the budget (PromptBuilder.buildMessageHistoryAsync). Fold up to where
+  // the prompt actually starts, with the same step basis the send passes; a
+  // tail sized to the full budget would leave the messages in between in
+  // neither the prompt nor the summary until they aged out of both.
+  const kept = await new PromptBuilder().buildMessageHistoryAsync(
+    contextMessages.slice(args.historyStart, suffixStart),
+    () => setImmediate(),
+    undefined,
+    0,
+    0,
+    model,
+    finalRawHistoryBudget + nonRawHistoryTokens,
+    args.storyMemory ?? maxContext,
+  );
+  const keptRawTokens = await countPromptTokensCooperatively(kept, model) - nonRawHistoryTokens;
 
   const controller = new PromptBlockController({
     messages: contextMessages,
@@ -269,7 +290,7 @@ export async function compactTurnOverflowIfNeeded(args: {
     userId: args.userId,
     model,
     maxContext,
-    finalPromptRawTokenLimit: finalRawHistoryBudget,
+    finalPromptRawTokenLimit: Math.max(1, Math.min(finalRawHistoryBudget, keptRawTokens)),
     pathLabel: args.pathLabel,
     blocks: controller,
   });
@@ -298,5 +319,6 @@ export function scheduleTurnMemoryUpdates(args: {
     fallbackModel: args.fallbackModel,
     assistantMessageId: args.assistantMessageId,
     contextTokenLimit: args.contextTokenLimit,
+    rawHistory: args.turn.rawHistory,
   });
 }

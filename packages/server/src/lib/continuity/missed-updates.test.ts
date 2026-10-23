@@ -50,7 +50,7 @@ function deps(answers: Record<string, number>, output: string, calls: { decide: 
     },
     resolveModel: (async () => ({
       provider: { async *generateStream() { calls.repair++; yield* chunks(output); }, async listModels() { return []; } },
-      apiKeyTier: "regular", model: "google/gemini-2.5-flash-lite", maxContext: 28_608,
+      apiKeyTier: "regular", model: "google/gemini-3.1-flash-lite", maxContext: 28_608,
     })) as unknown as MissedUpdateDeps["resolveModel"],
   };
 }
@@ -327,4 +327,111 @@ test("a repeated tail after a complete object is dropped", () => {
   const good = '{"narrative":"","status":"updated","stateChanges":[{"variableId":"fallen","operation":"add","value":1,"note":"a \\"quoted\\" } brace"}]}';
   assert.equal(firstJsonObject(good + '\nactive":"active"}}]}\n]}'), good);
   assert.equal(firstJsonObject("no json"), "no json");
+});
+
+test("a state line the parser hid but could not apply flags its variable and reaches the repair model", async () => {
+  const calls = { decide: 0, repair: 0 };
+  let sent = "";
+  const base = deps({ body: 0.1, pack: 0.1, fallen: 0.1 }, "", calls);
+  const d: MissedUpdateDeps = {
+    ...base,
+    resolveModel: (async () => ({
+      provider: {
+        async *generateStream(req: { messages: Array<{ content: string }> }) {
+          calls.repair++;
+          sent = req.messages.map((m) => m.content).join("\n");
+          yield* chunks('{"narrative":"","status":"updated","stateChanges":[{"variableId":"fallen","operation":"add","value":1}]}');
+        },
+        async listModels() { return []; },
+      },
+      apiKeyTier: "regular", model: "google/gemini-3-flash", maxContext: 28_608,
+    })) as unknown as MissedUpdateDeps["resolveModel"],
+  };
+  const out = await repairMissedUpdates(args({
+    replyText: "The cannon fires once more.",
+    unapplied: [{ text: '[fallen: set "one more" true]', targets: ["fallen"] }],
+    storyModel: "google/gemini-3-flash-preview",
+  }), d);
+  assert.equal(calls.decide, 1);
+  assert.equal(calls.repair, 1, "the judge said no, the hint still flags it");
+  assert.deepEqual(out.hinted, ["fallen"]);
+  assert.deepEqual(Object.keys(out.flagged), ["fallen"]);
+  assert.deepEqual(out.attempted, ['[fallen: set "one more" true]']);
+  assert.match(sent, /storyModelAttempted/);
+  assert.match(sent, /fallen: set \\"one more\\" true/);
+  assert.deepEqual(out.effects, [{ variableId: "fallen", operation: "add", value: 1 }]);
+});
+
+test("without unapplied lines the repair prompt is unchanged", async () => {
+  const calls = { decide: 0, repair: 0 };
+  const out = await repairMissedUpdates(args(), deps({ body: 0.1, pack: 0.1, fallen: 0.1 }, "", calls));
+  assert.equal(calls.repair, 0);
+  assert.equal(out.hinted, undefined);
+  assert.equal(out.attempted, undefined);
+});
+
+test("partially updated JSON roots repair only the failed sibling and never replay successful writes", async () => {
+  const w = world();
+  const state = new GameStateManager(w).getSnapshot();
+  const parsed = new ResponseParser().parse('You drink and grow tired.\n[body.thirst: subtract 10]\n[body.energy: update 2]', undefined, { world: w });
+  assert.deepEqual(parsed.effects, [{ variableId: "body.thirst", operation: "subtract", value: 10 }]);
+  assert.deepEqual(parsed.unapplied?.[0]?.targets, ["body"]);
+  assert.ok(missedUpdateCandidates(w, state, parsed.effects, parsed.unapplied).some(v => v.id === "body"));
+  const calls = { decide: 0, repair: 0 };
+  let sent = "";
+  const output = JSON.stringify({ narrative: "", status: "updated", stateChanges: [
+    { variableId: "body.thirst", operation: "subtract", value: 10 },
+    { variableId: "body", operation: "merge", value: { thirst: 0 } },
+    { variableId: "body.energy", operation: "subtract", value: 5 },
+  ] });
+  const d = deps({ body: 0.1, pack: 0.1, fallen: 0.1 }, output, calls);
+  d.resolveModel = (async () => ({ provider: { async *generateStream(req: { messages: Array<{ content: string }> }) {
+    calls.repair++; sent = req.messages.map(m => m.content).join("\n"); yield* chunks(output);
+  }, async listModels() { return []; } }, apiKeyTier: "regular", model: "test", maxContext: 28_608 })) as unknown as MissedUpdateDeps["resolveModel"];
+  const out = await repairMissedUpdates(args({ world: w, state, effects: parsed.effects, unapplied: parsed.unapplied }), d);
+  assert.deepEqual(out.hinted, ["body"]);
+  assert.deepEqual(out.effects, [{ variableId: "body.energy", operation: "subtract", value: 5 }]);
+  assert.match(sent, /alreadyAppliedPaths/);
+  assert.match(sent, /"thirst":45/);
+  const manager = new GameStateManager(w, state);
+  manager.applyEffects([...parsed.effects, ...out.effects]);
+  assert.deepEqual(manager.get("body"), { thirst: 45, energy: 40 });
+});
+
+test("a whole-root update remains excluded even when another write on it failed", () => {
+  const a = args();
+  const candidates = missedUpdateCandidates(a.world, a.state,
+    [{ variableId: "body", operation: "merge", value: { thirst: 45 } }],
+    [{ text: "[body.energy: update 2]", targets: ["body"] }]);
+  assert.ok(!candidates.some(v => v.id === "body"));
+});
+
+test("repair path protection treats bracket indices, parents and children as overlapping", () => {
+  const a = args();
+  const original = [{ variableId: "pack[0].name", operation: "set" as const, value: "full bottle" }];
+  const text = JSON.stringify({ narrative: "", status: "updated", stateChanges: [
+    { variableId: "pack.0.name", operation: "append", value: " again" },
+    { variableId: "pack.0", operation: "set", value: { id: "bad", name: "bad" } },
+    { variableId: "pack", operation: "push", value: { id: "bad", name: "bad" } },
+    { variableId: "pack.0.weight", operation: "set", value: 2 },
+  ] });
+  assert.deepEqual(usableEffects({ ...a, effects: original }, ["pack"], text),
+    [{ variableId: "pack.0.weight", operation: "set", value: 2 }]);
+});
+
+test("repair after deleting an array slot cannot write shifted siblings", () => {
+  const a = args();
+  const text = JSON.stringify({ narrative: "", status: "updated", stateChanges: [
+    { variableId: "pack.0.name", operation: "set", value: "wrong item" },
+    { variableId: "pack", operation: "push", value: { id: "bad" } },
+  ] });
+  assert.deepEqual(usableEffects({ ...a, effects: [{ variableId: "pack[0]", operation: "delete", value: true }] }, ["pack"], text), []);
+});
+
+test("explicit failed writes do not bypass writable permissions or candidate limits", () => {
+  const a = args();
+  const named = [{ text: '[secret: set "x"]', targets: ["secret"] }, { text: '[bare: set "lots"]', targets: ["bare"] }];
+  const ids = missedUpdateCandidates(a.world, a.state, [], named).map(v => v.id);
+  assert.ok(!ids.includes("secret"));
+  assert.equal(ids[0], "bare");
 });

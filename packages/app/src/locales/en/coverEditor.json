@@ -1,4 +1,11 @@
 {
+  "motion": {
+    "uploadHint": "Images: 20 MB. Animated covers: 64 MB, up to 60 seconds. MP4 and WebM supported.",
+    "processing": "Optimizing cover…",
+    "uploading": "Uploading cover…",
+    "play": "Play",
+    "pause": "Pause"
+  },
   "voiceField": {
     "characterLabel": "Voice",
     "characterHint": "The voice this character's lines are read in when the player turns on voice readout. Leave it unset and the AI picks one to fit the character.",
@@ -669,9 +676,9 @@
         "sharedHint": "The card's own entries and variables reach every scenario. One 血量 in every dungeon is one variable, not four.",
         "trap": "{{source}} does not reach here (via {{via}})",
         "connections": "Reads {{reads}} sources · read by {{gives}} scenarios",
-        "reviewConnections": "{{count}} indirect references to review",
-        "memoryCardAlone": "Remembers the whole conversation",
-        "memoryCardHint": "This is the AI that plays unless a scenario takes over, and it remembers everything said.",
+        "reviewConnections": "{{count}} links don't reach here",
+        "memoryCardAlone": "Remembers everything in the main chat",
+        "memoryCardHint": "This AI plays unless a scenario takes over. It reads the card's main chat: every scenario's turns are in it, as far back as the history setting lets it look. AIs the interface calls (each contact in a phone, say) keep chats of their own, which it does not see.",
         "continuityOn": "Smart tracking: on",
         "continuityOff": "Smart tracking: off"
       }
@@ -4684,8 +4691,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "Unsaved Changes",
-    "description": "Your changes will be lost if you leave without saving.",
+    "title": "Not saved yet",
+    "description": "This card hasn't been saved. Leave now and what you wrote is gone.",
     "stay": "Stay",
     "leave": "Leave without saving",
     "saveAndLeave": "Save and leave",
@@ -4693,7 +4700,11 @@
     "switchDescription": "Save your recent edits before switching editors — otherwise they'll be lost.",
     "switchCancel": "Cancel",
     "switchWithoutSaving": "Switch without saving",
-    "saveAndSwitch": "Save and switch"
+    "saveAndSwitch": "Save and switch",
+    "saving": "Saving…",
+    "failedTitle": "Couldn't save",
+    "failedDescription": "Your latest changes didn't reach the server. Try again, or leave without saving.",
+    "retry": "Try again"
   },
   "save": {
     "staleWorldToast": "Couldn't save — try again in a moment",

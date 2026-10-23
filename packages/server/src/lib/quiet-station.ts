@@ -275,7 +275,7 @@ export async function runQuietTick(args: { sessionId: string; userId: string; wo
   const outcome = (what: string) => console.log(`[Quiet] ${sessionId} ${speaker.book.id} ${what} (${raw.length} chars)${process.env.NODE_ENV === "production" ? "" : ` ${JSON.stringify(raw.slice(0, 120))}`}`);
   if (!raw.trim() || SILENT.test(raw)) { outcome("silent"); return { ran: true, spoke: false, speaker: who }; }
 
-  const parsed = responseParser.parse(raw);
+  const parsed = responseParser.parse(raw, undefined, { world });
   // 回复处理 applies to an AI that cuts in, the same as to the narrator.
   const ruled = applyReplyRules(world, parsed.cleanText);
   parsed.effects.push(...ruled.effects);

@@ -31,7 +31,7 @@ const TOOL_ENTITY: Record<string, string> = {
   write_entry: "entry", write_variable: "variable", write_behavior: "behavior", write_audio: "audio",
   write_scene_image: "sceneImage", write_worldbook: "worldbook", write_lore_binding: "loreBinding",
   write_custom_ui: "customUI", edit_custom_ui: "customUI", update_settings: "settings",
-  write_ui_knob_groups: "uiKnobGroups", set_ui_knobs: "uiKnobs",
+  write_ui_knob_groups: "uiKnobGroups", set_ui_knobs: "uiKnobs", write_note: "note",
 };
 
 function parseArgs(toolCall: ToolCallLike): Record<string, unknown> {

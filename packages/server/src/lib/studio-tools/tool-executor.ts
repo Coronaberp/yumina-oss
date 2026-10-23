@@ -46,7 +46,7 @@ function suggestSimilarIds(target: string, allIds: string[]): string {
 
 export interface SchemaChange {
   action: "create" | "update" | "delete";
-  entityType: "entry" | "variable" | "rule" | "behavior" | "customUI" | "audio" | "sceneImage" | "settings" | "worldbook" | "loreBinding" | "uiKnobs" | "uiKnobGroups" | "uiDoc";
+  entityType: "entry" | "variable" | "rule" | "behavior" | "customUI" | "audio" | "sceneImage" | "settings" | "worldbook" | "loreBinding" | "uiKnobs" | "uiKnobGroups" | "uiDoc" | "note";
   id?: string;
   data?: Record<string, unknown>;
 }
@@ -1114,6 +1114,8 @@ function applySingleChange(
         return applyUiKnobGroupsChange(draft, data, index);
       case "uiDoc":
         return applyUiDocChange(draft, data, index);
+      case "note":
+        return applyNoteChange(draft, data, index);
       default:
         return { index, action: change.action, entityType: change.entityType, id, status: "error", error: `Unknown entity type: ${change.entityType}` };
     }
@@ -2134,6 +2136,32 @@ function applyUiKnobsChange(draft: WorldDefinition, data: Record<string, unknown
 }
 
 /**
+ * A canvas sticky note stuck to exactly one thing (graphLayout.notes): the
+ * text replaces that note's, a new one is made when there is none, and ""
+ * peels it off. Its place is left to the board, which draws a stuck note
+ * beside what it is stuck to.
+ */
+export function applyNoteChange(draft: WorldDefinition, data: Record<string, unknown>, index: number): ChangeResult {
+  const on = String(data.on ?? "").trim();
+  const text = String(data.text ?? "").trim();
+  const base = { index, action: "update", entityType: "note", id: on };
+  if (!on) return { ...base, status: "error", error: "write_note needs 'on'." };
+  const layout = draft.graphLayout ?? { version: 1, nodes: {} };
+  const notes = [...(layout.notes ?? [])];
+  const stuckHere = (n: { on?: string; targets?: string[] }) => (n.targets?.length ? n.targets.length === 1 && n.targets[0] === on : n.on === on);
+  const at = notes.findIndex(stuckHere);
+  if (!text) {
+    if (at >= 0) notes.splice(at, 1);
+  } else if (at >= 0) {
+    notes[at] = { ...notes[at]!, text };
+  } else {
+    notes.push({ id: `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, x: 0, y: 0, w: 280, h: 56, text, targets: [on] });
+  }
+  draft.graphLayout = { ...layout, notes } as WorldDefinition["graphLayout"];
+  return { ...base, status: "success" };
+}
+
+/**
  * Install the 拆积木 decomposition itself: the knob GROUPS of a preserved base
  * frontend, written by the studio AI after it rewrote the base code to read
  * from `_knobs`. The executor is the gate — the rewrite (edit_custom_ui calls
@@ -2979,6 +3007,16 @@ export function toolCallsToSchemaChanges(
         continue;
       }
       results.push({ toolCallId: tc.id, toolName: name, change: { action: "update", entityType: "uiKnobs", id: "ui-knobs", data: args } });
+      continue;
+    }
+
+    // write_note: the canvas sticky note stuck to one thing, by what it is stuck to.
+    if (name === "write_note") {
+      if (typeof args.on !== "string" || !args.on.trim() || typeof args.text !== "string") {
+        results.push({ toolCallId: tc.id, toolName: name, error: "write_note requires 'on' (what the note is stuck to) and 'text'" });
+        continue;
+      }
+      results.push({ toolCallId: tc.id, toolName: name, change: { action: "update", entityType: "note", id: args.on.trim(), data: args } });
       continue;
     }
 

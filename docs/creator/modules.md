@@ -60,7 +60,7 @@ By default the whole card shares one memory: wherever you go, it remembers what 
 
 A scenario can keep its own. Choose under **Memory** in the scenario's settings:
 
-- **Whole card** (default): reads the whole conversation
+- **Whole card** (default): reads the main chat (every scenario's turns are in it)
 - **Its own pool**: while inside, the AI only sees what was said in this scenario. Walk into the tower and the AI has never heard of the town. Walk back out and the town still remembers what happened in the tower
 - **Share this pool with**: A and B share one memory, C and D share another. Good for several scenes with the same NPC, or one side story
 

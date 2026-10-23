@@ -19,6 +19,7 @@ import { useChatStore } from "@/stores/chat";
 import { useAudioStore } from "@/stores/audio";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { filmTurn, turnFilmNotes, turnVideoClips, type TurnShotState } from "@/features/chat/turn-video";
+import { ft, rawText, shortReason, shotStatus, type FilmText, type ShotState, type ShotStatus } from "./film-text";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 /** fal bills a session's first minute up front (the server meters the rest). */
@@ -55,10 +56,11 @@ export interface VideoStep {
   id: number;
   t: number;
   kind: VideoStepKind;
-  text: string;
+  /** What happened, as words to show (film-text.ts). */
+  text: FilmText;
   shot?: string;
   version?: number;
-  status?: string;
+  status?: ShotStatus;
   /** Shots: the story passage this shot films. */
   excerpt?: string;
   /** Shots: seconds into the film when its picture reached the screen. */
@@ -137,7 +139,8 @@ export interface VideoState {
   shortQueue?: { messageId: string; reply: number; opening: boolean; status: "writing" | "shooting" | "failed"; cells: TurnShotState[]; reason?: string }[];
   /** The latest shot sent, and what happened to it. */
   currentShot: string;
-  currentStatus: string;
+  /** What is happening to it (or, short films, to the next film), as words to show. */
+  currentStatus: FilmText | null;
   /** Sound is off (the default, and the fallback when the browser refuses to play sound). */
   muted: boolean;
   /** Started with hold: the first shot is ready and the rest waits for release(). */
@@ -322,7 +325,7 @@ function loadResume(sessionId: string): ResumePoint | null {
 export class RealtimeVideoController {
   readonly video: HTMLVideoElement;
   private listeners = new Set<Listener>();
-  private state: VideoState = { status: "idle", engine: "comfy-h3", elapsed: 0, cost: 0, credits: 0, clips: 0, waiting: false, currentShot: "", currentStatus: "", muted: true, steps: [], scenes: [], currentScene: null, cut: null };
+  private state: VideoState = { status: "idle", engine: "comfy-h3", elapsed: 0, cost: 0, credits: 0, clips: 0, waiting: false, currentShot: "", currentStatus: null, muted: true, steps: [], scenes: [], currentScene: null, cut: null };
   /** Full-size last frame of each scene, to resume a Comfy chain exactly where it left off. */
   private sceneFrames = new Map<string, string>();
   private opts: Required<VideoStartOptions> = { engine: DEFAULT_ENGINE, style: "source", limitSeconds: 600, idleSeconds: 120, openingBeats: 7, directorModel: DIRECTOR_MODELS[0].id, firstFrame: "none", uploadedFrame: "", hold: false, resume: true, playerChoice: false };
@@ -368,7 +371,7 @@ export class RealtimeVideoController {
     if (this.running && this.state.engine === "shorts") return this.skipShort();
     const go = this.skipNow;
     if (!go || !this.running || this.state.held) return;
-    this.addStep({ kind: "info", text: "玩家快进：直接拍下一镜" });
+    this.addStep({ kind: "info", text: ft("step.skip") });
     const before = this.version;
     go();
     if (this.version > before) this.seekEffect("ff");
@@ -407,7 +410,7 @@ export class RealtimeVideoController {
     if (!this.running || this.state.held || this.state.engine !== "fal" || this.cursor <= 0) return;
     const token = ++this.replayToken;
     this.replay = { token };
-    this.addStep({ kind: "info", text: "玩家回退：重拍上一镜" });
+    this.addStep({ kind: "info", text: ft("step.rewind") });
     this.playReel(this.cursor - 1, token);
     this.seekEffect("rw");
   }
@@ -418,7 +421,7 @@ export class RealtimeVideoController {
     this.cursor = i;
     this.replaying = true;
     this.nextExcerpt = r.excerpt ?? null;
-    this.sendShot(r.shot, `回放第 ${i + 1}/${this.reel.length} 镜`, r.kind, r.scene, "return");
+    this.sendShot(r.shot, ft("step.replay", { n: i + 1, total: this.reel.length }), r.kind, r.scene, "return");
     this.replaying = false;
     const last = i + 1 >= this.reel.length;
     this.afterOnScreen(this.version, () => (last ? 3000 : 7000), 30_000, () => (last ? this.endReplay() : this.playReel(i + 1, token)), true);
@@ -444,7 +447,7 @@ export class RealtimeVideoController {
   private queue: ClipItem[] = [];
   /** Comfy clips by version: rendering, rendered and waiting to play, or given up on. */
   private rendering = new Map<number, ClipItem>();
-  private rendered = new Map<number, { url: string; hold: boolean; info: string }>();
+  private rendered = new Map<number, { url: string; hold: boolean; info: FilmText }>();
   /** Versions still to play, in story order. */
   private playOrder: number[] = [];
   private renderStart = new Map<number, number>();
@@ -548,8 +551,8 @@ export class RealtimeVideoController {
     const step = { ...s, id: ++this.stepId, t: this.now() };
     this.set({ steps: [...this.state.steps, step].slice(-200) });
   }
-  private patchShot(version: number, status: string) {
-    const shown = status.startsWith("画面已出") ? this.now() : undefined;
+  private patchShot(version: number, status: ShotStatus) {
+    const shown = status.state === "shown" ? this.now() : undefined;
     const steps = this.state.steps.map((s) => (s.version === version ? { ...s, status, ...(shown != null && s.shownAt == null ? { shownAt: shown } : {}) } : s));
     this.set({ steps, ...(version === this.version ? { currentStatus: status } : {}) });
     const seek = this.state.fastForward ?? this.state.rewind;
@@ -768,7 +771,7 @@ export class RealtimeVideoController {
     this.deferred = [];
     this.earlyWork = null;
     this.pendingReply = false;
-    this.set({ status: "starting", engine, elapsed: 0, cost: 0, credits: 0, clips: 0, waiting: false, currentShot: "", currentStatus: "", error: undefined, steps: [], scenes: [], currentScene: null, cut: null, short: null });
+    this.set({ status: "starting", engine, elapsed: 0, cost: 0, credits: 0, clips: 0, waiting: false, currentShot: "", currentStatus: null, error: undefined, steps: [], scenes: [], currentScene: null, cut: null, short: null });
     if (engine === "shorts") return this.startShorts();
     try {
       const msgs = useChatStore.getState().messages;
@@ -785,15 +788,15 @@ export class RealtimeVideoController {
       if (saved) {
         this.opts.style = options.style ?? saved.style;
         op = { cast: saved.cast, scenes: saved.scenes, beats: saved.opening?.beats ?? [] };
-        this.addStep({ kind: "info", text: "接着上次离开的地方拍" });
+        this.addStep({ kind: "info", text: ft("step.resume") });
       } else {
-        this.addStep({ kind: "info", text: "导演读开场白、拆镜头…" });
+        this.addStep({ kind: "info", text: ft("step.openingDirecting") });
         op = await post<typeof op>("opening", {
           sessionId: this.sessionId, style: this.opts.style, beats: late ? 1 : this.opts.openingBeats, greeting: greeting.content.replace(SHOT_TAG, ""), model: this.opts.directorModel,
         });
         if ((this.state.status as VideoState["status"]) !== "starting") return { error: "stopped" };
         this.addCredits(op.credits);
-        this.addStep({ kind: "info", text: `拆成 ${op.beats.length} 镜，认出 ${op.cast.length} 个角色（${((performance.now() - t0) / 1000).toFixed(1)}s）：${op.cast.map((c) => c.name).join("、")}` });
+        this.addStep({ kind: "info", text: ft("step.openingDirected", { beats: op.beats.length, cast: op.cast.length, secs: ((performance.now() - t0) / 1000).toFixed(1), names: op.cast.map((c) => c.name) }) });
       }
       this.cast = op.cast;
       this.look = op.look ?? "";
@@ -811,7 +814,7 @@ export class RealtimeVideoController {
         this.begin();
         // Held: the clips render as usual; playback waits for release().
         if (this.opts.hold) this.set({ held: true });
-        for (const b of op.beats) this.sendShot(b.shot, b.text.replace(/\s+/g, " ").slice(0, 90), "opening", b.scene);
+        for (const b of op.beats) this.sendShot(b.shot, rawText(b.text.replace(/\s+/g, " ").slice(0, 90)), "opening", b.scene);
         this.openingDone = true;
         return { ok: true };
       }
@@ -834,7 +837,7 @@ export class RealtimeVideoController {
         // shot's frame is drawn (~40 s): waiting for it held the stream back over a minute.
         const first = saved?.shot ? { shot: saved.shot, scene: saved.currentScene ?? undefined } : op.beats[0];
         if (first?.shot) {
-          this.addStep({ kind: "info", text: "按定场图画开场的角色形象帧…" });
+          this.addStep({ kind: "info", text: ft("step.keyframeDrawing") });
           void this.falFrame(first.shot, first.scene ?? null).then((url) => { if (url) this.pinLook(url, first.scene ?? null); });
         }
       }
@@ -844,11 +847,11 @@ export class RealtimeVideoController {
           this.video.removeAttribute("src");
           this.video.srcObject = stream;
           this.play();
-          this.addStep({ kind: "info", text: "视频流已连上" });
+          this.addStep({ kind: "info", text: ft("step.streamConnected") });
         },
         onData: (raw: string) => this.onFalData(raw),
         onState: (s: string) => { if (s === "failed" || s === "closed") this.stop(false); },
-        onError: (e: unknown) => this.addStep({ kind: "error", text: `连接错误：${(e as Error)?.message ?? e}` }),
+        onError: (e: unknown) => this.addStep({ kind: "error", text: ft("step.connectError", { error: String((e as Error)?.message ?? e) }) }),
       }) as unknown) as WmaRealtimeSession;
       this.falAnchor = anchor;
       this.begin();
@@ -859,7 +862,7 @@ export class RealtimeVideoController {
         this.openingDone = true;
         this.lastAssistantId = saved.replyId;
         this.setProgress({ phase: "turn", shot: 1, total: 1, excerpt: saved.excerpt }, { currentScene: saved.currentScene });
-        this.sendShot(saved.shot, "上次离开时的镜头", "shot");
+        this.sendShot(saved.shot, ft("step.resumeShot"), "shot");
         if (latest && latest.id !== saved.replyId) this.afterOnScreen(this.version, () => 4000, 20_000, () => this.handleReply());
         return { ok: true };
       }
@@ -874,18 +877,18 @@ export class RealtimeVideoController {
       const play0Only = (go: (i: number) => void, more: boolean) => {
         this.openingAt = from;
         this.setProgress({ phase: "opening", shot: from + 1, total: beats.length, excerpt: beats[from].text.slice(0, 1500) }, { held: true });
-        this.sendShot(beats[from].shot, beats[from].text.replace(/\s+/g, " ").slice(0, 90), "opening", beats[from].scene);
-        this.addStep({ kind: "info", text: "开场第一镜先拍着，等玩家进场再往下播" });
+        this.sendShot(beats[from].shot, rawText(beats[from].text.replace(/\s+/g, " ").slice(0, 90)), "opening", beats[from].scene);
+        this.addStep({ kind: "info", text: ft("step.holdFirst") });
         // The player is in: this shot plays out from now, then the rest follows.
         this.onRelease = () => { if (more) this.afterOnScreen(this.version, () => 7000, 7000, () => go(from + 1)); else this.openingDone = true; };
         // Nobody came: stop paying for a film no one watches.
-        this.holdTimer = setTimeout(() => { if (this.state.held) { this.addStep({ kind: "info", text: "玩家迟迟没进场，先停拍" }); this.stop(false); } }, 180_000);
+        this.holdTimer = setTimeout(() => { if (this.state.held) { this.addStep({ kind: "info", text: ft("step.holdTimeout") }); this.stop(false); } }, 180_000);
       };
       const play = (i: number) => {
         if (!this.running) return;
         this.openingAt = i;
         this.setProgress({ phase: "opening", shot: i + 1, total: beats.length, excerpt: beats[i].text.slice(0, 1500) });
-        this.sendShot(beats[i].shot, beats[i].text.replace(/\s+/g, " ").slice(0, 90), "opening", beats[i].scene);
+        this.sendShot(beats[i].shot, rawText(beats[i].text.replace(/\s+/g, " ").slice(0, 90)), "opening", beats[i].scene);
         // A shot needs ~6-10 s to settle on screen; 12 s lets each beat read. Rushed (the player
         // already acted): 5 s, so the whole opening still plays before their turn.
         // The next beat goes out once this one is actually on screen and has played for a while
@@ -901,7 +904,7 @@ export class RealtimeVideoController {
           this.openingNext = null;
           this.openingDone = true;
           this.saveResume();
-          this.addStep({ kind: "info", text: "开场演完，之后每条回复都会接成下一个镜头" });
+          this.addStep({ kind: "info", text: ft("step.openingDone") });
           if (this.pendingReply) {
             this.pendingReply = false;
             setTimeout(() => this.handleReply(), 5000);
@@ -917,7 +920,7 @@ export class RealtimeVideoController {
       return { ok: true };
     } catch (e) {
       const msg = e instanceof FilmError ? e.code : (e as Error).message;
-      this.addStep({ kind: "error", text: `启动失败：${(e as Error).message}` });
+      this.addStep({ kind: "error", text: ft("step.startFailed", { error: (e as Error).message }) });
       this.stop(false);
       this.set({ status: "error", error: msg });
       return { error: (e as Error).message };
@@ -933,7 +936,7 @@ export class RealtimeVideoController {
     this.set({ credits, cost: credits / 1000 });
   }
   /** The film stops: the wallet is empty (or the player turned the feature off). */
-  private failHard(code: string, text: string) {
+  private failHard(code: string, text: FilmText = ft("step.outOfCredits")) {
     this.addStep({ kind: "error", text });
     this.stop(false);
     this.set({ status: "error", error: code });
@@ -947,7 +950,7 @@ export class RealtimeVideoController {
     const tick = this.falTicks + 1;
     post<{ credits?: number }>("fal-meter", { sessionId: this.sessionId, run: this.falRun, tick, seconds: 15 })
       .then((r) => { this.falTicks = tick; this.addCredits(r.credits); })
-      .catch((e) => { if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) this.failHard(e.code, "蘑菇币不足，停止拍摄"); })
+      .catch((e) => { if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) this.failHard(e.code); })
       .finally(() => { this.falMetering = false; });
   }
   private falAnchor: string | null = null;
@@ -968,11 +971,11 @@ export class RealtimeVideoController {
       this.addCredits(r.credits);
       const blob = await (await fetch(`${apiBase}${r.url}`)).blob();
       const url = await fal.storage.upload(blob);
-      this.addStep({ kind: "info", text: `角色形象帧已画好（${((performance.now() - t0) / 1000).toFixed(1)}s）` });
+      this.addStep({ kind: "info", text: ft("step.keyframeDone", { secs: ((performance.now() - t0) / 1000).toFixed(1) }) });
       return url;
     } catch (e) {
-      if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) { this.failHard(e.code, "蘑菇币不足，停止拍摄"); return null; }
-      this.addStep({ kind: "error", text: `角色形象帧失败：${(e as Error).message}` });
+      if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) { this.failHard(e.code); return null; }
+      this.addStep({ kind: "error", text: ft("step.keyframeFailed", { error: (e as Error).message }) });
       return null;
     }
   }
@@ -984,7 +987,7 @@ export class RealtimeVideoController {
     const session = this.falSession;
     if (!this.running || !session || !this.prevShot) return;
     if (scene && this.state.currentScene && scene !== this.state.currentScene) {
-      this.addStep({ kind: "info", text: "角色形象帧画好时已切到别的场景，跳过这次校正" });
+      this.addStep({ kind: "info", text: ft("step.keyframeStale") });
       return;
     }
     const v = ++this.version;
@@ -992,7 +995,7 @@ export class RealtimeVideoController {
     const waiter = this.onScreenWaiters.get(v - 1);
     if (waiter) { this.onScreenWaiters.delete(v - 1); this.onScreenWaiters.set(v, waiter); }
     session.send({ type: "prompt", prompt_version: v, prompt: this.prevShot, end_image_url: url });
-    this.addStep({ kind: "info", text: "校正角色形象（画面会走到定好的这一帧）", shot: this.prevShot, version: v, status: "已发送" });
+    this.addStep({ kind: "info", text: ft("step.pinLook"), shot: this.prevShot, version: v, status: SENT });
   }
 
   private begin() {
@@ -1016,10 +1019,10 @@ export class RealtimeVideoController {
       this.pump();
     }
     if (elapsed >= this.opts.limitSeconds) {
-      this.addStep({ kind: "info", text: `到达时长上限 ${this.opts.limitSeconds}s，自动结束` });
+      this.addStep({ kind: "info", text: ft("step.limitReached", { n: this.opts.limitSeconds }) });
       this.stop(false);
     } else if (this.state.engine === "fal" && this.openingDone && (performance.now() - this.lastShotAt) / 1000 > this.opts.idleSeconds) {
-      this.addStep({ kind: "info", text: `${this.opts.idleSeconds} 秒没有新剧情，自动停流省钱` });
+      this.addStep({ kind: "info", text: ft("step.idleStop", { n: this.opts.idleSeconds }) });
       this.stop(false);
     }
   }
@@ -1069,7 +1072,7 @@ export class RealtimeVideoController {
     this.leaveTimer = setTimeout(() => {
       this.leaveTimer = null;
       if (!this.running && this.state.status !== "starting") return;
-      this.addStep({ kind: "info", text: "玩家离开了页面：先停拍，回来接着拍" });
+      this.addStep({ kind: "info", text: ft("step.left") });
       this.stop(false);
     }, 8000);
   }
@@ -1096,7 +1099,7 @@ export class RealtimeVideoController {
   }
 
   /** A card (or the player) can direct the camera itself. */
-  direct(prompt: string, label = "手动发送的镜头") {
+  direct(prompt: string, label: FilmText = ft("step.manualShot")) {
     if (!this.running || !prompt.trim()) return;
     this.sendShot(prompt.trim(), label, "shot");
   }
@@ -1105,7 +1108,7 @@ export class RealtimeVideoController {
   regenerate() {
     if (this.running && this.state.engine === "shorts") return this.shootShort(true);
     if (!this.running || !this.prevShot) return;
-    this.sendShot(this.prevShot, "重新生成这一镜", "shot");
+    this.sendShot(this.prevShot, ft("step.retake"), "shot");
   }
 
   // ── shots ──
@@ -1151,10 +1154,10 @@ export class RealtimeVideoController {
     const sc = this.state.scenes.find((x) => x.id === sceneId);
     if (!this.running || !sc || sceneId === this.state.currentScene) return;
     this.enterScene(sceneId, "return");
-    this.sendShot(`Cut back to: ${sc.sheet} The scene continues where it was left.`, `玩家切到场景 ${sceneId}`, "shot", sceneId, "return");
+    this.sendShot(`Cut back to: ${sc.sheet} The scene continues where it was left.`, ft("step.cutTo", { scene: sceneId }), "shot", sceneId, "return");
   }
 
-  private sendShot(shot: string, label: string, kind: VideoStepKind, scene?: string, transition: "cut" | "return" | "continue" = "cut", sheet?: string | null) {
+  private sendShot(shot: string, label: FilmText, kind: VideoStepKind, scene?: string, transition: "cut" | "return" | "continue" = "cut", sheet?: string | null) {
     if (scene) this.enterScene(scene, transition, sheet);
     const v = ++this.version;
     const excerpt = this.nextExcerpt ?? undefined;
@@ -1167,11 +1170,11 @@ export class RealtimeVideoController {
     this.prevShot = shot;
     this.lastShotAt = performance.now();
     this.sentAt.set(v, performance.now());
-    this.set({ currentShot: shot, currentStatus: this.state.engine === "fal" ? "已发送" : "排队中" });
+    this.set({ currentShot: shot, currentStatus: this.state.engine === "fal" ? SENT : QUEUED });
     if (this.state.engine !== "fal") {
       const turn = kind === "shot";
       // Story to film: shots of an older turn and held-shot filler not yet rendering give way.
-      for (const q of this.queue.filter((x) => x.hold || (turn && x.turn && x.turnNo < this.turnNo))) this.dropClip(q.v, q.hold ? "有新剧情，不再延长" : "被新回合替换");
+      for (const q of this.queue.filter((x) => x.hold || (turn && x.turn && x.turnNo < this.turnNo))) this.dropClip(q.v, ft(q.hold ? "shotState.droppedNewStory" : "shotState.droppedNewTurn"));
       // A new place starts fresh, a place seen before resumes from its own last clip.
       const prev = this.queuedScene;
       let from: "prev" | "fresh" | "scene" = "prev";
@@ -1179,7 +1182,7 @@ export class RealtimeVideoController {
       if (scene) this.seenScenes.add(scene);
       this.queuedScene = scene ?? prev;
       this.enqueueClip({ v, prompt: shot, turn, turnNo: this.turnNo, scene: this.queuedScene, from, hold: false, queuedAt: performance.now() });
-      this.addStep({ kind, text: label, shot, version: v, status: "排队中", excerpt });
+      this.addStep({ kind, text: label, shot, version: v, status: QUEUED, excerpt });
       this.pump();
       return;
     }
@@ -1190,7 +1193,7 @@ export class RealtimeVideoController {
         ? { type: "configure", prompt_version: 1, prompt: shot, resolution: "768p", aspect_ratio: "16:9", memory: 12, ...(this.falAnchor ? { image_url: this.falAnchor } : {}) }
         : { type: "prompt", prompt_version: v, prompt: shot },
     );
-    this.addStep({ kind, text: label, shot, version: v, status: "已发送", excerpt });
+    this.addStep({ kind, text: label, shot, version: v, status: SENT, excerpt });
     this.saveResume();
   }
 
@@ -1199,16 +1202,16 @@ export class RealtimeVideoController {
     try { msg = JSON.parse(raw); } catch { return; }
     const v = msg.prompt_version;
     if (v == null || !this.sentAt.has(v)) {
-      if (msg.type === "error" || msg.type === "stream_exhausted") this.addStep({ kind: "error", text: `${msg.type}: ${raw.slice(0, 200)}` });
+      if (msg.type === "error" || msg.type === "stream_exhausted") this.addStep({ kind: "error", text: rawText(`${msg.type}: ${raw.slice(0, 200)}`) });
       return;
     }
     const secs = ((performance.now() - this.sentAt.get(v)!) / 1000).toFixed(1);
-    if (msg.type === "prompt_applied") this.patchShot(v, `已生效 ${secs}s`);
-    else if (msg.type === "prompt_rejected") this.patchShot(v, `被拒绝 ${secs}s`);
+    if (msg.type === "prompt_applied") this.patchShot(v, shotStatus("applied", "shotState.applied", { secs }));
+    else if (msg.type === "prompt_rejected") this.patchShot(v, shotStatus("rejected", "shotState.rejected", { secs }));
     else if (msg.type === "chunk") {
       const step = this.state.steps.find((s) => s.version === v);
-      if (step && !step.status?.startsWith("画面")) {
-        this.patchShot(v, `画面已出 ${secs}s`);
+      if (step && step.status?.state !== "shown") {
+        this.patchShot(v, shotStatus("shown", "shotState.shownAfter", { secs }));
         const w = this.onScreenWaiters.get(v);
         this.onScreenWaiters.delete(v);
         w?.();
@@ -1244,14 +1247,14 @@ export class RealtimeVideoController {
     this.playOrder.push(item.v);
   }
 
-  private dropClip(v: number, why: string) {
+  private dropClip(v: number, why: FilmText, state: ShotState = "dropped") {
     this.queue = this.queue.filter((x) => x.v !== v);
     this.playOrder = this.playOrder.filter((x) => x !== v);
     const r = this.rendered.get(v);
     if (r) URL.revokeObjectURL(r.url);
     this.rendered.delete(v);
     this.droppedClips.add(v);
-    this.patchShot(v, why);
+    this.patchShot(v, { state, ...why });
   }
 
   private playNext() {
@@ -1262,7 +1265,7 @@ export class RealtimeVideoController {
       if (r) {
         // Filler gives way to story that is ready to play.
         if (r.hold && this.playOrder.some((x) => x !== v && this.rendered.has(x) && !this.rendered.get(x)!.hold)) {
-          this.dropClip(v, "剧情已到，跳过延长");
+          this.dropClip(v, ft("shotState.droppedStoryReady"));
           continue;
         }
         this.playOrder.shift();
@@ -1272,7 +1275,7 @@ export class RealtimeVideoController {
         if (this.video.src.startsWith("blob:")) URL.revokeObjectURL(this.video.src);
         this.video.src = r.url;
         this.play();
-        this.patchShot(v, `画面已出 · ${r.info}`);
+        this.patchShot(v, shotStatus("shown", "shotState.shownClip", { info: r.info }));
         const w = this.onScreenWaiters.get(v);
         this.onScreenWaiters.delete(v);
         w?.();
@@ -1282,7 +1285,7 @@ export class RealtimeVideoController {
       const since = this.renderStart.get(v);
       const stuck = since != null && performance.now() - since > COMFY_STUCK_MS;
       if (stuck && this.playOrder.some((x) => this.rendered.has(x))) {
-        this.dropClip(v, "生成太慢，跳过");
+        this.dropClip(v, ft("shotState.droppedTooSlow"));
         continue;
       }
       break;
@@ -1315,7 +1318,7 @@ export class RealtimeVideoController {
       const v = ++this.version;
       const prompt = this.prevShot + HOLD_SHOTS[this.holds++ % HOLD_SHOTS.length];
       this.enqueueClip({ v, prompt, turn: false, turnNo: this.turnNo, scene: this.queuedScene, from: "prev", hold: true, queuedAt: performance.now() });
-      this.addStep({ kind: "info", text: "等剧情时延长当前镜头，画面不停", shot: prompt, version: v, status: "排队中" });
+      this.addStep({ kind: "info", text: ft("step.holdShot"), shot: prompt, version: v, status: QUEUED });
       this.pump();
     }
   }
@@ -1353,11 +1356,11 @@ export class RealtimeVideoController {
   }
 
   private clipFailed(v: number, why: string) {
-    this.dropClip(v, `失败：${why}`.slice(0, 80));
+    this.dropClip(v, ft("shotState.failed", { error: why.slice(0, 77) }), "failed");
     this.failStreak++;
     this.pauseUntil = performance.now() + Math.min(30_000, 1000 * 2 ** this.failStreak);
     if (this.failStreak >= 5) {
-      this.addStep({ kind: "error", text: "连续 5 段生成失败，先停拍" });
+      this.addStep({ kind: "error", text: ft("step.failStreak") });
       this.set({ error: why });
       this.stop(false);
     }
@@ -1366,10 +1369,10 @@ export class RealtimeVideoController {
   private async renderClip(item: ClipItem) {
     this.rendering.set(item.v, item);
     this.renderStart.set(item.v, performance.now());
-    this.patchShot(item.v, "生成中");
+    this.patchShot(item.v, shotStatus("generating", "shotState.generating"));
     const t0 = performance.now();
     const body = this.clipRequest(item);
-    const how = [item.hold ? "延长" : "", item.from === "fresh" ? "新场景" : item.from === "scene" ? "接回场景" : "guide" in body ? "续写" : ""].filter(Boolean).join(" · ");
+    const how: FilmText[] = [item.hold ? ft("shotState.clipHold") : null, item.from === "fresh" ? ft("shotState.clipFresh") : item.from === "scene" ? ft("shotState.clipScene") : "guide" in body ? ft("shotState.clipGuide") : null].filter((x): x is FilmText => !!x);
     try {
       const res = await fetch(`${apiBase}/api/realtime-video/clip`, {
         method: "POST",
@@ -1381,8 +1384,8 @@ export class RealtimeVideoController {
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
         if (err.code && FILM_STOP_CODES.has(err.code)) {
-          this.dropClip(item.v, "蘑菇币不足");
-          this.failHard(err.code, "蘑菇币不足，停止拍摄");
+          this.dropClip(item.v, ft("shotState.droppedNoCredits"));
+          this.failHard(err.code);
           return;
         }
         this.clipFailed(item.v, err.error ?? (res.statusText || String(res.status)));
@@ -1405,9 +1408,11 @@ export class RealtimeVideoController {
       }
       if (item.v >= this.lastRefVersion) this.lastFrame = await lastFrameOf(url).catch(() => this.lastFrame);
       if (this.droppedClips.has(item.v)) { URL.revokeObjectURL(url); return; }
-      const info = `${((performance.now() - t0) / 1000).toFixed(1)}s 生成好（排队 ${queued.toFixed(0)}s · 生成 ${exec.toFixed(0)}s${how ? ` · ${how}` : ""}${refs ? ` · 参考 ${refs}` : ""}）`;
+      const more = refs ? [...how, ft("shotState.clipRefs", { refs })] : how;
+      const timing = { secs: ((performance.now() - t0) / 1000).toFixed(1), queued: queued.toFixed(0), exec: exec.toFixed(0) };
+      const info = more.length ? ft("shotState.clipInfoMore", { ...timing, more }) : ft("shotState.clipInfo", timing);
       this.rendered.set(item.v, { url, hold: item.hold, info });
-      this.patchShot(item.v, `已生成，等待播放 · ${info}`);
+      this.patchShot(item.v, shotStatus("ready", "shotState.ready", { info }));
     } catch (e) {
       if (this.running && !this.droppedClips.has(item.v)) this.clipFailed(item.v, (e as Error).message);
     } finally {
@@ -1429,13 +1434,13 @@ export class RealtimeVideoController {
           this.turnNo++;
           this.early = null;
           this.earlyWork = null;
-          this.addStep({ kind: "user", text: added.content.slice(0, 120) });
+          this.addStep({ kind: "user", text: rawText(added.content.slice(0, 120)) });
           // The player moved on: stop replaying, the story continues from the latest shot.
           if (this.replay) this.endReplay();
           // The player acted before the opening finished: play the rest faster, then their turn.
           if (!this.openingDone && !this.openingRush) {
             this.openingRush = true;
-            this.addStep({ kind: "info", text: "玩家行动了：开场加快拍完，再接这一回合" });
+            this.addStep({ kind: "info", text: ft("step.openingRush") });
           }
           // Same for the shots of the last turn still waiting to play.
           if (this.turnBusy) this.turnRush = true;
@@ -1448,7 +1453,7 @@ export class RealtimeVideoController {
       if (!prev.isStreaming) return;
       if (!this.openingDone) {
         this.pendingReply = true;
-        this.addStep({ kind: "info", text: "回复写好了，等开场拍完马上接上" });
+        this.addStep({ kind: "info", text: ft("step.replyWaits") });
         return;
       }
       this.handleReply();
@@ -1478,7 +1483,7 @@ export class RealtimeVideoController {
     const fresh = (newCast ?? []).filter((p) => p?.name && p.look && !this.cast.some((k) => k.name === p.name));
     if (!fresh.length) return;
     this.cast = [...this.cast, ...fresh];
-    this.addStep({ kind: "info", text: `新角色定妆：${fresh.map((p) => p.name).join("、")}` });
+    this.addStep({ kind: "info", text: ft("step.newCast", { names: fresh.map((p) => p.name) }) });
   }
 
   /** A turn's shots still playing one after another. */
@@ -1486,13 +1491,12 @@ export class RealtimeVideoController {
   private turnRush = false;
 
   /** Film a turn's shots in order: each next one once the previous has played on screen. */
-  private playBeats(beats: DirectorBeat[], no: number, total: number, label: string, fallbackExcerpt: string): void {
+  private playBeats(beats: DirectorBeat[], no: number, total: number, label: FilmText, fallbackExcerpt: string): void {
     const [b, ...rest] = beats;
     if (!b || !this.running) return this.endTurn();
     this.turnBusy = true;
-    const how = b.transition === "cut" ? `切到新场景 ${b.scene}` : b.transition === "return" ? `切回场景 ${b.scene}` : "同一场景";
     this.setProgress({ phase: "turn", shot: no, total, excerpt: (b.text || fallbackExcerpt).slice(0, 1500) });
-    this.sendShot(b.shot, `${label} · 第 ${no}/${total} 镜 · ${how}`, "shot", b.scene ?? undefined, b.transition ?? "continue", b.sheet);
+    this.sendShot(b.shot, ft("step.turnShot", { label, n: no, total, how: beatHow(b) }), "shot", b.scene ?? undefined, b.transition ?? "continue", b.sheet);
     // Comfy renders a turn's shots side by side and plays them in order.
     if (this.state.engine !== "fal") return rest.length ? this.playBeats(rest, no + 1, total, label, "") : this.endTurn();
     if (rest.length) this.afterOnScreen(this.version, () => (this.turnRush ? 3000 : 7000), 30_000, () => this.playBeats(rest, no + 1, total, label, ""));
@@ -1523,9 +1527,8 @@ export class RealtimeVideoController {
         if (!this.running) return;
         this.learnCast(d.newCast);
         const b = d.beats?.[0] ?? d;
-        const how = b.transition === "cut" ? `切到新场景 ${b.scene}` : b.transition === "return" ? `切回场景 ${b.scene}` : "同一场景";
         this.setProgress({ phase: "turn", shot: 1, total: 2, excerpt: (b.text || text).slice(0, 1500) });
-        this.sendShot(b.shot, `导演 ${((performance.now() - t0) / 1000).toFixed(1)}s 写好镜头（回复还在写，先拍开头）· ${how}`, "shot", b.scene ?? undefined, b.transition ?? "continue", b.sheet);
+        this.sendShot(b.shot, ft("step.earlyShot", { secs: ((performance.now() - t0) / 1000).toFixed(1), how: beatHow(b) }), "shot", b.scene ?? undefined, b.transition ?? "continue", b.sheet);
         this.early = { at: performance.now(), shot: b.shot, len: text.length, v: this.version };
       })
       .catch(() => { /* the full reply still gets its shots */ });
@@ -1562,7 +1565,7 @@ export class RealtimeVideoController {
       if (!this.running) return;
       if (state.messages.length > prev.messages.length) {
         const added = state.messages[state.messages.length - 1];
-        if (added?.role === "user") this.addStep({ kind: "user", text: added.content.slice(0, 120) });
+        if (added?.role === "user") this.addStep({ kind: "user", text: rawText(added.content.slice(0, 120)) });
       }
       if (state.messages !== prev.messages) this.syncShorts();
       // A reply (or a new swipe of one) is written: film it.
@@ -1576,7 +1579,7 @@ export class RealtimeVideoController {
     if (newest && newest.messageId === latest.id && !this.holders.length) this.shortUnseen = newest.messageId;
     if (newest) this.playShort(newest.messageId, 0, newest.messageId !== latest.id || !this.holders.length);
     else this.set({ waiting: true });
-    this.addStep({ kind: "info", text: `短片：这一局已有 ${films.length} 部` });
+    this.addStep({ kind: "info", text: ft("step.shortsCount", { n: films.length }) });
     this.shootShort();
     this.syncShorts();
     return { ok: true };
@@ -1634,11 +1637,11 @@ export class RealtimeVideoController {
     if (!latest || !latest.content.trim() || latest.turnVideo?.status === "rendering") return;
     if (latest.swipes?.[latest.activeSwipeIndex ?? 0]?.refusal) return;
     if (!again && (turnVideoClips(latest.content).length || latest.turnVideo?.status === "failed")) return;
-    this.addStep({ kind: "reply", text: latest.content.replace(/\s+/g, " ").slice(0, 120) });
+    this.addStep({ kind: "reply", text: rawText(latest.content.replace(/\s+/g, " ").slice(0, 120)) });
     void filmTurn(latest.id, this.opts.style || "source").then((credits) => {
       this.addCredits(credits);
       const now = useChatStore.getState().messages.find((m) => m.id === latest.id)?.turnVideo;
-      if (now?.status === "failed" && now.reason === "credits" && this.running) this.failHard("INSUFFICIENT_CREDITS", "蘑菇币不足，停止拍摄");
+      if (now?.status === "failed" && now.reason === "credits" && this.running) this.failHard("INSUFFICIENT_CREDITS");
     });
   }
 
@@ -1672,7 +1675,7 @@ export class RealtimeVideoController {
     const patch: Partial<VideoState> = {};
     if (JSON.stringify(short) !== JSON.stringify(this.state.short ?? null)) {
       patch.short = short;
-      if (this.state.waiting) patch.currentStatus = !short ? "" : short.status === "failed" ? `没拍成：${short.reason}` : short.status === "writing" ? "导演在写分镜…" : `正在拍：已拍好 ${short.done}/${short.shots} 个镜头`;
+      if (this.state.waiting) patch.currentStatus = !short ? null : short.status === "failed" ? ft("now.failed", { reason: shortReason(short.reason) }) : short.status === "writing" ? ft("now.writing") : ft("now.shooting", { done: short.done, shots: short.shots });
     }
     if (JSON.stringify(queue) !== JSON.stringify(this.state.shortQueue ?? [])) patch.shortQueue = queue;
     if (JSON.stringify(shortNow) !== JSON.stringify(this.state.shortNow ?? null)) patch.shortNow = shortNow;
@@ -1733,8 +1736,8 @@ export class RealtimeVideoController {
     } else {
       this.version++;
       const total = film.cells.filter((c) => c !== "failed").length;
-      this.set({ waiting: false, clips: this.state.clips + 1, progress: { phase: "turn", shot: clip + 1, total, excerpt: film.texts[clip] ?? "" }, currentStatus: `第 ${film.reply} 条回复 · 第 ${clip + 1}/${total} 镜` });
-      this.addStep({ kind: "shot", text: `短片 ${i + 1}/${films.length} · 第 ${clip + 1}/${total} 镜`, excerpt: film.texts[clip] || undefined, version: this.version, status: "画面已出", shownAt: this.now() });
+      this.set({ waiting: false, clips: this.state.clips + 1, progress: { phase: "turn", shot: clip + 1, total, excerpt: film.texts[clip] ?? "" }, currentStatus: ft("now.playing", { reply: film.reply, n: clip + 1, total }) });
+      this.addStep({ kind: "shot", text: ft("step.shortShot", { film: i + 1, films: films.length, n: clip + 1, total }), excerpt: film.texts[clip] || undefined, version: this.version, status: shotStatus("shown", "shotState.shown"), shownAt: this.now() });
     }
     this.syncShorts();
   }
@@ -1785,7 +1788,7 @@ export class RealtimeVideoController {
     // At a film's start (or just sent there): the film before.
     const atStart = !this.state.waiting && this.shortAt?.clip === 0 && (this.video.currentTime < 2 || performance.now() - this.shortSince < 2500);
     const to = films[i < 0 ? films.length - 1 : Math.max(0, atStart ? i - 1 : i)];
-    this.addStep({ kind: "info", text: "玩家回退：从头放一部" });
+    this.addStep({ kind: "info", text: ft("step.shortRewind") });
     this.playShort(to.messageId, 0);
   }
 
@@ -1835,11 +1838,11 @@ export class RealtimeVideoController {
     if (!last || last.id === this.lastAssistantId) return;
     this.lastAssistantId = last.id;
     const clean = last.content.replace(SHOT_TAG, "").trim();
-    this.addStep({ kind: "reply", text: clean.replace(/\s+/g, " ").slice(0, 120) + (clean.length > 120 ? "…" : "") });
+    this.addStep({ kind: "reply", text: rawText(clean.replace(/\s+/g, " ").slice(0, 120) + (clean.length > 120 ? "…" : "")) });
     const own = extractShot(last.content);
     if (own) {
       this.setProgress({ phase: "turn", shot: 1, total: 1, excerpt: clean.slice(0, 1500) });
-      this.sendShot(own, "卡的 AI 自带镜头（跳过导演）", "shot");
+      this.sendShot(own, ft("step.ownShot"), "shot");
       return;
     }
     const lastUser = [...state.messages].reverse().find((m) => m.role === "user");
@@ -1858,7 +1861,7 @@ export class RealtimeVideoController {
         this.learnCast(d.newCast);
         const beats = (d.beats?.length ? d.beats : [d]).filter((b) => b && b.shot);
         if (!beats.length) throw new Error("no shot");
-        const label = `导演 ${((performance.now() - t0) / 1000).toFixed(1)}s 拆成 ${beats.length} 镜${early ? "（接着拍这条回复的后半段）" : ""}`;
+        const label = ft(early ? "step.directedRest" : "step.directed", { secs: ((performance.now() - t0) / 1000).toFixed(1), n: beats.length });
         const go = () => this.playBeats(beats, early ? 2 : 1, beats.length + (early ? 1 : 0), label, restText);
         // fal drifts from the characters' looks over a story: each reply steers it back once.
         if (this.state.engine === "fal" && lookPins()) {
@@ -1871,8 +1874,8 @@ export class RealtimeVideoController {
         else go();
       })
       .catch((e) => {
-        if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) return this.failHard(e.code, "蘑菇币不足，停止拍摄");
-        this.addStep({ kind: "error", text: `导演失败：${e.message}` });
+        if (e instanceof FilmError && FILM_STOP_CODES.has(e.code)) return this.failHard(e.code);
+        this.addStep({ kind: "error", text: ft("step.directorFailed", { error: e.message }) });
         this.endTurn();
       });
   }
@@ -1893,6 +1896,13 @@ type ClipItem = {
 };
 type DirectorBeat = { text?: string; shot: string; transition?: "continue" | "cut" | "return"; scene?: string | null; sheet?: string | null };
 type DirectorAnswer = DirectorBeat & { beats?: DirectorBeat[]; newCast?: CastMember[]; credits?: number };
+
+const SENT = shotStatus("sent", "shotState.sent");
+const QUEUED = shotStatus("queued", "shotState.queued");
+/** How a director's shot joins the film: a cut to a new scene, back to one, or the same scene. */
+function beatHow(b: DirectorBeat): FilmText {
+  return b.transition === "cut" ? ft("step.howCut", { scene: String(b.scene) }) : b.transition === "return" ? ft("step.howReturn", { scene: String(b.scene) }) : ft("step.howSame");
+}
 
 const controllers = new Map<string, RealtimeVideoController>();
 

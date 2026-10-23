@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { signUp, authClient } from "@/lib/auth-client";
-import { readSafeAuthReturnTo } from "@/lib/auth-return";
+import { isOAuthResumeReturnTo, readSafeAuthReturnTo } from "@/lib/auth-return";
 import { getAuthErrorKey } from "@/lib/auth-errors";
 import { trackSignupConversion } from "@/lib/analytics";
 import { Turnstile, type TurnstileHandle } from "@/components/turnstile";
@@ -88,6 +88,12 @@ export function RegisterPage() {
         // Account row exists from this point — report the signup conversion
         // (PostHog + ad pixels) before the verification-pending screen.
         trackSignupConversion((result.data as { user?: { id?: string } } | null)?.user?.id);
+        // Signed in already (no email verification on this server): an outside
+        // app's sign-in carries straight on to its consent page.
+        if ((result.data as { token?: string | null } | null)?.token && returnTo && isOAuthResumeReturnTo(returnTo)) {
+          window.location.replace(returnTo);
+          return;
+        }
         setShowVerification(true);
       }
     } catch {

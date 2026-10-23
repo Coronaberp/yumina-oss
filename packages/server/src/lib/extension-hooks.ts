@@ -125,6 +125,8 @@ export interface TurnCompleteContext {
   fallbackModel: string;
   assistantMessageId: string;
   contextTokenLimit: number;
+  /** The turn's prompt raw history and its budget, when the prompt path measured them. */
+  rawHistory?: { budget: number; tokens: number };
 }
 
 export type InvalidateReason =

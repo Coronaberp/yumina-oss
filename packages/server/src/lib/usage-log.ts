@@ -3,9 +3,7 @@ import { db } from "../db/index.js";
 import { usageLogs } from "../db/schema.js";
 import { captureServerError } from "./posthog.js";
 import { touchLastActive } from "./last-active.js";
-
-/** The turns the daily and weekly quests count (lib/quests.ts questProgress). */
-const QUEST_TURN_ENDPOINTS = new Set(["send", "regenerate", "continue"]);
+import { QUEST_TURN_ENDPOINT_SET } from "./quest-turn-endpoints.js";
 import type { LedgerDatabase } from "./transaction-hash.js";
 
 type UsageLogInsert = typeof usageLogs.$inferInsert;
@@ -72,6 +70,12 @@ export const USAGE_ENDPOINT_BILLING_POLICY: Record<string, "billed" | "free-by-d
   // Same existing side-call billing; distinguish silent output so it does not
   // become a successful play interaction in analytics.
   "side-completion_empty": "billed",
+  // Outside apps through the AI gateway (routes/ai-gateway.ts; the OAuth
+  // client is in usage_logs.client_id): official key only, billed at provider
+  // cost like pvz-dave. Provider failures and empty replies are logged as
+  // app_empty and never charged.
+  app: "billed",
+  app_empty: "free-by-design",
   "pvz-dave": "billed",
   // Failed, cancelled and silent Dave generations are not heard by the player.
   "pvz-dave-unheard": "free-by-design",
@@ -214,7 +218,7 @@ export async function recordUsageLog(row: UsageLogInsert, options?: {database?: 
     }
   }
   // A finished turn can finish a quest; the collector looks a few seconds later.
-  if (QUEST_TURN_ENDPOINTS.has(values.endpoint) && (values.completionTokens ?? 0) > 0) {
+  if (QUEST_TURN_ENDPOINT_SET.has(values.endpoint) && (values.completionTokens ?? 0) > 0) {
     // The collector imports the hosted edition, which mounts routes that use
     // this writer. Load it after module initialization to avoid a router cycle.
     // Capture the event time now so crossing a reward reset cannot move it.

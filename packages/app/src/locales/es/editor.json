@@ -47,8 +47,11 @@
     "visualIntroBody": "Activa este interruptor y toda la carta se despliega en un solo tablero: aperturas, lore, números, comportamientos y la pantalla del jugador, uno al lado del otro. Edita cada cosa donde está, y el asistente trabaja directamente sobre el tablero. Puedes apagarlo cuando quieras para volver al editor completo.",
     "visualIntroTry": "Probar el lienzo",
     "visualIntroLater": "Ahora no",
-    "desktopCanvasNote": "Abre esta carta en un ordenador para editarla en el Lienzo (Beta).",
-    "recoverDraftMerged": "Esta tarjeta cambió en otro lugar desde entonces; se conservó tu versión recuperada"
+    "recoverDraftMerged": "Esta tarjeta cambió en otro lugar desde entonces; se conservó tu versión recuperada",
+    "saving": "Guardando…",
+    "offline": "Sin conexión",
+    "offlineTitle": "Se guarda en este dispositivo y se sube al volver la conexión",
+    "autosaveTitle": "Los cambios se guardan automáticamente"
   },
   "sections": {
     "firstMessage": "Primer mensaje",
@@ -157,7 +160,7 @@
     "tagPlaceholder": "Nombre de la etiqueta...",
     "rename": "Renombrar",
     "depth": "Profundidad (mensajes desde el final)",
-    "depthHint": "Solo importa dentro del chat: cuántos mensajes por encima del último. 0 va junto al último mensaje, donde la IA le da más peso; cuanto mayor, más atrás, más como contexto.",
+    "depthHint": "Solo se usa dentro del chat. Indica cuántos mensajes por encima del último va. 0 pesa más; cuanto mayor, más se lee como contexto.",
     "position": "Posición",
     "positionHint": "Orden dentro de esta sección. Menor = más arriba. Arrastra para reordenar automáticamente.",
     "keywords": "Palabras clave",
@@ -330,7 +333,7 @@
     "noMax": "Sin máx",
     "behaviorRules": "Reglas de comportamiento",
     "behaviorRulesPlaceholder": "p. ej. 0 = muerte, 1-20 = crítico, 20-50 = herido...",
-    "behaviorRulesHint": "Describe en lenguaje común cuándo y cómo debería cambiar esta variable: el motor se encarga de decirle a la IA qué directiva de actualización emitir. No necesitas escribir comandos como \"set hp=...\" aquí.",
+    "behaviorRulesHint": "Describe con palabras normales cuándo y cómo debe cambiar esta variable. El motor le dice a la IA cómo actualizarla, así que no escribas comandos como \"set hp=...\".",
     "aiAccessLabel": "Acceso de la IA",
     "aiAccessOptions": {
       "write": "La IA puede leer y escribir",
@@ -388,7 +391,7 @@
       "json": "JSON (objeto / arreglo)"
     },
     "optionsLabel": "Valores permitidos",
-    "optionsHint": "Aquí puedes fijar la salida de la IA: si lo rellenas, esta variable solo tomará uno de estos valores. Si lo dejas vacío, la IA la cambia libremente según la situación, pero puede ser menos estable.",
+    "optionsHint": "Si lo rellenas, la variable solo toma uno de estos valores. Si lo dejas vacío, la IA elige libremente, lo que es menos estable.",
     "optionsAdd": "Añadir un valor",
     "optionsPlaceholder": "Escribe y pulsa Enter",
     "preciseLabel": "Seguimiento preciso",
@@ -727,7 +730,7 @@
     "imageRemoveFailed": "No se pudo quitar la imagen",
     "importCoverFailed": "No se pudo usar la imagen de la tarjeta",
     "continuity": "Seguimiento inteligente",
-    "continuityDesc": "Cada vez que la IA escribe una respuesta, un asistente dedicado la revisa: si debe cambiar una variable, qué canción poner, qué imagen de escena mostrar. Mucho más preciso que dejárselo a la IA que narra. Desactivado: solo la IA que narra los cambia.",
+    "continuityDesc": "Tras cada respuesta, un asistente aparte decide cambios de variables, música e imágenes de escena, mucho mejor que la IA que narra. Desactivado: lo hace ella sola.",
     "background": "Fondo",
     "backgroundDesc": "Una imagen detrás del chat. El texto lleva una capa oscura debajo para que siga leyéndose.",
     "worldTitle": "Título de la tarjeta",
@@ -776,7 +779,7 @@
   "versionHistory": {
     "menuItem": "Versiones",
     "title": "Historial de versiones",
-    "subtitle": "Actualizar y Publicar guardan una sola versión del contenido, portada y clasificación modificados. La aprobación hace pública esa misma versión. Conserva hasta {{automaticCap}} registros automáticos y {{cap}} versiones con nombre.",
+    "subtitle": "Mientras editas se guarda una versión automáticamente cada 15 minutos: las 20 más recientes se conservan todas y las anteriores se reducen a una por día durante 30 días. Publicar y actualizar también guardan una versión (hasta {{automaticCap}}), y la aprobada se marca como publicada. Además puedes guardar {{cap}} versiones con nombre.",
     "formTitle": "Guardar una versión con nombre",
     "saveCurrent": "Guardar con nombre",
     "saving": "Guardando...",
@@ -787,7 +790,7 @@
     "cleanHint": "Registra el contenido, la portada y la clasificación guardados actualmente.",
     "savedListTitle": "Versiones con nombre ({{count}})",
     "emptyTitle": "Aún no hay versiones",
-    "empty": "Publica o actualiza para guardar una versión automáticamente, o crea una versión con nombre arriba.",
+    "empty": "Las versiones se guardan automáticamente mientras editas. También puedes crear una versión con nombre arriba.",
     "safetySnapshotName": "Antes de restaurar \"{{name}}\"",
     "restore": "Restaurar al borrador",
     "delete": "Eliminar",
@@ -826,7 +829,8 @@
       "publish": "Versión guardada",
       "live": "Versión guardada",
       "backup": "Copia anterior a la restauración",
-      "incoming": "Antes de aplicar cambios"
+      "incoming": "Antes de aplicar cambios",
+      "autosave": "Versión guardada automáticamente"
     },
     "previousPublished": "Publicada anteriormente",
     "notPublished": "Sin publicar",
@@ -839,7 +843,8 @@
     "needsReview": "Esta versión necesita revisión. Restáurala como borrador y publícala normalmente.",
     "backupName": "Copia antes de restaurar · {{date}}",
     "restoredName": "Versión restaurada · {{date}}",
-    "earlierName": "Versión anterior · {{date}}"
+    "earlierName": "Versión anterior · {{date}}",
+    "autosaveRun": "{{count}} puntos de autoguardado"
   },
   "assetPicker": {
     "title": "Recursos",
@@ -947,7 +952,7 @@
     "selectAction": "Selecciona acción...",
     "limitsPriority": "Límites y prioridad",
     "priority": "Prioridad",
-    "priorityHint": "Cuando varios comportamientos se activan en el mismo turno, los de número mayor van primero. Normalmente no hace falta tocarlo.",
+    "priorityHint": "Si varios comportamientos se activan en el mismo turno, va primero el número mayor. Normalmente no hace falta cambiarlo.",
     "cooldown": "Enfriamiento (turnos)",
     "cooldownHint": "Turnos mínimos entre activaciones",
     "cooldownPlaceholder": "Sin enfriamiento",
@@ -960,7 +965,7 @@
     "stopWhen": "DETENER CUANDO",
     "stopWhenHint": "Opcional",
     "stopConditionsLabel": "Condiciones de parada",
-    "stopWhenNote": "Mientras se cumpla alguna condición de parada, este comportamiento queda en pausa. Para detenerlo tras un número fijo de repeticiones, usa \"Máx. activaciones\" en Límites y prioridad.",
+    "stopWhenNote": "Se pausa mientras se cumpla alguna condición de parada. Para pararlo tras cierto número de veces, usa «Máx. activaciones» en «Límites y prioridad».",
     "optional": "opcional",
     "allMustBeTrue": "TODAS deben ser verdaderas",
     "anyCanBeTrue": "CUALQUIERA puede ser verdadera",
@@ -1126,7 +1131,7 @@
       "rollEmpty": "(sin candidatos)"
     },
     "chance": "Probabilidad de que ocurra (%)",
-    "chanceHint": "Cuando este comportamiento debería dispararse, solo ocurre de verdad con este porcentaje. En blanco = siempre.",
+    "chanceHint": "Solo se activa este % de las veces en que debería activarse. En blanco = siempre.",
     "onlyIfEmptyHint": "opcional: déjalo vacío para que se active siempre",
     "customEvent": "Personalizado: {{event}}",
     "eventBadge": {
@@ -1353,7 +1358,6 @@
       "focusPane": "Enfocar panel",
       "backToSplit": "Volver a dividido",
       "choosePanel": "Elige panel",
-      "quickActions": "Rápido",
       "testingGroup": "Pruebas",
       "singleWorkspaceAction": "Espacio único",
       "splitWorkspaceAction": "Espacio dividido",
@@ -1367,11 +1371,14 @@
       "resetSplit": "Restablecer división",
       "resizeHandle": "Redimensionar división del Studio",
       "desktopOnly": "Necesita una pantalla más grande",
-      "tabAssistant": "Asistente",
-      "tabOpening": "Apertura",
-      "tabLorebook": "Lore",
-      "tabPlaytest": "Prueba",
-      "tabMore": "Más"
+      "tabCanvas": "Lienzo",
+      "panels": "Paneles",
+      "sheetExpand": "Abrir la conversación",
+      "sheetCollapse": "Cerrar la conversación",
+      "sheetDoing": "El asistente está editando: {{what}}",
+      "sheetWorking": "El asistente está trabajando…",
+      "sheetReply": "El asistente respondió; desliza hacia arriba",
+      "sheetHint": "Desliza hacia arriba para la conversación"
     },
     "groups": {
       "story": "Historia",
@@ -1833,7 +1840,8 @@
         "uiKnobs": "controles de estilo",
         "uiKnobGroups": "grupos de controles de estilo",
         "uiDoc": "interfaz",
-        "other": "elemento"
+        "other": "elemento",
+        "note": "Nota"
       },
       "tool": {
         "write_entry": "Escribir una entrada",
@@ -1867,7 +1875,8 @@
         "analyze_token_cost": "Estimar el uso",
         "validate_ui_blueprint": "Comprobar la interfaz",
         "list_templates": "Ver plantillas",
-        "other": "Otro paso"
+        "other": "Otro paso",
+        "write_note": "Escribir una nota"
       },
       "field": {
         "name": "Nombre",
@@ -2061,7 +2070,7 @@
         "value": "Valor a guardar",
         "valuePlaceholder": "Vacío = usar el título",
         "after": "Al elegir",
-        "afterHint": "Para mostrar lo que eligió el jugador en un texto, escribe {{la opción elegida}}.",
+        "afterHint": "Para mostrar lo que eligió el jugador en un texto, escribe {{token}}.",
         "stepsCount_one": "{{count}} paso al elegir",
         "stepsCount_other": "{{count}} pasos al elegir",
         "addOption": "Añadir una opción",
@@ -2162,7 +2171,7 @@
       },
       "looks": {
         "title": "Cambiar el aspecto",
-        "hint": "Solo cambia la apariencia: el contenido y los ajustes se quedan. Después puedes cambiar cada campo por separado.",
+        "hint": "Solo cambia la apariencia; el contenido y los ajustes se quedan. Después puedes ajustar cada parte.",
         "names": {
           "choice-default": "Tema",
           "choice-glass": "Cristal",
@@ -2791,7 +2800,7 @@
       "maxWidthNone": "Sin límite",
       "gap": "Espacio entre mensajes",
       "rules": "Escritura especial",
-      "rulesHint": "Lo que la IA escribe siguiendo una convención se dibuja de otra forma. Las reglas se escriben solas en la entrada de lorebook «Convenciones de la interfaz», así la IA las sigue.",
+      "rulesHint": "Cuando la IA escribe en estos formatos, el texto se muestra distinto. Las reglas se añaden solas a la entrada «Interface conventions» para que la IA las siga.",
       "empty": "Todavía no hay escritura especial. Añade una abajo: la vista previa la muestra en una conversación de ejemplo.",
       "add": "Añadir una convención",
       "ruleName": "Nombre",
@@ -3454,7 +3463,7 @@
         "copy": "Duplicar página",
         "copyName": "{{name}} (copia)",
         "deadEnd": "Sin salida",
-        "deadEndHint": "Nada en esta página lleva a otra y no tiene chat: el jugador que llegue aquí se queda atascado. Dale a un botón la acción de ir a una página.",
+        "deadEndHint": "Esta página no tiene chat ni forma de ir a otra, así que el jugador se queda atascado. Dale a un botón la acción «Ir a la página».",
         "fold": "Ocultar páginas",
         "unfold": "Mostrar páginas",
         "chatPage": "Pantalla de chat",
@@ -3871,8 +3880,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "Cambios sin guardar",
-    "description": "Tus cambios se perderán si sales sin guardar.",
+    "title": "Sin guardar",
+    "description": "Esta tarjeta aún no se ha guardado. Si sales ahora, se pierde lo que escribiste.",
     "stay": "Quedarme",
     "leave": "Salir sin guardar",
     "saveAndLeave": "Guardar y salir",
@@ -3880,7 +3889,11 @@
     "switchDescription": "Guarda tus cambios recientes antes de cambiar de editor; si no, se perderán.",
     "switchCancel": "Cancelar",
     "switchWithoutSaving": "Cambiar sin guardar",
-    "saveAndSwitch": "Guardar y cambiar"
+    "saveAndSwitch": "Guardar y cambiar",
+    "saving": "Guardando…",
+    "failedTitle": "No se pudo guardar",
+    "failedDescription": "Tus últimos cambios no llegaron al servidor. Vuelve a intentarlo o sal sin guardar.",
+    "retry": "Reintentar"
   },
   "review": {
     "submittedTitle": "Enviado a revisión",
@@ -4118,8 +4131,8 @@
         "body": "Cuando esté listo, haz clic aquí arriba a la derecha para enviarlo a publicación. ¡Una vez aprobado aparecerá en el hub para que todos lo jueguen!"
       },
       "save": {
-        "title": "Recuerda guardar",
-        "body": "Guarda en cualquier momento aquí (Ctrl+S también funciona). Un puntito en el botón te avisa cuando hay cambios sin guardar."
+        "title": "Se guarda solo",
+        "body": "Los cambios se guardan unos segundos después de que paras y aquí pone Guardado. Haz clic (o Ctrl+S) para guardar ya."
       },
       "studio": {
         "title": "Otra forma de trabajar",
@@ -4130,8 +4143,8 @@
         "body": "El menú también guarda UI personalizada, Audio y Recursos: herramientas avanzadas para darle a tu carta su propia interfaz y banda sonora. Vuelve cuando tengas soltura; ¡la Guía del Creador tiene tutoriales completos!"
       },
       "saveM": {
-        "title": "Recuerda guardar",
-        "body": "Toca aquí arriba a la derecha para guardar en cualquier momento. Un puntito en el botón te avisa cuando hay cambios sin guardar."
+        "title": "Se guarda solo",
+        "body": "Los cambios se guardan automáticamente; arriba a la derecha pone Guardado."
       },
       "finish": {
         "title": "¡Adelante!",
@@ -4194,8 +4207,8 @@
         "body": "Una o dos frases que se muestran en Descubrir. Es el gancho que hace que la gente entre."
       },
       "sSave": {
-        "title": "Guarda tu trabajo",
-        "body": "Guarda cuando quieras aquí (Ctrl+S también funciona). Un puntito en el botón te avisa cuando hay cambios sin guardar."
+        "title": "Se guarda solo",
+        "body": "Los cambios se guardan unos segundos después de que paras y aquí pone Guardado. Haz clic (o Ctrl+S) para guardar ya."
       },
       "sPlay": {
         "title": "Pruébalo tú mismo",
@@ -4326,7 +4339,7 @@
     "emptySelect": "Selecciona una imagen para editarla",
     "modeTitle": "Quién coloca las imágenes",
     "modeJudge": "Tras cada respuesta",
-    "modeJudgeHelp": "Después de cada respuesta se revisa la condición de «cuándo mostrarla» de cada imagen y, si se cumple, la imagen va al final de esa respuesta. Una condición como «después de cada respuesta» la envía en cada turno. Funciona igual con cualquier modelo que use el jugador.",
+    "modeJudgeHelp": "Tras cada respuesta se revisa la condición «Cuándo mostrarla» de cada imagen, y las que cumplen van al final de la respuesta. Funciona igual con cualquier modelo.",
     "modeNarrator": "La IA las inserta",
     "modeNarratorHelp": "Las imágenes pueden quedar entre párrafos, pero solo si el modelo sigue las instrucciones. Algunos modelos casi nunca lo hacen.",
     "modeRecommended": "Recomendado",
@@ -4483,19 +4496,26 @@
       "output": "Respuesta",
       "piecePlaceholder": "Se añade a su prompt mientras se cumpla la condición",
       "when": "Cuando",
-      "pieces": "Fragmentos de prompt (solo mientras se cumplan)",
+      "pieces": "Fragmentos de prompt (se añaden solo si se cumple su condición)",
       "ownThread": "Recuerda sus propias respuestas",
       "history": "Mensajes recientes que lee",
       "addVariable": "+ una variable",
       "sees": "Lo que ve",
       "title": "Formato de respuesta",
-      "piecesNeedVariable": "Crea primero una variable: un fragmento se añade cuando una variable cumple su condición."
+      "piecesNeedVariable": "Crea primero una variable: un fragmento se añade cuando una variable cumple su condición.",
+      "answerKind": {
+        "text": "Texto",
+        "json": "JSON"
+      },
+      "outputJson": "Un objeto JSON, con la forma que describe su tarea, devuelto tal cual a la interfaz. Pulsa + para campos fijos."
     },
     "aiType": {
-      "code": "Por código",
       "ui": "Por interfaz",
       "turn": "Por turnos",
-      "custom": "Personalizada"
+      "custom": "Personalizada",
+      "event": "Por eventos",
+      "script": "En el código",
+      "game": "En el juego"
     },
     "placeAis": {
       "jobUi": "cuando la interfaz la llama",
@@ -4509,7 +4529,7 @@
       "narratorAway": "aquí responden las IA de abajo",
       "keepNarrator": "También la IA de la tarjeta",
       "dropNarrator": "Sin la IA de la tarjeta",
-      "memAll": "recuerda toda la conversación",
+      "memAll": "recuerda todo el chat principal",
       "memRecent": "últimos {{n}} mensajes",
       "memPool": "comparte memoria con {{names}}",
       "memOwn": "solo recuerda lo dicho aquí",
@@ -4533,7 +4553,15 @@
       "linkReadsModules": "limitado a {{names}}",
       "linkPicksModule": "elige una de {{names}} al ejecutar",
       "jobImplemented": "implementada en el código de la interfaz · {{file}} línea {{line}}",
-      "jobUnimplemented": "sin implementar"
+      "jobUnimplemented": "sin implementar",
+      "liveVoice": "IA de voz en directo",
+      "liveVoiceJob": "El jugador le habla por micrófono; la lleva el código de la interfaz",
+      "notCalled": "La interfaz no envía mensajes al chat, así que esta IA no se usa",
+      "notCalledShort": "no se usa",
+      "jobGame": "Cuando el juego necesita que hable",
+      "memGame": "El juego le cuenta la escena cada vez",
+      "notCalledGame": "Esta tarjeta abre un juego, así que esta IA nunca se llama",
+      "removeAsk": "Pedir al asistente que la quite"
     },
     "gameData": {
       "readBy": "Lo leen",
@@ -4582,7 +4610,7 @@
         "everyUnit": "turnos",
         "writesFor": "Escribe para",
         "writesForLater": "Todavía no",
-        "noReaders": "El narrador no lee lo que escribe una IA entre bastidores. Añade primero una IA que responda al jugador para que alguien lo lea.",
+        "noReaders": "El narrador no puede leer lo que escribe una IA de fondo. Añade primero una IA que responda al jugador.",
         "create": "Añadir",
         "cancel": "Cancelar",
         "alwaysReply": "Siempre responde",
@@ -4640,7 +4668,9 @@
       "when": "Cuándo se usa",
       "self": "Solo ella lo sabe",
       "makeOwn": "Darle a esta situación su propia IA",
-      "toPlace": "Quitar esta IA y volver a un escenario normal"
+      "toPlace": "Quitar esta IA y volver a un escenario normal",
+      "addTyped": "Añadir una IA {{type}} a la tarjeta",
+      "cardTypeHint": "La IA propia de la tarjeta responde al jugador y no cambia de tipo; elegir otro tipo añade una IA nueva."
     },
     "aiTable": {
       "view": "Tabla de IA",
@@ -4696,7 +4726,10 @@
       },
       "readiness": "{{done}}/{{total}} listo",
       "readinessNext": "Siguiente: {{label}}",
-      "showOpening": "Mostrar esta apertura en la tarjeta"
+      "showOpening": "Mostrar esta apertura en la tarjeta",
+      "rename": "Renombrar",
+      "settings": "Ajustes",
+      "readByGame": "Lo lee el juego"
     },
     "scene": {
       "none": "Sin escena propia",
@@ -4731,7 +4764,7 @@
       "followHint": "Esta tarjeta no decide; vale lo que el jugador eligió en ajustes",
       "preview": "Escuchar",
       "hasVoice": "Con voz asignada",
-      "hint": "La lectura cambia de voz según quien habla; un personaje sin voz usa la del narrador, y sin narrador, la del jugador.",
+      "hint": "La lectura en voz alta cambia de voz según quién habla. Un personaje sin voz usa la del narrador, o la del jugador si no hay.",
       "inputTitle": "Entrada por voz del jugador",
       "inputHint": "Al soltar el micrófono. Para hombres lobo o interrogatorios, mejor enviar ya",
       "inputConfirm": "Revisar antes",
@@ -4753,7 +4786,7 @@
       "editInterface": "Editar interfaz",
       "custom": "Interfaz personalizada",
       "replaceTitle": "¿Cambiar a «{{name}}»?",
-      "replaceBody": "«{{name}}» sustituye toda tu interfaz actual: las partes y páginas que colocaste se reemplazan y se añaden las variables que usa este diseño. Si no te gusta, Ctrl+Z lo deshace.",
+      "replaceBody": "«{{name}}» sustituye toda tu interfaz, incluidas las partes y páginas que colocaste, y añade las variables que necesita. Ctrl+Z lo deshace.",
       "replaceConfirm": "Sustituir interfaz",
       "title": "Diseño y tema",
       "button": "Aspecto"
@@ -4802,10 +4835,10 @@
       },
       "problemsTitle": "Así conectado no puede funcionar",
       "triggerConditions": "Cuando se cumpla una condición",
-      "triggerConditionsHint": "Estas condiciones deciden cuándo corre el escritor: una vez, al pasar de falso a verdadero, no en cada turno.",
+      "triggerConditionsHint": "El escritor se ejecuta una vez cuando estas condiciones pasan a cumplirse, no en cada turno que siguen cumpliéndose.",
       "model": "Modelo",
       "modelInherit": "Seguir la elección del jugador",
-      "modelHint": "Los jugadores que no pueden usar este modelo reciben otro: una IA que les responde usa su propio modelo; una entre bastidores, el modelo predeterminado.",
+      "modelHint": "Si un jugador no puede usar este modelo, las IA que le responden pasan a su modelo y las de fondo, al predeterminado.",
       "inputs": "Conectado desde otro sitio",
       "inputKind": {
         "memory": "Partidas pasadas de un escenario",
@@ -4819,7 +4852,7 @@
       "transcriptLimit": "Como máximo",
       "addInput": "＋ Conectar una",
       "noOtherModules": "Esta tarjeta solo tiene este escenario: aún no hay nada que conectar.",
-      "inputsHint": "«Lo vivió» = el protagonista estuvo allí. «Archivo» = un registro consultado. Las palabras literales salen caras.",
+      "inputsHint": "«Lo vivió»: el protagonista estuvo allí. «Archivo»: un registro que consultó. Las palabras literales cuestan mucho, así que usa partidas pasadas si puedes.",
       "inputsSummary": "La tarjeta misma + {{count}} conectados",
       "inputsNone": "Solo la tarjeta misma; aún no hay otro escenario conectado",
       "inputsEdit": "Editar",
@@ -4827,7 +4860,7 @@
       "onClose": "Cuando el jugador se va",
       "onClose_archive": "Archivar y resumir",
       "onClose_keep": "Mantenerlo",
-      "onCloseHint_archive": "El tramo sale del contexto de la IA y se convierte en un resumen; la transcripción del jugador conserva cada palabra.",
+      "onCloseHint_archive": "Al cerrarse, este tramo sale del contexto de la IA y queda como un resumen. El chat del jugador conserva cada palabra. Al reabrirlo, empieza de cero.",
       "onCloseHint_keep": "El tramo permanece en el contexto como historial normal.",
       "archivePromptPlaceholder": "¿Qué debe conservar el resumen? Ej.: «cómo murió, qué averiguó, a quién le debe»",
       "trigger": "Cuándo se ejecuta",
@@ -4835,20 +4868,20 @@
       "triggerClosed": "Cuando se cierra un escenario",
       "triggerTurns": "Cada N turnos",
       "everyTurns": "Cada",
-      "triggerHint": "«Cuando se cierra un escenario» es lo habitual: termina una mazmorra, esto la lee y escribe para el siguiente escenario.",
+      "triggerHint": "«Cuando se cierra un escenario» es lo más habitual. Al terminar una mazmorra, esto la lee y escribe para el siguiente escenario.",
       "any": {
         "closed": "Cualquier escenario que acabe de cerrarse",
         "memory": "Las partidas pasadas de todos los escenarios",
         "worker": "Todos los demás redactores"
       },
       "task": "Qué hace",
-      "taskPlaceholder": "Ej.: Comprime la partida recién terminada en tres líneas — solo causas y deudas — para el siguiente narrador.",
-      "taskHint": "Las entradas del escenario son quién es; esto es el encargo. Sin encargo no se ejecuta.",
+      "taskPlaceholder": "p. ej. Resume la última partida en tres líneas, solo causas y favores pendientes, para el narrador de la siguiente mazmorra.",
+      "taskHint": "Sus entradas dicen quién es; esto, qué debe hacer. Sin tarea, no se ejecuta.",
       "takeOver": "Este escenario lleva la conversación",
-      "takeOverHint": "Mientras está activo, su propia IA responde al jugador: su modelo, su memoria. Si lo dejas apagado, el escenario solo entrega sus entradas y variables a quien esté narrando. Así es casi cualquier escenario.",
+      "takeOverHint": "Activado, habla con el jugador con su propio modelo y memoria mientras esté activo. La mayoría lo deja apagado y pasa entradas y variables al narrador.",
       "makeWorker": "O que trabaje entre bastidores, sin hablar nunca con quien juega",
       "isWorker": "Un redactor de trasfondo",
-      "isWorkerHint": "Nunca habla con el jugador. Se ejecuta cuando salta su disparador y lo que escribe pasa a ser contexto de los escenarios que sí hablan.",
+      "isWorkerHint": "Nunca habla con el jugador. Al dispararse se ejecuta una vez, y lo que escribe pasa a ser contexto de otros escenarios.",
       "stopBeingWorker": "Volverlo un escenario normal",
       "badge": {
         "narrator": "Lleva la conversación",
@@ -4860,13 +4893,13 @@
       },
       "history": "Memoria",
       "historyHint_shared": "Lee toda la conversación, como siempre han hecho los escenarios.",
-      "historyHint_own": "Dentro, la IA solo ve lo dicho en este escenario. Lo que se dice aquí sigue entrando en el registro compartido, así que al salir todos los demás lugares lo recuerdan.",
+      "historyHint_own": "Aquí dentro la IA solo sabe lo dicho en este escenario. Eso también entra en el registro compartido, así que los demás lugares lo recuerdan.",
       "pool": {
         "card": "Toda la carta",
         "own": "Su propio grupo",
         "with": "Compartir este grupo con",
         "none": "Ningún otro escenario narra todavía.",
-        "hint": "Los escenarios de un mismo grupo recuerdan las partidas de los demás y nada de fuera. Todo queda en la transcripción, y la IA de la propia carta lo sigue viendo todo.",
+        "hint": "Los escenarios de un mismo grupo recuerdan las partidas de los otros y nada de fuera. La IA de la propia tarjeta lo sigue viendo todo.",
         "selectAll": "Seleccionar todo",
         "selectNone": "Quitar todo"
       },
@@ -4878,7 +4911,7 @@
       "triggerAfter": "Justo después de que responda otra IA",
       "quietSeconds": "Nadie habla durante",
       "quietSecondsUnit": "segundos",
-      "triggerQuietHint": "Con el juego abierto, este escenario activo y nadie hablando durante este tiempo, decide si intervenir con una línea, y puede cambiar valores. Si no hay nada que decir, se queda en silencio. Se cobra por llamada.",
+      "triggerQuietHint": "Tras este tiempo de silencio, con el juego abierto y este escenario activo, puede añadir una línea o cambiar valores. Se cobra por llamada.",
       "isQuietHint": "Despierta tras un rato de silencio; decide si intervenir con una línea o cambiar valores, y si no, calla.",
       "modelAndParams": "Modelo y ajustes",
       "modelDefault": "Predeterminado",
@@ -4919,7 +4952,7 @@
       "frontendReadsShort": "lee {{count}} variable(s)",
       "ruleUnreadable": "Dañado",
       "ruleUnreadableTitle": "A este comportamiento le falta una parte",
-      "ruleUnreadableBody": "Está escrito en un formato que esta versión no puede leer, así que nunca se activa y el lienzo no puede dibujar sus cables. Abre Comportamientos para reescribirlo o borrarlo."
+      "ruleUnreadableBody": "Tiene un formato que esta versión no puede leer, así que nunca se ejecuta y aquí no tiene cables. Abre «Comportamientos» para reescribirlo o borrarlo."
     },
     "events": {
       "clockEvery": "Cada pocos segundos",
@@ -4950,7 +4983,7 @@
       "name": "Nombre",
       "note": "Nota adhesiva",
       "notePlaceholder": "Qué ES este escenario — una nota para ti y para la IA…",
-      "noteHint": "La pizarra compartida: el asistente IA la lee para entender el escenario y también puede actualizarla. La IA nunca la ve durante la partida.",
+      "noteHint": "El asistente de creación lo lee para entender el escenario y puede actualizarlo. La IA de la partida nunca lo ve.",
       "content": "Contenido",
       "openingText": "Texto de apertura",
       "openingPlaceholder": "El primer mensaje que ve el jugador...",
@@ -4970,11 +5003,11 @@
       "deleteModule": "Eliminar escenario",
       "deleteConfirm": "¿Eliminar el escenario \"{{name}}\"? Sus miembros pasan a Compartido (no se borra nada más).",
       "readOnly": "Vista de solo lectura.",
-      "coreEntriesHint": "Las entradas sin cables ni escenario viven aquí, siempre activas. Abre el Lorebook para verlas y editarlas.",
+      "coreEntriesHint": "Las entradas sin cables ni escenario están aquí, siempre activas. Abre el «Lorebook» para verlas y editarlas.",
       "frontendHint": "El frontend de la carta (app TSX). Los puertos LoreSlot de este nodo aceptan cables desde entradas.",
-      "chainHint": "Cable de cadena: el comportamiento anterior emite un evento que este escucha. Edita cualquiera de los dos para cambiarlo; el cable en sí no se puede borrar.",
+      "chainHint": "Un comportamiento emite un evento que este escucha. Este cable no se puede borrar; edita cualquiera de los dos para cambiarlo.",
       "logicLabel": "Lógica de condiciones",
-      "moduleEntriesHint": "Estas entradas pertenecen al escenario y no tienen cables; se activan junto con él. Abre el Lorebook para verlas y editarlas una a una.",
+      "moduleEntriesHint": "Entradas sin cables de este escenario. Están activas siempre que lo esté el escenario. Abre el «Lorebook» para verlas y editarlas.",
       "delete": "Eliminar",
       "deleteGreetingConfirm": "¿Eliminar la apertura \"{{name}}\"?",
       "deleteEntryConfirm": "¿Eliminar la entrada \"{{name}}\"? Sus cables también desaparecerán.",
@@ -4990,7 +5023,7 @@
       "whenOpen": "Cuándo se usa",
       "whenOpenHint": {
         "always": "Activo durante toda la partida.",
-        "conditions": "Lo deciden las variables. Conecta una variable a este escenario para fijar la prueba y pulsa el cable para editarla.",
+        "conditions": "Las variables deciden cuándo está activo. Conecta una variable a este escenario para añadir una condición; pulsa el cable para editarla.",
         "greeting": "Activo solo en partidas que empezaron por una de las aperturas de abajo.",
         "manual": "Sin regla automática: decide el interruptor «Activado» de abajo.",
         "keywords": "Se abre cuando el jugador lo dice y sigue abierta hasta que diga una palabra de salida."
@@ -5005,21 +5038,21 @@
       "sharingModule": "Empaquetando…",
       "sharedModule": "Guardado en tus paquetes",
       "shareModuleEmpty": "Ponle algo dentro primero: un escenario vacío no es nada que entregar.",
-      "conditionsWired": "{{count}} condiciones conectadas: arrastra una variable hasta esta entrada para añadir otra, y pulsa el cable para editarla.",
+      "conditionsWired": "{{count}} condiciones conectadas. Conecta una variable a esta entrada para añadir otra, o pulsa un cable para editarla.",
       "varWhenExposed": "Cuándo puede verla la IA",
       "varWhenExposedHint": "El valor siempre existe; esto decide cuándo entra en el prompt.",
       "varInternal": "Solo para el motor",
       "varInternalHint": "Oculta a la IA y a los selectores de comportamiento. Para valores que la tarjeta se guarda.",
       "liveCanon": "Lore Shift",
       "allowLiveCanon": "Permitir edición en la sesión",
-      "allowLiveCanonHint": "Activado: los jugadores con la extensión Lore Shift pueden cambiar, solo en su partida, las entradas y variables que marcaste como permitidas. Tu tarjeta no cambia.",
+      "allowLiveCanonHint": "Activado: los jugadores con Lore Shift pueden cambiar las entradas y variables que permitas, solo en su partida. Tu tarjeta no cambia.",
       "allowLiveCanonAdditions": "Permitir lore nuevo en la sesión",
-      "allowLiveCanonAdditionsHint": "Activado: esos jugadores también pueden añadir entradas nuevas a su partida, como un personaje nuevo. Lo que añadan tiene menos prioridad que lo tuyo.",
+      "allowLiveCanonAdditionsHint": "Activado: esos jugadores también pueden añadir entradas en su partida, como un personaje nuevo. Las tuyas tienen prioridad sobre las suyas.",
       "liveCanonSaveFailed": "No se pudo guardar la configuración de Lore Shift. Inténtalo de nuevo.",
       "liveCanonEntryEditable": "Los jugadores pueden editar este lore en una sesión",
-      "liveCanonEntryEditableHint": "Permite a los jugadores con Lore Shift cambiar el texto de esta entrada en su propia partida. Cómo se envía, sus activadores y tu tarjeta no cambian.",
+      "liveCanonEntryEditableHint": "Permite a los jugadores con Lore Shift reescribir el texto de esta entrada en su partida. Su forma de envío y tu tarjeta no cambian.",
       "liveCanonVariableEditable": "Los jugadores pueden editar este valor en una sesión",
-      "liveCanonVariableEditableHint": "Permite a los jugadores con Lore Shift cambiar este valor en su propia partida, por ejemplo poner el oro a 999. Solo su partida; se aplica en el siguiente turno.",
+      "liveCanonVariableEditableHint": "Permite a los jugadores con Lore Shift cambiar este valor en su partida, por ejemplo el oro a 999. Se aplica en el siguiente turno.",
       "noVariables": "Esta tarjeta aún no tiene variables con las que detenerse.",
       "reachesPrompt": "Cuándo la lee la IA",
       "belonging": "A quién pertenece",
@@ -5034,18 +5067,18 @@
       "historyWindow": "Ventana",
       "historyLatestShort": "Últimos N",
       "historySummaryShort": "Resumen + últimos N",
-      "historySummaryHint": "Los turnos que salen de la ventana no se pierden: se condensan en un resumen continuo que va antes del historial.",
+      "historySummaryHint": "Los turnos antiguos que salen se condensan en un resumen continuo que va antes del historial.",
       "summaryFocus": "Qué debe conservar el resumen",
-      "summaryFocusHint": "Una línea para la IA que resume sobre lo que no puede perderse: relaciones, promesas, deudas, el reloj.",
+      "summaryFocusHint": "Dile a la IA que resume qué debe conservar, como relaciones, promesas, deudas o la cronología.",
       "summaryFocusPlaceholder": "p. ej. Conserva cada promesa hecha y quién le debe a quién.",
-      "summaryCost": "El resumen se actualiza en segundo plano con un modelo barato; cada actualización suele costar al jugador bastante menos de 1 mushie. Los jugadores pueden leerlo y editarlo en el panel de Memoria.",
+      "summaryCost": "Un modelo barato actualiza el resumen en segundo plano; suele costar al jugador menos de 1 mushie. Puede verlo y editarlo en «Memoria de la partida».",
       "budget": "Presupuesto de contexto",
       "budgetValue": "Unos {{tokens}} tokens",
       "budgetAuthor": "ajuste de esta carta",
       "budgetPlayer": "ajuste del jugador",
       "budgetLock": "Fijar a esta carta",
       "previewTitle": "Qué lee la IA en cada turno",
-      "previewHint": "En el orden en que se arma. Las cifras son la estimación del tablero.",
+      "previewHint": "En el orden en que se arma. Las cifras son la estimación del lienzo.",
       "previewLore": "{{count}} entradas siempre activas",
       "previewExamples": "{{count}} diálogos de ejemplo",
       "previewSummary": "Resumen de turnos anteriores",
@@ -5053,20 +5086,20 @@
       "previewTriggered": "{{count}} entradas esperan palabra clave o condición",
       "previewVars": "{{count}} variables",
       "scanDepth": "Alcance de palabras clave",
-      "scanDepthHint": "En cuántos mensajes recientes puede aparecer una palabra clave para traer su entrada.",
+      "scanDepthHint": "Cuántos mensajes recientes se revisan en busca de palabras clave.",
       "recursionDepth": "Disparos en cascada",
       "recursionDepthHint": "Una entrada que entra puede disparar otras, hasta esta profundidad. 0 = apagado.",
       "variablesToAi": "Variables mostradas a la IA",
-      "variablesToAiHint": "Todas: el valor actual de cada variable legible, cada turno. Solo cambiadas: solo las que se movieron de su valor inicial. Ninguna: sin valores actuales, aunque las Reglas de comportamiento de cada variable se siguen enviando. Para ocultar una variable del todo, pon su acceso de la IA en Solo motor.",
+      "variablesToAiHint": "Todas: cada valor legible. Solo cambiadas: las que no están por defecto. Ninguna: sin valores, pero las Reglas de comportamiento sí van. Para ocultar una del todo, usa «Solo motor».",
       "variablesAll": "Todas",
       "variablesChanged": "Solo cambiadas",
       "variablesNone": "Ninguna",
       "continuityOn": "Activado",
       "cardAiTitle": "La IA de esta carta",
       "openContext": "Abrir ajustes de Context",
-      "historyLimitHint": "Cuántos mensajes anteriores ve la IA en cada turno. «Todo lo que quepa»: lo máximo posible, quitando los más antiguos solo si no cabe. «Solo los últimos N»: más barato, pero la IA olvida lo anterior. Entradas y memoria no se ven afectadas y el historial del chat nunca se pierde.",
+      "historyLimitHint": "Cuántos mensajes anteriores ve la IA cada turno. «Todo lo que quepa» quita los antiguos solo si no caben. «Últimos N» es más barato, pero la IA olvida lo anterior.",
       "contextLock": "Fijar el presupuesto de contexto a esta tarjeta",
-      "contextLockHint": "Lo que la IA puede leer en cada turno (el presupuesto de contexto) sigue el ajuste de tu tarjeta (ahora unos {{tokens}} tokens) y los jugadores no pueden cambiarlo en sus ajustes. Desactivado: decide cada jugador. El límite de su plan y del modelo sigue aplicando.",
+      "contextLockHint": "Activado: todos usan tu presupuesto de contexto (unos {{tokens}} tokens) sin poder cambiarlo. Desactivado: cada jugador elige. Siguen valiendo los límites del plan y del modelo.",
       "editCanvasContent": "Editar el texto en el lienzo",
       "variableName": "Nombre de la variable",
       "typeHint": {
@@ -5158,7 +5191,7 @@
       "seedValue": "Valor inicial",
       "apply": "Aplicar",
       "remove": "Quitar",
-      "seedJsonFixed": "Aquí no se puede fijar una lista u objeto: un inicio solo guarda números, texto e interruptores. Quita este cable y ponlo como valor por defecto de la variable."
+      "seedJsonFixed": "Un inicio solo puede fijar números, texto e interruptores, no listas ni objetos. Quita este cable y usa el valor por defecto de la variable."
     },
     "ports": {
       "write": "escribir",
@@ -5204,7 +5237,7 @@
     },
     "addEntry": "Entrada",
     "deadRead": "Nunca cambia",
-    "deadReadHint": "La interfaz lee esta variable, pero ningún comportamiento, apertura ni la IA puede escribirla: el jugador verá un número que nunca se mueve.",
+    "deadReadHint": "La interfaz lee esta variable, pero ningún comportamiento, apertura ni la IA la cambia, así que el jugador ve un número que nunca se mueve.",
     "readByUiHint": "La leen los componentes de la carta.",
     "turn": {
       "added": "nuevo",
@@ -5216,7 +5249,7 @@
       "undo": "Deshacer este turno",
       "dismiss": "Entendido",
       "undoKeptYours_one": "Turno deshecho; lo que cambiaste después se queda como lo dejaste",
-      "undoKeptYours": "Turno deshecho; tus {{count}} cambios posteriores se quedan como los dejaste",
+      "undoKeptYours": "Turno del asistente deshecho. Se conservaron los {{count}} cambios que hiciste después.",
       "undoAllKept": "Ya cambiaste todo lo que tocó este turno; se queda tu versión"
     },
     "links": {
@@ -5224,7 +5257,7 @@
       "out": "{{count}} salida(s)"
     },
     "cost": {
-      "alwaysOnHint": "Se envía cada turno — coste de contexto recurrente",
+      "alwaysOnHint": "Se envía cada turno, así que suma coste de contexto en cada turno",
       "keywordHint": "Solo se envía si coincide una palabra clave"
     },
     "wires": {
@@ -5248,7 +5281,7 @@
       "openingPlaceholder": "Escribe la apertura — lo primero que lee quien juega la tarjeta",
       "firedByHint": "lo dispara {{name}}",
       "sharedRow": "compartido",
-      "sharedRowHint": "Compartido con todos los escenarios: esta fila es el mismo objeto en cada uno; edítalo en cualquiera y cambia en todos",
+      "sharedRowHint": "Compartido por todos los escenarios. Si lo editas en un sitio, cambia en todos.",
       "valueEditHint": "Haz clic para cambiar el valor inicial",
       "valueToggleHint": "Haz clic para alternar el valor inicial",
       "settings": "Ajustes",
@@ -5262,7 +5295,9 @@
       "backgroundCount": "{{count}} fondos",
       "backgroundOpen": "Abrir",
       "listAll_one": "{{count}} en total",
-      "listAll_other": "{{count}} en total"
+      "listAll_other": "{{count}} en total",
+      "fold": "Mostrar menos",
+      "moreGroups": "{{count}} grupos más"
     },
     "blocks": {
       "card": "Portada y resumen",
@@ -5279,7 +5314,8 @@
         "always": "Personaje y mundo",
         "keywords": "Lore por palabra clave",
         "conditions": "Lore condicional",
-        "manual": "Lore en espera"
+        "manual": "Lore en espera",
+        "manualGame": "Lo que el juego toma cuando lo necesita"
       },
       "empty": {
         "image": "Aún no hay imágenes de escena",
@@ -5323,7 +5359,8 @@
       "context": "Context",
       "contextHint": "lo que la IA de aquí lee cada turno",
       "addPack": "Usar un sistema listo",
-      "background": "Fondo del chat"
+      "background": "Fondo del chat",
+      "contextHintNoChat": "Lo que leen las IA de aquí"
     },
     "gate": {
       "members_one": "{{count}} miembro",
@@ -5393,7 +5430,7 @@
       "vars": "{{count}} variables",
       "behaviors": "{{count}} comportamientos",
       "nothing": "todavía no tiene nada",
-      "gated": "Hay {{count}} escenarios condicionales más: que coincidan con este depende del estado en ese momento.",
+      "gated": "Otros {{count}} escenarios se activan por condición. Que coincidan con este depende del estado.",
       "history": "Historial",
       "ownRun": "Su propia partida",
       "ownRunArchive": "se archiva en un resumen al cerrarse",
@@ -5418,37 +5455,48 @@
       },
       "readsHint": "Este escenario lee {{other}}: {{reads}}.",
       "readByHint": "{{other}} lee este escenario: {{gives}}.",
-      "mutualHint": "En ambos sentidos con {{other}}: este escenario lee {{reads}}; {{other}} lee {{gives}}.",
+      "mutualHint": "Conectado en ambos sentidos con {{other}}. Este escenario lee {{reads}} y {{other}} lee {{gives}}.",
       "joinsNarrator": "se une al narrador",
       "readBy": "Quién lo lee",
       "noReaders": "Todavía nada lee este escenario.",
-      "chainTrap": "{{via}} lee {{source}}, pero eso no llega hasta aquí: un cable recorre un solo paso. Conecta {{source}} aquí también si este escenario lo necesita.",
-      "stationNeeded": "Activa «lleva la conversación» arriba y este escenario tendrá su propia memoria: su propia partida y cables hacia lo que deba leer.",
+      "chainTrap": "{{via}} lee {{source}}, pero un cable solo recorre un paso, así que no llega aquí. Si este escenario necesita {{source}}, conéctalo directamente.",
+      "stationNeeded": "Activa «Este escenario lleva la conversación» arriba. Así tendrá su propio registro y podrás conectarle lo demás que deba leer.",
       "row": {
         "usesCard": "Usa el Context de la tarjeta",
         "readBy": "La leen {{names}}",
-        "memoryShared": "Memoria compartida · con {{names}}",
+        "memoryShared": "Chat principal · compartido con {{names}}",
         "memorySharedHint": "La IA de este escenario lee toda la conversación, como siempre han hecho los escenarios.",
         "memoryPlainHint": "Este escenario no tiene IA propia. Sus entradas y variables se suman a quien narra, y ese narrador lo recuerda todo.",
         "memoryOwnKeep": "Memoria propia · nada de fuera, vuelve al salir",
         "memoryOwnArchive": "Memoria propia · nada de fuera, se archiva al salir",
-        "memoryOwnHint": "Dentro, la IA solo ve lo dicho en este escenario: al entrar no sabe nada de ningún otro lugar. Lo que se dice aquí sigue entrando en el registro compartido; al salir, todos los demás lugares lo recuerdan.",
+        "memoryOwnHint": "Aquí dentro la IA solo sabe lo dicho en este escenario. Eso también entra en el registro compartido, así que los demás lugares lo recuerdan.",
         "memoryPool": "Memoria compartida · solo con {{names}}",
-        "memoryPoolHint": "Estos escenarios comparten un grupo de memoria: dentro de ellos la IA recuerda lo ocurrido en las partidas de los demás y nada de otros escenarios. La IA de la propia carta lo sigue viendo todo.",
+        "memoryPoolHint": "Estos escenarios comparten memoria. Cada uno recuerda lo que pasó en los otros y nada de fuera. La IA de la propia tarjeta lo ve todo.",
         "memoryWorker": "Segundo plano · solo lee lo cableado",
-        "memoryWorkerHint": "Nunca responde al jugador. Se ejecuta con su disparador y los cables de abajo son todo su mundo.",
+        "memoryWorkerHint": "Nunca responde al jugador. Se ejecuta con su disparador y solo ve lo que traen los cables de abajo.",
         "theCard": "la carta",
         "shared": "{{lore}} entradas compartidas · {{vars}} variables compartidas",
-        "sharedHint": "Las entradas y variables de la propia carta llegan a todos los escenarios. La misma vida en cada mazmorra es una variable, no cuatro.",
+        "sharedHint": "Las entradas y variables de la propia tarjeta llegan a todos los escenarios. La vida de cada mazmorra es una sola variable, no una por mazmorra.",
         "trap": "{{source}} no llega hasta aquí (vía {{via}})",
-        "memoryCardAlone": "Recuerda toda la conversación",
-        "memoryCardHint": "Esta es la IA que juega salvo que un escenario tome el relevo, y recuerda todo lo dicho.",
+        "memoryCardAlone": "Recuerda todo el chat principal",
+        "memoryCardHint": "Actúa si ningún escenario toma el control. Lee el chat de todos los escenarios hasta el límite de «Historial». No ve los chats propios de las IA de la interfaz.",
         "summaryOn": "los turnos anteriores se resumen",
         "connections": "Lee {{reads}} fuentes · lo leen {{gives}} escenarios",
-        "reviewConnections": "{{count}} referencias indirectas por revisar",
+        "reviewConnections": "{{count}} conexiones no llegan aquí",
         "continuityOn": "Seguimiento inteligente: activado",
         "continuityOff": "Seguimiento inteligente: desactivado",
-        "codeContext": "Armado por el código de la interfaz · {{count}}"
+        "codeContext": "El código de la interfaz prepara lo que leen sus IA · {{count}}",
+        "scene": "La interfaz le cuenta a la IA la escena",
+        "sceneEvents": "La interfaz le cuenta a la IA la escena · {{count}} eventos que puede activar",
+        "sceneHint": "Cada turno, la interfaz de la tarjeta le cuenta a la IA lo que hay en pantalla.",
+        "sceneEventsList": "La IA puede activar: ",
+        "notCalled": "Sin chat: la interfaz llama a sus propias IA",
+        "notCalledHint": "La interfaz de esta tarjeta llama a sus IA ella misma; aparecen abajo.",
+        "notCalledGame": "Sin chat: la tarjeta abre un juego, y el juego llama a sus IA",
+        "notCalledGameHint": "El juego tiene sus propias IA, en el bloque de IA de abajo.",
+        "byGame": "El juego decide qué ve {{name}}",
+        "byInterface": "El código de la interfaz lee esto y se lo da a su propia IA",
+        "byInterfaceHint": "La interfaz de esta tarjeta no usa el chat, así que la IA del chat nunca lee esto. El código de la interfaz lee estas entradas y se las da a su IA. Si cambias el texto aquí, cambia lo que dice."
       }
     },
     "turnCtx": {
@@ -5459,7 +5507,7 @@
       "noNarrator": "Responde la IA de la tarjeta: ningún escenario ha tomado el relevo",
       "on": "Activos",
       "off": "Apagados ahora ({{count}})",
-      "standby": "Otras {{count}} entradas esperan una palabra clave o una condición: solo lo que se diga decide.",
+      "standby": "Otras {{count}} entradas esperan una palabra clave o una condición. Que entren depende del chat.",
       "standby_one": "Otra {{count}} entrada espera una palabra clave o una condición: solo lo que se diga decide.",
       "carried": "trae «{{name}}» — {{what}}, como {{as}}",
       "floorHint": "por turno, como mínimo",
@@ -5492,7 +5540,7 @@
     },
     "crash": {
       "title": "El lienzo no pudo dibujar esta tarjeta",
-      "body": "Tu tarjeta está a salvo y no se perdió nada. Algo dentro tiene un formato que esta versión no puede leer: abre Editores completos en la barra de arriba para encontrarlo y arreglarlo, y vuelve.",
+      "body": "Tu tarjeta está a salvo y no se perdió nada. Una parte tiene un formato que esta versión no puede leer. Arréglala en el editor completo y vuelve.",
       "retry": "Dibujar de nuevo"
     },
     "writing": {
@@ -5583,7 +5631,7 @@
       "outgoing": "Usos y efectos",
       "members": "Contenido",
       "empty": "Todavía no hay conexiones configuradas.",
-      "configuredHint": "Estas son las conexiones configuradas. Que se activen en juego depende de la apertura, las condiciones y si están habilitadas.",
+      "configuredHint": "Conexiones según la configuración. Que se apliquen en una prueba depende de la apertura, las condiciones y lo que esté activado.",
       "dynamicCodeHint": "El código propio también puede acceder a datos de forma dinámica; esas conexiones no se pueden listar todas.",
       "operations": {
         "set": "Fijar",
@@ -5620,7 +5668,7 @@
       "local": "Contenido del escenario",
       "shared": "Contenido compartido",
       "localHint": "Pertenece a {{name}}.",
-      "sharedHint": "Un solo objeto compartido, visible en {{count}} escenarios. Editarlo los actualiza todos.",
+      "sharedHint": "Aparece en {{count}} escenarios. Si lo editas aquí, cambia en todos.",
       "references": "Conexiones · {{count}}",
       "outgoing": "Usa esto",
       "incoming": "Alimenta esto",
@@ -5638,7 +5686,7 @@
         "json": "Escribe un objeto o un array JSON válido. El valor anterior no ha cambiado."
       },
       "moveMemory": "Cambiar de grupo de memoria",
-      "moveMemoryHint": "{{name}} comparte ahora con {{members}}. Moverlo aquí cambia esa relación.",
+      "moveMemoryHint": "{{name}} comparte memoria con {{members}}. Moverlo aquí lo saca de ese grupo.",
       "moveMemoryOwn": "{{name}} tiene ahora su propia memoria. ¿Lo metemos en este grupo?",
       "moveMemoryCard": "{{name}} lee ahora la conversación entera. Al entrar en este grupo, su historial se limita a este grupo.",
       "applyMemory": "Mover a este grupo",
@@ -5673,13 +5721,13 @@
       "deliveryKeywordsConditionsAny": "Se envía cuando coinciden las palabras clave y se cumple alguna de las {{count}} condiciones de variable.",
       "deliveryKeywordsConditionsAll": "Se envía cuando coinciden las palabras clave y se cumplen las {{count}} condiciones de variable.",
       "deliveryFrontend": "El elemento de la interfaz conectado decide si esto se envía a la IA narradora.",
-      "deliveryUnconfigured": "No hay ningún envío automático configurado. Activa Enviar siempre, o añade palabras clave, condiciones de variable o una conexión con la interfaz.",
+      "deliveryUnconfigured": "No hay envío automático configurado. Activa «Enviar siempre» o añade palabras clave, condiciones de variable o una conexión con la interfaz.",
       "deliveryModuleScope": "Solo se envía mientras su escenario esté activo.",
       "deliveryAiOnly": "Solo {{name}} lo ve; las otras IA no.",
       "deliveryFrontendConditions": "El elemento de la interfaz conectado también debe estar activo y cumplir las condiciones de la conexión.",
       "deliveryFrontendScope": "Solo se envía mientras el elemento de la interfaz conectado esté activo.",
       "deliverySecondary": "También sigue las palabras clave secundarias y los ajustes de coincidencia.",
-      "deliveryUnplaced": "Fuera, sin usar: solo llega a la IA cuando lo arrastras a la tarjeta o a un escenario."
+      "deliveryUnplaced": "Está fuera y sin efecto. Arrástrala a la tarjeta o a un escenario para que llegue a la IA de la historia."
     },
     "addSceneImage": "Imagen de escena",
     "addPurpose": {
@@ -5699,7 +5747,7 @@
       "scopeHint": "Las ambientaciones, variables y comportamientos de abajo pertenecen a {{name}}.",
       "missingModule": "Escenario ausente · {{id}}",
       "modules": "Escenarios",
-      "moduleContents": "{{entries}} ambientaciones · {{variables}} variables · {{behaviors}} comportamientos",
+      "moduleContents": "{{entries}} entradas · {{variables}} variables · {{behaviors}} comportamientos",
       "viewContents": "Ver contenido",
       "moduleSettings": "{{name}} · Ajustes del escenario"
     },
@@ -5748,7 +5796,7 @@
       "variablesMore": "Propón una variable más que las actuales no cubren.",
       "behaviorsEmpty": "Escribe dos o tres comportamientos que muevan las variables de esta carta en los momentos correctos.",
       "behaviorsMore": "Escribe un comportamiento más que los actuales no cubren.",
-      "sceneImagesEmpty": "Propón tres momentos de esta carta que merezcan una imagen, y escribe para cada uno la línea de cuándo mostrarla.",
+      "sceneImagesEmpty": "Propón tres momentos de esta tarjeta que merezcan una imagen y escribe para cada uno su línea de «Cuándo mostrarla».",
       "sceneImagesMore": "Propón dos momentos más que merezcan una imagen.",
       "audioEmpty": "Propón qué música y sonidos necesita esta carta y cuándo debe sonar cada uno.",
       "audioMore": "Propón una pieza más de música o sonido para esta carta."
@@ -5778,7 +5826,13 @@
       },
       "precise": "Preciso",
       "audioNoCue": "La IA no lo pondrá sola",
-      "imageManual": "La IA no la mostrará sola"
+      "imageManual": "La IA no la mostrará sola",
+      "byInterface": "Lo cambia la interfaz",
+      "byInterfaceHint": "El código de la interfaz de la tarjeta cambia este valor.",
+      "readByInterface": "Lo lee la interfaz",
+      "readByInterfaceHint": "La interfaz de la tarjeta funciona con este valor: cámbialo y el juego cambia.",
+      "firedByInterface": "Lo avisa la interfaz",
+      "firedByInterfaceHint": "El código de la interfaz lo dispara cuando ocurre en el juego ({{action}}). Lo que hace es lo que dice."
     },
     "sentence": {
       "every": "cada",
@@ -5816,39 +5870,39 @@
       "none": "Nada coincide"
     },
     "tips": {
-      "audioAi": "Activado: la IA decide cuándo suena esta pista según la historia, guiándose por su línea de «cuándo suena». Desactivado: solo suena desde la lista y los comportamientos.",
+      "audioAi": "Activado: la IA pone esta pista cuando la historia encaja con su línea «Cuándo sonar». Desactivado: solo la ponen la lista y los comportamientos.",
       "audioType": "BGM: música de fondo en bucle. Efecto: un sonido corto, como una puerta. Ambiente: un sonido que se queda de fondo, como la lluvia o una multitud.",
-      "cooldown": "Tras activarse, cuántos turnos hasta que pueda volver a hacerlo. 3 = no se activa en los 3 turnos siguientes. 0 = sin límite.",
+      "cooldown": "Cuántos turnos espera tras activarse antes de poder volver a hacerlo, p. ej. 3. 0 = sin espera.",
       "maxFire": "Cuántas veces puede activarse en una partida. 1 = una sola vez, ideal para eventos únicos. 0 = sin límite.",
-      "effects": "Lo que pasa cuando se cumplen las condiciones. Añade los que quieras: cambiar una variable, activar o desactivar una entrada, poner música, avisar al jugador, decirle algo a la IA…",
-      "keywords": "La entrada solo se envía a la IA cuando aparece una de estas palabras en el chat. Escribe «castillo, rey» y la IA solo la leerá cuando se mencione el castillo. Separa con comas.",
-      "liveCanon": "Lore Shift es una extensión que instalan los jugadores. Con ella, un jugador puede cambiar las entradas y variables que permitas en su propia partida, por ejemplo cambiar al señor del castillo. Solo afecta a su partida; tu tarjeta no cambia.",
-      "range": "El valor mínimo y máximo. La IA nunca lo saca de este rango, por ejemplo afecto de 0 a 100.",
-      "reaches": "Cómo y cuándo se envía esta entrada a la IA: en cada turno o por palabras clave o condiciones, y en qué parte de lo que lee la IA va.",
+      "effects": "Lo que pasa cuando se cumplen las condiciones. Añade los que quieras, como cambiar una variable o poner música.",
+      "keywords": "La entrada solo se envía a la IA cuando aparece una de estas palabras. Sepáralas con comas, p. ej. castillo, rey.",
+      "liveCanon": "Lore Shift es una extensión de los jugadores. Les deja cambiar las entradas y variables que permitas, solo en su partida. Tu tarjeta no cambia.",
+      "range": "El valor mínimo y máximo, como afecto de 0 a 100. La IA no puede sacarlo de este rango.",
+      "reaches": "Cómo y cuándo llega esta entrada a la IA, y dónde va en lo que lee la IA.",
       "varWhen": "Por defecto la IA siempre la ve. Puedes limitarla a ciertos inicios o a un escenario para que no ocupe espacio el resto del tiempo.",
       "whenFires": "Cuándo mira este comportamiento: en cada turno por defecto, o cuando el jugador dice algo, cambia una variable o se pulsa un botón.",
-      "onlyIf": "Los efectos de abajo solo ocurren si esto se cumple. Con varias condiciones, elige si deben cumplirse todas o basta una. Vacío = siempre.",
-      "alwaysSend": "Activado: se envía a la IA en cada turno. Desactivado: solo cuando aparece una palabra clave o se cumplen sus condiciones; ahorra palabras y la IA se centra más.",
-      "alwaysSendGated": "Tiene condiciones de variables conectadas: ellas deciden cuándo llega esto a la IA. Quítalas y este interruptor vuelve a funcionar.",
-      "excludeRecursion": "Si el texto de otra entrada contiene por casualidad estas palabras clave, no arrastrará esta. Solo el chat entre jugador e IA la activa.",
+      "onlyIf": "Los efectos de abajo solo ocurren si esto se cumple. Con varias, elige «Todas deben cumplirse» o «Basta con una». Vacío = siempre.",
+      "alwaysSend": "Activado: va a la IA cada turno. Desactivado: solo con una palabra clave o condición, lo que ahorra espacio y mantiene a la IA centrada.",
+      "alwaysSendGated": "Hay condiciones de variables conectadas, así que ellas deciden cuándo llega esto a la IA. Quítalas y este interruptor vuelve a funcionar.",
+      "excludeRecursion": "El texto de otras entradas no puede activar esta. Solo la activa el chat entre el jugador y la IA.",
       "preventRecursion": "Una vez enviada, su propio texto no activará las palabras clave de otras entradas.",
-      "secondary": "Un segundo grupo de palabras que se combina con las claves para afinar, como «también debe aparecer» o «no debe aparecer». Normalmente vacío.",
+      "secondary": "Un segundo grupo de palabras que afina las claves, como «también debe aparecer» o «no debe aparecer». Suele quedar vacío.",
       "secondaryLogic": "Cómo se comprueba el segundo grupo: cualquiera, todas, ninguna…",
       "sendAs": "Cómo la lee la IA. Sistema: reglas y contexto, lo habitual. Usuario: como si lo dijera el jugador. Asistente: como si lo hubiera dicho la IA.",
       "wholeWord": "Activado: solo cuentan palabras completas; «cat» no coincide con «category». Casi nunca hace falta en chino o japonés.",
-      "imageScope": "Usa esta imagen solo en chats que empezaron desde estos inicios. Todos los inicios = cualquiera.",
+      "imageScope": "Usa esta imagen solo en chats que empezaron desde estos inicios. «Todos los inicios» permite cualquiera.",
       "imageUrl": "De dónde sale la imagen: pega un enlace o elígela de tus recursos.",
-      "aiAccess": "Si la IA puede cambiarla. Puede cambiar: la IA la cambia según la historia. Solo lectura: la IA la conoce, pero solo los comportamientos y la pantalla la cambian. Oculta: la IA no sabe que existe.",
+      "aiAccess": "La IA puede leer y escribir: la IA la cambia. Solo lectura para la IA: solo la cambian los comportamientos y la interfaz. Solo motor: la IA nunca la ve.",
       "preciseStep": "Con el seguimiento preciso activado, lo máximo que puede subir (o bajar) en un turno; la IA elige un número intermedio según la historia.",
-      "section": "En qué parte de lo que lee la IA va esta entrada. Arriba se lee como contexto; dentro del chat, cuanto más cerca del último mensaje, más peso le da la IA.",
-      "situationEnabled": "Desactivado: todo el escenario queda fuera de juego, diga lo que diga su regla. Úsalo para apartarla sin borrarla."
+      "section": "Dónde va esta entrada en lo que lee la IA. Arriba es contexto; dentro del chat, cuanto más cerca del último mensaje, más pesa.",
+      "situationEnabled": "Desactivado: todo el escenario queda fuera de juego, diga lo que diga su regla. Apágalo para apartarlo sin borrarlo."
     },
     "addSituation": {
       "title": "Añadir un escenario",
-      "what": "Un escenario nuevo, como una tarjeta dentro de la tarjeta: sus propias entradas, variables, comportamientos y memoria. Arrastra cosas dentro y se aplican en este escenario."
+      "what": "Es como una tarjeta dentro de la tarjeta, con entradas, variables, comportamientos y memoria propios. Lo que arrastres dentro se aplica aquí."
     },
     "addLoose": {
-      "hint": "Con un escenario o la tarjeta seleccionada se añade dentro; sin nada seleccionado empieza fuera (apagado, sin usar) hasta que lo arrastres dentro:"
+      "hint": "Con un escenario o la tarjeta seleccionados, entra directamente; sin nada seleccionado queda fuera (atenuado, sin efecto) hasta que lo arrastres dentro:"
     },
     "addMenu": {
       "setup": "Pantalla inicial (nombre, reparto, inicio)",
@@ -5943,14 +5997,14 @@
       "wakeAnyClosed": "Se ejecuta cuando termina cualquier escenario",
       "workerReads": "Solo lee {{names}}",
       "workerReadsNothing": "Nada conectado · solo puede inventar",
-      "workerReadsNothingHint": "No ve lo que hizo el jugador, así que lo que escribe es inventado y aun así cuesta dinero. Conéctala a el escenario que debe registrar.",
+      "workerReadsNothingHint": "No ve lo que hizo el jugador, así que se lo inventa y aun así cuesta dinero. Conéctala al escenario que debe registrar.",
       "workerWritesFor": "Escribe para {{names}} · nunca habla con el jugador",
       "workerWritesForNobody": "Nadie lee todavía lo que escribe",
       "wakeQuiet": "Tras {{n}} s de silencio · decide si habla",
       "wakeAfter": "Se activa justo después de que responda «{{name}}»",
       "doesInterject": "Interviene con una línea · cambia valores",
       "seesScene": "La escena en vivo · la cuenta la interfaz",
-      "seesSceneHint": "La interfaz de la tarjeta le dice a la IA lo que hay en pantalla (setScene); va con cada llamada.",
+      "seesSceneHint": "La interfaz de la tarjeta usa setScene para decirle a la IA qué hay en pantalla. Va en cada llamada.",
       "line": {
         "lore": "{{n}} entradas",
         "vars": "{{n}} valores",
@@ -6046,7 +6100,11 @@
       "answerJson": "JSON",
       "answerText": "texto",
       "model": "Modelo",
-      "openAt": "Abrir {{file}} en la línea {{line}}"
+      "openAt": "Abrir {{file}} en la línea {{line}}",
+      "lorePicked": "Lore que elige el código de la interfaz",
+      "modelPlayer": "El modelo del jugador",
+      "modelVariable": "Lo decide la variable «{{name}}»",
+      "modelComputed": "Lo calcula el código de la interfaz"
     },
     "files": {
       "summary": "Código de la interfaz · {{files}} archivos · {{lines}} líneas",
@@ -6071,7 +6129,10 @@
       "use_audio": "audio",
       "use_assets": "recursos",
       "use_chat": "acciones de chat",
-      "use_session": "guardado"
+      "use_session": "guardado",
+      "use_scene": "Escena",
+      "use_liveVoice": "Voz en directo",
+      "use_timer": "Funciona con temporizador"
     },
     "hints": {
       "title": "También se puede escribir a mano",
@@ -6106,7 +6167,7 @@
         },
         "lore": {
           "title": "Elegir el lore",
-          "body": "includeLorebook, worldbookIds: solo algunas entradas o una situación"
+          "body": "includeLorebook, worldbookIds: solo envía algunas entradas o un escenario"
         },
         "session": {
           "title": "Con la partida",
@@ -6124,7 +6185,7 @@
       "implementedBy": "Implementado en {{count}} lugares",
       "implementedCode": "Código propio · {{count}} líneas",
       "firedFrom": "Disparado desde la interfaz · {{file}} línea {{line}}",
-      "contextIntro": "Lo que lee la IA también lo puede decidir el código de la interfaz: escribe los mensajes y elige el lore y la situación. Estas son las llamadas de la tarjeta que lo hacen.",
+      "contextIntro": "El código de la interfaz también puede decidir qué lee la IA, escribiendo los mensajes y eligiendo las entradas y el escenario. Estas llamadas de la tarjeta lo hacen.",
       "codeAt": "{{file}} línea {{line}}"
     },
     "gateGroups": {
@@ -6196,13 +6257,14 @@
       },
       "openAi": "Editar",
       "openCode": "Abrir código",
-      "footRules": "El modelo de la IA de la historia siempre lo elige el jugador; el autor solo puede recomendar uno. Si una IA de la tarjeta pide un modelo que el jugador no puede usar, cambia a uno que sí pueda.",
+      "footRules": "La IA de la historia usa siempre el modelo del jugador; tú solo recomiendas uno. Si no puede usar el de otra IA, cambia a uno que pueda.",
       "footClamp": "Los valores del autor se mantienen dentro de rangos seguros.",
-      "legendAuthor": "Rosa: del autor"
+      "legendAuthor": "Rosa: del autor",
+      "viewAll": "Ver todas las IA"
     },
     "storyAi": {
       "title": "Modelo y ajustes de la IA de la historia",
-      "hint": "El jugador elige y paga el modelo. Los ajustes (temperatura, top P) también son los del jugador, salvo que elijas «Del autor»; entonces se usan los de esta tarjeta.",
+      "hint": "El jugador elige y paga el modelo. La temperatura y el top P también son los suyos, salvo que elijas «Del autor».",
       "recommendedModel": "Modelo recomendado",
       "recommendedModelHint": "Al elegir modelo, el jugador lo verá marcado como «Recomendado por el autor». Nunca se impone.",
       "recommendedModelNone": "Ninguno",
@@ -6214,6 +6276,98 @@
       "topP": "Top P",
       "topPHint": "{{min}}–{{max}}",
       "alwaysPlayer": "El modelo y la longitud de respuesta siempre son los del jugador, que es quien paga."
+    },
+    "game": {
+      "spiretalk": "Slay the Spire 2",
+      "in": "Del juego",
+      "out": "Al juego",
+      "inHint": "{{game}} escribe este valor cada turno. El valor de aquí son datos de prueba. No cambies el ID.",
+      "outHint": "La IA escribe este valor y {{game}} lo lee tras la respuesta. No cambies el ID.",
+      "inNote": "{{game}} lo escribe cada turno; la IA solo lo lee. Son datos de prueba. El juego lo busca por su ID, así que no cambies el ID ni lo borres.",
+      "outNote": "La IA lo escribe cada turno; {{game}} lo comprueba y actúa. El juego lo busca por su ID, así que no cambies el ID ni lo borres.",
+      "idLocked": "{{game}} busca este valor por su ID, así que el ID no se puede cambiar.",
+      "unnamed": "el juego"
+    },
+    "gameScreen": {
+      "tag": "Juego",
+      "pageLead": "Esta tarjeta abre directamente el juego: los jugadores entran al juego, no a un chat.",
+      "play": "Jugar aquí",
+      "openWindow": "Abrir en otra ventana",
+      "stop": "Dejar de jugar",
+      "modTag": "{{game}} · un personaje de un mod",
+      "modLead": "Esta tarjeta no se juega en la web: cuando los jugadores se cruzan con {{npc}} en {{game}}, esta tarjeta habla por él.",
+      "inputs": "Lo que {{game}} le cuenta a la IA cada turno",
+      "role": "La IA interpreta",
+      "outputs": "Lo que la IA le devuelve a {{game}}",
+      "more": "{{count}} más",
+      "lore": "{{count}} entradas de lore",
+      "range": "de {{min}} a {{max}}",
+      "out": {
+        "choices": "Tres respuestas para que elija el jugador",
+        "action": "Si da una recompensa, solo entre las que el juego permite"
+      },
+      "modFoot": "{{game}} comprueba por sí mismo recompensas y pactos. Los valores de la izquierda son datos de prueba; pulsa «Playtest» arriba a la derecha para probarlos.",
+      "noneIn": "Todavía ninguna. En una variable, pon Conexión con el juego en Del juego.",
+      "noneOut": "Todavía ninguna. En una variable, pon Conexión con el juego en Al juego."
+    },
+    "aiTypeHint": {
+      "turn": "Se ejecuta cada turno: responde al jugador o trabaja entre bastidores.",
+      "ui": "Un botón o código de la pantalla del jugador la llama, y ella devuelve un resultado a la pantalla.",
+      "event": "Se ejecuta sola cuando pasa algo en la tarjeta: un valor cumple una condición, termina un escenario, un silencio se alarga.",
+      "custom": "Tú defines su nombre, entradas, respuesta y tarea. El asistente de creación o una IA externa escribe el código que lo cumple."
+    },
+    "aiContract": {
+      "title": "Cómo se llama",
+      "titleHint": "El código de la interfaz la llama con esta línea. Su nombre es el título, así que renombrarla cambia la llamada. Tras la flecha va su «Formato de respuesta».",
+      "takes": "Qué recibe",
+      "takesHint": "Lo que la interfaz pasa al llamarla. La IA ve esta nota junto con la entrada, y también quien escriba el código.",
+      "takesPlaceholder": "p. ej. El mensaje que acaba de enviar el jugador",
+      "does": "Qué debe hacer",
+      "doesHint": "Explica a quien la construya qué debe hacer y adónde va el resultado. El asistente de creación y las IA externas lo leen antes de empezar.",
+      "doesPlaceholder": "p. ej. Responder a un mensaje privado según el afecto. Fría por debajo de 30. Nunca revelar secretos de la trama principal.",
+      "returnsText": "texto",
+      "returnsJson": "un objeto JSON"
+    },
+    "gameIface": {
+      "title": "Conexión con el juego",
+      "hint": "Actívalo si el mod de un juego usa esta tarjeta como personaje. Cada turno el mod rellena las variables «Del juego» y lee las «Al juego».",
+      "builtin": "La ejecuta el mod de {{game}}: el juego escribe {{inputs}} variables y lee {{outputs}}. Las define el mod, así que no se pueden cambiar aquí.",
+      "on": "Esta tarjeta es un personaje de un juego",
+      "name": "Nombre del juego",
+      "namePlaceholder": "p. ej. Slay the Spire 2",
+      "counts": "El juego escribe {{inputs}} variables y lee {{outputs}}. Elige el lado en cada variable.",
+      "side": "Conexión con el juego",
+      "sideHint": "Del juego: {{game}} la escribe cada turno y la IA solo la lee. Al juego: la IA la escribe y {{game}} actúa en consecuencia.",
+      "sideNone": "Ninguno"
+    },
+    "codeAi": {
+      "voiceWhat": "El jugador le habla por micrófono en directo. La lleva el código de la interfaz; no tiene ajustes propios.",
+      "callWhat": "El código de la interfaz la llama cuando la necesita. No tiene ajustes propios; abajo está lo que dice el código.",
+      "kind": "Tipo",
+      "kindVoice": "Voz en directo",
+      "scene": "Escena",
+      "sceneYes": "La interfaz le cuenta la escena",
+      "sceneNo": "No aparece en el código",
+      "note": "Qué hace",
+      "noteHint": "Una o dos frases para ti y quien colabore contigo. Queda pegada a esta fila y la leen el asistente de creación y las IA externas.",
+      "notePlaceholder": "p. ej. Juzga cada cosa que dice el jugador y cambia la sospecha",
+      "ask": "Pedir al asistente que lo explique",
+      "askPrompt": "Mira «{{name}}» en el código de la interfaz, {{file}} línea {{line}}: qué hace, qué lee y qué devuelve. Ponlo en una o dos frases sencillas en la nota pegada a esa fila (write_note con on = {{target}}). No cambies el código.",
+      "convert": "Convertirla en una IA configurable",
+      "convertHint": "La convierte en una IA de interfaz de la tarjeta, para ajustar su modelo y su tarea aquí en el lienzo. El asistente de creación cambia solo este punto del código; se puede deshacer.",
+      "convertBundled": "Es código compilado y no se puede cambiar automáticamente. Para hacerla configurable hace falta el código fuente del autor.",
+      "convertPrompt": "Convierte la llamada a IA «{{name}}» del código de la interfaz, {{file}} línea {{line}}, en una IA de interfaz de la tarjeta, para que el creador ajuste su modelo y su tarea en el lienzo:\n1. Con write_worldbook, crea una situación con station { kind: \"worker\", trigger: { on: \"ui\" } }, con un nombre según lo que hace; su task dice lo que pide ahora el prompt de la llamada; su formato de respuesta sigue cómo usa el código la respuesta ahora; el lore que lee va como entradas de esa situación.\n2. Con edit_custom_ui, cambia este api.ai.complete por api.callAi(\"<nombre>\", <lo que se le pasaba>) y usa el text o los fields que devuelve.\n3. Cambia solo este punto, ningún otro código. Luego dime en una o dos frases qué cambiaste.",
+      "gameWhat": "El juego ejecuta esta IA en el servidor de Yumina. Su personaje no está en esta tarjeta y editar la tarjeta no la cambia. Abajo está lo que pasa entre el juego y ella.",
+      "kindGame": "IA del juego",
+      "gets": "El juego le dice",
+      "returns": "Devuelve",
+      "where": "Escrita en",
+      "gameBook": "{{count}} entradas en «{{name}}»",
+      "gameWhatBook": "El juego ejecuta esta IA en el servidor de Yumina y lee quién es en la situación «{{name}}» de la tarjeta. Abajo está lo que pasa entre el juego y ella.",
+      "removePrompt": "Quita la llamada a la IA «{{name}}» de la línea {{line}} de {{file}} en el código de la interfaz:\n1. Con edit_custom_ui, quita esta llamada y el código que solo existe para ella (el prompt que se le arma, el manejo de su respuesta).\n2. La interfaz tiene que seguir jugándose: donde esperaba esta respuesta, que siga sin ella.\n3. Cambia solo esto; no toques el resto del código. Luego dime en una o dos frases qué quitaste y qué hace ahora la interfaz."
+    },
+    "mobile": {
+      "untitled": "Sin nombre"
     }
   },
   "modules": {

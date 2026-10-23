@@ -27,6 +27,8 @@ interface AssetPickerProps {
   /** "media" = a picture or a video (the second argument of onSelect says which). */
   filterType?: "image" | "video" | "audio" | "font" | "txt" | "other" | "media";
   onSelect: (assetRef: string, type: string) => void;
+  /** Let a cover upload use its own normalization limits. */
+  onUploadFile?: (file: File) => Promise<void>;
   onClose: () => void;
 }
 
@@ -41,7 +43,7 @@ const TYPE_ICONS: Record<string, typeof ImageIcon> = {
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
-export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSelect, onClose }: AssetPickerProps) {
+export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSelect, onClose, onUploadFile }: AssetPickerProps) {
   const { t } = useTranslation("editor");
   const { assets, loading, fetchAssets } = useAssetStore();
   const {
@@ -60,7 +62,7 @@ export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSele
 
   useEffect(() => {
     fetchAssets(worldId);
-    fetchGlobalAssets({ page: 1, ...(filterType && filterType !== "media" ? { type: filterType } : {}) });
+    fetchGlobalAssets({ page: 1, ...(filterType ? { type: filterType } : {}) });
   }, [worldId, fetchAssets, fetchGlobalAssets, filterType]);
 
   const handleSelectAsset = useCallback(
@@ -90,10 +92,11 @@ export function AssetPicker({ worldId, mediaUsage = "assets", filterType, onSele
   );
 
   const uploadSingleFile = useCallback(async (file: File) => {
+    if (onUploadFile) { await onUploadFile(file); return; }
     const { type } = getUploadMetadata(file, filterType === "media" ? undefined : filterType);
     const asset = await uploadAsset(file, type);
     if (asset) await handleSelectAsset(asset);
-  }, [filterType, handleSelectAsset, uploadAsset]);
+  }, [filterType, handleSelectAsset, uploadAsset, onUploadFile]);
 
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {

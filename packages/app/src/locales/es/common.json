@@ -44,7 +44,7 @@
     "home": "Yumina",
     "discover": "Descubrir",
     "community": "Comunidad",
-    "bundles": "Paquetes",
+    "bundles": "Módulos y prompts",
     "create": "Crear",
     "library": "Biblioteca",
     "quests": "Misiones",
@@ -71,7 +71,7 @@
   "search": {
     "hub": "Buscar mundos, personajes, historias...",
     "library": "Buscar en la biblioteca...",
-    "bundles": "Buscar paquetes, creadores o funciones..."
+    "bundles": "Buscar módulos de tarjeta, creadores o funciones..."
   },
   "aria": {
     "showSidebar": "Mostrar barra lateral",

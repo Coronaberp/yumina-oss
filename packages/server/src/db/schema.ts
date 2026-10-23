@@ -35,6 +35,12 @@ import type { ToolCall } from "../lib/llm/types.js";
 
 // ─── Better Auth tables ─────────────────────────────────────────────
 
+// Legacy registration inventory, separate from authentication and activity.
+export const legacyKrewRegistrations = pgTable("legacy_krew_registrations", {
+  emailHash: text("email_hash").primaryKey(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [check("legacy_krew_registrations_email_hash_check", sql`${t.emailHash} ~ '^[a-f0-9]{64}$'`)]);
+
 // Anonymous game visitors stay outside Better Auth. A verified login can link
 // a guest to one account for analytics; this never merges saved game progress.
 export const gameGuestLinks = pgTable("game_guest_links", {
@@ -418,6 +424,8 @@ export const worlds = pgTable("worlds", {
   targetAudience: text("target_audience").notNull().default("all"),
   visibility: text("visibility").notNull().default("public"),
   downloadCount: integer("download_count").notNull().default(0),
+  /** Shown to players instead of download_count while DOWNLOAD_DISPLAY_FROZEN is on (null = 0). */
+  displayDownloadCount: integer("display_download_count"),
   messageCount: integer("message_count").notNull().default(0),
   favoriteCount: integer("favorite_count").notNull().default(0),
   reviewCount: integer("review_count").notNull().default(0),
@@ -765,6 +773,23 @@ export const messages = pgTable("messages", {
   index("messages_session_created_idx").on(t.sessionId, t.createdAt),
   index("messages_session_compacted_idx").on(t.sessionId, t.compacted),
   index("messages_session_summaryception_compacted_idx").on(t.sessionId, t.summaryceptionCompacted),
+]);
+
+/** Session memory as each fold committed it, so a changed turn or a stopped
+ *  rebuild continues from the version before it (lib/session-memory-versions.ts). */
+export const sessionMemoryVersions = pgTable("session_memory_versions", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sessionId: text("session_id").notNull().references(() => playSessions.id, { onDelete: "cascade" }),
+  /** The last turn the memory covers; deleting it drops the version. */
+  processedMessageId: text("processed_message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  processedAt: timestamp("processed_at").notNull(),
+  memory: jsonb("memory").notNull(),
+  /** Ids and lengths of the covered turns when saved. */
+  sourceFingerprint: text("source_fingerprint").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("session_memory_versions_session_idx").on(t.sessionId, t.processedAt),
+  index("session_memory_versions_message_idx").on(t.processedMessageId),
 ]);
 
 export const assets = pgTable("assets", {
@@ -1242,6 +1267,16 @@ export const generationProviderSpend = pgTable("generation_provider_spend", {
   actualUsd: real("actual_usd"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, t => [index("generation_provider_spend_created_idx").on(t.createdAt)]);
+
+export const turnImageTasks = pgTable("turn_image_tasks", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  messageId: text("message_id").notNull(),
+  status: text("status", { enum: ["running", "completed", "cancelled", "failed"] }).notNull().default("running"),
+  charge: jsonb("charge").$type<import("../lib/per-turn-image/billing.js").TurnImageCharge>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull().default(sql`now() + interval '10 minutes'`),
+}, (t) => [index("turn_image_tasks_pending_idx").on(t.expiresAt).where(sql`${t.status} = 'running'`)]);
 
 export const generationJobs = pgTable("generation_jobs", {
   id: text("id")
@@ -2501,10 +2536,16 @@ export const usageLogs = pgTable("usage_logs", {
   // Prompt-cache traffic as the provider reported it (null when not reported).
   cacheReadTokens: integer("cache_read_tokens"),
   cacheWriteTokens: integer("cache_write_tokens"),
+  // The OAuth client (oauth_client.client_id) of an outside app's call through
+  // the AI gateway (endpoint app / app_empty); null everywhere else.
+  // DDL: scripts/2026-10-21-oauth-apps.sql.
+  clientId: text("client_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("usage_logs_user_id_idx").on(t.userId),
   index("usage_referral_play_idx").on(t.userId,t.createdAt).where(sql`${t.endpoint} IN ('send','regenerate','continue','pvz-dave') AND ${t.completionTokens}>0`),
+  // Played turns per user for the quest board (QUEST_TURN_ENDPOINTS) and referrals: a superset of both IN-lists (scripts/2026-10-21-usage-play-turns-idx.sql).
+  index("usage_play_turns_idx").on(t.userId,t.createdAt).where(sql`${t.endpoint} IN ('send','regenerate','continue','pvz-dave','app') AND ${t.completionTokens}>0`),
   index("usage_logs_created_at_idx").on(t.createdAt),
   index("usage_logs_created_user_idx").on(t.createdAt, t.userId),
   index("usage_logs_created_model_idx").on(t.createdAt, t.model),
@@ -4170,6 +4211,25 @@ export const assetImportRetries = pgTable("asset_import_retries", {
 ]);
 
 // Native voice ownership and accounting survive deletion.
+/** Credits-paid GPT-Live calls; DDL in scripts/voice-live-calls.sql. */
+export const voiceLiveCalls = pgTable("voice_live_calls", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  sessionId: text("session_id").notNull(),
+  connectionId: text("connection_id"),
+  providerId: text("provider_id"),
+  state: text("state").notNull().default("connecting"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+  paidMinutes: integer("paid_minutes").notNull().default(0),
+  creditsPerMinute: integer("credits_per_minute").notNull(),
+  maxMinutes: integer("max_minutes").notNull().default(15),
+  claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+  closeReason: text("close_reason"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const voiceCalls = pgTable("voice_calls", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => user.id, { onDelete: "set null" }),

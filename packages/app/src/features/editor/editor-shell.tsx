@@ -12,7 +12,6 @@ import {
   Boxes,
   Check,
   ChevronDown,
-  Save,
   Loader2,
   FileText,
   BookOpen,
@@ -36,7 +35,6 @@ import {
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
 import { useBlueprintAccess } from "@/lib/blueprint-access";
-import { useTransientFlag } from "@/hooks/use-transient-flag";
 import { cn } from "@/lib/utils";
 import { DOCS_URLS } from "@/lib/docs-urls";
 import {
@@ -68,6 +66,7 @@ import { BackgroundsSection } from "./sections/backgrounds";
 import { MechanicPacksSection } from "./sections/mechanic-packs";
 import { AssetsSection } from "./sections/assets";
 import { OverviewSection } from "./sections/overview";
+import type { CoverSettingsTarget } from "./lib/cover-settings-target";
 import { BundlesSection, GenerationEditorSection, WorldPublishModal } from "@/edition/slots";
 import { useEdition } from "@/edition/edition";
 import { ExportCardMenu } from "./export-card-menu";
@@ -78,6 +77,7 @@ const AiChatPanel = lazy(() => importWithChunkRecovery(() => import("@/features/
 const StudioChangeReviewPanel = lazy(() => importWithChunkRecovery(() => import("@/features/studio/components/studio-change-review-panel")).then(m => ({ default: m.StudioChangeReviewPanel })));
 const PlaytestPanel = lazy(() => importWithChunkRecovery(() => import("@/features/studio/panels/playtest-panel")).then(m => ({ default: m.PlaytestPanel })));
 import { UpdateNotifyDialog } from "./update-notify-dialog";
+import { SaveStatus } from "./save-status";
 import { isEditorTourDone } from "./tour/tour-state";
 import { readLearningProgress } from "@/features/studio/learn/learning-catalog";
 import { useUserProfileStore } from "@/stores/user-profile";
@@ -170,6 +170,8 @@ function useIsMobileEditor() {
 }
 
 interface EditorShellProps {
+  coverTarget?: CoverSettingsTarget;
+  coverVisit?: string;
   onBack?: () => void;
   onSwitchToSimple?: () => void;
   /** Create route: the card was made this session — the first-visit tour may
@@ -177,17 +179,13 @@ interface EditorShellProps {
   autoTour?: boolean;
 }
 
-export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: EditorShellProps) {
+export function EditorShell({ onBack, onSwitchToSimple, autoTour = false, coverTarget, coverVisit }: EditorShellProps) {
   const { t } = useTranslation(["editor", "common"]);
   const router = useRouter();
   const navigateToStory = useStoryNavigation();
   const worldDraft = useEditorStore(s => s.worldDraft);
   const serverWorldId = useEditorStore(s => s.serverWorldId);
-  const isDirty = useEditorStore(s => s.isDirty);
   const saving = useEditorStore(s => s.saving);
-  // R3: the Save button says "Saved" for a moment instead of a toast.
-  const lastSavedAt = useEditorStore(s => s.lastSavedAt);
-  const justSaved = useTransientFlag(lastSavedAt);
   const activeSection = useEditorStore(s => s.activeSection);
   const setActiveSection = useEditorStore(s => s.setActiveSection);
   const [historySection, setHistorySection] = useHistoryEntryState<EditorSection>(
@@ -254,6 +252,12 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
   useEffect(() => {
     setActiveSection(historySection);
   }, [historySection, setActiveSection]);
+
+  useEffect(() => {
+    if (!coverTarget) return;
+    setHistorySection("overview");
+    setActiveSection("overview");
+  }, [coverTarget, coverVisit, serverWorldId, setHistorySection, setActiveSection]);
 
   const selectSection = (section: EditorSection) => {
     setHistorySection(section);
@@ -331,7 +335,8 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
 
   // Fallback to "entries" if activeSection is invalid or hidden for this variant
   const safeSection =
-    activeSection in SECTION_COMPONENTS && visibleSections.some((s) => s.id === activeSection)
+    (coverTarget && activeSection === "overview") ||
+    (activeSection in SECTION_COMPONENTS && visibleSections.some((s) => s.id === activeSection))
       ? activeSection
       : "entries";
   const ActiveComponent = SECTION_COMPONENTS[safeSection];
@@ -610,25 +615,7 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
             </div>
 
             {!readOnlyInspect && (
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                title={t("shell.saveTooltip")}
-                data-tour="m-save"
-                className="relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-gold px-3 text-xs font-semibold text-black transition-opacity disabled:opacity-40"
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : justSaved ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                {justSaved && !saving ? t("shell.saved") : t("shell.save")}
-                {isDirty && !saving && (
-                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-500" />
-                )}
-              </button>
+              <SaveStatus onSave={handleSave} data-tour="m-save" className="h-9" />
             )}
             {readOnlyInspect && (
               <span className="inline-flex h-9 shrink-0 items-center rounded-xl border border-amber-400/40 bg-amber-400/10 px-2.5 text-[11px] font-semibold text-amber-300">
@@ -762,7 +749,9 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
               className="min-h-full"
               contentClassName="flex flex-col overflow-hidden"
             >
-              <ActiveComponent />
+              {safeSection === "overview" && coverTarget
+                ? <OverviewSection key={coverVisit} focusCover={coverTarget} coverOnly={isNonPrimaryVariant} />
+                : <ActiveComponent />}
             </GuestEditorReadOnly>
           </div>
         </div>
@@ -934,26 +923,8 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
 
             {!readOnlyInspect && (
               <>
-                {/* Save — primary action */}
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  title={t("shell.saveTooltip")}
-                  data-tour="save"
-                  className="editor-shell-save-button relative flex items-center gap-2 rounded-lg bg-gold px-4 py-2 text-sm font-semibold text-black shadow-[0_1px_0_0_rgba(255,255,255,0.12)_inset] transition-all hover:brightness-110 disabled:opacity-40"
-                >
-                  {saving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : justSaved ? (
-                    <Check className="h-3.5 w-3.5" />
-                  ) : (
-                    <Save className="h-3.5 w-3.5" />
-                  )}
-                  {justSaved && !saving ? t("shell.saved") : t("shell.save")}
-                  {isDirty && !saving && (
-                    <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-500" />
-                  )}
-                </button>
+                {/* Saved / saving / offline: the card saves itself. */}
+                <SaveStatus onSave={handleSave} data-tour="save" size="md" className="editor-shell-save-button" />
 
                 {/* Publish + review state in one control: green "Publish update"
                     when live & clean; otherwise the button itself shows the
@@ -1108,7 +1079,9 @@ export function EditorShell({ onBack, onSwitchToSimple, autoTour = false }: Edit
                 className="flex-1 overflow-hidden"
                 contentClassName="flex flex-col overflow-hidden"
               >
-                <ActiveComponent />
+                {safeSection === "overview" && coverTarget
+                  ? <OverviewSection key={coverVisit} focusCover={coverTarget} coverOnly={isNonPrimaryVariant} />
+                  : <ActiveComponent />}
               </GuestEditorReadOnly>
             </div>
           </div>

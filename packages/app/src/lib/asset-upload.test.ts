@@ -5,8 +5,46 @@ import {
   getUploadMetadata,
   isAnimatedImageFile,
   uploadAssetWithPresignedUrl,
+  registerAssetWithRetry,
 } from "./asset-upload";
 import { createUploadTestPng, PNG_SIGNATURE, pngChunk } from "./test-fixtures/upload-png";
+
+test("cover processing polls the same upload without transferring the source again", async () => {
+  let prepares = 0, transfers = 0, confirms = 0;
+  const result = await uploadAssetWithPresignedUrl({ file: new File(["movie"], "cover.mp4", {type:"video/mp4"}),
+    prepareUrl: "/prepare", registerUrl: "/confirm", normalizedByServer: true,
+    registerBody: ({key}) => ({key, target:"portrait"}),
+    fetchImpl: async (url, options) => {
+      if (url === "/prepare") { prepares++; return Response.json({data:{uploadUrl:"/storage",key:"same-key"}}); }
+      if (url === "/storage") { transfers++; return new Response(null, {status:200}); }
+      assert.deepEqual(JSON.parse(String(options?.body)), {key:"same-key",target:"portrait",processingMode:"async"});
+      return ++confirms === 1 ? Response.json({code:"COVER_PROCESSING"},{status:202}) : Response.json({data:{thumbnailUrl:"poster"}});
+    },
+  });
+  assert.deepEqual(result, {thumbnailUrl:"poster"});
+  assert.equal(prepares,1); assert.equal(transfers,1); assert.equal(confirms,2);
+});
+
+test("existing-asset cover polling propagates errors and cancels its wait without another request", async () => {
+  await assert.rejects(registerAssetWithRetry("/cover", {}, {fetchImpl: async () => Response.json({error:"Use a shorter clip"},{status:413})}), /shorter/);
+  const controller = new AbortController(); let calls=0;
+  const pending = registerAssetWithRetry("/cover", {}, {signal:controller.signal,fetchImpl:async()=>{calls++;return Response.json({code:"COVER_PROCESSING"},{status:202});}});
+  await new Promise(resolve => setImmediate(resolve)); controller.abort();
+  await assert.rejects(pending); assert.equal(calls,1);
+});
+
+test("an interrupted cover confirmation retries its key, while other asset mutations are not replayed", async () => {
+  for (const retryTransient of [true,false]) {
+    let calls=0;
+    const run=registerAssetWithRetry("/cover",{key:"stable"},{retryTransient,fetchImpl:async(_url,options)=>{
+      assert.deepEqual(JSON.parse(String(options?.body)),{key:"stable"});
+      if (++calls===1) throw new TypeError("connection closed after commit");
+      return Response.json({data:{thumbnailUrl:"poster"}});
+    }});
+    if (retryTransient) { assert.deepEqual(await run,{thumbnailUrl:"poster"}); assert.equal(calls,2); }
+    else { await assert.rejects(run); assert.equal(calls,1); }
+  }
+});
 
 test("busy slots wait abortably, while hard hourly limits fail without retries", async () => {
   for (const code of ["UPLOAD_BUSY", "UPLOAD_LIMIT"]) {

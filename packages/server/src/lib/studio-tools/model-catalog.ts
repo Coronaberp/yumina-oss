@@ -36,7 +36,7 @@ export type CatalogLookup =
  * lib/session-compaction.ts (not imported: that module pulls in the database);
  * model-catalog.test.ts keeps the two equal.
  */
-export const BACKGROUND_FALLBACK_MODEL = "google/gemini-2.5-flash-lite";
+export const BACKGROUND_FALLBACK_MODEL = "google/gemini-3.1-flash-lite";
 
 const TTL_MS = 5 * 60 * 1000;
 let snapshot: Map<string, CatalogModel> | null = null;

@@ -1,4 +1,5 @@
 import { WORLD_VERSION_SCHEMA_SQL } from "./world-version-schema.js";
+import { TURN_IMAGE_TASK_DDLS } from "./turn-image-tasks-ddl.js";
 import fs from "node:fs";
 import { USER_MUTE_COLUMNS_SQL } from "./user-mute-schema.js";
 import { planAdditiveSql, type CatalogQuery } from "./schema-probe.js";
@@ -947,7 +948,21 @@ const TABLE_DDLS = [
   artwork JSONB NOT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT now()
 )`,
+  // Apply path: scripts/session-memory-versions.sql, run before the code ships.
+  `CREATE TABLE IF NOT EXISTS session_memory_versions (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES play_sessions(id) ON DELETE CASCADE,
+  processed_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  processed_at TIMESTAMP NOT NULL,
+  memory JSONB NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT now()
+)`,
+  `CREATE INDEX IF NOT EXISTS session_memory_versions_session_idx ON session_memory_versions (session_id, processed_at)`,
+  `CREATE INDEX IF NOT EXISTS session_memory_versions_message_idx ON session_memory_versions (processed_message_id)`,
 ];
+
+TABLE_DDLS.push(...TURN_IMAGE_TASK_DDLS);
 
 const INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS game_guest_links_user_idx ON game_guest_links(user_id)`,
@@ -1640,6 +1655,7 @@ export async function ensureTables() {
   await db.execute(sql.raw(NATIVE_PLAYTIME_HISTORY_SNAPSHOT));
   await ensureMessagesSwipeCount();
   await ensureVoiceBillingSchema();
+  await ensureVoiceLiveCallsSchema();
   console.log("[DEV] PGlite tables + indexes created");
 }
 
@@ -1876,6 +1892,14 @@ export async function ensureRecentAdditiveSchema() {
     await db.execute(sql.raw(ddl));
   }
   await ensureVoiceBillingSchema();
+  await ensureVoiceLiveCallsSchema();
+}
+
+/** Fallback self-heal for credits-paid GPT-Live calls. The apply path is
+ * scripts/voice-live-calls.sql, run by hand before the code ships. */
+export async function ensureVoiceLiveCallsSchema() {
+  const { installVoiceLiveCalls } = await import("./voice-live-calls.js");
+  await installVoiceLiveCalls(db);
 }
 
 /**

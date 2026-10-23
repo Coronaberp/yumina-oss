@@ -105,7 +105,7 @@ const PICKED_READS = ["read_entities", "grep_world", "load_skill", "list_assets"
 const PICKED_WRITES = [
   "write_entry", "write_variable", "write_behavior", "write_worldbook", "write_custom_ui", "edit_custom_ui",
   "edit_ui_doc", "set_ui_knobs", "write_ui_knob_groups", "write_audio", "write_scene_image", "update_settings",
-  "write_lore_binding", "delete_entities",
+  "write_lore_binding", "write_note", "delete_entities",
 ];
 const byName = new Map(STUDIO_TOOLS.map((t) => [t.function.name, t]));
 

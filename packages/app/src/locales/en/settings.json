@@ -157,6 +157,25 @@
       "connectError": "Failed to connect",
       "disconnectError": "Failed to disconnect"
     },
+    "connectedApps": {
+      "title": "Connected apps",
+      "description": "Game mods, apps and AIs you signed in to with your Yumina account. Disconnect one and it loses access right away.",
+      "loading": "Loading…",
+      "loadError": "Couldn't load. Refresh and try again.",
+      "empty": "No apps connected yet.",
+      "verified": "Official",
+      "connectedOn": "Connected {{date}}",
+      "disconnect": "Disconnect",
+      "disconnecting": "Disconnecting…",
+      "disconnectError": "Couldn't disconnect. Try again.",
+      "scope": {
+        "aiChat": "Chat on your mushies",
+        "walletRead": "Balance",
+        "quests": "Quests",
+        "cards": "Your cards",
+        "profile": "Name"
+      }
+    },
     "validation": {
       "usernameMinLength": "Username must be at least 3 characters",
       "usernameTaken": "Username already taken",
@@ -179,7 +198,7 @@
     },
     "sensitive": {
       "label": "Limitless",
-      "description": "Include Limitless content"
+      "description": "Adult content allowed. If a model still holds back, get an Unrestricted prompt from the Prompt Plaza."
     },
     "minorRestriction": "Limitless mode isn't available for this account.",
     "audiencePreference": {

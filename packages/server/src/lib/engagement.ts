@@ -598,6 +598,8 @@ export interface EngagementCandidate {
   createdAt?: Date | null;
   tags?: string[] | null;
   downloadCount?: number;
+  /** Live count (ranking); downloadCount may be the paused display number. */
+  liveDownloadCount?: number;
   favoriteCount?: number;
   messageCount?: number;
   reviewCount?: number;
@@ -685,7 +687,7 @@ export function buildRankerFeatures(
     log1p_imp_total: Math.log1p(stat?.impressionsTotal ?? 0),
     log1p_favorites: Math.log1p(candidate.favoriteCount ?? 0),
     log1p_messages: Math.log1p(candidate.messageCount ?? 0),
-    log1p_downloads: Math.log1p(candidate.downloadCount ?? 0),
+    log1p_downloads: Math.log1p(candidate.liveDownloadCount ?? candidate.downloadCount ?? 0),
     age_days_capped: Math.min(ageDays, 365),
     freshness: Math.pow(0.5, ageDays / 14),
     has_audio: candidate.hasAudio ? 1 : 0,
@@ -730,6 +732,61 @@ export function buildRankerFeatures(
   };
 }
 
+/**
+ * Residual ranker (composition "residual-v1", see ranker-model.ts): the
+ * hand-tuned score's own parts enter the model next to the 53 ranker inputs.
+ * NAMES ARE A CONTRACT with trainer/value_training.py RESIDUAL_COMPONENTS and
+ * reuse the discovery-features-v3 snapshot keys (score_* from the captured
+ * breakdown, starter_score, personalization_score) — no new snapshot keys.
+ * Deliberately absent: score_engagement_explore (per-visit random jitter; it
+ * moved cards between positions in the logs, so a model could learn position
+ * bias through it), score_engagement_model/total, score_baseScore and
+ * rank_final_score (they contain the model term or the order-dependent
+ * diversity penalties).
+ */
+export const RESIDUAL_COMPONENT_NAMES = [
+  "score_exact_total", "score_generalize_total", "score_quality_total", "score_presentation_total",
+  "score_vector_total", "score_editorial", "starter_score", "personalization_score",
+  "score_engagement_ctr", "score_engagement_quality", "score_engagement_velocity", "score_engagement_session",
+  "score_engagement_craft", "score_engagement_coPlay", "score_engagement_latent", "score_engagement_fatiguePenalty",
+] as const;
+export type ResidualComponentName = typeof RESIDUAL_COMPONENT_NAMES[number];
+
+/** Guard rail on one card's learned correction, in hand-score points. The
+ * 2026-10-17 offline fit put 98% of corrections inside −235..+120. */
+const RESIDUAL_MAX_POINTS = 400;
+
+export function isResidualRanker(model: RankerModelHandle | null | undefined): boolean {
+  return Boolean(model && model.composition === "residual-v1" && (model.handScale ?? 0) > 0);
+}
+
+/**
+ * Learned correction (hand-score points) for one candidate under a
+ * residual-v1 model: raw LambdaRank output / hand scale. The caller adds it
+ * to the hand-tuned score once every part (incl. starter + personalization)
+ * is known. Position stays 0 (buildRankerFeatures): the model was trained
+ * with the real served position as an input so that it explains the
+ * position effect, and serving holds it constant.
+ * Returns 0 when the model is not residual or a prediction fails.
+ */
+export function residualRankerPoints(
+  candidate: EngagementCandidate,
+  ctx: EngagementContext,
+  components: Record<ResidualComponentName, number>,
+  now: Date,
+): number {
+  const model = ctx.model;
+  if (ctx.variant !== "engage_v2" || !model || !isResidualRanker(model)) return 0;
+  try {
+    const features: Record<string, number> = buildRankerFeatures(candidate, ctx.stats.get(candidate.id), ctx, now);
+    for (const name of RESIDUAL_COMPONENT_NAMES) features[name] = components[name];
+    const points = model.predict(features) / model.handScale!;
+    return Number.isFinite(points) ? Math.max(-RESIDUAL_MAX_POINTS, Math.min(RESIDUAL_MAX_POINTS, points)) : 0;
+  } catch {
+    return 0; // a single bad prediction must never break the feed — hand score alone
+  }
+}
+
 /** Feature-time caps for the v3 history inputs. */
 const EXPOSURE_HOURS_CAP = 24 * 30;
 const SESSION_TAG_OVERLAP_CAP = 5;
@@ -750,7 +807,9 @@ export function scoreEngagement(
   if (!ctx || ctx.variant === "control") return EMPTY_ENGAGEMENT_BREAKDOWN;
 
   const stat = ctx.stats.get(candidate.id);
-  const useModel = ctx.variant === "engage_v2" && ctx.model !== null;
+  // A residual-v1 model is applied after the full hand score is known
+  // (residualRankerPoints, from recommendations.ts), never as a lift here.
+  const useModel = ctx.variant === "engage_v2" && ctx.model !== null && !isResidualRanker(ctx.model);
 
   // ── Learned model (v2) — a measured nudge on top of every engage_v1 term.
   let model = 0;

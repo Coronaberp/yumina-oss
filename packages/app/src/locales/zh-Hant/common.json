@@ -53,7 +53,7 @@
   "search": {
     "hub": "搜尋世界、角色、故事...",
     "library": "搜尋庫...",
-    "bundles": "搜尋資源包、作者或功能..."
+    "bundles": "搜尋卡片模組、作者或功能..."
   },
   "aria": {
     "showSidebar": "顯示側邊欄",
@@ -530,7 +530,7 @@
     "home": "Yumina夢塢",
     "discover": "發現",
     "community": "社群",
-    "bundles": "資源包",
+    "bundles": "模組與提示詞",
     "create": "建立",
     "library": "庫",
     "quests": "任務",

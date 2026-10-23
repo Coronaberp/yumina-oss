@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Variable, WorldDefinition } from "@yumina/engine";
 import { getVariableIdUsage, variableUsageInputs } from "../lib/variable-id-references";
+import { gameInterfaceOf, gameNameOf, gameSide } from "../lib/game-interface";
 
 /** A technical identifier needs an explicit commit boundary. A rejected edit
  * stays in the field, with its reason; typing never changes world references. */
@@ -34,6 +35,20 @@ export function VariableIdEditor({ world, variable, onCommit }: {
     setError(null);
     setAssigned(actual !== next ? actual : null);
   };
+
+  // The card's game finds this value by its id, from outside the card where
+  // no reference scan can see it: the id stays.
+  const game = gameInterfaceOf(world);
+  if (gameSide(game, variable.id)) {
+    return <div className="min-w-0 space-y-2 text-xs">
+      <label htmlFor={fieldId} className="font-medium text-foreground">{t("variables.id")}</label>
+      <input id={fieldId} value={variable.id} readOnly aria-describedby={`${fieldId}-hint`}
+        className="w-full min-w-0 rounded-lg border border-border bg-background px-2.5 py-2 font-mono text-xs text-muted-foreground focus:outline-none" />
+      <p id={`${fieldId}-hint`} className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("blueprint.game.idLocked", { game: gameNameOf(game!, t as (key: string, opts?: Record<string, unknown>) => string) })}
+      </p>
+    </div>;
+  }
 
   return <div className="min-w-0 space-y-2 text-xs">
     <label htmlFor={fieldId} className="font-medium text-foreground">{t("variables.id")}</label>

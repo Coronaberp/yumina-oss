@@ -9,7 +9,7 @@ import { lazyRouteComponent } from "@/lib/lazy-route-component";
 import { useUnsavedChangesGuard } from "@/features/editor/use-unsaved-changes-guard";
 import { UnsavedChangesDialog } from "@/features/editor/unsaved-changes-dialog";
 import { backupEditorDraft } from "@/features/editor/editor-draft-recovery";
-import { saveEditorSurface } from "@/lib/editor-surface";
+import { useSaveWhenHidden } from "@/features/editor/save-status";
 import { EditorUnavailable, useEditorOwnership } from "@/features/editor/editor-unavailable";
 
 const StudioShell = lazyRouteComponent(
@@ -31,6 +31,7 @@ function StudioLoading() {
 
 function StudioPage() {
   const { worldId } = Route.useParams();
+  useSaveWhenHidden(worldId);
   const loadWorld = useEditorStore((s) => s.loadWorld);
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
   const loadingWorld = useEditorStore((s) => s.loadingWorld);
@@ -68,12 +69,6 @@ function StudioPage() {
       state.releaseDiscardedWorld(worldId);
     };
   }, [worldId]);
-
-  // However they got here — the switch, a bookmark, the redirect out of
-  // /edit — this is now where their cards open. Recorded on arrival rather
-  // than only on the switch, so a bookmarked canvas does not keep sending
-  // them back to the classic editor on the next card.
-  useEffect(() => { saveEditorSurface("visual"); }, []);
 
   useEffect(() => {
     window.scrollTo(0, 0);

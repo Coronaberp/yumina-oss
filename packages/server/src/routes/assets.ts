@@ -2,7 +2,7 @@ import { discoverAccess } from "../lib/discover-access.js";
 import { assetIsVersioned } from "../lib/world-version-store.js";
 import { worldsUsingAsCover } from "../lib/asset-cover-use.js";
 import { Hono } from "hono";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { assets, worlds, userAssets } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -17,6 +17,8 @@ import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { applyWorldCover } from "../lib/pending-edit.js";
 import { discardDirectImageUpload, publishStoredImage } from "../lib/image-resize.js";
 import { validateImageUploadSize } from "../lib/image-upload-policy.js";
+import { COVER_UPLOAD_TYPES, validateCoverUploadSize } from "../lib/cover-upload.js";
+import { coverUploadJobs } from "../lib/cover-upload-jobs.js";
 
 const assetRoutes = new Hono<AppEnv>();
 const ASSET_TYPES = ["image", "video", "audio", "font", "txt", "other"] as const;
@@ -307,15 +309,15 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
     return c.json({ error: "filename and contentType are required" }, 400);
   }
 
-  if (!ALLOWED_MIME_TYPES.image!.includes(body.contentType)) {
-    return c.json({ error: "Only image files allowed for thumbnails" }, 400);
+  if (!(COVER_UPLOAD_TYPES as readonly string[]).includes(body.contentType)) {
+    return c.json({ error: "Use a JPEG, PNG, GIF, WebP, MP4 or WebM cover." }, 400);
   }
 
   if (!(await verifyWorldOwnership(worldId, currentUser.id))) {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
 
-  const ext = body.filename.split(".").pop() ?? "png";
+  const ext = sanitizeFilename(body.filename.split(".").pop() ?? "png");
   // `.anim.` marks an animated cover (the uploader sniffs the file): the app
   // paints its still first frame from the CDN and fades the animation in, so a
   // Discover card is never a dark slot while the animation downloads. The
@@ -323,7 +325,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
   // animated and need no marker.
   const marker = body.animated === true && ext.toLowerCase() !== "gif" ? ".anim" : "";
   const key = `worlds/${worldId}/thumbnail/pending/${crypto.randomUUID()}${marker}.${ext}`;
-  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: validateImageUploadSize(body.sizeBytes), expiresIn: 600 });
+  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: validateCoverUploadSize(body.sizeBytes), expiresIn: 600 });
 
   return c.json({ data: { uploadUrl, key } });
 });
@@ -332,7 +334,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
 assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ key: string; target?: "portrait" | "landscape" }>();
+  const body = await c.req.json<{ key: string; target?: "portrait" | "landscape"; processingMode?: "async" }>();
 
   if (!body.key || !body.key.startsWith(`worlds/${worldId}/thumbnail/`)) {
     return c.json({ error: "Invalid thumbnail key" }, 400);
@@ -345,7 +347,10 @@ assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
   // For a published world the cover is a material change: hold it for re-review
   // instead of overwriting the live cover.
   if (!(await verifyWorldOwnership(worldId, currentUser.id))) return c.json({ error: "World not found or not authorized" }, 404);
-  const normalized = await publishStoredImage(body.key, `worlds/${worldId}/thumbnail/processed`);
+  const prefix = `worlds/${worldId}/thumbnail/processed`;
+  const normalized = body.processingMode === "async"
+    ? coverUploadJobs.poll(body.key, prefix) : await coverUploadJobs.complete(body.key, prefix);
+  if (!normalized) { c.header("Retry-After", "2"); return c.json({ code: "COVER_PROCESSING" }, 202); }
   const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: normalized.key, target: body.target, discoverPreview });
   if (!applied.ok) {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);
@@ -363,7 +368,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
 
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ assetId: string; target?: "portrait" | "landscape" }>();
+  const body = await c.req.json<{ assetId: string; target?: "portrait" | "landscape"; processingMode?: "async" }>();
 
   if (body.target !== undefined && body.target !== "portrait" && body.target !== "landscape") return c.json({ error: "Invalid cover target" }, 400);
   const discoverPreview = (await discoverAccess(currentUser.id)).enabled;
@@ -382,22 +387,22 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
   const assetRows = await db
     .select({ url: assets.url, type: assets.type })
     .from(assets)
-    .where(eq(assets.id, body.assetId));
+    .where(and(eq(assets.id, body.assetId), eq(assets.worldId, worldId)));
 
   if (assetRows.length > 0) {
-    if (assetRows[0]!.type !== "image") {
-      return c.json({ error: "Asset must be an image" }, 400);
+    if (!["image", "video"].includes(assetRows[0]!.type)) {
+      return c.json({ error: "Choose an image or video." }, 400);
     }
     s3Key = assetRows[0]!.url;
   } else {
     const userRows = await db
       .select({ url: userAssets.url, type: userAssets.type })
       .from(userAssets)
-      .where(eq(userAssets.id, body.assetId));
+      .where(and(eq(userAssets.id, body.assetId), or(eq(userAssets.userId, currentUser.id), eq(userAssets.isPublic, true))));
 
     if (userRows.length > 0) {
-      if (userRows[0]!.type !== "image") {
-        return c.json({ error: "Asset must be an image" }, 400);
+      if (!["image", "video"].includes(userRows[0]!.type)) {
+        return c.json({ error: "Choose an image or video." }, 400);
       }
       s3Key = userRows[0]!.url;
     }
@@ -407,7 +412,10 @@ assetRoutes.post("/worlds/:worldId/thumbnail/from-asset", async (c) => {
     return c.json({ error: "Asset not found" }, 404);
   }
 
-  const normalized = await publishStoredImage(s3Key, `worlds/${worldId}/thumbnail/processed`);
+  const prefix = `worlds/${worldId}/thumbnail/processed`;
+  const normalized = body.processingMode === "async"
+    ? coverUploadJobs.poll(s3Key, prefix) : await coverUploadJobs.complete(s3Key, prefix);
+  if (!normalized) { c.header("Retry-After", "2"); return c.json({ code: "COVER_PROCESSING" }, 202); }
   const applied = await applyWorldCover({ worldId, creatorId: currentUser.id, newKey: normalized.key, target: body.target, discoverPreview });
   if (!applied.ok) {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);

@@ -4,6 +4,7 @@ interface UtteranceCallbacks {
   send(event: Record<string, unknown>): void;
   capture(event: Record<string, unknown>): void;
   playback(event: AvatarPlayback): void;
+  beforePlayback?(): boolean;
   mute(value: boolean): void;
   error?(message: string): void;
   now?(): number;
@@ -19,6 +20,7 @@ interface Utterance {
   draining: boolean;
   ended: boolean;
   bytes: number;
+  audible?: boolean;
   deadline: number;
 }
 
@@ -140,6 +142,16 @@ export class AvatarUtterances {
     if (!utterance || !utterance.sent) return;
     if (event.type === "agent.speak_started") {
       if (utterance.epoch < this.latestPlaybackEpoch || this.playbackId === utterance.id) return;
+      // Revalidate just before opening the local speaker gate. A source can
+      // wait in the avatar service after its text was approved. Once audible,
+      // chunk gaps must never revalidate or cut the rest of that utterance.
+      if (!utterance.audible && this.callbacks.beforePlayback?.() === false) { this.interrupt(); return; }
+      utterance.audible = true;
+      // A later correlated source supersedes sealed earlier ones if the
+      // provider omitted their lifecycle. They cannot start under the monotonic
+      // playback rule above. Retire the debt, without claiming those words heard.
+      for(const [epoch,older] of this.utterances)if(epoch<utterance.epoch&&older.sealed)this.utterances.delete(epoch);
+      this.callbacks.queue?.(this.utterances.size);
       this.latestPlaybackEpoch = utterance.epoch; this.playbackId = utterance.id;
       utterance.ended = false;
       utterance.deadline = this.now() + 30_000 + utterance.bytes / 48;

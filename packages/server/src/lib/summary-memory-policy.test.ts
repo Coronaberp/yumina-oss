@@ -15,7 +15,7 @@ import { invalidateModelPriceCache } from './model-price-cache.js';
 
 after(async () => { await (db as unknown as { $client: { close(): Promise<void> } }).$client.close(); });
 
-const model = 'google/gemini-2.5-flash-lite';
+const model = 'google/gemini-3.1-flash-lite';
 const failedMarker = 'FAILED_SOURCE_CANARY';
 const episode = JSON.stringify({ title: 'Cafe', summary: 'The visitor waited for tea.', endingOneLine: 'The visitor remains in the cafe.', majorEvents: ['The visitor waited.'], relationshipChanges: [], decisionsAndPromises: [], goalsAndOpenThreads: ['Have tea.'], worldStateAndInventory: [], risksAndConstraints: [], keywords: ['cafe'] });
 const story = '## Story So Far\nThe visitor waits for tea.\n\n## Major Open Threads\n- Have tea.\n\n## Important Past Events\n- The visitor arrived at the cafe.';

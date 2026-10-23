@@ -91,6 +91,8 @@ export interface PresignedAssetUploadConfig {
   signal?: AbortSignal;
   onStage?: (stage: AssetUploadStage) => void;
   onReconciled?: () => void;
+  /** Cover sources are normalized before publication, so source size is not download size. */
+  normalizedByServer?: boolean;
   /**
    * When set, a raster image (not GIF/SVG) is downscaled to at most this many
    * pixels on its longest edge and re-encoded as JPEG before upload. Use for
@@ -461,6 +463,7 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   signal,
   onStage,
   onReconciled,
+  normalizedByServer = false,
   resizeImageMaxDimension,
   resizeImageQuality,
   onProgress,
@@ -479,7 +482,7 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
 
   // Warn (but don't block) on large files
   const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MB
-  if (file.size > LARGE_FILE_THRESHOLD) {
+  if (!normalizedByServer && file.size > LARGE_FILE_THRESHOLD) {
     const sizeMB = (file.size / 1024 / 1024).toFixed(1);
     console.warn(`[Upload] Large file: ${file.name} (${sizeMB}MB) — may cause slow loading for users on mobile`);
     feedback.notice(
@@ -578,21 +581,43 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
 
   signal?.throwIfAborted();
   onStage?.("register");
-  const registerTimeout = createUploadTimeout(registerTimeoutMs, signal);
+  return registerAssetWithRetry<T>(registerUrl, normalizedByServer ? { ...payload, processingMode: "async" } : payload,
+    { fetchImpl: f, timeoutMs: registerTimeoutMs, signal, credentials: registerCredentials, retryTransient: normalizedByServer });
+}
+
+/** Also used when an existing library asset needs cover normalization. */
+export async function registerAssetWithRetry<T>(registerUrl: string, payload: Record<string, unknown>, {
+  fetchImpl: f = fetch, timeoutMs = DEFAULT_REGISTER_TIMEOUT_MS, signal, credentials = "include", retryTransient = false,
+}: { fetchImpl?: typeof fetch; timeoutMs?: number; signal?: AbortSignal; credentials?: RequestCredentials; retryTransient?: boolean } = {}): Promise<T> {
+  const registerTimeout = createUploadTimeout(timeoutMs, signal);
+  const release = holdReload("upload");
+  let networkRetries = 0, busyRetries = 0;
   try {
-    for (let attempt = 0; ; attempt++) {
-      const registerResponse = await f(registerUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: registerCredentials,
-        body: JSON.stringify(payload),
-        signal: registerTimeout.signal,
-      });
+    for (;;) {
+      let registerResponse: Response;
+      try {
+        registerResponse = await f(registerUrl, {
+          method: "POST", headers: { "Content-Type": "application/json" }, credentials,
+          body: JSON.stringify(payload), signal: registerTimeout.signal,
+        });
+      } catch (error) {
+        if (!retryTransient || registerTimeout.signal.aborted || isAbortError(error) || networkRetries++ >= 1) throw error;
+        await waitForUploadRetry(1000, registerTimeout.signal);
+        continue;
+      }
 
       const registerPayload = await parseApiResponse<T>(registerResponse);
-      if (registerResponse.status === 503 && registerPayload?.code === "IMAGE_PROCESSOR_BUSY" && attempt < 10) {
+      if (registerResponse.status === 202 && registerPayload?.code === "COVER_PROCESSING") {
+        await waitForUploadRetry(2000, registerTimeout.signal);
+        continue;
+      }
+      if (registerResponse.status === 503 && registerPayload?.code === "IMAGE_PROCESSOR_BUSY" && busyRetries++ < 10) {
         const seconds = Number(registerResponse.headers.get("Retry-After") ?? 3);
         await waitForUploadRetry(Math.min(5000, Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : 3000)), registerTimeout.signal);
+        continue;
+      }
+      if (retryTransient && [502, 504].includes(registerResponse.status) && networkRetries++ < 1) {
+        await waitForUploadRetry(1000, registerTimeout.signal);
         continue;
       }
 
@@ -620,6 +645,7 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
     throw new AssetUploadError("register", `Failed to ${getStageLabel("register")}`, { cause: error });
   } finally {
     registerTimeout.cleanup();
+    release();
   }
 }
 

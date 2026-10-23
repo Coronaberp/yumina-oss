@@ -79,6 +79,9 @@ export type GraphPatch =
  *  module, until it is dragged into one or sent to all. */
 export interface GraphLayout {
   version: number;
+  /** What the creator calls the card's own tile on the canvas (「这张卡」
+   *  by default). Editor-only, like the rest of the layout. */
+  cardTitle?: string;
   nodes: Record<string, { x: number; y: number; collapsed?: boolean; pinned?: boolean; loose?: boolean }>;
   /** Sticky notes. With `on` (a canvas id: a block, a scenario's frame, an
    *  entry…) the note is stuck beside that thing and `x`/`y` are its offset

@@ -333,7 +333,7 @@ test("an AI runs whenever its creator picks, and one going behind the scenes sto
   await withInspector(world({ worldbooks: [dock, fresh] }), "module:new", {}, async ({ container, change }) => {
     const runWhen = () => container.querySelector<HTMLSelectElement>("[data-ai-run-when]")!;
     // Turn-based first: inside the type, only its own ways to run.
-    assert.deepEqual([...container.querySelectorAll("[data-ai-type-option]")].map(b => `${b.getAttribute("data-ai-type-option")}${b.getAttribute("aria-checked") === "true" ? "*" : ""}`), ["turn*", "ui", "code", "custom"]);
+    assert.deepEqual([...container.querySelectorAll("[data-ai-type-option]")].map(b => `${b.getAttribute("data-ai-type-option")}${b.getAttribute("aria-checked") === "true" ? "*" : ""}`), ["turn*", "ui", "event", "custom"]);
     assert.deepEqual([...runWhen().options].map(o => o.value), ["reply", "turns", "after"]);
     await change(runWhen(), "after");
     const after = useEditorStore.getState().worldDraft.worldbooks?.[1];
@@ -506,5 +506,38 @@ test("a prompt piece's condition value is read as its variable keeps it, and a p
   await withInspector(world({ worldbooks: [{ ...ai, station: { ...station, pieces: undefined, say: "none" } }] }), "ai:guide", {}, async ({ container }) => {
     const add = container.querySelector<HTMLButtonElement>("[data-ai-piece-add]")!;
     assert.equal(add.disabled, true, "no piece pointing at no variable");
+  });
+});
+
+test("the card's own AI shows every kind, and picking another adds that AI beside it", async () => {
+  await withInspector(world(), "ai:narrator", {}, async ({ container, click }) => {
+    const options = [...container.querySelectorAll("[data-ai-type-option]")];
+    assert.deepEqual(options.map(b => `${b.getAttribute("data-ai-type-option")}${b.hasAttribute("data-ai-type-adds") ? "+" : ""}`), ["turn", "ui+", "event+", "custom+"]);
+    assert.equal(container.textContent?.includes("blueprint.insp.openContext"), false, "Context is its own block, not a link from here");
+    const before = (a: Element | null, b: Element | null) => !!a && !!b && !!(a.compareDocumentPosition(b) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(before(container.querySelector("[role='radiogroup'][aria-label='blueprint.storyAi.sampling']"), container.querySelector("[data-ai-type-pick]")), "who sets its settings comes first");
+    const asked: unknown[] = [];
+    const onAdd = (e: Event) => asked.push((e as CustomEvent).detail);
+    dom.window.addEventListener("yumina:studio-add-ai", onAdd);
+    await click(container.querySelector("[data-ai-type-option='custom']")!);
+    dom.window.removeEventListener("yumina:studio-add-ai", onAdd);
+    assert.deepEqual(asked, [{ type: "custom" }]);
+    assert.deepEqual(useEditorStore.getState().worldDraft.worldbooks, [], "the card's own AI is left as it is");
+  });
+});
+
+test("a custom AI is declared as an interface: its call, what it is handed, what it answers, what it should do", async () => {
+  const phone = { id: "phone", name: "Phone", order: 0, host: "card", activation: { mode: "always" as const }, station: { kind: "custom" as const, name: "Mina", output: [{ name: "reply", type: "text" as const }, { name: "mood", type: "choice" as const, options: ["warm", "cold"] }] } };
+  await withInspector(world({ worldbooks: [phone] }), "ai:phone", {}, async ({ container }) => {
+    const snippet = container.querySelector("[data-ai-contract] [data-ai-call-snippet]")?.textContent ?? "";
+    assert.match(snippet, /api\.callAi\("Mina", input\)/);
+    assert.match(snippet, /mood: "warm" \| "cold"/);
+    assert.ok(container.querySelector("[data-ai-takes]"), "what it is handed");
+    assert.ok(container.querySelector("[data-ai-does]"), "what it should do, for whoever implements it");
+    assert.ok(container.querySelector("[data-ai-custom]"), "its answer format is right there");
+    assert.equal(container.querySelectorAll("[data-ai-call-snippet]").length, 1, "the call is written once");
+    const first = container.querySelector("[data-ai-model-first] [data-station-params]");
+    assert.ok(first && first.compareDocumentPosition(container.querySelector("[data-ai-type-pick]")!) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING, "who sets its settings comes first");
+    assert.equal(container.querySelectorAll("[data-station-model-fields]").length, 1, "the model is shown once");
   });
 });

@@ -1,4 +1,4 @@
-import { consumeQuietTour, quietTourRequested } from "@/lib/studio-entry";
+import { consumeHeldTour, consumeQuietTour, heldTourRequested, quietTourRequested } from "@/lib/studio-entry";
 import { isScreenFirst } from "@/lib/editor-surface";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, LocateFixed } from "lucide-react";
@@ -171,7 +171,10 @@ function BlueprintTour({ account }: { account: string }) {
   // The note is only READ here: a render can be thrown away before it
   // commits, and one that took the note with it left the mount that did
   // commit to greet over the starter.
-  const [greet] = useState(() => account !== "guest" && !readOnly && !progress.seenRelease);
+  // An existing card opened from /edit holds the welcome without spending it:
+  // greet stays false and seenRelease unwritten, so the next card they start
+  // is where it runs.
+  const [greet] = useState(() => account !== "guest" && !readOnly && !progress.seenRelease && !heldTourRequested());
   // A first visit goes straight into the first lesson: no list of what is
   // still ahead. The catalog is for after the required three.
   // The screen-first prototype opens on the player's screen; this tour teaches the board.
@@ -211,6 +214,7 @@ function BlueprintTour({ account }: { account: string }) {
   const stepRef = useRef(stepId); stepRef.current = stepId;
   const documentId = useRef(draft.id);
   const persist = useCallback((next: LearningProgress) => { writeLearningProgress(account, next); setProgress(next); }, [account]);
+  useEffect(() => { consumeHeldTour(); }, []);
   useEffect(() => {
     if (!greet) return;
     consumeQuietTour();

@@ -23,7 +23,7 @@ import { Hono } from "hono";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { createRouteHandler } from "@fal-ai/server-proxy/hono";
 import { authMiddleware } from "../middleware/auth.js";
-import { env } from "../lib/env.js";
+import { env, PUBLIC_ORIGIN } from "../lib/env.js";
 import { db, readOwn } from "../db/index.js";
 import { messages, playSessions, user, worlds } from "../db/schema.js";
 import type { AppEnv } from "../lib/types.js";
@@ -47,7 +47,8 @@ import {
   turnVideoEmbed, turnVideoKeyOf, turnVideoPath, type FilmState, type TurnClipFailure, type TurnClipJob, type TurnClipProgress,
 } from "../lib/realtime-video/turn-clip.js";
 import { stripTurnImages } from "../lib/per-turn-image/illustrate.js";
-import { keyframeGraph, keyframePrompt, plateGraph, platePrompt } from "../lib/realtime-video/keyframes.js";
+import { keyframeGraph, keyframePrompt, plateGraph, platePrompt, plateRefGraph, plateRefPrompt, silentShot, softBlush } from "../lib/realtime-video/keyframes.js";
+import { asCamera, describedCast, matchPortraits, namedCharacters, playerEntries, portraitEntries, type CastMember, type CharacterNames } from "../lib/realtime-video/portraits.js";
 import { messageContentUpdate } from "../lib/message-edit.js";
 import { getObjectBuffer, putObject } from "../lib/s3.js";
 import { acquireConcurrency, releaseConcurrency } from "../middleware/rate-limit.js";
@@ -211,7 +212,12 @@ const SHOT_FORMATS: Record<string, string> = {
   structured: `- Then exactly these labelled parts on one line each: SUBJECT (cast description verbatim) | ACTION | EXPRESSION | CAMERA (framing + move) | SETTING | LIGHT | SOUND.
 - 60–110 words, English.`,
   /** One ~5 s shot of a message's film (the script mode of directTurn). */
-  shot: `- Then: who is on screen, each named with their cast description pasted verbatim (never just "a girl" for someone in the cast), the one action of this shot with its expression, the framing and camera angle, the place and light, and its sound (ambience, or the one line spoken in it).
+  // Every shot of a film starts from a picture (the plate, a keyframe or the previous shot's last
+  // frames) that already shows who is there and how they look. Looks written into the shot fought
+  // that picture: the video model pulled back to a full-body shot to show the listed shoes and socks,
+  // and painted "ears blazing red" as a glowing red patch (2026-10-19, same frame and seed with and
+  // without the looks). A shot that has to render from text alone gets the cast's looks pasted in.
+  shot: `- Then: who is on screen, by name only (never just "a girl" for someone in the cast, and never their looks or clothing: the picture already shows them), the one action of this shot with its expression, the framing and camera angle, and its sound (ambience, or the one line spoken in it).
 - 40–80 words, English, literal and physical, no metaphors. About five seconds of film: one action, not a sequence.`,
 };
 
@@ -226,9 +232,10 @@ const SHOT_RULES = (style: string, format = "temporal", look?: string | null) =>
 - Every shot starts with this exact sentence: ${styleSentence(style, look)}
 ${SHOT_FORMATS[format] ?? SHOT_FORMATS.temporal}
 - Only what can be seen and heard. No inner thoughts.
-- The player ("you") is always first-person POV; never draw the player as a person.
+- The player ("you") is always first-person POV; never draw the player as a person, and never name them in a shot or a scene state: they are "you", the camera. The player has no reflection: no mirror, window or water ever shows "you".
 - Keep location and lighting continuous unless the story clearly moves.
 - No readable text, captions or titles on screen.
+- A blush is only ever a faint blush: never colour anyone's skin, face or ears red, crimson or scarlet.
 - Every spoken line is Japanese, written in Japanese inside 「」 (e.g. she whispers in Japanese: 「逃げて」). Never write dialogue in English or any other language.`;
 
 /** The stream speaks whatever language the prompt quotes, and directors still slip English lines
@@ -319,6 +326,7 @@ realtimeVideoRoutes.post("/realtime-video/opening", async (c) => {
   const world = await loadWorldSchema(userId, body.sessionId);
   if (!world) return c.json({ error: "session not found" }, 404);
   const lore = characterNotes(world.schema);
+  const portraits = portraitEntries(world.schema).map((e) => e.name);
   const n = Math.min(10, Math.max(3, Number(body.beats) || 7));
   if (!(await canAffordFilm(userId, 1))) return c.json(NO_CREDITS, 402);
   const model = await pickModel(userId, body.model, OPENING_MODEL);
@@ -330,7 +338,7 @@ realtimeVideoRoutes.post("/realtime-video/opening", async (c) => {
     const out = await callDirector(
       `You direct a realtime video stream for the interactive story "${world.name}". A video model renders one continuous stream, about 8 seconds per shot.
 
-1. "cast": for every named person who appears in the opening or is clearly central, write a one-line English visual description (age, build, hair, eyes, clothing). Base it strictly on the character notes.${body.format === "lock" ? " Make each look unmistakable: name the hair length, colour and cut, eye colour, exact outfit, and give every person one signature detail no one else has (an accessory, a scar, a hair clip) so a video model can tell them apart and keep them the same." : ""} Format: {"name":"…","look":"…"}.
+1. "cast": for every named person who appears in the opening or is clearly central, write a one-line English visual description (${LOOK_FIELDS}). Base it strictly on the character notes.${body.format === "lock" ? " Make each look unmistakable: name the hair length, colour and cut, eye colour, exact outfit, and give every person one signature detail no one else has (an accessory, a scar, a hair clip) so a video model can tell them apart and keep them the same." : ""} Format: {"name":"…","look":"…"${portraits.length ? ',"entry":"<only for a character with a reference picture: their label>"' : ""}}.${portraitNote(portraits, await characterNames(world.schema, bill))}
 2. "scenes": every distinct place/time in the opening, in order of first appearance. Each = {"id":"S1","sheet": one English paragraph: the place, time of day, light and weather, and who is usually there with their look}.
 3. "beats": split the opening text into exactly ${n} consecutive shots in order. Each beat = {"text": the exact passage of the opening this shot films, copied verbatim from its first sentence to its last, "scene": the scene id, "shot": the camera direction}. Consecutive beats continue where the previous one stopped, so together they cover the whole opening with nothing skipped; give a beat more text rather than leave text out. The shot films what its passage says, in the passage's order. When a beat moves to a different scene, its shot starts with "Hard cut to:" followed by that scene's sheet. Exception: if the story gets there by blacking out, fainting, falling asleep or waking up, it is not a hard cut. The beat before ends with the picture slowly fading to black as consciousness goes, and the new scene's shot starts with "Fade in from black:" then blurred, slowly focusing first-person vision of that scene's sheet. Within one scene the beats are one continuous take: each shot starts from where the previous one ended and moves the camera to the new action, with no new establishing description and no jump to another angle. Transitions the story describes (mist filling a room, someone fainting, waking up somewhere) get their own beat, so the film shows how one place leads to the next. Do not merge two different speakers or events into one shot if it makes a character do another character's action. Whatever language the opening is written in, the film is Japanese: when a shot has someone speak, translate their line into natural Japanese and write it in 「」; never copy a line from the opening into a shot untranslated.
 
@@ -345,7 +353,7 @@ Output JSON only: {"cast":[…],"scenes":[…],"beats":[…]}`,
       model,
       bill,
     );
-    const cast = (Array.isArray(out.cast) ? out.cast : []) as { name: string; look: string }[];
+    const cast = castFrom(out.cast, portraits);
     const beats = (Array.isArray(out.beats) ? out.beats : []) as { text?: string; shot?: string; scene?: string }[];
     for (const b of beats) if (typeof b?.shot === "string") b.shot = withVoice(withStyle(pinLooks(b.shot, cast), body.style, look));
     return c.json({ cast, scenes: out.scenes ?? [], beats, coverUrl, look, ms: Date.now() - t0, model, credits: bill.credits });
@@ -357,7 +365,7 @@ Output JSON only: {"cast":[…],"scenes":[…],"beats":[…]}`,
 /** What the director needs to film one turn. */
 type DirectInput = {
   sessionId?: string;
-  style?: string; cast?: { name: string; look: string }[]; userText?: string; aiText: string; prevShot?: string;
+  style?: string; cast?: CastMember[]; userText?: string; aiText: string; prevShot?: string;
   model?: string; scenes?: SceneCard[]; currentScene?: string; format?: string;
   /** The cover's look in words (from /opening), for style "source". */
   look?: string | null;
@@ -373,6 +381,10 @@ type DirectInput = {
   prevState?: string;
   /** The card's character notes, for looks while the cast is still empty. */
   notes?: string;
+  /** The card's characters with a portrait, by entry name: a new cast member who is one of them names it in `entry`. */
+  portraits?: string[];
+  /** Their English names (characterNames), so every shot calls each by the same one. */
+  portraitNames?: CharacterNames;
   /** Script mode (a film per message): the director decides how many ~5 s shots the reply needs,
    *  up to maxBeats, cutting between camera angles; `ownShot` is the card's own direction. */
   script?: { ownShot?: string };
@@ -380,8 +392,30 @@ type DirectInput = {
 /** take "same": the shot carries on the previous shot's movement as one unbroken take (script mode). */
 type DirectedBeat = { text: string; shot: string; transition: "continue" | "cut" | "return"; scene: string | null; sheet: string | null; take: "new" | "same" };
 
+/** What every cast look names, so a video model draws the same person each time. Without the
+ *  hair length a "platinum hair pulled back" heroine came out short-haired, and without the gender
+ *  she came out as a boy (prod 2026-10-19). */
+const LOOK_FIELDS = "gender, apparent age, build, hair length, hair colour and hairstyle, eye colour, clothing, one signature detail";
+
+/** The director's note on which characters have a reference picture. */
+function portraitNote(portraits?: string[], names: CharacterNames = {}): string {
+  if (!portraits?.length) return "";
+  // One English name each, the same everywhere: a scene state that called her "Draco Malfoy" beside
+  // her portrait got a second person drawn (2026-10-19).
+  const called = portraits.map((n) => (names[n]?.[0] ? `"${n}" (always call them ${names[n]![0]}, in every shot and scene state)` : `"${n}"`));
+  return `
+These characters have a reference picture. When one of them joins the cast, set "entry" to their label exactly as written here: ${called.join(", ")}.`;
+}
+
+/** Cast members from the director's JSON; `entry` is kept only when it names a portrait. */
+function castFrom(list: unknown, portraits?: string[]): CastMember[] {
+  return (Array.isArray(list) ? list : [])
+    .filter((p): p is CastMember => !!p && typeof p.name === "string" && typeof p.look === "string" && !!p.name && !!p.look)
+    .map((p) => ({ name: p.name, look: p.look, ...(typeof p.entry === "string" && portraits?.includes(p.entry) ? { entry: p.entry } : {}) }));
+}
+
 /** Turn one story reply into camera directions (/shot, and the clip per message). */
-async function directTurn(body: DirectInput, bill: FilmBill): Promise<{ beats: DirectedBeat[]; newCast: { name: string; look: string }[]; state?: string; states: Record<string, string> }> {
+async function directTurn(body: DirectInput, bill: FilmBill): Promise<{ beats: DirectedBeat[]; newCast: CastMember[]; state?: string; states: Record<string, string> }> {
   const partNote = body.part === "start"
     ? "\n\n(The story reply is still being written; this is its beginning. Film its first visible moment.)"
     : body.part === "rest"
@@ -401,7 +435,7 @@ async function directTurn(body: DirectInput, bill: FilmBill): Promise<{ beats: D
   const filming = body.script
     ? `write the film of it as a script of shots, about five seconds each.
 COVERAGE: the script films the WHOLE reply, from its first visible event to its last, in story order. The beginning is never skipped and no stretch of the reply goes unfilmed: every paragraph that shows something new is inside some shot's passage. This reply needs at least ${minShots} and at most ${maxBeats} shots.
-SCENES: one place is one scene. Inside a scene every shot is in the same room, with the same people, in the poses and the state of dress the story gives them at that moment. When the reply moves to another place (a ceremony, then waking up somewhere else), that is a new scene, filmed after the first, in order. For every scene write its scene state ("states", by scene id): one English paragraph with the exact place (the room, its furniture and where things are), the light, and for each person on screen their look, what they are wearing right now (or that they are undressed), their pose and where they are relative to each other. "state" repeats the scene state of the scene the reply ends in. When the story is still where the previous scene state left it, start from that state and change only what the story changed. Every shot of a scene repeats that scene's place, light, people, clothing and poses (after the style sentence) before its camera angle and action; a shot never contradicts it (no clothes coming back on, no different room, no other people).
+SCENES: one place is one scene. Inside a scene every shot is in the same room, with the same people, in the poses and the state of dress the story gives them at that moment. When the reply moves to another place (a ceremony, then waking up somewhere else), that is a new scene, filmed after the first, in order. For every scene write its scene state ("states", by scene id): one English paragraph with the exact place (the room, its furniture and where things are), the light, and for each person on screen what they are wearing right now (or that they are undressed), their pose and where they are relative to each other; describe the face, hair and body only of someone who has no reference picture (the picture shows the others), and do describe them, in every scene state they are in. Write nothing about where the player ("you") stands or what they carry: the picture is seen through their eyes. "state" repeats the scene state of the scene the reply ends in. When the story is still where the previous scene state left it, start from that state and change only what the story changed. The scene state holds the place, light, clothing and poses, and every shot of the scene starts from a picture drawn from it, so a shot does not repeat them: it names who is in it and gives its own camera angle, action, expression and sound, and never contradicts the state (no clothes coming back on, no different room, no other people).
 SHOTS: count shots by visible action, not by sentence. A spoken line, a sound, a moan or an inner reaction belongs to the action shot it happens in and never gets a shot of its own; a long stretch of continued action gets several shots, about one per paragraph that shows something new. Cut between camera angles inside a scene the way a film editor does (wide, close-up, reverse shot, the player's first-person view). The player is the camera: never show the player's face or body from outside, only their hands and what they see. Mark a shot "take":"same" only when it must carry on the previous shot's movement as one unbroken take (the previous shot of this turn, or for the first shot the previous shot below); otherwise "take":"new".${body.script.ownShot ? `\nThe story's author wrote this camera direction for the turn; follow it, cut into shots:\n${body.script.ownShot}` : ""}`
     : body.maxBeats === 1
     ? "film it in exactly 1 shot of about ten seconds: its key visible moment (the main event the reply is about, as far as it has gone) with the action that leads into it. Do not try to show everything."
@@ -420,14 +454,14 @@ Before choosing "cut", check the scene list: if the story is in the same kind of
 
 ${SHOT_RULES(body.style ?? "live", body.format, look)}
 
-Cast (paste the description of whoever is on screen):
+${body.script ? "Cast (who they are and how they look; a shot names them and does not repeat their look):" : "Cast (paste the description of whoever is on screen):"}
 ${cast || "(none yet)"}
-A named person who is on screen but not in the cast: add them to "newCast" with a one-line English look (age, build, hair, eyes, clothing, one signature detail) taken from the ${body.notes ? "character notes when they have one, otherwise the story" : "story"}, and paste that same look in every shot they are in.
+A named person who is on screen but not in the cast: add them to "newCast" with a one-line English look (${LOOK_FIELDS}) taken from the ${body.notes ? "character notes when they have one, otherwise the story" : "story"}${body.script ? "" : ", and paste that same look in every shot they are in"}.${portraitNote(body.portraits, body.portraitNames)}
 ${body.notes ? `\nCharacter notes:\n${body.notes}\n` : ""}
 Scene list:
 ${sceneList}
 
-Output JSON only: {${body.script ? '"state":"<the scene state the reply ends in>","states":{"<scene id>":"<its scene state>"},' : ""}"newCast":[{"name":"…","look":"…"}],"beats":[{"passage":"<sentences copied word for word from the story reply: the part this shot films, from its first sentence to its last>","transition":"continue|cut|return","scene":"<scene id>","sheet":"<only for cut>",${body.script ? '"take":"new|same",' : ""}"shot":"<the camera direction, following the shot rules>"}]}
+Output JSON only: {${body.script ? '"state":"<the scene state the reply ends in>","states":{"<scene id>":"<its scene state>"},' : ""}"newCast":[{"name":"…","look":"…"${body.portraits?.length ? ',"entry":"<only for a character with a reference picture: their label>"' : ""}}],"beats":[{"passage":"<sentences copied word for word from the story reply: the part this shot films, from its first sentence to its last>","transition":"continue|cut|return","scene":"<scene id>","sheet":"<only for cut>",${body.script ? '"take":"new|same",' : ""}"shot":"<the camera direction, following the shot rules>"}]}
 The passage is the story text itself, never the camera direction.${extra}`,
     `Story so far (most recent last):
 ${(body.recent ?? "").slice(-2500) || "(the opening)"}
@@ -476,12 +510,15 @@ Your last answer had only ${first} shot${first === 1 ? "" : "s"} and skipped mos
     return { text: isDirection(passage) ? "" : passage, shot: String(b.shot), transition, scene: id, sheet: transition === "cut" && typeof b.sheet === "string" ? b.sheet : null, take: b.take === "same" ? "same" : "new" };
   });
   if (!beats.length) throw new Error(`the director wrote no shot: ${JSON.stringify(out).slice(0, 600)}`);
-  const newCast = (Array.isArray(out.newCast) ? out.newCast : [])
-    .filter((p): p is { name: string; look: string } => !!p && typeof p.name === "string" && typeof p.look === "string" && !!p.name && !!p.look)
-    .filter((p) => !(body.cast ?? []).some((k) => k.name === p.name))
+  const newCast = castFrom(out.newCast, body.portraits)
+    // One cast member per portrait: a later film named her 「德拉科妮娅·马尔福」 after the first had
+    // named her Draconia Malfoy, and she got a second look.
+    .filter((p) => !(body.cast ?? []).some((k) => k.name === p.name || (!!p.entry && k.entry === p.entry)))
     .slice(0, 6);
   const everyone = [...(body.cast ?? []), ...newCast];
-  for (const b of beats) b.shot = withVoice(withStyle(pinLooks(b.shot, everyone), body.style, look));
+  // A script's shots name people without their looks (SHOT_FORMATS.shot); renderShot pastes them
+  // in only for a shot that renders from text alone.
+  for (const b of beats) b.shot = withVoice(withStyle(body.script ? b.shot : pinLooks(b.shot, everyone), body.style, look));
   // A script plays in story order whatever order the director wrote it in: each shot sits where
   // its passage is in the reply (a reordered take can no longer carry on the shot before it).
   if (body.script && beats.length > 1) {
@@ -563,34 +600,87 @@ async function uploadToComfy(bytes: Uint8Array, type: string, name: string): Pro
 const refAssets = new Map<string, { id: string; at: number }>();
 const uploadPortraitAsset = async (bytes: Uint8Array, type: string, name: string) => uploadFilmAsset(bytes, type, name);
 
-/** Characters with a portrait who are named in the shot, in the order they appear (max 3).
+const REF_MAX_BYTES = 12 * 1024 * 1024;
+/** Covers and portraits are author-written URLs: the server only fetches the ones on our own CDN
+ *  (an `@asset:`/key reference resolves there), never an address an author typed in. */
+function ownCdnUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.origin === new URL(PUBLIC_ORIGIN).origin && u.pathname.startsWith("/cdn/");
+  } catch {
+    return false;
+  }
+}
+
+/** A picture of the card (portrait or cover) as a graph input, uploaded once per server: a Comfy
+ *  Cloud input file, or a film deployment asset id. Null when it cannot be fetched. */
+async function refImage(url: string, onDeploy: boolean): Promise<string | null> {
+  if (!ownCdnUrl(url)) return null;
+  const known = onDeploy ? refAssets.get(url) : null;
+  let image = onDeploy ? (known && Date.now() - known.at < 12 * 3600_000 ? known.id : undefined) : refUploads.get(url);
+  if (image) return image;
+  const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) return null;
+  const type = res.headers.get("content-type")?.split(";")[0] ?? "";
+  if (!type.startsWith("image/") || Number(res.headers.get("content-length") ?? 0) > REF_MAX_BYTES) return null;
+  const name = `rtv-ref-${refUploads.size + refAssets.size}-${Date.now()}.${type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg"}`;
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length > REF_MAX_BYTES) return null;
+  image = onDeploy ? await uploadPortraitAsset(bytes, type, name) : await uploadToComfy(bytes, type, name);
+  if (onDeploy) refAssets.set(url, { id: image, at: Date.now() });
+  else refUploads.set(url, image);
+  return image;
+}
+
+/** The card's cover as a style reference for a plate (style "source" only). */
+async function coverRef(coverUrl: string | null): Promise<string | null> {
+  return coverUrl ? refImage(coverUrl, false).catch(() => null) : null;
+}
+
+// Character labels -> their English names, per card (by the labels and the start of each entry).
+const characterNameCache = new Map<string, Promise<CharacterNames>>();
+/** The English names a film's shots call the card's portrait characters and the player by. A
+ *  Chinese card's labels never appear in an English shot, and the director's own tagging missed
+ *  her in one film of two (2026-10-19); one small call per card, cached, makes it deterministic. */
+function characterNames(schema: unknown, bill?: FilmBill): Promise<CharacterNames> {
+  const who = namedCharacters(schema);
+  if (!who.length) return Promise.resolve({});
+  const key = who.map((c) => `${c.name}:${c.content.slice(0, 200)}`).join("|");
+  let names = characterNameCache.get(key);
+  if (!names) {
+    if (characterNameCache.size > 300) characterNameCache.clear();
+    names = callDirector(
+      `For each character of an interactive story, list the names an English text calls them by: their full name in English and their given name in English, and a well-known nickname if they have one. Never the family name alone, never a title. Output JSON only: {"<character label exactly as given>": ["…", …], …}`,
+      who.map((c) => `Label: ${c.name}\n${c.content.slice(0, 400)}`).join("\n\n"), 400, DIRECTOR_MODEL, bill,
+    ).then((out) => {
+      const res: CharacterNames = {};
+      for (const c of who) {
+        const list = (out as Record<string, unknown> | null)?.[c.name];
+        res[c.name] = Array.isArray(list) ? list.filter((n): n is string => typeof n === "string" && n.trim().length >= 3).map((n) => n.trim()).slice(0, 6) : [];
+      }
+      return res;
+    }).catch((e) => {
+      console.warn("[Film] character names failed:", e instanceof Error ? e.message : e);
+      characterNameCache.delete(key);
+      return {};
+    });
+    characterNameCache.set(key, names);
+  }
+  return names;
+}
+
+/** Characters with a portrait who are in the shot, in the order they appear (max 3).
  *  `image` is what the graph's LoadImage names: a Comfy Cloud input file, or a film deployment asset id. */
-async function portraitRefs(userId: string, sessionId: string, prompt: string, onDeploy = false): Promise<{ name: string; image: string }[]> {
+async function portraitRefs(userId: string, sessionId: string, prompt: string, onDeploy = false, cast: CastMember[] = []): Promise<{ name: string; image: string; url: string }[]> {
   const world = await loadWorldSchema(userId, sessionId);
   if (!world) return [];
-  const entries = ((world.schema as { entries?: (Entry & { portrait?: string })[] }).entries ?? []).filter((e) => e.enabled !== false && e.portrait && e.name);
-  const named = entries
-    .map((e) => ({ e, at: prompt.indexOf(e.name!) }))
-    .filter((x) => x.at >= 0)
-    .sort((a, b) => a.at - b.at)
-    .slice(0, 3);
-  const out: { name: string; image: string }[] = [];
-  for (const { e } of named) {
-    const url = resolveImageCdn(e.portrait);
+  const out: { name: string; image: string; url: string }[] = [];
+  const names = await characterNames(world.schema);
+  for (const { entry, name } of matchPortraits(portraitEntries(world.schema), prompt, cast, names)) {
+    const url = resolveImageCdn(entry.portrait);
     if (!url) continue;
-    const known = onDeploy ? refAssets.get(url) : null;
-    let image = onDeploy ? (known && Date.now() - known.at < 12 * 3600_000 ? known.id : undefined) : refUploads.get(url);
-    if (!image) {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) continue;
-      const type = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
-      const name = `rtv-ref-${refUploads.size + refAssets.size}-${Date.now()}.${type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg"}`;
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      image = onDeploy ? await uploadPortraitAsset(bytes, type, name) : await uploadToComfy(bytes, type, name);
-      if (onDeploy) refAssets.set(url, { id: image, at: Date.now() });
-      else refUploads.set(url, image);
-    }
-    out.push({ name: e.name!, image });
+    const image = await refImage(url, onDeploy);
+    if (image) out.push({ name, image, url });
   }
   return out;
 }
@@ -951,16 +1041,30 @@ async function renderTurnClip(
   // The director writes the script: how many shots, where, and which carry on the one before.
   // A card that films itself wrote its own direction, which the director follows.
   const ownShot = SHOT_TAG_RE.exec(msg.content)?.[1]?.trim();
+  const names = await characterNames(world.schema, bill);
   const directed = await directTurn({
     sessionId, style, look, cast: film.cast, userText, aiText: reply, prevShot: film.prevShot || undefined, prevState: film.state,
     scenes: film.scenes, currentScene: film.currentScene ?? undefined, recent, maxBeats: TURN_FILM_MAX_SHOTS, format: "shot",
     script: ownShot ? { ownShot } : {},
     ...(film.cast.length ? {} : { notes: characterNotes(world.schema) }),
+    portraits: portraitEntries(world.schema).map((e) => e.name),
+    portraitNames: names,
   }, bill);
+  // The player is the camera: named in a shot or a scene state, pictures drew him in.
+  const player = playerEntries(world.schema).flatMap((e) => names[e.name] ?? []);
+  if (player.length) {
+    for (const b of directed.beats) b.shot = asCamera(b.shot, player);
+    for (const id of Object.keys(directed.states)) directed.states[id] = asCamera(directed.states[id]!, player);
+    if (directed.state) directed.state = asCamera(directed.state, player);
+  }
   const cast = [...film.cast, ...directed.newCast];
   const prev = film.lastClip;
+  // A shot that carries on another renders on the deployment, where the clip it continues lives.
+  // While no worker is warm the whole film is new angles on the shared pool (each with its
+  // keyframe), rather than a continuation waiting minutes for a worker to boot.
+  const canContinue = filmDeployWarm();
   const plan: PlannedShot[] = directed.beats.map((beat, i) => {
-    if (beat.take !== "same") return { beat, after: null, guideKey: null };
+    if (beat.take !== "same" || !canContinue) return { beat, after: null, guideKey: null };
     if (i > 0) return { beat, after: i - 1, guideKey: null };
     // The first shot carries on the previous message's last clip in the same scene.
     const continues = prev && prev.messageId !== msg.id && prev.scene === beat.scene && prev.depth < TURN_CLIP_MAX_CHAIN;
@@ -983,7 +1087,7 @@ async function renderTurnClip(
   const leave = () => { free++; waiting.shift()?.(); };
   let broke = false;
   const tasks: Promise<RenderedShot | null>[] = [];
-  const keyframes = filmKeyframes(userId, sessionId, plan, directed, style, look, bill);
+  const keyframes = filmKeyframes(userId, sessionId, plan, directed, style, look, bill, cast, resolveImageCdn(world.thumbnailUrl));
   plan.forEach((p, i) => {
     tasks.push((async () => {
       const parent = p.after != null ? await tasks[p.after]! : null;
@@ -1034,9 +1138,50 @@ async function renderTurnClip(
   return { content, credits: bill.credits };
 }
 
-/** A shot without the style sentence it opens with (a picture prompt states the look itself). */
-function withoutStyle(shot: string): string {
+/** A shot without the style sentence it opens with (a picture prompt states the look itself).
+ *  A cover's look runs to two sentences ("…soft cel-shading. Not a sketch, not a 3D model."): cut
+ *  at the first full stop it left the "not a 3D model" in every keyframe prompt and took the anime out. */
+export function withoutStyle(shot: string, styleLine?: string): string {
+  if (styleLine && shot.includes(styleLine)) return shot.replace(styleLine, "").trim();
   return shot.replace(/^\s*Visual style:.*?\.(\s|$)/i, "").trim();
+}
+
+/** How a scene's plate is drawn, and from which portraits. Who is in the scene with a portrait
+ *  (named in `state` or `who`, its first shot): their portraits are the references, for looks and
+ *  style alike. A card's cover only stands in when nobody has one: it brings its own people along
+ *  (the player turned up in 4 of 4 plates drawn with it, 2026-10-19). Else text alone, as before. */
+async function platePlan(
+  userId: string, sessionId: string, style: string, styleLine: string, state: string, who: string, cast: CastMember[], coverUrl: string | null,
+): Promise<{ graph: (seed: number) => Record<string, unknown>; faces: { name: string; url: string }[] }> {
+  const faces = (await portraitRefs(userId, sessionId, `${state} ${who}`, false, cast).catch(() => [])).slice(0, 3);
+  const others = describedCast(cast, `${state} ${who}`);
+  if (faces.length) {
+    const prompt = plateRefPrompt(styleLine, state, false, faces.map((f) => f.name), others);
+    return { graph: (seed) => plateRefGraph(faces.map((f) => f.image), prompt, seed), faces };
+  }
+  const cover = style === "source" ? await coverRef(coverUrl) : null;
+  if (cover) return { graph: (seed) => plateRefGraph([cover], plateRefPrompt(styleLine, state, true, [], others), seed), faces: [] };
+  return { graph: (seed) => plateGraph(platePrompt(styleLine, state, others), seed), faces: [] };
+}
+
+/** Which of a scene's candidate plates to keep. A plate drawn from portraits still draws someone
+ *  twice or adds a person about one time in three (2026-10-19), and every shot of the scene starts
+ *  from it, so two are drawn side by side and a vision model keeps the better one. 0 when unsure. */
+async function pickPlate(plates: Uint8Array[], faces: { name: string; url: string }[], scene: string, bill: FilmBill): Promise<number> {
+  if (plates.length < 2) return 0;
+  const content: UserContent = [
+    { type: "text", text: `The scene: ${silentShot(scene)}` },
+    { type: "text", text: faces.length ? `Reference pictures, in order: ${faces.map((f) => f.name).join(", ")}.` : "No reference pictures." },
+    ...faces.map((f) => ({ type: "image_url" as const, image_url: { url: f.url } })),
+    { type: "text", text: `Candidates, in order, numbered from 0 to ${plates.length - 1}:` },
+    ...plates.map((b) => ({ type: "image_url" as const, image_url: { url: `data:image/png;base64,${Buffer.from(b).toString("base64")}` } })),
+  ];
+  const out = await callDirector(
+    `You choose the establishing picture of a film scene, seen through the player's own eyes. For each candidate check: does each person from the reference pictures appear exactly once (not twice, not as a reflection or a second copy); is anyone there whom the scene does not name (an extra person, or someone seen from behind in the foreground as if they were the camera); does each of them look like their reference picture (face, hair length and colour, clothing); no text, no broken hands or faces. Keep the candidate with the fewest problems. Output JSON only: {"best": <candidate number>}`,
+    content, 200, DIRECTOR_MODEL, bill,
+  ).catch((e) => { console.warn("[TurnClip] plate pick failed:", e instanceof Error ? e.message : e); return null; });
+  const best = Number(out?.best);
+  return Number.isInteger(best) && best >= 0 && best < plates.length ? best : 0;
 }
 
 /** A keyframe or plate on the shared pool; past this the shot renders from text instead. */
@@ -1050,11 +1195,11 @@ const KEYFRAME_DEADLINE_MS = 150_000;
  */
 function filmKeyframes(
   userId: string, sessionId: string, plan: PlannedShot[], directed: { state?: string; states: Record<string, string> },
-  style: string, look: string | null, bill: FilmBill,
+  style: string, look: string | null, bill: FilmBill, cast: CastMember[] = [], coverUrl: string | null = null,
 ): Promise<Uint8Array | null>[] {
   if (process.env.REALTIME_FILM_KEYFRAMES === "0") return plan.map(() => Promise.resolve(null));
   const styleLine = styleSentence(style, look);
-  const noStyle = withoutStyle;
+  const noStyle = (shot: string) => withoutStyle(shot, styleLine);
   const lastScene = plan[plan.length - 1]?.beat.scene ?? null;
   const charge = async (out: { execMs: number; promptId: string }, what: string) => {
     bill.credits += await chargeFilm({
@@ -1062,16 +1207,23 @@ function filmKeyframes(
       referenceId: `film-key:${out.promptId}`, description: `Scene video — ${what} ${(out.execMs / 1000).toFixed(1)} GPU s`,
     });
   };
-  const plates = new Map<string, Promise<{ name: string; bytes: Uint8Array } | null>>();
+  const plates = new Map<string, Promise<{ name: string; bytes: Uint8Array; portraits: string[] } | null>>();
   const plateFor = (scene: string | null, firstShot: string) => {
     const key = scene ?? "-";
     if (!plates.has(key)) {
       plates.set(key, (async () => {
         const state = (scene && directed.states[scene]) || (scene === lastScene ? directed.state : undefined) || noStyle(firstShot);
-        const out = await renderOnPool(plateGraph(platePrompt(styleLine, state), Math.floor(Math.random() * 1e9)), Date.now() + KEYFRAME_DEADLINE_MS, ".png");
-        await charge(out, "scene plate");
-        const bytes = new Uint8Array(out.bytes);
-        return { name: await uploadToComfy(bytes, "image/png", `rtv-plate-${crypto.randomUUID()}.png`), bytes };
+        const plan = await platePlan(userId, sessionId, style, styleLine, state, noStyle(firstShot), cast, coverUrl);
+        const drawn = (await Promise.all([0, 1].map(() =>
+          renderOnPool(plan.graph(Math.floor(Math.random() * 1e9)), Date.now() + KEYFRAME_DEADLINE_MS, ".png").catch((e) => {
+            console.warn("[TurnClip] scene plate failed:", e instanceof Error ? e.message : e);
+            return null;
+          }),
+        ))).filter((o) => o !== null);
+        if (!drawn.length) return null;
+        for (const out of drawn) await charge(out, "scene plate");
+        const bytes = new Uint8Array(drawn[await pickPlate(drawn.map((o) => new Uint8Array(o.bytes)), plan.faces, state, bill)]!.bytes);
+        return { name: await uploadToComfy(bytes, "image/png", `rtv-plate-${crypto.randomUUID()}.png`), bytes, portraits: plan.faces.map((f) => f.url) };
       })().catch((e) => { console.warn("[TurnClip] scene plate failed:", e instanceof Error ? e.message : e); return null; }));
     }
     return plates.get(key)!;
@@ -1092,8 +1244,10 @@ function filmKeyframes(
       if (!plateOut) return null;
       if (opening.has(i)) return plateOut.bytes;
       const plate = plateOut.name;
-      const faces = (await portraitRefs(userId, sessionId, p.beat.shot).catch(() => [])).slice(0, 2);
-      const out = await renderOnPool(keyframeGraph(plate, faces.map((f) => f.image), keyframePrompt(noStyle(p.beat.shot), faces.map((f) => f.name)), Math.floor(Math.random() * 1e9)),
+      // The plate has its people's faces; only someone it lacks brings a portrait (keyframePrompt).
+      const joining = (await portraitRefs(userId, sessionId, p.beat.shot, false, cast).catch(() => [])).filter((f) => !plateOut.portraits.includes(f.url)).slice(0, 2);
+      const people = describedCast(cast, p.beat.shot, 3, true).filter((d) => !joining.some((f) => f.name === d.name));
+      const out = await renderOnPool(keyframeGraph(plate, joining.map((f) => f.image), keyframePrompt(noStyle(p.beat.shot), joining.map((f) => f.name), people), Math.floor(Math.random() * 1e9)),
         Date.now() + KEYFRAME_DEADLINE_MS, ".png");
       await charge(out, "keyframe");
       return new Uint8Array(out.bytes);
@@ -1102,7 +1256,7 @@ function filmKeyframes(
 }
 
 /** Scene plates for fal streams, by session and scene (pool image names; an hour is plenty). */
-const falPlates = new Map<string, { name: string; at: number }>();
+const falPlates = new Map<string, { name: string; at: number; portraits: string[] }>();
 
 /**
  * A frame that pins a fal stream's look (owner, 2026-10-09: players saw fal characters change).
@@ -1132,15 +1286,17 @@ realtimeVideoRoutes.post("/realtime-video/keyframe", async (c) => {
     const plateKey = `${sessionId}:${body.scene ?? "-"}`;
     let plate = falPlates.get(plateKey);
     if (!plate || Date.now() - plate.at > 3600_000) {
-      const state = [body.sheet, withoutStyle(shot)].filter(Boolean).join(" ");
-      const out = await renderOnPool(plateGraph(platePrompt(styleLine, state), Math.floor(Math.random() * 1e9)), Date.now() + KEYFRAME_DEADLINE_MS, ".png");
+      const state = [body.sheet, withoutStyle(shot, styleLine)].filter(Boolean).join(" ");
+      const world = style === "source" ? await loadWorldSchema(userId, sessionId) : null;
+      const plan = await platePlan(userId, sessionId, style, styleLine, state, "", [], resolveImageCdn(world?.thumbnailUrl ?? null));
+      const out = await renderOnPool(plan.graph(Math.floor(Math.random() * 1e9)), Date.now() + KEYFRAME_DEADLINE_MS, ".png");
       await charge(out, "scene plate");
-      plate = { name: await uploadToComfy(new Uint8Array(out.bytes), "image/png", `rtv-plate-${crypto.randomUUID()}.png`), at: Date.now() };
+      plate = { name: await uploadToComfy(new Uint8Array(out.bytes), "image/png", `rtv-plate-${crypto.randomUUID()}.png`), at: Date.now(), portraits: plan.faces.map((f) => f.url) };
       falPlates.set(plateKey, plate);
       if (falPlates.size > 500) falPlates.delete(falPlates.keys().next().value!);
     }
-    const faces = (await portraitRefs(userId, sessionId, shot).catch(() => [])).slice(0, 2);
-    const out = await renderOnPool(keyframeGraph(plate.name, faces.map((f) => f.image), keyframePrompt(withoutStyle(shot), faces.map((f) => f.name)), Math.floor(Math.random() * 1e9)),
+    const joining = (await portraitRefs(userId, sessionId, shot).catch(() => [])).filter((f) => !plate!.portraits.includes(f.url)).slice(0, 2);
+    const out = await renderOnPool(keyframeGraph(plate.name, joining.map((f) => f.image), keyframePrompt(withoutStyle(shot, styleLine), joining.map((f) => f.name)), Math.floor(Math.random() * 1e9)),
       Date.now() + KEYFRAME_DEADLINE_MS, ".png");
     await charge(out, "keyframe");
     const key = `users/${userId}/film-keys/${crypto.randomUUID()}.png`;
@@ -1162,19 +1318,27 @@ const DEPLOY_WARM_MACHINES = Math.max(1, Number(process.env.REALTIME_FILM_DEPLOY
 /** One ~5 s shot: on the film deployment (continuing `guide` when given), else fresh on the shared
  *  pool. Charged at its GPU time. `keep` uploads it back as an asset for the shot that continues it. */
 async function renderShot(
-  userId: string, sessionId: string, beat: DirectedBeat, style: string, look: string | null, cast: { name: string; look: string }[],
+  userId: string, sessionId: string, beat: DirectedBeat, style: string, look: string | null, cast: CastMember[],
   guide: { assetId?: string; key: string } | null, keep: boolean, bill: FilmBill, frame: Uint8Array | null = null,
 ): Promise<{ bytes: ArrayBuffer; assetId?: string; continued: boolean }> {
-  let prompt = await clipPrompt({ prompt: pinLooks(beat.shot, cast), style, look: look ?? undefined }, bill);
+  // A shot that starts from a picture (keyframe, or the frames it continues) takes its looks from
+  // it; only a shot rendering from text alone gets the cast's looks written in (SHOT_FORMATS.shot).
+  const fromPicture = !!frame || !!guide;
+  let prompt = softBlush(await clipPrompt({ prompt: fromPicture ? beat.shot : pinLooks(beat.shot, cast), style, look: look ?? undefined }, bill));
   const seed = Math.floor(Math.random() * 1e9);
   let clip: { bytes: ArrayBuffer; execMs: number; model: string; jobId: string; assetId?: string; continued: boolean } | null = null;
-  if (filmDeployEnabled() && (guide || keep || deployShots < DEPLOY_WARM_MACHINES)) {
+  // A new shot goes to the deployment only while a worker is warm: it scales to zero, and a cold
+  // one boots for minutes while the shared pool starts in seconds. On 2026-10-19 every film's first
+  // shot went to the cold deployment and the film, played in order, waited 3.6-12.7 minutes for it.
+  // Shots that continue another must stay there (its assets live there); the plan only makes
+  // continuations while the deployment is warm.
+  if (filmDeployEnabled() && (guide || keep || (deployShots < DEPLOY_WARM_MACHINES && filmDeployWarm()))) {
     deployShots++;
     try {
       const guideAssetId = guide ? guide.assetId ?? await uploadFilmAsset(new Uint8Array((await getObjectBuffer(guide.key)).buffer), "video/mp4", "guide.mp4") : undefined;
       // Portraits only on a new angle without a first frame: with a guide they fight the
       // carried-over frames, and a keyframe already has the faces.
-      const refs = guideAssetId || frame ? [] : await portraitRefs(userId, sessionId, prompt, true).catch(() => []);
+      const refs = guideAssetId || frame ? [] : await portraitRefs(userId, sessionId, prompt, true, cast).catch(() => []);
       const images = new Map<string, string>();
       const refFiles = refs.map((r, i) => { const name = `rtv-ref-${i}.jpg`; images.set(name, r.image); return name; });
       const frameName = frame && !guideAssetId ? "rtv-keyframe.png" : undefined;
@@ -1195,9 +1359,15 @@ async function renderShot(
     // The pool cannot read a clip stored by us, so this shot starts fresh (from its keyframe when
     // it has one).
     const frameName = frame ? await uploadToComfy(frame, "image/png", `rtv-key-${crypto.randomUUID()}.png`).catch(() => undefined) : undefined;
-    const refs = frameName ? [] : await portraitRefs(userId, sessionId, prompt).catch(() => []);
+    const refs = frameName ? [] : await portraitRefs(userId, sessionId, prompt, false, cast).catch(() => []);
     if (refs.length) prompt = `${refs.map((r, i) => `<Picture ${i + 1}> is ${r.name}'s face and hair.`).join(" ")} Clothing and pose follow the description, not the pictures. ${prompt}`;
-    const out = await renderOnPool(buildH3Graph({ prompt, seed, frame: frameName, refs: refs.map((r) => r.image), preset: "shot" }), Date.now() + TURN_SHOT_POOL_DEADLINE_MS);
+    // The pool's load is what wakes a deployment worker for the shots after these.
+    poolClipStarted();
+    maybeWakeFilmDeploy(warmGraph);
+    let poolQueue: number | null = null;
+    const out = await renderOnPool(buildH3Graph({ prompt, seed, frame: frameName, refs: refs.map((r) => r.image), preset: "shot" }), Date.now() + TURN_SHOT_POOL_DEADLINE_MS)
+      .then((o) => { poolQueue = o.queueMs; return o; })
+      .finally(() => poolClipEnded(poolQueue));
     clip = { bytes: out.bytes, execMs: out.execMs, model: "comfy/h3", jobId: out.promptId, continued: false };
   }
   // The player pays the GPU time of a shot they get, up to a render's worth; failed renders are on us.

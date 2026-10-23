@@ -161,6 +161,7 @@ describe("branchSession", () => {
     assert.strictEqual(newSession!.parentSessionId, testSessionId);
     assert.strictEqual(newSession!.branchedFromMessageId, messageIds[2]);
     assert.strictEqual((newSession!.state as any).variables.hp, 9);
+    assert.strictEqual(result.body.data!.variablesRestored, true);
     assert.strictEqual(newSession!.summary, null, "legacy summary without coverage proof must not enter the branch");
     assert.strictEqual(newSession!.name, "main · 分支 1");
 
@@ -172,6 +173,37 @@ describe("branchSession", () => {
     for (const m of clonedMessages) {
       assert.ok(!parentIds.has(m.id), `cloned message "${m.content}" reused parent id ${m.id}`);
     }
+  });
+
+  it("rolls a pruned branch point forward from the nearest checkpoint", async () => {
+    // Only the greeting kept its snapshot (a checkpoint); the replies after it
+    // were pruned, so the branch replays their active-swipe changes.
+    await db.update(messages).set({ stateSnapshot: null }).where(eq(messages.sessionId, testSessionId));
+    await db.update(messages).set({ stateSnapshot: { variables: { hp: 10 }, turnCount: 0 } }).where(eq(messages.id, messageIds[0]!));
+    const ledger = (hp: number) => [{ variableId: "hp", oldValue: 0, newValue: hp }] as unknown as Record<string, unknown>;
+    await db.update(messages).set({ stateChanges: ledger(7) }).where(eq(messages.id, messageIds[2]!));
+    await db.update(messages).set({
+      stateChanges: ledger(6), activeSwipeIndex: 1,
+      swipes: [{ content: "reply 2", createdAt: "now", stateChanges: ledger(6) }, { content: "reply 2b", createdAt: "now", stateChanges: ledger(5) }],
+    }).where(eq(messages.id, messageIds[4]!));
+
+    const result = await branchSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[4]! });
+    assert.strictEqual(result.status, 201);
+    assert.strictEqual(result.body.data!.variablesRestored, true);
+    const [branch] = await db.select().from(playSessions).where(eq(playSessions.id, result.body.data!.sessionId));
+    assert.strictEqual((branch!.state as any).variables.hp, 5);
+    assert.strictEqual((branch!.state as any).turnCount, 2);
+  });
+
+  it("keeps the parent's live variables and says so when no snapshot is left", async () => {
+    await db.update(messages).set({ stateSnapshot: null }).where(eq(messages.sessionId, testSessionId));
+    await db.update(playSessions).set({ state: { variables: { hp: 42 } } }).where(eq(playSessions.id, testSessionId));
+
+    const result = await branchSession({ userId: testUserId, sessionId: testSessionId, messageId: messageIds[2]! });
+    assert.strictEqual(result.status, 201);
+    assert.strictEqual(result.body.data!.variablesRestored, false);
+    const [branch] = await db.select().from(playSessions).where(eq(playSessions.id, result.body.data!.sessionId));
+    assert.strictEqual((branch!.state as any).variables.hp, 42);
   });
 
   it("does not mutate the parent session", async () => {

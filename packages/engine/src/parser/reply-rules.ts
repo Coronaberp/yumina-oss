@@ -40,7 +40,9 @@ export interface ReplyRulesResult {
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function matcher(rule: ReplyRule): RegExp | null {
+/** What a rule catches. The response parser also uses it, so bracket lines a
+ *  card's rule is waiting for are never hidden as state bookkeeping. */
+export function replyRuleMatcher(rule: ReplyRule): RegExp | null {
   if ("tag" in rule.match) {
     const tag = rule.match.tag.trim();
     if (!tag) return null;
@@ -128,7 +130,7 @@ export function applyReplyRules(world: Pick<WorldDefinition, "replyRules" | "var
   const varOf = (key: string) => vars.find((v) => v.id === key || v.name === key);
 
   for (const rule of rules) {
-    const re = matcher(rule);
+    const re = replyRuleMatcher(rule);
     if (!re) continue;
     const found: string[] = [];
     result.text.replace(re, (whole: string, ...groups: unknown[]) => {

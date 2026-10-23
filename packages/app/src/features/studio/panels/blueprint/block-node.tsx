@@ -1,10 +1,11 @@
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Handle, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
 import { OpeningHoverRing, OpeningOnScreenEditor } from "../inspector/screen-first";
 import { PREVIEW_GREETING_ATTR } from "@/features/editor/components/preview/live-frontend-preview";
 import { useTranslation } from "react-i18next";
 import {
+  SlidersHorizontal,
   Activity,
   AlertTriangle,
   ArrowDownLeft,
@@ -49,6 +50,7 @@ import {
   MessageSquareText,
   Eye,
   Bot,
+  Trash2,
 } from "lucide-react";
 import { resolveImageUrl } from "@/lib/asset-url";
 import {
@@ -99,6 +101,7 @@ import {
 import type { TrayItem } from "./starter-board";
 import type { PlaceAis } from "./place-ais";
 import type { AiVoice, ReceiveChip } from "./ai-roster";
+import type { AiRowType } from "./add-ai";
 import { formatTokens, type RowCost } from "@/features/editor/lib/context-budget";
 import type { ShortWhy } from "../../lib/turn-explain";
 
@@ -258,7 +261,7 @@ export interface BlockRowView {
    *  kind. The board used to leave all of that to the inspector, and a
    *  beginner reading "好感 0" learned nothing about what a variable can be.
    *  `accent` marks the ones that are a setting turned on, not a kind. */
-  tags?: Array<{ text: string; accent?: boolean }>;
+  tags?: Array<{ text: string; accent?: boolean; hint?: string }>;
   /** The one line that says what the row is FOR, in the author's words: a
    *  variable's rules for when it changes, a track's cue for when the AI
    *  plays it, a scene image's cue for when the AI shows it. Grey, after
@@ -298,6 +301,9 @@ export type ContextRowView = {
    *  memory, C and D share another" from two sentences into something the
    *  board says without being read. */
   tint?: string;
+  /** A small chip after the words: 自定义 when the card's own code or game,
+   *  not the engine, decides what this AI is handed. */
+  tag?: string;
 };
 
 /**
@@ -388,6 +394,9 @@ export type BlockNodeData = {
   /** "N more" on a tile: the column lists the whole block, the tile stays
    *  a tile. Absent, the rows unfold in place. */
   onMore?: () => void;
+  /** Shown whole after "N more": the foot line folds it back. */
+  unfolded?: boolean;
+  onFold?: () => void;
 
   /** kind === "card" */
   card?: {
@@ -489,6 +498,10 @@ export type BlockNodeData = {
      *  none the card's own. */
     onToggle: (key: string, memory?: boolean, bookId?: string) => void;
     onRemove?: (bookId: string) => void;
+    /** Remove a row that is not a situation's AI: a game's AI from the card's
+     *  declaration, a call in the code by asking the assistant (`ask`). */
+    removeOther?: (key: string) => "remove" | "ask" | null;
+    onRemoveOther?: (key: string) => void;
     /** Stick a note beside this block. */
     onNote?: () => void;
     /** A situation with AIs of its own: keep the narrator talking here too. */
@@ -1015,13 +1028,31 @@ const CONTEXT_CHIP: Record<ContextRowView["icon"], string> = {
  * narrator, in a situation whose own AIs answer instead, is a faded row with
  * the way to keep it.
  */
-/** The three kinds of AI, each its own quiet colour. */
-const AI_TYPE_CHIP: Record<"turn" | "ui" | "code" | "custom", string> = {
+/** The kinds of AI, each its own quiet colour; a call in the code is grey,
+ *  since it is not a kind anyone chose. */
+const AI_TYPE_CHIP: Record<AiRowType, string> = {
   turn: "bg-pink-400/15 text-pink-200",
   ui: "bg-sky-400/15 text-sky-200",
-  code: "bg-violet-400/15 text-violet-200",
+  event: "bg-violet-400/15 text-violet-200",
   custom: "bg-amber-400/15 text-amber-200",
+  script: "bg-zinc-400/15 text-zinc-300",
+  // An AI the game runs: the game's colour, like the player's screen block.
+  game: "bg-emerald-400/15 text-emerald-200",
 };
+
+type AisData = NonNullable<BlockNodeData["ais"]>;
+type AiRowOf = AisData["rows"][number];
+/** How a row comes off the board: a situation's AI and a game's AI go at
+ *  once (one undo step); a call in the code is the assistant's to take out.
+ *  The card's own AI is the chat itself and stays. */
+function removalOf(ais: AisData, row: AiRowOf): "remove" | "ask" | null {
+  if (row.bookId) return ais.onRemove ? "remove" : null;
+  return ais.removeOther?.(row.key) ?? null;
+}
+function removeRow(ais: AisData, row: AiRowOf): void {
+  if (row.bookId) ais.onRemove?.(row.bookId);
+  else ais.onRemoveOther?.(row.key);
+}
 
 function AisBody({ data }: { data: BlockNodeData }) {
   const { t } = useTranslation("editor");
@@ -1035,6 +1066,7 @@ function AisBody({ data }: { data: BlockNodeData }) {
         // Every row opens in the column: an AI on its own settings, the card's
         // own AI on its judge — the same place every object on the board opens.
         const open = (memory?: boolean) => ais.onToggle(row.key, memory, row.bookId ?? undefined);
+        const removal = removalOf(ais, row);
         const isOpen = ais.openKey === row.key;
         return (
           <div key={row.key}>
@@ -1058,7 +1090,7 @@ function AisBody({ data }: { data: BlockNodeData }) {
               setMenu({ key: row.key, x: e.clientX, y: e.clientY });
             }}
             className={cn(
-              "nodrag flex w-full cursor-pointer flex-col justify-center gap-1 px-2.5 text-left transition-colors hover:bg-white/[0.06]",
+              "group/airow nodrag flex w-full cursor-pointer flex-col justify-center gap-1 px-2.5 text-left transition-colors hover:bg-white/[0.06]",
               (row.away || row.off) && "opacity-55",
               isOpen && "bg-pink-400/[0.08] shadow-[inset_3px_0_0_#f472b6]",
             )}
@@ -1069,7 +1101,21 @@ function AisBody({ data }: { data: BlockNodeData }) {
               <span className="min-w-0 truncate text-[12.5px] font-semibold text-foreground/90">{row.name}</span>
               <span data-ai-type={row.type} className={cn("shrink-0 rounded px-1.5 text-[10.5px] font-semibold leading-[18px]", AI_TYPE_CHIP[row.type])}>{t(`blueprint.aiType.${row.type}`)}</span>
               {row.off && <span className="shrink-0 text-[10.5px] text-muted-foreground">{t("blueprint.placeAis.off")}</span>}
+              {/* A called AI's answer, so its row reads as the call it is. */}
+              {row.returns && <span data-ai-returns className="min-w-0 truncate font-mono text-[10.5px] text-muted-foreground/70">{row.returns}</span>}
               <span className="flex-1" />
+              {removal && (
+                <button
+                  type="button"
+                  data-place-ai-trash={row.key}
+                  title={String(t(removal === "ask" ? "blueprint.placeAis.removeAsk" : "blueprint.aiForm.remove"))}
+                  aria-label={String(t(removal === "ask" ? "blueprint.placeAis.removeAsk" : "blueprint.aiForm.remove"))}
+                  className="nodrag shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover/airow:opacity-100"
+                  onClick={(e) => { e.stopPropagation(); removeRow(ais, row); }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
               {row.away && ais.onKeepNarrator && (
                 <button
                   type="button"
@@ -1115,9 +1161,9 @@ function AisBody({ data }: { data: BlockNodeData }) {
                 {t("blueprint.menu.addNote")}
               </button>
             )}
-            {row.bookId && ais.onRemove && (
-              <button type="button" data-place-ai-remove className={cn(item, "text-rose-300")} onClick={() => { setMenu(null); ais.onRemove!(row.bookId!); }}>
-                {t("blueprint.aiForm.remove")}
+            {removalOf(ais, row) && (
+              <button type="button" data-place-ai-remove className={cn(item, "text-rose-300")} onClick={() => { setMenu(null); removeRow(ais, row); }}>
+                {t(removalOf(ais, row) === "ask" ? "blueprint.placeAis.removeAsk" : "blueprint.aiForm.remove")}
               </button>
             )}
           </div>
@@ -1174,6 +1220,7 @@ function ContextBody({ data }: { data: BlockNodeData }) {
             >
               {row.text}
             </span>
+            {row.tag && <span data-ctx-tag="" className={cn("shrink-0 rounded px-1.5 text-[10.5px] font-semibold leading-[18px]", AI_TYPE_CHIP.custom)}>{row.tag}</span>}
           </Tag>
         );
       })}
@@ -1232,6 +1279,7 @@ function PlainRow({ row, data, selected, dimmed }: { row: BlockRowView; data: Bl
         {row.tags?.map((tag) => (
           <span
             key={tag.text}
+            title={tag.hint}
             className={cn(
               "shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold leading-none",
               tag.accent ? "bg-primary/15 text-primary" : "bg-white/[0.06] text-muted-foreground/80",
@@ -2378,6 +2426,22 @@ function BlockNodeInner({ data, selected }: NodeProps<BlockFlowNode>) {
                   {t("blueprint.block.more", { count: hiddenCount })}
                 </button>
               )}
+              {hiddenCount === 0 && data.unfolded && data.onFold && (
+                <button
+                  type="button"
+                  data-block-fold=""
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    data.onFold!();
+                  }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  className="nodrag flex w-full items-center gap-1.5 px-2.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+                  style={{ height: 28 }}
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                  {t("blueprint.block.fold")}
+                </button>
+              )}
             </div>
           )}
         </>
@@ -2414,6 +2478,11 @@ export type FrameChrome = {
    *  goes there, as double-clicking a row opens that row's page. */
   drillId?: string;
   onOpenPage?: () => void;
+  /** Renames what the frame is (a situation, an AI, the card's own tile):
+   *  a double-click on the title edits it in place. */
+  onRename?: (name: string) => void;
+  /** Opens the frame's settings (when it applies, its screen…). */
+  onSettings?: () => void;
   /** Members across every block inside — the shut header's whole content. */
   total: number;
   /** ...split into the module's own and the card's shared in. When anything
@@ -2487,6 +2556,9 @@ export type GateNodeData = {
   title: string;
   tint: string;
   activationLabel?: string;
+  /** The card's game reads this situation (its AI's prose): drawn as in use
+   *  though its own switch is off for the card's chat. */
+  readByGame?: boolean;
   /** Put the opening this situation is entered from on show on the card. */
   onShowOpening?: () => void;
   /** The module's sticky note (便签). */
@@ -2618,6 +2690,84 @@ function ContextMarks({ context, open }: { context: FrameContext; open: boolean 
  * words as the header 25px below it.
  */
 const NAME_ZOOM = 0.75;
+/**
+ * A frame's name, renamed where it stands: double-click it, type, Enter (or
+ * click away) keeps it, Esc puts it back. Every situation could be renamed
+ * only from the card that opened on a click, and the card's own tile
+ * (「这张卡」) not at all (owner, 10/18).
+ */
+/** Asked by the board, which tells a double-click from two clicks: rename
+ *  the frame whose title bar opens `drillId`. */
+export const FRAME_RENAME_EVENT = "yumina:studio-frame-rename";
+
+function FrameTitle({ title, onRename, drillId }: { title: string; onRename?: (name: string) => void; drillId?: string }) {
+  const { t } = useTranslation("editor");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  useEffect(() => {
+    if (!onRename || !drillId) return;
+    const start = (e: Event) => {
+      if ((e as CustomEvent<{ drillId?: string }>).detail?.drillId !== drillId) return;
+      setDraft(title);
+      setEditing(true);
+    };
+    window.addEventListener(FRAME_RENAME_EVENT, start);
+    return () => window.removeEventListener(FRAME_RENAME_EVENT, start);
+  }, [onRename, drillId, title]);
+  if (!editing || !onRename) {
+    if (!onRename) return <span data-frame-title="" className="truncate text-[13px] font-bold">{title}</span>;
+    // The pencil is the sure way in: a double-click on a large tile is not
+    // (picking the card's own tile redraws the board between the presses).
+    return (
+      <>
+        <span
+          data-frame-title=""
+          className="cursor-text truncate text-[13px] font-bold"
+          onDoubleClick={(e) => { e.stopPropagation(); setDraft(title); setEditing(true); }}
+        >
+          {title}
+        </span>
+        <button
+          type="button"
+          data-frame-rename=""
+          title={t("blueprint.frame.rename")}
+          aria-label={t("blueprint.frame.rename")}
+          onClick={(e) => { e.stopPropagation(); setDraft(title); setEditing(true); }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="nodrag shrink-0 rounded p-0.5 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-white/10 hover:text-foreground focus-visible:opacity-100 group-hover/frame:opacity-100"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      </>
+    );
+  }
+  const commit = () => {
+    setEditing(false);
+    const next = draft.trim();
+    if (next !== title.trim()) onRename(next);
+  };
+  return (
+    <input
+      autoFocus
+      data-frame-title-input=""
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") { setDraft(title); setEditing(false); }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      maxLength={80}
+      className="nodrag nopan min-w-0 flex-1 rounded border border-white/15 bg-black/30 px-1.5 py-0.5 text-[13px] font-bold text-foreground outline-none focus:border-[rgba(240,198,116,0.6)]"
+    />
+  );
+}
+
 function FrameName({ title, tint }: { title: string; tint: string }) {
   const zoom = useStore((s) => s.transform[2]);
   if (zoom >= NAME_ZOOM) return null;
@@ -2634,8 +2784,8 @@ function FrameName({ title, tint }: { title: string; tint: string }) {
 
 export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
   const { t } = useTranslation("editor");
-  const { g, frame, title, tint, activationLabel, onShowOpening, note, live, turn, recent, dimmed, context, ai, onReceiveHover, placeGives, aiLit } = data;
-  const enabled = !g || g.data.enabled !== false;
+  const { g, frame, title, tint, activationLabel, onShowOpening, note, live, turn, recent, dimmed, context, ai, onReceiveHover, placeGives, aiLit, readByGame } = data;
+  const enabled = readByGame || !g || g.data.enabled !== false;
   // A place, as opposed to an AI: its border is drawn dashed.
   const place = !!g && !ai;
 
@@ -2708,7 +2858,7 @@ export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
       )}
       <div
         data-frame-drill={frame.drillId}
-        className={cn("flex h-[46px] items-center gap-2 px-2.5", ai && "rounded-t-xl bg-gradient-to-r from-pink-500/[0.14] to-pink-500/[0.03]")}
+        className={cn("group/frame flex h-[46px] items-center gap-2 px-2.5", ai && "rounded-t-xl bg-gradient-to-r from-pink-500/[0.14] to-pink-500/[0.03]")}
         onDoubleClick={(e) => {
           e.stopPropagation();
           // Its own page, as for a row; the chevron folds it.
@@ -2732,7 +2882,7 @@ export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
           : <Boxes className="h-4 w-4 shrink-0" style={{ color: tint }} />}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 leading-tight">
-            <span className="truncate text-[13px] font-bold">{title}</span>
+            <FrameTitle title={title} onRename={frame.onRename} drillId={frame.drillId} />
             {ai?.gives && (
               <span className={cn("ml-auto shrink-0 truncate pl-2 text-[11px]", ai.givesWarn ? "text-amber-300/80" : "text-pink-200/80")}>{ai.gives}</span>
             )}
@@ -2783,6 +2933,7 @@ export function GateNode({ data, selected }: NodeProps<GateFlowNode>) {
             "lore", "variables", "behaviours" spelled out — a label a creator
             reads once, charged to every module forever. The icon and the
             number are what is read after that, and they cost nothing here. */}
+        {frame.onSettings && <button type="button" data-frame-settings="" onClick={(e) => { e.stopPropagation(); frame.onSettings?.(); }} title={t("blueprint.frame.settings")} aria-label={t("blueprint.frame.settings")} className="nodrag shrink-0 rounded-md border border-white/10 p-1.5 text-muted-foreground opacity-0 transition-[opacity,colors] hover:border-[rgba(240,198,116,0.4)] hover:bg-[rgba(240,198,116,0.1)] hover:text-[#f5d48a] focus-visible:opacity-100 group-hover/frame:opacity-100"><SlidersHorizontal className="h-3.5 w-3.5" /></button>}
         {frame.onFocus && <button type="button" onClick={(e) => { e.stopPropagation(); frame.onFocus?.(); }} title={t("blueprint.workspace.focus")} aria-label={t("blueprint.workspace.focusNamed", { name: title })} className="nodrag shrink-0 rounded-md border border-white/10 p-1.5 text-muted-foreground transition-colors hover:border-[rgba(240,198,116,0.4)] hover:bg-[rgba(240,198,116,0.1)] hover:text-[#f5d48a]"><Maximize2 className="h-3.5 w-3.5" /></button>}
         {live?.active !== undefined && (
           <span

@@ -44,7 +44,7 @@
     "home": "Yumina",
     "discover": "発見",
     "community": "コミュニティ",
-    "bundles": "バンドル",
+    "bundles": "モジュールとプロンプト",
     "create": "作成",
     "library": "ライブラリ",
     "quests": "クエスト",
@@ -71,7 +71,7 @@
   "search": {
     "hub": "ワールド、キャラクター、ストーリーを検索...",
     "library": "ライブラリを検索...",
-    "bundles": "リソースバンドル、作者、機能を検索..."
+    "bundles": "カードモジュール、作者、機能を検索..."
   },
   "aria": {
     "showSidebar": "サイドバーを表示",

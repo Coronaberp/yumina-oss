@@ -20,7 +20,8 @@ import { extractVariableReadsFromFiles } from "./variable-read-scan.js";
 
 /** The sandbox API families a file reaches for, beyond variables. */
 export type FrontendApiFamily =
-  | "ai" | "room" | "voice" | "tts" | "storage" | "media" | "social" | "audio" | "assets" | "chat" | "session";
+  | "ai" | "room" | "voice" | "tts" | "storage" | "media" | "social" | "audio" | "assets" | "chat" | "session" | "scene"
+  | "liveVoice" | "timer";
 
 export interface FrontendFileFacts {
   file: string;
@@ -34,6 +35,9 @@ export interface FrontendFileFacts {
   dynamicWrites: number;
   aiCalls: FrontendAiCall[];
   uses: FrontendApiFamily[];
+  /** Events the file offers the AI with `api.setScene(…, { events })`, by
+   *  name, when the names are written out. */
+  sceneEvents: string[];
 }
 
 export interface FrontendManifest {
@@ -46,6 +50,7 @@ export interface FrontendManifest {
   dynamicWrites: number;
   aiCalls: FrontendAiCall[];
   uses: FrontendApiFamily[];
+  sceneEvents: string[];
 }
 
 const FAMILY_PATTERNS: Array<[FrontendApiFamily, RegExp]> = [
@@ -60,7 +65,41 @@ const FAMILY_PATTERNS: Array<[FrontendApiFamily, RegExp]> = [
   ["assets", /@asset:|\.fetchAsset\s*\(/],
   ["chat", /\.(?:sendMessage|editMessage|deleteMessage|regenerateMessage|continueLastMessage|swipeMessage)\s*\(/],
   ["session", /\.(?:saveCheckpoint|restoreCheckpoint|branchFromMessage|revertToMessage|createSession|listSessions)\s*\(/],
+  // 现场: what the screen shows, told to the next AI turn (server live-scene.ts).
+  ["scene", /\.setScene\s*\(|\brealtimeVoice\b[\s\S]*\.updateContext\s*\(/],
+  // A spoken conversation with an AI (api.realtimeVoice): an AI of its own,
+  // whatever name the bundle gives the API.
+  ["liveVoice", /\brealtimeVoice\b/],
+  // Runs on a clock: something happens without the player doing anything.
+  ["timer", /\bset(?:Interval|Timeout)\s*\(/],
 ];
+
+/** Anything in the files that sends the player's words into the chat:
+ *  api.sendMessage, or the stock chat components by name (a hand-written
+ *  file imports them, so their own sendMessage is not in its text). A card
+ *  whose interface does neither is never answered by the story AI. In doubt
+ *  it says yes: the board then shows the story AI as it always did. */
+export function interfaceSendsChat(files: Record<string, string>): boolean {
+  return Object.values(files).some((src) => typeof src === "string" && /\bsendMessage\b|\bcontinueLastMessage\b|\bregenerateMessage\b|\bMessageInput\b|\bChatCanvas\b|\bChat\b/.test(src));
+}
+
+/** Where a pattern first appears in the files: for a row that opens the code there. */
+export function firstMatchIn(files: Record<string, string>, re: RegExp): { file: string; line: number } | null {
+  for (const [file, src] of Object.entries(files)) {
+    if (typeof src !== "string") continue;
+    const m = re.exec(src);
+    if (m) return { file, line: src.slice(0, m.index).split("\n").length };
+  }
+  return null;
+}
+
+/** `{ name: "派警察进门", when: "…" }` — the events a scene offers the AI. */
+function sceneEventsOf(source: string): string[] {
+  if (!/\.setScene\s*\(/.test(source)) return [];
+  const out = new Set<string>();
+  for (const m of source.matchAll(/\bname\s*:\s*(["'`])([^"'`\n]{1,40})\1\s*,\s*when\s*:/g)) out.add(m[2]!.trim());
+  return [...out];
+}
 
 const sortedUnique = (xs: Iterable<string>) => [...new Set(xs)].sort();
 
@@ -77,6 +116,7 @@ export function frontendFileFacts(file: string, source: string): FrontendFileFac
     dynamicWrites: scan.dynamicWrites,
     aiCalls: extractAiCallsFromFiles({ [file]: source }),
     uses,
+    sceneEvents: sceneEventsOf(source),
   };
 }
 
@@ -99,5 +139,6 @@ export function frontendManifest(files: Record<string, string>, entryFile?: stri
     dynamicWrites: facts.reduce((n, f) => n + f.dynamicWrites, 0),
     aiCalls: facts.flatMap((f) => f.aiCalls),
     uses: [...new Set(facts.flatMap((f) => f.uses))] as FrontendApiFamily[],
+    sceneEvents: [...new Set(facts.flatMap((f) => f.sceneEvents))],
   };
 }

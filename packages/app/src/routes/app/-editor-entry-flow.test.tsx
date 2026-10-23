@@ -8,6 +8,7 @@ import { JSDOM } from "jsdom";
 import ts from "typescript";
 import { prepareStudioEntry, resolveEditorMode } from "../../features/editor/editor-entry";
 import { backupEditorDraft } from "../../features/editor/editor-draft-recovery";
+import { coverSettingsSearch } from "../../features/editor/lib/cover-settings-target";
 
 // Mount the actual route modules. Only their network/store dependencies and
 // large editor children are replaced; clicks execute the production handlers.
@@ -16,8 +17,9 @@ test("creation, import, and reopening preserve content and choose the intended e
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;
   const originalStorage = globalThis.localStorage;
+  const originalSession = globalThis.sessionStorage;
   dom.window.scrollTo = () => {};
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, sessionStorage: dom.window.sessionStorage, IS_REACT_ACT_ENVIRONMENT: true });
   const require = createRequire(import.meta.url);
   let preference: "simple" | "advanced" | null = null;
   let authenticated = true;
@@ -61,7 +63,7 @@ test("creation, import, and reopening preserve content and choose the intended e
   const translate = (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key;
   const setPickerActive = () => {};
   const mocks: Record<string, unknown> = {
-    "@tanstack/react-router": { createFileRoute: () => (config: object) => ({ ...config, useParams: () => ({ worldId: "saved-card" }) }), useNavigate: () => router.navigate, useRouter: () => router },
+    "@tanstack/react-router": { createFileRoute: () => (config: object) => ({ ...config, useParams: () => ({ worldId: "saved-card" }), useSearch: () => ({}) }), useNavigate: () => router.navigate, useRouter: () => router, useRouterState: () => undefined },
     "lucide-react": new Proxy({}, { get: () => () => null }),
     "react-i18next": { useTranslation: () => ({ t: translate }) },
     "@/stores/editor": { useEditorStore },
@@ -75,14 +77,19 @@ test("creation, import, and reopening preserve content and choose the intended e
     "@/lib/lazy-route-component": { lazyRouteComponent: (_loader: unknown, select: (module: unknown) => unknown) => select({
       EditorShell: () => <div>LEGACY</div>,
       StudioShell: () => <div>STUDIO</div>,
-      QuickCreateEditor: ({ onOpenFullEditor }: { onOpenFullEditor: () => void }) => <button onClick={onOpenFullEditor}>SIMPLE_ADVANCE</button>,
+      // Like the real switch: the route is told first, then the card is saved
+      // (the route waits on that save before it leaves for the canvas).
+      QuickCreateEditor: ({ onOpenFullEditor }: { onOpenFullEditor: () => void }) => <button onClick={() => { onOpenFullEditor(); void store.saveDraft(); }}>SIMPLE_ADVANCE</button>,
     }) },
     "@/lib/i18n": { __esModule: true, default: { language: "zh", loadNamespaces: async () => {}, t: translate } },
     "@/features/editor/lib/editor-mode": { getGlobalEditorMode: () => preference, getEditorMode: () => null, saveGlobalEditorMode: (value: typeof preference) => { preference = value; } },
     "@/features/editor/use-unsaved-changes-guard": { useUnsavedChangesGuard: () => ({ status: "idle" }) },
     "@/features/editor/unsaved-changes-dialog": { UnsavedChangesDialog: () => null },
     "@/features/editor/editor-entry": { prepareStudioEntry, resolveEditorMode },
+    "@/features/editor/lib/cover-settings-target": { coverSettingsSearch },
     "@/features/editor/editor-draft-recovery": { backupEditorDraft },
+    "@/features/editor/save-status": { useSaveWhenHidden: () => {} },
+    "@/lib/blueprint-access": { fetchBlueprintAccess: async () => true },
     "@/lib/auth-client": { getSessionSafe: async () => ({ data: {} }) },
     "@/lib/safe-back": { navigateBackSafely: () => {} },
     "@/features/editor/editor-unavailable": { EditorUnavailable: () => <div>UNAVAILABLE</div>, useEditorOwnership: () => null },
@@ -103,7 +110,7 @@ test("creation, import, and reopening preserve content and choose the intended e
   const reset = () => {
     preference = null; authenticated = true; allowSave = true; creates = 0; saves = 0; imports = 0; coverUploads = 0; importedCover = undefined; navigations.length = 0;
     store.serverWorldId = null; store.isDirty = false; store.saving = false; store.worldDraft = { id: "empty", entries: [] };
-    store.layoutDirty = false; store.guestMode = false; store.readOnlyInspect = false; localStorage.clear();
+    store.layoutDirty = false; store.guestMode = false; store.readOnlyInspect = false; localStorage.clear(); sessionStorage.clear();
   };
   const withPage = async (Page: React.ComponentType, check: () => Promise<void>) => {
     document.body.innerHTML = "<div id='root'></div>";
@@ -116,6 +123,8 @@ test("creation, import, and reopening preserve content and choose the intended e
     assert.ok(button, `button exists: ${text}`);
     await act(async () => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
   };
+  const toStudio = () => navigations.map(n => n.to);
+  const tourHeld = () => sessionStorage.getItem("yumina-studio-hold-tour") === "1";
   const upload = async () => {
     const input = document.querySelector("input[type=file]")!;
     Object.defineProperty(input, "files", { configurable: true, value: [new dom.window.File(["test"], importedCover ? "card.png" : "card.json")] });
@@ -131,8 +140,8 @@ test("creation, import, and reopening preserve content and choose the intended e
         assert.equal(creates, 0, "mode selection must never reinitialize imported data");
         assert.deepEqual(store.worldDraft.entries, [{ id: "unique", content: "必须保留的正文" }]);
         if (mode === "advanced") {
-          assert.equal(navigations.length, 0, "advanced opens here; the blueprint is somewhere you go from it");
-          assert.ok(document.body.textContent?.includes("LEGACY"));
+          assert.deepEqual(toStudio(), ["/app/studio/$worldId"], "advanced opens on the canvas once the import is saved");
+          assert.equal(sessionStorage.getItem("yumina-studio-quiet-tour"), "1", "an imported card opens without the welcome over it");
         } else assert.ok(document.body.textContent?.includes("SIMPLE_ADVANCE"));
       });
     });
@@ -142,8 +151,7 @@ test("creation, import, and reopening preserve content and choose the intended e
         await upload(); await click("quickCreate.modeAdvancedTitle");
         assert.equal(creates, 0); assert.equal(coverUploads, 1);
         assert.equal(store.worldDraft.avatar, "uploaded-cover");
-        assert.equal(navigations.length, 0, "the card opens where it was made");
-        assert.ok(document.body.textContent?.includes("LEGACY"));
+        assert.deepEqual(toStudio(), ["/app/studio/$worldId"], "the cover is saved before the card moves to the canvas");
       });
     });
     await suite.test("an import whose save fails still opens with its content, not an error screen", async () => {
@@ -158,18 +166,26 @@ test("creation, import, and reopening preserve content and choose the intended e
         assert.ok(document.body.textContent?.includes("LEGACY"));
       });
     });
-    await suite.test("a reopened advanced card opens the editor, and Simple switches to it in place", async () => {
+    await suite.test("a reopened advanced card opens on the canvas, holding the welcome for a new card", async () => {
       reset(); store.serverWorldId = "saved-card"; store.worldDraft = { id: "saved", editorMode: "advanced" };
       await withPage(EditPage, async () => {
-        assert.equal(navigations.length, 0, "advanced is this editor, not a redirect to the blueprint");
+        assert.deepEqual(toStudio(), ["/app/studio/$worldId"], "a creator who never chose lands on the canvas");
         assert.equal(saves, 0);
+        assert.ok(tourHeld(), "their own card is not where the first lesson runs");
+      });
+      reset(); store.serverWorldId = "saved-card"; store.worldDraft = { id: "saved", editorMode: "advanced" };
+      localStorage.setItem("yumina-editor-surface", "classic");
+      await withPage(EditPage, async () => {
+        assert.equal(navigations.length, 0, "turning the 画布 switch off is remembered");
         assert.ok(document.body.textContent?.includes("LEGACY"));
       });
+    });
+    await suite.test("Simple switched to advanced goes to the canvas and is greeted there", async () => {
       reset(); store.serverWorldId = "saved-card"; store.worldDraft = { id: "saved", editorMode: "simple", entries: ["保持正文"] };
       await withPage(EditPage, async () => {
         assert.equal(navigations.length, 0); await click("SIMPLE_ADVANCE");
-        assert.equal(navigations.length, 0, "switching mode swaps the shell without a route change");
-        assert.ok(document.body.textContent?.includes("LEGACY"));
+        assert.deepEqual(toStudio(), ["/app/studio/$worldId"]);
+        assert.equal(tourHeld(), false, "choosing the canvas from Simple is a first visit, not opening a card");
         assert.deepEqual(store.worldDraft.entries, ["保持正文"]);
       });
     });
@@ -177,7 +193,7 @@ test("creation, import, and reopening preserve content and choose the intended e
       reset(); authenticated = false; preference = "advanced";
       await withPage(CreatePage, async () => { await click("templates.blank"); assert.equal(saves, 0); assert.ok(document.body.textContent?.includes("LEGACY")); });
     });
-    await suite.test("a new advanced world opens in the editor and leaves the blueprint's own layout alone", async () => {
+    await suite.test("a new advanced world opens on the canvas and leaves the blueprint's own layout alone", async () => {
       reset(); preference = "advanced";
       localStorage.setItem("yumina-studio-stage-v2", "classic");
       localStorage.setItem("yumina-stage-ai", "closed");
@@ -185,10 +201,11 @@ test("creation, import, and reopening preserve content and choose the intended e
       await withPage(CreatePage, async () => {
         await click("templates.blank");
         assert.equal(creates, 1);
-        assert.equal(navigations.length, 0);
-        assert.ok(document.body.textContent?.includes("LEGACY"));
-        // Making a card used to reset the canvas's panels on the way in. It no
-        // longer opens the canvas, so it has no business touching them.
+        assert.deepEqual(toStudio(), ["/app/studio/$worldId"]);
+        assert.equal(sessionStorage.getItem("yumina-studio-quiet-tour"), null, "a blank card is where the welcome runs");
+        assert.equal(tourHeld(), false);
+        // Making a card used to reset the canvas's panels on the way in. It has
+        // no business touching them: they are the creator's layout.
         assert.equal(localStorage.getItem("yumina-studio-stage-v2"), "classic");
         assert.equal(localStorage.getItem("yumina-stage-ai"), "closed");
         assert.equal(localStorage.getItem("yumina-stage-tree-v2"), "open");
@@ -210,6 +227,6 @@ test("creation, import, and reopening preserve content and choose the intended e
     });
   } finally {
     dom.window.close();
-    Object.assign(globalThis, { window: originalWindow, document: originalDocument, localStorage: originalStorage, IS_REACT_ACT_ENVIRONMENT: false });
+    Object.assign(globalThis, { window: originalWindow, document: originalDocument, localStorage: originalStorage, sessionStorage: originalSession, IS_REACT_ACT_ENVIRONMENT: false });
   }
 });

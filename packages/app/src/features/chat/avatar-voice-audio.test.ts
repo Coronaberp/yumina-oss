@@ -2,15 +2,130 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { RoomEvent, type RemoteTrack, type Room } from "livekit-client";
-import { createAvatarVoiceAudio, type AvatarAudioRuntime, type AvatarConnection } from "./avatar-voice-audio";
+import { createAvatarVoiceAudio, type AvatarAudioRuntime, type AvatarConnection, type AvatarAudioOptions } from "./avatar-voice-audio";
+import { LiveVoiceSession } from './live-voice-session';
+import { bindVoiceReplyAuthority } from './voice-scene-notice';
 
+const isReplyAppend = (event: any) => event.type === 'session.instructions.append' && event.content?.startsWith('For this reply only,');
 const connection: AvatarConnection = { sessionId: "avatar-session", livekitUrl: "wss://media.invalid", livekitClientToken: "token", wsUrl: "wss://control.invalid", maxDurationSeconds: 300 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test('capture worklet has no speaker route that can switch to a throttled silent clock', async () => {
+  const h = harness(), audio = h.start();
+  try {
+    await settle();
+    assert.deepEqual((h.capture as unknown as { outputs: unknown[] }).outputs, []);
+    assert.ok(h.nodes.every(node => !node.outputs.includes(h.context.destination)));
+  } finally { audio.close(); }
+});
+
+test('avatar forwards the independent Live input transport and fails closed without it', async () => {
+  for (const supported of [true, false]) {
+    const h = harness(), createOutput = h.runtime.createOutput;
+    const transport = {} as MediaStream;
+    h.runtime.createOutput = (...args) => ({ ...createOutput(...args),
+      ...(supported ? { prepareLiveInput: async () => transport } : {}),
+    });
+    const audio = h.start();
+    try {
+      assert.equal(typeof audio.prepareLiveInput, 'function');
+      if (supported) assert.equal(await audio.prepareLiveInput!(), transport);
+      else await assert.rejects(audio.prepareLiveInput!(), /audio|input|microphone/i);
+    } finally { audio.close(); }
+  }
+});
+
+test('browser-default live audio builds a bounded lead before sending its first avatar packets', async () => {
+  const h=harness();delete h.runtime.liveStartupBufferMs;
+  const audio=h.start();
+  try{
+    const connected=audio.connectAvatar(connection);await h.ready();await connected;
+    audio.handleClientEvent({type:'live.enable'});
+    const packet=()=>{const pcm=new ArrayBuffer(9600);new Int16Array(pcm).fill(4000);h.capture.port.onmessage!({data:{type:'live-pcm',pcm}} as MessageEvent);};
+    for(let n=0;n<7;n++)packet();
+    assert.equal(h.socket.sent.filter(e=>e.type==='agent.speak').length,0);
+    packet();assert.equal(h.socket.sent.filter(e=>e.type==='agent.speak').length,8);
+    packet();assert.equal(h.socket.sent.filter(e=>e.type==='agent.speak').length,9);
+    assert.deepEqual(h.errors,[]);
+  }finally{audio.close();}
+});
+
+test('avatar preserves capture readiness and evidence from its microphone adapter', async () => {
+  const h = harness(), createOutput = h.runtime.createOutput;
+  let attach!: () => void;
+  h.runtime.createOutput = (...args) => ({ ...createOutput(...args),
+    attachInput: () => new Promise<void>(resolve => { attach = resolve; }), inputEvidence: async () => 'silent',
+  });
+  const audio = h.start();
+  try {
+    let ready = false;
+    const pending = Promise.resolve(audio.attachInput({} as MediaStream)).then(() => { ready = true; });
+    await settle(); assert.equal(ready, false);
+    attach(); await pending; assert.equal(await audio.inputEvidence!(), 'silent');
+  } finally { audio.close(); }
+});
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+
+for (const boundary of ['source', 'avatar', 'audible'] as const) test(`world reply revalidates public authority at ${boundary} boundary without clipping spoken lines`, async t => {
+  const h = harness(), events: any[] = [], sent: any[] = [], inputs: boolean[] = [], failures: string[] = [];
+  let session: LiveVoiceSession;
+  const audio = h.start(undefined, {
+    beforePlayback: () => session.beforePlayback(),
+    onSourceActivity: active => session.sourceActivity(active), onQueue: count => session.avatarQueue(count),
+    onPending: () => session.avatarPending(), onPlayback: state => session.playback(state),
+  });
+  session = new LiveVoiceSession({ send: e => {
+    sent.push(e);
+    if (/^session\.(instructions|thinking|commentary)\.append$/.test(String(e.type))) session.receive({ type: e.type + 'ed', client_event_id: e.event_id });
+  }, emit: e => events.push(e), input: v => inputs.push(v),
+    allowAudio: allowed => audio.handleClientEvent({ type: 'live.output', allowed }),
+    holdAudio: held => audio.handleClientEvent({ type: 'live.hold', held }),
+    interruptAudio: () => audio.handleClientEvent({ type: 'live.interrupt' }), fail: message => failures.push(message),
+  }, 'Official', '', 'manual', undefined, true, 'silent');
+  t.after(() => { session.close(); audio.close(); });
+  const connected = audio.connectAvatar(connection); await h.ready(); await connected;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  audio.handleClientEvent({ type: 'live.enable' }); session.receive({ type: 'session.started' }); session.start();
+  const packet = (value: number) => { const pcm = new ArrayBuffer(9600); new Int16Array(pcm).fill(value); h.capture.port.onmessage!({ data: { type: 'live-pcm', pcm } } as MessageEvent); };
+  let current = { 'unperson-state': { phase: 'conceal' }, 'unperson-room': { attempt: 'a', clock: 2, events: [] as unknown[] } };
+  session.receive({ type: 'session.input_transcript.delta', delta: 'May I leave?' }); t.mock.timers.tick(1500);
+  session.resolveDelegation(events.find(e => e.type === 'delegation').id, bindVoiceReplyAuthority({ text: 'You may leave.' }, current, () => current, '79.0.0'));
+  const mute = sent.at(-1); assert.equal(mute.type, 'session.input_audio.mute');
+  session.receive({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+  assert.equal(sent.at(-1).type, 'session.instructions.append');
+  current['unperson-room'].events.push({ id: 'own-performance', attempt: 'a', kind: 'speech', actor: 'screen', visibility: 'public', at: 2, data: { role: 'assistant', source: 'voice', delivery: 'generated', text: 'You may leave.' } });
+  const changed = () => { current = { ...current, 'unperson-room': { ...current['unperson-room'], events: [{ id: 'detained', attempt: 'a', kind: 'police', actor: 'police', visibility: 'public', at: 2, data: { code: 'detained' } }] } }; };
+  if (boundary === 'source') changed();
+  packet(8192);
+  const speech = h.socket.sent.find(e => e.type === 'agent.speak');
+  if (boundary === 'source') assert.equal(speech, undefined, 'Stale PCM is denied before avatar submission');
+  else {
+    assert.ok(speech);
+    if (boundary === 'avatar') changed();
+    h.socket.onmessage!({ data: JSON.stringify({ type: 'agent.speak_started', source_event_id: speech.event_id }) });
+    if (boundary === 'audible') { changed(); session.updateContext('A later public change.'); packet(9000); }
+  }
+  assert.equal(h.muted.includes(false), boundary === 'audible');
+  assert.equal(events.some(e => e.type === 'input-hint' && /words are saved/.test(e.message)), boundary !== 'audible');
+  assert.ok(events.some(e => e.type === 'transcript' && e.final && e.text === 'May I leave?'));
+  assert.equal(h.socket.sent.some(e => e.type === 'agent.interrupt'), boundary === 'avatar');
+  for (let n = 0; n < 6; n++) packet(0);
+  if (boundary === 'audible') h.socket.onmessage!({ data: JSON.stringify({ type: 'agent.speak_ended', source_event_id: speech!.event_id }) });
+  t.mock.timers.tick(700);
+  if (boundary === 'audible') {
+    const unmute = sent.filter(e => e.type === 'session.input_audio.unmute').at(-1); assert.ok(unmute);
+    session.receive({ type: 'session.input_audio.unmuted', client_event_id: unmute.event_id });
+    assert.equal(inputs.at(-1), true); assert.deepEqual(failures, []);
+  } else {
+    assert.equal(inputs.at(-1), false); assert.equal(sent.at(-1).type, 'session.close');
+    assert.equal(failures.length, 1); assert.match(failures[0], /Reconnect/);
+  }
+  assert.deepEqual(h.errors, []);
+});
 
 function harness() {
   const abort = new AbortController(), events: string[] = [], errors: string[] = [], muted: boolean[] = [];
@@ -41,6 +156,9 @@ function harness() {
   }) as unknown as HTMLVideoElement;
   let pump: FrameRequestCallback | undefined, frameTime = 0;
   const runtime: AvatarAudioRuntime = {
+    // Transport lifecycle fixtures use immediate packets. Startup buffering is
+    // exercised separately with the browser default below.
+    liveStartupBufferMs: 0,
     createOutput: () => { events.push("output-create"); return {
       ready: async () => {}, attach: stream => { outputStreams.push(stream); }, attachInput() {}, setSpatial() {},
       setMuted: value => muted.push(value), close: () => events.push("output-close"),
@@ -54,10 +172,10 @@ function harness() {
     scheduleFrame: callback => { pump = callback; return 1; }, cancelFrame: () => { pump = undefined; },
     connectTimeoutMs: 200,
   };
-  const start = (onVideoFrame = (frame: typeof frames[number]) => { events.push("frame"); frames.push(frame); }) => createAvatarVoiceAudio(() => {}, () => {}, {
+  const start = (onVideoFrame = (frame: typeof frames[number]) => { events.push("frame"); frames.push(frame); }, hooks: Partial<AvatarAudioOptions> = {}) => createAvatarVoiceAudio(() => {}, () => {}, {
     signal: abort.signal, onError: error => errors.push(error), onPlayback: event => events.push(event),
     onSourceActivity: active => events.push(`source:${active}`), onQueue: count => events.push(`queue:${count}`),
-    onVideoStatus: status => events.push(status), onVideoFrame,
+    onVideoStatus: status => events.push(status), onVideoFrame, ...hooks,
   }, runtime);
   const track = (kind: "audio" | "video") => ({ kind, mediaStreamTrack: { kind, stop() { events.push(`${kind}-stop`); } }, detach() {} }) as unknown as RemoteTrack;
   const tracks = [track("audio"), track("video")];
@@ -219,6 +337,153 @@ test('a held Live reply preserves the first packet until the microphone has the 
   audio.handleClientEvent({type:'live.hold',held:false});
   assert.equal(h.socket.sent[0].type,'agent.speak');
   assert.equal(Buffer.from(String(h.socket.sent[0].audio),'base64').readInt16LE(0),8192);
+});
+
+test('world source gate drains speculative PCM without avatar queues and retains the approved onset', async t => {
+  const h = harness(), audio = h.start(); t.after(() => audio.close());
+  const connected = audio.connectAvatar(connection); await h.ready(); await connected;
+  audio.handleClientEvent({ type: 'live.enable' });
+  audio.handleClientEvent({ type: 'live.output', allowed: false });
+  const packet = (value: number) => {
+    const pcm = new ArrayBuffer(9600); new Int16Array(pcm).fill(value);
+    h.capture.port.onmessage!({ data: { type: 'live-pcm', pcm } } as MessageEvent);
+  };
+  packet(4096); packet(4096);
+  assert.equal(h.socket.sent.length, 0, 'Go on must never enter the paid avatar queue');
+  assert.ok(h.events.includes('source:true'), 'rejected output still has an observable drain boundary');
+  for (let i = 0; i < 6; i++) packet(0);
+  assert.ok(h.events.includes('source:false'));
+  audio.handleClientEvent({ type: 'live.output', allowed: true });
+  packet(8192);
+  const spoken = h.socket.sent.filter(e => e.type === 'agent.speak');
+  assert.equal(Buffer.from(String(spoken.at(-1)?.audio), 'base64').readInt16LE(0), 8192);
+  assert.equal(spoken.some(e => Buffer.from(String(e.audio), 'base64').readInt16LE(0) === 4096), false);
+  assert.deepEqual(h.errors, []);
+});
+
+test('world session and avatar carry only approved PCM and retain capture protection until rendered playback ends', async t => {
+  const h = harness(), events: any[] = [], sent: any[] = [], input: boolean[] = [];
+  let session: LiveVoiceSession;
+  const audio = h.start(undefined, {
+    onSourceActivity: active => session.sourceActivity(active), onQueue: count => session.avatarQueue(count),
+    onPending: () => session.avatarPending(), onPlayback: state => session.playback(state),
+  });
+  session = new LiveVoiceSession({ send: e => {
+    sent.push(e);
+    if (/^session\.(instructions|thinking|commentary)\.append$/.test(String(e.type))) session.receive({ type: e.type + 'ed', client_event_id: e.event_id });
+  }, emit: e => events.push(e), input: v => input.push(v),
+    allowAudio: allowed => audio.handleClientEvent({ type: 'live.output', allowed }),
+    holdAudio: held => audio.handleClientEvent({ type: 'live.hold', held }),
+    interruptAudio: () => audio.handleClientEvent({ type: 'live.interrupt' }), fail: message => assert.fail(message),
+  }, 'Official', '', 'manual', undefined, true);
+  t.after(() => { session.close(); audio.close(); });
+  const connected = audio.connectAvatar(connection); await h.ready(); await connected;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  audio.handleClientEvent({ type: 'live.enable' }); session.receive({ type: 'session.started' }); session.start();
+  const packet = (value: number) => {
+    const pcm = new ArrayBuffer(9600); new Int16Array(pcm).fill(value);
+    h.capture.port.onmessage!({ data: { type: 'live-pcm', pcm } } as MessageEvent);
+  };
+  session.inputLevel(.1); session.receive({ type: 'session.input_transcript.delta', delta: 'I refuse to erase Anna.' });
+  packet(4096); session.receive({ type: 'session.output_transcript.delta', delta: 'Go on.' });
+  t.mock.timers.tick(1500);
+  session.resolveDelegation(events.find(e => e.type === 'delegation').id, { text: 'You have stated your refusal.' });
+  assert.equal(input.at(-1), true); assert.equal(h.socket.sent.length, 0);
+  for (let n = 0; n < 6; n++) packet(0); t.mock.timers.tick(700);
+  const mute = sent.at(-1); assert.equal(mute.type, 'session.input_audio.mute');
+  assert.equal(sent.some(e => isReplyAppend(e)), false);
+  assert.equal(input.at(-1), false); assert.equal(h.socket.sent.length, 0);
+  session.receive({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+  assert.equal(sent.at(-1).type, 'session.instructions.append'); assert.equal(input.at(-1), false);
+  packet(8192);
+  const chunks = h.socket.sent.filter(e => e.type === 'agent.speak');
+  assert.equal(chunks.length, 1); assert.equal(Buffer.from(String(chunks[0].audio), 'base64').readInt16LE(0), 8192);
+  session.receive({ type: 'session.output_transcript.delta', delta: 'You have stated your refusal.' });
+  for (let n = 0; n < 6; n++) packet(0); t.mock.timers.tick(2000);
+  assert.equal(input.at(-1), false, 'source silence and finalized captions are not rendered completion');
+  h.socket.onmessage!({ data: JSON.stringify({ type: 'agent.speak_started', source_event_id: chunks[0].event_id }) });
+  session.inputLevel(.5);
+  h.socket.onmessage!({ data: JSON.stringify({ type: 'agent.speak_ended', source_event_id: chunks[0].event_id }) });
+  t.mock.timers.tick(700); assert.equal(input.at(-1), false);
+  const unmute = sent.at(-1); assert.equal(unmute.type, 'session.input_audio.unmute');
+  session.receive({ type: 'session.input_audio.unmuted', client_event_id: unmute.event_id });
+  assert.equal(input.at(-1), true);
+  assert.equal(events.some(e => e.text?.includes('Go on')), false); assert.deepEqual(h.errors, []);
+});
+
+for (const opening of [undefined, 'character', 'silent'] as const) test(`${opening ?? 'default'} world opening applies before remote PCM and preserves the authorized onset`, async t => {
+  const h = harness(), events: any[] = [], sent: any[] = [], input: boolean[] = [];
+  let session: LiveVoiceSession;
+  const audio = h.start(undefined, {
+    onSourceActivity: active => session.sourceActivity(active), onQueue: count => session.avatarQueue(count),
+    onPending: () => session.avatarPending(), onPlayback: state => session.playback(state),
+  });
+  session = new LiveVoiceSession({ send: e => {
+    sent.push(e);
+    if (/^session\.(instructions|thinking|commentary)\.append$/.test(String(e.type))) session.receive({ type: e.type + 'ed', client_event_id: e.event_id });
+  }, emit: e => events.push(e), input: v => input.push(v),
+    allowAudio: allowed => audio.handleClientEvent({ type: 'live.output', allowed }),
+    interruptAudio: () => audio.handleClientEvent({ type: 'live.interrupt' }), fail: message => assert.fail(message),
+    holdAudio: held => audio.handleClientEvent({ type: 'live.hold', held }),
+  }, 'Official', '', 'manual', undefined, true, opening);
+  t.after(() => { session.close(); audio.close(); });
+  const connected = audio.connectAvatar(connection); await h.ready(); await connected;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  audio.handleClientEvent({ type: 'live.enable' }); session.prepareOutput();
+  const packet = (value: number) => {
+    const pcm = new ArrayBuffer(9600); new Int16Array(pcm).fill(value);
+    h.capture.port.onmessage!({ data: { type: 'live-pcm', pcm } } as MessageEvent);
+  };
+  if (opening === 'silent') {
+    // Media is independent of data-channel readiness and may arrive first.
+    packet(4096);
+    assert.equal(h.socket.sent.length, 0, 'speculation before session.started never enters the avatar queue');
+    session.receive({ type: 'session.started' }); session.start();
+    session.updateContext('The resident typed: I refuse.');
+    session.receive({ type: 'session.output_transcript.delta', delta: 'No. Your words are taken down as said.' });
+    packet(4096);
+    assert.equal(h.socket.sent.length, 0); assert.equal(input.at(-1), true);
+    assert.equal(events.some(e => e.type === 'transcript' && e.role === 'assistant'), false);
+    session.scene({ id: 'saved-typed-answer', kind: 'reply', text: 'No. It records that you refused.' });
+    for (let n = 0; n < 6; n++) packet(0); t.mock.timers.tick(700);
+    const mute = sent.at(-1); assert.equal(mute.type, 'session.input_audio.mute');
+    assert.equal(h.socket.sent.length, 0);
+    session.receive({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+    assert.equal(sent.at(-1).type, 'session.instructions.append'); assert.equal(input.at(-1), false);
+  }
+  packet(8192);
+  if (opening !== 'silent') {
+    assert.equal(input.at(-1), false, 'startup media must close already-active microphone capture');
+    assert.equal(h.socket.sent.length, 0, 'opening PCM waits for ready provider mute protection');
+    session.receive({ type: 'session.started' }); session.start();
+    const mute = sent.find(e => e.type === 'session.input_audio.mute'); assert.ok(mute);
+    assert.equal(h.socket.sent.length, 0);
+    session.receive({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+  }
+  const chunks = h.socket.sent.filter(e => e.type === 'agent.speak');
+  assert.equal(chunks.length, 1);
+  assert.equal(Buffer.from(String(chunks[0].audio), 'base64').readInt16LE(0), 8192, 'the complete first authorized PCM packet survives');
+  assert.deepEqual(h.errors, []);
+});
+
+test('distinct held phrases wait for prior avatar completion instead of burst-submitting sources',async t=>{
+  const h=harness(),audio=h.start();t.after(()=>audio.close());
+  const connected=audio.connectAvatar(connection);await h.ready();await connected;
+  audio.handleClientEvent({type:'live.enable'});audio.handleClientEvent({type:'live.hold',held:true});
+  const packet=(value:number)=>{const pcm=new ArrayBuffer(9600);new Int16Array(pcm).fill(value);h.capture.port.onmessage!({data:{type:'live-pcm',pcm}} as MessageEvent);};
+  packet(8192);for(let n=0;n<6;n++)packet(0);
+  packet(9000);for(let n=0;n<6;n++)packet(0);
+  audio.handleClientEvent({type:'live.hold',held:false});
+  const ids=()=>[...new Set(h.socket.sent.filter(e=>e.type==='agent.speak').map(e=>e.event_id))];
+  assert.equal(ids().length,1,'Only the first sealed phrase may enter provider playback.');
+  const first=ids()[0];
+  h.socket.onmessage!({data:JSON.stringify({type:'agent.speak_started',source_event_id:first})});
+  h.socket.onmessage!({data:JSON.stringify({type:'agent.speak_ended',source_event_id:first})});
+  assert.equal(ids().length,2,'The next phrase drains after the first finishes.');
+  const second=ids()[1];
+  h.socket.onmessage!({data:JSON.stringify({type:'agent.speak_started',source_event_id:second})});
+  h.socket.onmessage!({data:JSON.stringify({type:'agent.speak_ended',source_event_id:second})});
+  assert.equal(h.events.filter(e=>e.startsWith('queue:')).at(-1),'queue:0');assert.deepEqual(h.errors,[]);
 });
 
 test('held Live audio drains in order through an already busy socket without overflow', async t => {

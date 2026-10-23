@@ -1,20 +1,29 @@
 import { composeVoiceInstructions, voiceStartContextError, formatVoiceSceneReaction, isVoiceSceneReaction, isVoiceToolAllowlist, type VoiceAPI, type VoiceEvent, type VoicePose, type VoiceToolName } from "../../../sandbox/voice-types";
 import type { AvatarAudio, AvatarAudioOptions, AvatarConnection } from "./avatar-voice-audio";
 import { VoiceActivityWindow, VoiceQuietWindow, INPUT_SETTLEMENT_TIMEOUT_MS, INPUT_REFERENCE_WAIT_MS, OUTPUT_ECHO_TAIL_MS, meaningfulVoiceText, overlapsVoiceReference } from "./voice-interruption";
-import { policeSceneAuthority } from "./voice-scene-notice";
+import { policeSceneAuthority, workSceneAuthority, voiceSceneAuthority } from "./voice-scene-notice";
 import { LiveVoiceSession } from "./live-voice-session";
 import { LiveVoiceContext } from './live-voice-context';
+import type { VoiceInputEvidence } from './voice-input-monitor';
+import { TranscriptFallback } from './voice-transcript-fallback';
 import { copyVoiceContext, isVoiceContext, voiceContextText, type VoiceContext } from '../../../sandbox/voice-context';
 import { isVoiceAttempt, isVoiceCapability, sameVoiceAttempt, type VoiceAttempt, type VoiceCapability, type VoiceFinishResult } from '../../../sandbox/voice-types';
 import { BalanceVoiceClient, validBalanceRecipe } from './voice-balance-client';
 import type { BalanceAudio } from './voice-pcm-playback';
 
-export interface VoiceConfig { turnControl?: "client-v1" | 'server-v1'; liveModel?: "gpt-live-1"; available: boolean; funding: "byok" | "testing" | "private-pilot" | 'balance' | null; maxDurationSeconds: number; avatarAvailable?: boolean; avatarRequested?: boolean; transport?: 'server-ws-v1'; finishAcknowledged?: boolean; reservationCredits?: number }
+export interface VoiceConfig { turnControl?: "client-v1" | 'server-v1'; liveModel?: "gpt-live-1"; available: boolean; funding: "byok" | "testing" | "first-morning" | "private-pilot" | "credits-live" | 'balance' | null; maxDurationSeconds: number; creditsPerMinute?: number; avatarAvailable?: boolean; avatarRequested?: boolean; transport?: 'server-ws-v1'; finishAcknowledged?: boolean; reservationCredits?: number }
 
 export interface VoiceAudio {
   /** Bounded output unlock acknowledgement; optional for injected legacy adapters. */
   ready?(timeoutMs?: number): Promise<void>;
-  attachInput(stream: MediaStream): void;
+  /** Live transport without an avatar: output gating from the session (live.output, live.hold, live.interrupt). */
+  handleClientEvent?(event: Record<string, unknown>): void;
+  attachInput(stream: MediaStream): void | Promise<void>;
+  /** Live-only transport clock, owned and stopped by this adapter; never the captured track. */
+  prepareLiveInput?(options?: { holdFloor?: boolean }): Promise<MediaStream>;
+  inputEvidence?(): Promise<VoiceInputEvidence>;
+  /** Live with holdFloor: the last seconds of raw microphone audio (the transcript fallback). */
+  inputTail?(seconds: number): Promise<{ samples: Float32Array; sampleRate: number } | null>;
   attach(stream: MediaStream): void | Promise<void>;
   setMuted(muted: boolean): void;
   setSpatial(pose: VoicePose): void;
@@ -78,13 +87,25 @@ type Run = {
   balance?: BalanceVoiceClient;
   balanceAudio?: BalanceAudio;
   live?: LiveVoiceSession;
+  /** The live session's one entry start has run (it is skipped while output is muted). */
+  liveStarted?: boolean;
   preflightContext?: LiveVoiceContext;
   closing?: boolean;
   intent?: string;
   interruptionMode: "automatic" | "manual";
+  /** The character's sentence holds the floor: the microphone reaches the model after it ends. */
+  holdFloor?: boolean;
+  /** The second ear for words the live model never transcribes (holdFloor only). */
+  fallback?: TranscriptFallback;
+  /** Last raw microphone speech energy (before any floor hold). */
+  userVoiceAt?: number;
+  opening: 'character' | 'silent';
   abort: AbortController;
   promise: Promise<{ status: "connected" }>;
   timer?: ReturnType<typeof setTimeout>;
+  expiresAt?: number;
+  expiryTimer?: ReturnType<typeof setTimeout>;
+  warningTimer?: ReturnType<typeof setTimeout>;
   heartbeat?: ReturnType<typeof setTimeout>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   stream?: MediaStream;
@@ -97,7 +118,13 @@ type Run = {
   ready: boolean;
   voice?: "marin" | "cedar";
   toolAllowlist?: VoiceToolName[];
+  worldReasoning?: boolean;
+  /** The card asked for the live model without an avatar (direct audio). */
+  liveRequested: boolean;
+  maxDurationMs?: number;
   sponsored: boolean;
+  creditsLive?: boolean;
+  creditsBeat?: ReturnType<typeof setInterval>;
   privatePilot?: boolean;
   connectionId: string;
   connecting: boolean;
@@ -135,7 +162,7 @@ type Run = {
   sceneIds: Set<string>;
   sceneTimes: number[];
   sceneItem: { id: string; acknowledged: boolean } | null;
-  sceneItems: Map<string, { id: string; acknowledged: boolean; active: boolean; followUp: boolean; bulletin: boolean; policeCurrent?: () => boolean }>;
+  sceneItems: Map<string, { id: string; acknowledged: boolean; active: boolean; followUp: boolean; bulletin: boolean; policeCurrent?: () => boolean; workCurrent?: () => boolean; current?: () => boolean }>;
   cancellationIds: Set<string>;
   cancellationSequence: number;
 };
@@ -164,6 +191,7 @@ function serverFailure(code: unknown, funding?: unknown): VoiceFailure {
   if (funding === "private-pilot" && code === "VOICE_DAILY_LIMIT") return new VoiceFailure("This private voice test has used its two daily attempts. Try tomorrow or continue in text.");
   if (funding === "private-pilot" && (code === "OPENAI_KEY_REQUIRED" || code === "OPENAI_KEY_REJECTED")) return new VoiceFailure("The private voice test is temporarily unavailable. Continue in text or try again later.");
   if (code === "VOICE_DAILY_LIMIT") return new VoiceFailure("Sponsored testing voice has reached its daily limit. Try tomorrow or add your own OpenAI key in Settings.");
+  if (code === "VOICE_CREDITS_REQUIRED") return new VoiceFailure("You need more Mushies for live voice (about 60 a minute). Continue in text or add Mushies.");
   if (code === "OPENAI_KEY_REQUIRED") return new VoiceFailure("Add your own OpenAI API key in Settings to use live voice.");
   if (code === "VOICE_RATE_LIMITED" || code === "VOICE_PROVIDER_RATE_LIMITED") return new VoiceFailure("Please wait a minute before starting voice again.");
   if (code === "OPENAI_KEY_REJECTED") return new VoiceFailure("OpenAI could not use your API key. Check your key and account in Settings.");
@@ -192,8 +220,13 @@ export class VoiceController {
       const value: unknown = await response.json();
       if (this.disposed || lifecycle !== this.lifecycle || !this.deps.canUse() || !response.ok || !record(value)) return unavailable;
       if (value.funding === 'balance') return isVoiceCapability(value) ? value : unavailable;
-      if (!['byok','testing','private-pilot',null].includes(value.funding as never) || typeof value.available !== 'boolean' || value.maxDurationSeconds !== 300) return unavailable;
-      return { available: value.available, funding: value.funding as 'byok' | 'testing' | 'private-pilot' | null, transport: 'webrtc-v1', maxDurationSeconds: 300, finishAcknowledged: false };
+      if (value.funding === 'credits-live') {
+        const seconds = value.maxDurationSeconds;
+        if (typeof value.available !== 'boolean' || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 60 || seconds > 7200) return unavailable;
+        return { available: value.available, funding: 'credits-live', transport: 'webrtc-v1', maxDurationSeconds: seconds, finishAcknowledged: false, ...(typeof value.code === 'string' ? { code: value.code } : {}) };
+      }
+      if (!['byok','testing','first-morning','private-pilot',null].includes(value.funding as never) || typeof value.available !== 'boolean' || value.maxDurationSeconds !== 300) return unavailable;
+      return { available: value.available, funding: value.funding as 'byok' | 'testing' | 'first-morning' | 'private-pilot' | null, transport: 'webrtc-v1', maxDurationSeconds: 300, finishAcknowledged: false };
     } catch { return unavailable; }
   }
   private newBalanceClient(connectionId: string = crypto.randomUUID()) {
@@ -258,6 +291,10 @@ export class VoiceController {
     if (options.avatar !== undefined && typeof options.avatar !== "boolean") return this.rejectStart("Invalid avatar video option.");
     if (options.tools !== undefined && !isVoiceToolAllowlist(options.tools)) return this.rejectStart("Invalid voice tool allowlist.");
     if (options.interruptionMode !== undefined && options.interruptionMode !== "automatic" && options.interruptionMode !== "manual") return this.rejectStart("Invalid voice interruption mode.");
+    if (options.reasoning !== undefined && options.reasoning !== 'world') return this.rejectStart('Invalid voice reasoning mode.');
+    if (options.opening !== undefined && options.opening !== 'character' && options.opening !== 'silent') return this.rejectStart('Invalid voice opening policy.');
+    if (options.transport !== undefined && options.transport !== "live" && options.transport !== "realtime") return this.rejectStart("Invalid voice transport.");
+    if (options.holdFloor !== undefined && typeof options.holdFloor !== "boolean") return this.rejectStart("Invalid voice floor option.");
     if (this.run) return this.run.promise;
     if (options.intent !== undefined && (typeof options.intent !== "string" || !this.prepared || this.prepared.intent !== options.intent || this.prepared.avatar !== (options.avatar === true))) {
       return this.rejectStart("The microphone action expired. Click Start voice again.");
@@ -275,6 +312,10 @@ export class VoiceController {
     run.toolAllowlist = options.tools === undefined ? undefined : [...options.tools];
     if (run.avatar && run.toolAllowlist?.length === 0) run.preflightContext = new LiveVoiceContext(run.context);
     run.interruptionMode = options.interruptionMode ?? "automatic";
+    run.worldReasoning = options.reasoning === 'world';
+    run.opening = options.opening ?? 'character';
+    run.liveRequested = options.transport === "live";
+    run.holdFloor = options.holdFloor === true;
     this.run = run;
     this.emit({ type: "status", status: "connecting", message: "Preparing call" });
     // Consent is bounded separately from the network negotiation.
@@ -326,6 +367,7 @@ export class VoiceController {
   private newRun(options: { instructions: string; avatar?: boolean; voice?: "marin" | "cedar"; tools?: VoiceToolName[] }): Run {
     return {
       interruptionMode: "automatic",
+      opening: 'character',
       abort: new AbortController(), promise: null!, ready: false, voice: options.voice, connectionId: crypto.randomUUID(), sponsored: false, connecting: false, playback: false,
       instructions: options.instructions, pendingInstructions: null, context: "", captions: new Map(), eventIds: new Set(), tools: new Map(), interrupting: false, responseActive: false, responseRequested: false, pendingResponse: false,
       pendingSceneResponse: false, inputs: new Map(), speakingInput: null, inputSequence: 0, audibilityEpoch: 0, sceneIds: new Set(), sceneTimes: [], sceneItem: null, sceneItems: new Map(),
@@ -334,7 +376,7 @@ export class VoiceController {
       responseId: null, cancelledResponses: new Set(), cancelledRequest: false, interruptedResponse: false, interruptedInput: null,
       responseRequestId: null, responseSequence: 0,
       responseOverlap: null, responseRetryPending: false, responseRetryUsed: false,
-      avatar: options.avatar === true, avatarStarting: false, avatarPending: false,
+      avatar: options.avatar === true, avatarStarting: false, avatarPending: false, liveRequested: false,
       toolAllowlist: options.tools === undefined ? undefined : [...options.tools],
     };
   }
@@ -346,9 +388,43 @@ export class VoiceController {
 
   private current(run: Run): boolean { return (this.run === run || this.prepared === run) && !run.abort.signal.aborted; }
   private check(run: Run): void {
+    if (this.current(run) && run.expiresAt !== undefined && this.now() >= run.expiresAt) {
+      this.expire(run);
+      throw run.abort.signal.reason;
+    }
     if (!this.current(run)) throw new VoiceFailure("Voice stopped.");
     if (!this.deps.canUse()) throw new VoiceFailure("Voice is unavailable in this view.");
     if (run.balanceFunding && run.attempt) { const attempt = this.deps.currentAttempt?.(); if (!attempt || !sameVoiceAttempt(run.attempt, attempt)) throw new VoiceFailure('Voice saved attempt changed.'); }
+  }
+
+  private startLifetime(run: Run): void {
+    this.check(run);
+    if (run.expiresAt !== undefined) return;
+    // Each provider's deadline begins after this request. Use the earliest paid
+    // request as a conservative monotonic anchor, including all later setup.
+    // Consent/setup watchdogs remain independent, and readiness never renews it.
+    const duration = this.deps.maxDurationMs ?? run.maxDurationMs ?? 300_000;
+    run.expiresAt = this.now() + duration;
+    run.expiryTimer = setTimeout(() => this.expire(run), duration);
+    if (duration > 30_000) run.warningTimer = setTimeout(() => {
+      if (!this.current(run)) return;
+      const remaining = run.expiresAt! - this.now();
+      if (remaining <= 0) { this.expire(run); return; }
+      this.emit({ type: "call-notice", notice: {
+        kind: "ending-soon", remainingMs: remaining,
+        message: `This voice call ends in about ${Math.ceil(remaining / 1000)} seconds. Start voice again after it ends to continue.`,
+      } });
+    }, duration - 30_000);
+  }
+
+  private expire(run: Run): void {
+    if (!this.current(run)) return;
+    const remaining = run.expiresAt! - this.now();
+    if (remaining > 0) { run.expiryTimer = setTimeout(() => this.expire(run), remaining); return; }
+    const message = "This voice call reached its time limit. Start voice again to continue.";
+    this.cleanup(run, new VoiceFailure(message));
+    this.emit({ type: "level", value: 0 });
+    this.emit({ type: "status", status: "stopped", message });
   }
 
   /** Reject immediately on cancellation even for non-abortable browser permission prompts. */
@@ -365,12 +441,15 @@ export class VoiceController {
   private prepareAudio(run: Run): void {
     this.check(run);
     const outputLevel = (value: number) => {
-      if (this.current(run) && run.ready) this.emit({ type: "level", value: this.muted.output ? 0 : Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) });
+      if (!this.current(run) || !run.ready) return;
+      const level = this.muted.output ? 0 : Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+      this.emit({ type: "level", value: level });
+      if (run.live && !run.avatar) this.observeDirectOutput(run, level);
     };
     const inputLevel = (value: number) => {
       if (!this.current(run) || !run.ready) return;
       this.emit({ type: "input-level", value: this.muted.input ? 0 : Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) });
-      if (run.live) { run.live.inputLevel(this.muted.input ? 0 : value); return; }
+      if (run.live) { if (!this.muted.input && value >= .025) run.userVoiceAt = this.now(); run.fallback?.level(this.muted.input ? 0 : value); run.live.inputLevel(this.muted.input ? 0 : value); return; }
       const input = run.speakingInput ? run.inputs.get(run.speakingInput) : undefined;
       if (input && !this.deps.canUse()) input.eligible = false;
       if (input?.protected && input.decision === "pending") {
@@ -396,6 +475,7 @@ export class VoiceController {
     };
     run.audio ??= run.avatar ? this.deps.createAvatarAudio!(outputLevel, inputLevel, {
       signal: run.abort.signal,
+      beforePlayback: () => this.current(run) && (run.live?.beforePlayback() ?? true),
       onPending: () => {
         if (!this.current(run) || run.interruptedResponse || this.muted.output) return;
         if (run.live) { run.live.avatarPending(); return; }
@@ -428,24 +508,43 @@ export class VoiceController {
       if (!isVoiceCapability(config) || !config.available || config.funding !== 'balance') throw new VoiceFailure(config.code === 'INSUFFICIENT_CREDITS' ? 'Your Yumina balance is too low for live voice. Continue in text or add credits.' : 'Live voice is temporarily unavailable. Continue in text or try again later.');
       return this.connectBalance(run, config);
     }
+    if (record(config) && config.funding === 'credits-live' && config.available !== true) throw serverFailure("VOICE_CREDITS_REQUIRED");
     if (!record(config) || config.available !== true) throw serverFailure("OPENAI_KEY_REQUIRED");
-    if ((config.funding !== "byok" && config.funding !== "testing" && config.funding !== "private-pilot") || config.maxDurationSeconds !== 300) throw new VoiceFailure("Voice configuration is unavailable. Please try again.");
+    const maxDurationSeconds = config.maxDurationSeconds;
+    if ((config.funding !== "byok" && config.funding !== "testing" && config.funding !== "first-morning" && config.funding !== "private-pilot" && config.funding !== "credits-live") || typeof maxDurationSeconds !== "number" || !Number.isFinite(maxDurationSeconds) || maxDurationSeconds < 60 || maxDurationSeconds > 7200) throw new VoiceFailure("Voice configuration is unavailable. Please try again.");
+    run.maxDurationMs = Math.round(maxDurationSeconds * 1000);
     if (config.turnControl !== "client-v1") throw new VoiceFailure("Voice turn control is incompatible. Refresh the page and try again.");
     if (run.avatar && (config.avatarAvailable !== true || !this.deps.createAvatarAudio)) throw new VoiceFailure("Live telescreen video is unavailable. Please try again when the avatar service is ready.");
-    run.sponsored = config.funding === "testing" || config.funding === "private-pilot";
+    // The free first morning is paid by Yumina's key, like testing.
+    run.sponsored = config.funding === "testing" || config.funding === "first-morning" || config.funding === "private-pilot";
+    // Paid from the wallet per started minute: the server must hear that the tab is alive.
+    run.creditsLive = config.funding === "credits-live";
     run.privatePilot = config.funding === "private-pilot";
     // The host explicitly enables this migration. Other worlds and tool-using
     // voice sessions retain their negotiated Realtime protocol.
-    if (config.liveModel === "gpt-live-1" && run.avatar && run.toolAllowlist?.length === 0) {
+    // A card may opt into the live model without an avatar: the plain speaker
+    // graph plays the provider track directly and gates it through handleClientEvent.
+    if (config.liveModel === "gpt-live-1" && run.toolAllowlist?.length === 0 && (run.avatar || run.liveRequested)) {
       run.instructions = run.pendingInstructions ?? run.instructions; run.pendingInstructions = null;
       run.live = new LiveVoiceSession({
         send: event => this.send(run, event),
-        emit: event => { if (this.current(run)) this.emit(event); },
+        emit: event => {
+          if (event.type === "transcript" && event.role === "user") {
+            // QA only: simulate the live model losing the player's words, to exercise the fallback.
+            if ((globalThis as { __voiceDropUserTranscripts?: boolean }).__voiceDropUserTranscripts === true) return;
+            run.fallback?.heard();
+          }
+          if (this.current(run)) this.emit(event);
+        },
         input: enabled => run.stream?.getAudioTracks().forEach(track => { track.enabled = enabled; }),
-        holdAudio: held => (run.audio as AvatarAudio | undefined)?.handleClientEvent({ type: 'live.hold', held }),
-        interruptAudio: () => (run.audio as AvatarAudio | undefined)?.handleClientEvent({ type: "live.interrupt" }),
+        inputEvidence: () => run.audio?.inputEvidence?.() ?? Promise.resolve('unknown'),
+        holdAudio: held => run.audio?.handleClientEvent?.({ type: 'live.hold', held }),
+        allowAudio: allowed => run.audio?.handleClientEvent?.({ type: 'live.output', allowed }),
+        interruptAudio: () => run.audio?.handleClientEvent?.({ type: "live.interrupt" }),
         fail: message => this.fail(run, new VoiceFailure(message)),
-      }, run.instructions, run.context, run.interruptionMode, run.preflightContext);
+      }, run.instructions, run.context, run.interruptionMode, run.preflightContext, run.worldReasoning, run.opening);
+      // Diagnosis only: which gate holds the live session (read in browser tests).
+      try { (globalThis as { __voiceGates?: () => unknown }).__voiceGates = () => run.live?.debugGates(); } catch { /* No global. */ }
     }
     run.preflightContext = undefined;
     if (!run.intent) this.emit({ type: "status", status: "connecting", message: "Confirm microphone" });
@@ -459,7 +558,12 @@ export class VoiceController {
       throw new VoiceFailure("The voice speaker could not start. Click Start voice again to unlock audio.");
     }
     this.check(run);
-    if (run.live) (run.audio as AvatarAudio).handleClientEvent({ type: "live.enable" });
+    if (run.live) {
+      run.audio?.handleClientEvent?.({ type: "live.enable" });
+      // Remote PCM can arrive before session.started; synchronize permission
+      // while audio exists and before any provider transport is negotiated.
+      run.live.prepareOutput();
+    }
     clearTimeout(run.timer);
     run.timer = setTimeout(() => this.fail(run, new VoiceFailure("Voice connection timed out. You can continue without voice.")), this.deps.connectTimeoutMs ?? (run.avatar ? 65_000 : 35_000));
     this.emit({ type: "status", status: "connecting", message: "Allow microphone" });
@@ -469,6 +573,9 @@ export class VoiceController {
     run.stream = await this.wait(run, pendingMedia);
     this.check(run);
     const microphoneTracks = run.stream.getAudioTracks();
+    // Keep physical capture closed until Live has initialized its input control.
+    // The independent transport below keeps sending silence during this interval.
+    if (run.live) for (const track of microphoneTracks) track.enabled = false;
     const microphoneEnded = () => this.fail(run, new VoiceFailure("Your microphone disconnected or its permission was revoked. Start voice again or continue without a microphone."));
     for (const track of microphoneTracks) track.onended = microphoneEnded;
     // Capture can end before the promise settles; registering a handler alone
@@ -490,7 +597,38 @@ export class VoiceController {
       try { selected = track.getSettings?.().echoCancellation; } catch { /* Diagnostics must not prevent capture. */ }
       this.emit({ type: "capture-settings", echoCancellation: typeof selected === "boolean" || selected === "all" || selected === "remote-only" ? selected : "unknown" });
     }
-    run.audio?.attachInput(run.stream);
+    await this.wait(run, Promise.resolve(run.audio?.attachInput(run.stream)));
+    this.check(run);
+    let outgoingStream = run.stream;
+    if (run.live) {
+      try {
+        if (!run.audio?.prepareLiveInput) throw new Error('Missing Live input clock');
+        outgoingStream = await this.wait(run, run.audio.prepareLiveInput({ holdFloor: run.holdFloor && !run.avatar }));
+        this.check(run);
+        if (run.holdFloor && !run.avatar && run.audio.inputTail) {
+          const audio = run.audio;
+          let n = 0;
+          run.fallback = new TranscriptFallback({
+            tail: seconds => audio.inputTail!(seconds),
+            transcribe: async clip => {
+              const form = new FormData(); form.append("file", clip, "clip.wav");
+              const res = await this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice-input`, { method: "POST", credentials: "include", body: form });
+              if (!res.ok) return null;
+              const body = await res.json().catch(() => ({})) as { text?: unknown };
+              return typeof body.text === "string" ? body.text : null;
+            },
+            emit: text => { if (this.current(run)) this.emit({ type: "transcript", role: "user", id: `live:fallback:${++n}`, text, final: true }); },
+          });
+        }
+        const tracks = outgoingStream.getAudioTracks();
+        if (tracks.length !== 1 || tracks.some(track => !track.enabled || track.readyState !== 'live' || microphoneTracks.includes(track))) {
+          throw new Error('Unavailable Live input clock');
+        }
+      } catch {
+        this.check(run);
+        throw new VoiceFailure('The live microphone audio could not start. Click Start voice again to unlock audio.');
+      }
+    }
     if (run.avatar) {
       this.emit({ type: "status", status: "connecting", message: "Connecting video" });
       await this.connectAvatar(run);
@@ -499,7 +637,10 @@ export class VoiceController {
     this.emit({ type: "status", status: "connecting", message: "Connecting voice" });
     const peer = this.deps.createPeer();
     run.peer = peer;
-    for (const track of run.stream.getAudioTracks()) { track.enabled = !this.muted.input; peer.addTrack(track, run.stream); }
+    for (const track of outgoingStream.getAudioTracks()) {
+      if (!run.live) track.enabled = !this.muted.input;
+      peer.addTrack(track, outgoingStream);
+    }
     peer.ontrack = event => {
       if (!this.current(run)) return;
       const stream = event.streams[0] ?? new MediaStream([event.track]);
@@ -537,6 +678,7 @@ export class VoiceController {
     const startupInstructions = run.instructions;
     run.live?.setStartupInstructions(startupInstructions);
     this.check(run);
+    this.startLifetime(run);
     const response = await this.wait(run, this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice/${encodeURIComponent(this.deps.sessionId)}/connect`, {
       method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "X-Voice-Connection-Id": run.connectionId },
       body: JSON.stringify({ turnControl: run.live ? "live-v1" : "client-v1", sdp: offer.sdp, instructions: composeVoiceInstructions(startupInstructions, startupContext), voice: run.voice, tools: run.toolAllowlist }), signal: run.abort.signal,
@@ -550,18 +692,13 @@ export class VoiceController {
     if (channel.readyState !== "open") await this.wait(run, opened);
     if (run.live) await this.wait(run, run.live.ready);
     this.check(run); clearTimeout(run.timer); run.ready = true;
-    run.timer = setTimeout(() => {
-      if (!this.current(run)) return;
-      this.cleanup(run, new VoiceFailure("Voice stopped."));
-      this.emit({ type: "level", value: 0 });
-      this.emit({ type: "status", status: "stopped", message: "Voice reached its five-minute limit. Start voice again to continue." });
-    }, this.deps.maxDurationMs ?? 300_000);
     if (!run.live && !this.flushInstructions(run) && run.context) this.sendContext(run);
     if (this.muted.input || this.muted.output) this.applyMute(run);
     this.check(run);
     this.emit({ type: "status", status: "connected" });
     this.emit({ type: "activity", status: "listening" });
-    if (run.live) { run.live.setMuted(this.muted); if (!this.muted.output) run.live.start(); }
+    if (run.creditsLive) this.startCreditsHeartbeat(run);
+    if (run.live) { run.live.setMuted(this.muted); if (!this.muted.output) { run.liveStarted = true; run.live.start(); } }
     else if (!this.muted.output) this.requestResponse(run);
     this.check(run);
     return { status: "connected" };
@@ -619,17 +756,36 @@ export class VoiceController {
 
   private fail(run: Run, error: VoiceFailure): void {
     if (!this.current(run)) return;
+    // Provider teardown may reach the event loop before an overdue timer.
+    if (run.expiresAt !== undefined && this.now() >= run.expiresAt) { this.expire(run); return; }
     this.cleanup(run, error);
     this.emit({ type: "level", value: 0 }); this.emit({ type: "status", status: "error", message: error.message, ...(run.balanceFunding ? { phase: 'cleanup' as const, code: 'VOICE_BALANCE_ERROR' } : {}) });
   }
 
+  /** A credits-paid call beats every 30 s; the server hangs up a silent one and stops billing.
+   * A beat the server no longer recognises means it already ended the call (out of Mushies, or the cap). */
+  private startCreditsHeartbeat(run: Run): void {
+    clearInterval(run.creditsBeat);
+    run.creditsBeat = setInterval(() => {
+      if (run.closing || this.run !== run) { clearInterval(run.creditsBeat); return; }
+      void this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice/${encodeURIComponent(this.deps.sessionId)}/live/heartbeat`, {
+        method: "POST", credentials: "include", headers: { "X-Voice-Connection-Id": run.connectionId },
+      }).then(response => {
+        if (response.status === 404 && !run.closing && this.run === run) this.fail(run, new VoiceFailure("Live voice ended: your Mushies ran out or the call reached its time limit."));
+      }, () => { /* A missed beat is retried; the server allows two. */ });
+    }, 30_000);
+  }
   private cleanup(run: Run, reason: Error): void {
     if (run.closing) return;
     run.closing = true;
+    clearInterval(run.creditsBeat); run.creditsBeat = undefined;
+    run.fallback?.close();
     run.live?.close();
+    if (this.run === run) this.emit({ type: "call-notice", notice: null });
     if (this.run === run) this.emit({ type: "activity", status: "listening" });
     if (this.run === run) this.run = null;
     if (this.prepared === run) this.prepared = null;
+    clearTimeout(run.expiryTimer); clearTimeout(run.warningTimer);
     clearTimeout(run.timer); clearTimeout(run.heartbeat); clearTimeout(run.reconnectTimer); run.abort.abort(reason);
     if (run.balance) { run.balance.stop(); run.stream = undefined; }
     run.balanceAudio?.close(); run.balanceAudio = undefined;
@@ -647,7 +803,7 @@ export class VoiceController {
       this.closePrivatePilotTransport(run);
     }
     else {
-      if ((run.sponsored || run.live) && run.connecting) void this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice/${encodeURIComponent(this.deps.sessionId)}/stop`, {
+      if ((run.sponsored || run.live || run.creditsLive) && run.connecting) void this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice/${encodeURIComponent(this.deps.sessionId)}/stop`, {
         method: "POST", credentials: "include", keepalive: true, headers: { "X-Voice-Connection-Id": run.connectionId },
       }).catch(() => {});
       this.emit({ type: "input-level", value: 0 });
@@ -767,6 +923,30 @@ export class VoiceController {
   }
 
   private now(): number { return this.deps.now?.() ?? performance.now(); }
+
+  private directOutput = new WeakMap<Run, { speaking: boolean; quietSince: number; floor?: boolean }>();
+  /** Without an avatar there is no playback event stream; derive the official's
+   * speaking state from the speaker level so quiet boundaries and activity work. */
+  private observeDirectOutput(run: Run, level: number): void {
+    const live = run.live; if (!live) return;
+    const now = this.now();
+    const state = this.directOutput.get(run) ?? { speaking: false, quietSince: now };
+    this.directOutput.set(run, state);
+    if (level >= 0.03) {
+      state.quietSince = now;
+      if (!state.speaking) {
+        state.speaking = true;
+        // The floor belongs to whoever started first: if the user is mid-sentence the model
+        // must keep hearing them, or it takes their pause for the end of the turn.
+        if (run.holdFloor && now - (run.userVoiceAt ?? -1e9) > 600) { state.floor = true; run.audio?.handleClientEvent?.({ type: 'live.floor', held: true }); }
+        live.sourceActivity(true); live.playback("started");
+      }
+    } else if (state.speaking && now - state.quietSince >= 350) {
+      state.speaking = false;
+      if (state.floor) { state.floor = false; run.audio?.handleClientEvent?.({ type: 'live.floor', held: false }); }
+      live.playback("stopped"); live.sourceActivity(false);
+    }
+  }
 
   private inputEligible(run: Run, input: InputTurn): boolean {
     return this.current(run) && this.deps.canUse() && input.eligible && input.decision !== "discarding" && input.decision !== "discarded" && input.epoch === run.audibilityEpoch && !this.muted.input && !this.muted.output;
@@ -997,6 +1177,8 @@ export class VoiceController {
       if (this.muted.output) run.audio?.setMuted(true);
       run.live.setMuted(this.muted);
       if (!this.muted.output) run.audio?.setMuted(false);
+      // A call that connected muted (a world that hung up while muted) still needs its entry start.
+      if (!this.muted.output && run.ready && !run.liveStarted) { run.liveStarted = true; run.live.start(); }
       return;
     }
     this.prunePoliceScenes(run);
@@ -1064,11 +1246,16 @@ export class VoiceController {
     run.sceneTimes = run.sceneTimes.filter(time => now - time < 10_000);
     if (run.sceneTimes.length >= 8) return;
     const policeCurrent = policeSceneAuthority(notice);
-    if (policeCurrent && !policeCurrent()) return;
+    const workCurrent = workSceneAuthority(notice);
+    const current = voiceSceneAuthority(notice);
+    if (current && !current()) {
+      if (notice.kind === 'reply') this.emit({ type: 'input-hint', message: 'The reply was saved but was not spoken because the conversation or room changed.' });
+      return;
+    }
     this.prunePoliceScenes(run, !!policeCurrent);
     run.sceneIds.add(notice.id); run.sceneTimes.push(now);
     if (run.live) { run.live.scene(notice); return; }
-    const item = { id: `voice-scene-${run.sceneIds.size}`, acknowledged: false, active: false, followUp: notice.kind === "follow-up", bulletin: notice.kind === "bulletin", policeCurrent };
+    const item = { id: `voice-scene-${run.sceneIds.size}`, acknowledged: false, active: false, followUp: notice.kind === "follow-up", bulletin: notice.kind === "bulletin" || notice.kind === 'reply', policeCurrent, workCurrent, current };
     run.sceneItem = item;
     run.sceneItems.set(notice.id, item);
     this.send(run, { type: "conversation.item.create", item: { id: run.sceneItem.id, type: "message", role: "user", content: [{
@@ -1077,13 +1264,15 @@ export class VoiceController {
     this.requestResponse(run, true);
   }
 
-  /** Delete only queued host-validated police instructions. A physical clock
+  /** Delete obsolete host-validated instructions; police milestones supersede
+   * only other police milestones, never a still-current work receipt. A physical clock
    * never cancels an active reply or clears its audio. Latest context is already
    * sent before the surviving milestone requests the next quiet turn. */
   private prunePoliceScenes(run: Run, superseded = false): void {
     let removed = false;
     for (const [noticeId, item] of run.sceneItems) {
-      if (item.active || !item.policeCurrent || !superseded && item.policeCurrent()) continue;
+      const obsolete = item.current && !item.current() || item.policeCurrent && (superseded || !item.policeCurrent()) || item.workCurrent && !item.workCurrent();
+      if (item.active || !obsolete) continue;
       this.send(run, { type: "conversation.item.delete", item_id: item.id });
       run.sceneItems.delete(noticeId);
       removed = true;
@@ -1125,6 +1314,9 @@ export class VoiceController {
     }
   }
 
+  resolveDelegation(id: unknown, result: unknown): void {
+    if(this.run && this.current(this.run)) this.run.live?.resolveDelegation(id,result);
+  }
   resolveTool(callId: unknown, result: unknown): void {
     const run = this.run;
     if (!run || !identifier(callId) || run.tools.get(callId) !== false) return;
@@ -1374,11 +1566,15 @@ export class VoiceController {
   private async connectAvatar(run: Run): Promise<void> {
     run.avatarStarting = true;
     this.emit({ type: "video-status", status: "connecting" });
+    this.startLifetime(run);
     const response = await this.wait(run, this.deps.fetch(`${this.deps.apiBase ?? ""}/api/voice/${encodeURIComponent(this.deps.sessionId)}/avatar/start`, {
       method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "X-Voice-Connection-Id": run.connectionId },
       body: "{}", signal: run.abort.signal,
     }));
     const connection: unknown = await this.wait(run, response.json()); this.check(run);
+    if (!response.ok && record(connection) && connection.code === "AVATAR_DAILY_LIMIT") {
+      throw new VoiceFailure("The testing live-video daily allowance is exhausted. You can keep playing by typing and try voice again after the allowance resets.");
+    }
     if (!response.ok || !record(connection) || !identifier(connection.sessionId)
       || !boundedString(connection.livekitClientToken, 8192) || !connection.livekitClientToken
       || !boundedString(connection.livekitUrl, 4096) || !connection.livekitUrl.startsWith("wss://")
@@ -1453,6 +1649,7 @@ export function dispatchVoiceCall(controller: VoiceController, method: string, a
       if (args.length !== 1) throw new VoiceFailure("Invalid voice arguments.");
       return controller.reactToScene(args[0]);
     case "realtimeVoice.resolveTool": return controller.resolveTool(args[0], args[1]);
+    case "realtimeVoice.resolveDelegation": return controller.resolveDelegation(args[0],args[1]);
     case "realtimeVoice.setSpatial": return controller.setSpatial(args[0]);
     case "realtimeVoice.ackVideoFrame":
       if (args.length !== 1) throw new VoiceFailure("Invalid video frame acknowledgement.");

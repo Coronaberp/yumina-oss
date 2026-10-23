@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { authClient } from "@/lib/auth-client";
 import { readSafeAuthReturnTo } from "@/lib/auth-return";
+import { oauthAuthorizeResumePath } from "@/lib/oauth-authorize";
 import { AuthLayout } from "./auth-layout";
 
 interface VerificationPendingProps {
@@ -18,9 +19,12 @@ export function VerificationPending({ email }: VerificationPendingProps) {
   const [resendError, setResendError] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  // The card a guest signed up from rides along to the verified page.
+  // The card a guest signed up from rides along to the verified page, and so
+  // does an outside app's sign-in that stopped at an unverified login.
   const [returnTo] = useState(() =>
-    typeof window === "undefined" ? undefined : readSafeAuthReturnTo(window.location.search),
+    typeof window === "undefined"
+      ? undefined
+      : readSafeAuthReturnTo(window.location.search) ?? oauthAuthorizeResumePath(window.location.search) ?? undefined,
   );
 
   useEffect(() => () => clearInterval(timerRef.current), []);

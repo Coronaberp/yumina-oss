@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import {
@@ -35,14 +35,86 @@ function isEditorSwitch(from?: string, to?: string): boolean {
   return CLASSIC_PATH.test(from) !== CLASSIC_PATH.test(to);
 }
 
+/**
+ * Leaving with unsaved changes, the way a Google doc does it: a card that is
+ * already saved somewhere is saved on the way out, with a small 「正在保存…」
+ * and no question (owner, 10/18: the three-button dialog over a blurred
+ * screen was the ugliest moment of leaving). Only a save that fails asks,
+ * and then it says the save failed. A card never saved yet still asks:
+ * saving it on the way out would make a card the creator may be abandoning.
+ */
 export function UnsavedChangesDialog({ blocker }: UnsavedChangesDialogProps) {
   const { t } = useTranslation("editor");
   const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const saved = useEditorStore((s) => Boolean(s.serverWorldId));
+  const blocked = blocker.status === "blocked";
+  const started = useRef(false);
 
-  if (blocker.status !== "blocked") return null;
+  // The choice most people want: keep the work AND go. The navigation only
+  // goes through once the save has landed clean — a failed save leaves them
+  // here, with the store's own failure pill saying why.
+  const saveAndLeave = async () => {
+    if (saving) return;
+    setSaving(true);
+    setFailed(false);
+    try {
+      flushPendingEditorFields();
+      const ok = await useEditorStore.getState().saveDraft();
+      const after = useEditorStore.getState();
+      if (ok && !after.isDirty && !after.layoutDirty) blocker.proceed?.();
+      else setFailed(true);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!blocked) { started.current = false; setFailed(false); return; }
+    if (saved && !started.current) {
+      started.current = true;
+      void saveAndLeave();
+    }
+    // saveAndLeave reads the blocker it is handed this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, saved]);
+
+  if (!blocked) return null;
+
+  // "Your changes will be lost" has to be true: the recovery copy the guard
+  // left behind is dropped too, or the next open offers the very changes the
+  // creator just threw away.
+  const leaveWithoutSaving = () => {
+    if (saving) return;
+    useEditorStore.getState().discardUnsavedChanges();
+    blocker.proceed?.();
+  };
+
+  if (saved && !failed) {
+    return (
+      <div
+        role="status"
+        data-leave-saving=""
+        className="pointer-events-none fixed left-1/2 top-3 z-[100] inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-popover/95 px-3 py-1.5 text-xs text-foreground/80 shadow-lg"
+      >
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        {t("unsavedDialog.saving")}
+      </div>
+    );
+  }
 
   const switching = isEditorSwitch(blocker.current?.pathname, blocker.next?.pathname);
-  const copy = switching
+  const copy = failed
+    ? {
+      title: t("unsavedDialog.failedTitle"),
+      description: t("unsavedDialog.failedDescription"),
+      stay: t("unsavedDialog.stay"),
+      leave: t("unsavedDialog.leave"),
+      saveAndLeave: t("unsavedDialog.retry"),
+    }
+    : switching
     ? {
       title: t("unsavedDialog.switchTitle"),
       description: t("unsavedDialog.switchDescription"),
@@ -58,31 +130,6 @@ export function UnsavedChangesDialog({ blocker }: UnsavedChangesDialogProps) {
       saveAndLeave: t("unsavedDialog.saveAndLeave", "Save and leave"),
     };
 
-  // The choice most people want was missing: keep the work AND go. The
-  // navigation only goes through once the save has landed clean — a failed
-  // save leaves them here, with the store's own failure pill saying why.
-  const saveAndLeave = async () => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      flushPendingEditorFields();
-      const ok = await useEditorStore.getState().saveDraft();
-      const after = useEditorStore.getState();
-      if (ok && !after.isDirty && !after.layoutDirty) blocker.proceed?.();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // "Your changes will be lost" has to be true: the recovery copy the guard
-  // left behind is dropped too, or the next open offers the very changes the
-  // creator just threw away.
-  const leaveWithoutSaving = () => {
-    if (saving) return;
-    useEditorStore.getState().discardUnsavedChanges();
-    blocker.proceed?.();
-  };
-
   return (
     <Dialog open onOpenChange={() => { if (!saving) blocker.reset?.(); }}>
       <DialogContent className="max-w-sm">
@@ -90,7 +137,7 @@ export function UnsavedChangesDialog({ blocker }: UnsavedChangesDialogProps) {
           <DialogTitle>{copy.title}</DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter className="gap-2">
           <button
             type="button"
             onClick={() => blocker.reset?.()}

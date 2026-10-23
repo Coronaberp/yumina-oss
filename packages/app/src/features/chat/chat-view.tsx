@@ -32,6 +32,7 @@ import { usePlaytimeTracker } from "./use-playtime-tracker";
 import { CombatPanel } from "./combat-panel";
 import { WorldRenderer } from "./world-renderer";
 import { PersonaManagerDialog } from "./persona-manager-dialog";
+import { PromptComposerDialog } from "./prompt-composer-dialog";
 import { SharePlaythroughModal } from "./share-playthrough-modal";
 import { TipModal } from "@/edition/slots";
 import { fetchCreditsForChat } from "@/edition/slots.state";
@@ -133,6 +134,8 @@ export function ChatView({
   // a window hook) keeps a single source of truth and avoids mount-timing races.
   const personaManagerOpen = useUiStore((s) => s.personaManagerOpen);
   const closePersonaManager = useUiStore((s) => s.closePersonaManager);
+  const promptComposerOpen = useUiStore((s) => s.promptComposerOpen);
+  const closePromptComposer = useUiStore((s) => s.closePromptComposer);
   const sharePlaythroughOpen = useUiStore((s) => s.sharePlaythroughOpen);
   const closeSharePlaythrough = useUiStore((s) => s.closeSharePlaythrough);
   // The scene-image gallery is mounted here, not in SessionHeader, for the
@@ -718,7 +721,9 @@ export function ChatView({
       ...yuminaAPI,
       variables: fullScreenVariables,
       isStreaming,
-      streamingContent: isStreaming ? stripDirectivesForSandbox(streamingContent ?? "") : "",
+      // The game-state keys are the world's variable ids: bracket lines naming
+      // one are bookkeeping, hidden while streaming as the server will on save.
+      streamingContent: isStreaming ? stripDirectivesForSandbox(streamingContent ?? "", Object.keys(fullScreenVariables ?? {}), worldDef?.replyRules) : "",
       // WorldRenderer reads these directly off api (legacy path passes them
       // via extraProps={canvasExtraProps} instead). Mirror them here so
       // rootComponent worlds get greetingContent / pendingChoices / etc.
@@ -740,7 +745,7 @@ export function ChatView({
       isLoadingEarlier,
     } as YuminaAPI),
     [
-      yuminaAPI, fullScreenVariables, isStreaming, streamingContent,
+      yuminaAPI, fullScreenVariables, isStreaming, streamingContent, worldDef?.replyRules,
       pendingChoices, error, sendFailureNonce, streamingReasoning, readOnly,
       resolvedGreetingContent, selectedModel, mixMode, modelPool, userPlan, memorySummaryEnabled, installedExtensions, preferredProvider,
       hasEarlierMessages, isLoadingEarlier,
@@ -897,6 +902,7 @@ export function ChatView({
         entries={worldDef?.entries ?? []}
         loreUiBindings={worldDef?.loreUiBindings ?? []}
         worldbooks={worldDef?.worldbooks ?? []}
+        replyRules={worldDef?.replyRules}
         speakerBubbles={worldDef?.settings?.speakerBubbles === true}
       />
       {combatActive && session?.id && <CombatPanel sessionId={session.id} />}
@@ -915,6 +921,7 @@ export function ChatView({
         onClose={closePersonaManager}
         sessionId={session?.id}
       />
+      <PromptComposerDialog open={promptComposerOpen} onClose={closePromptComposer} />
       <SharePlaythroughModal
         open={sharePlaythroughOpen}
         worldId={session?.worldId ?? ""}

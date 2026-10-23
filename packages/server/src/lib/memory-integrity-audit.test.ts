@@ -5,7 +5,7 @@ import { after, test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { apiKeys, creditWallets, messages, modelPrices, playSessions, summaryceptionSnippets, user, worlds } from '../db/schema.js';
+import { apiKeys, creditWallets, messages, modelPrices, playSessions, sessionMemoryVersions, summaryceptionSnippets, user, worlds } from '../db/schema.js';
 import { env } from './env.js';
 import { CustomProvider } from './llm/custom.js';
 import { encryptApiKey } from './crypto.js';
@@ -18,7 +18,7 @@ import { compactSummaryceptionForSession, getSummaryceptionPromptBlock, updateSu
 import { repairSessionContinuity, restoreSessionContinuity, type ContinuityRepairBackup } from './continuity-repair.js';
 import { branchSession } from '../routes/sessions.js';
 
-const model = 'google/gemini-2.5-flash-lite';
+const model = 'google/gemini-3.1-flash-lite';
 const future = 'FUTURE_ONLY_MARKER';
 after(async () => { await (db as unknown as { $client: { close(): Promise<void> } }).$client.close(); });
 
@@ -178,8 +178,12 @@ test('memory integrity adversarial audit', async t => {
         if (failSecond) {
           assert.equal(saved!.sessionMemory!.text,'Previous complete memory.');
           assert.equal(saved!.sessionMemoryProcessedMessageId,rows[0]!.id);
+          // A finished batch is kept as a version and paid once; the failed one
+          // is neither. The next run continues from the kept batch.
           const [wallet] = await db.select().from(creditWallets).where(eq(creditWallets.userId,f.uid));
-          assert.equal(Number(wallet!.balance)+Number(wallet!.addonBalance),200,'uncommitted batches are not charged');
+          assert.ok(Math.abs(Number(wallet!.balance)+Number(wallet!.addonBalance)-(200-2.4))<0.0001,'only the finished batch is charged');
+          const kept = await db.select().from(sessionMemoryVersions).where(eq(sessionMemoryVersions.sessionId,f.sid));
+          assert.equal(kept.length,1,'the finished batch is kept');
         } else {
           assert.equal(saved!.sessionMemoryProcessedMessageId,rows[802]!.id);
           assert.ok(requests.some(p => p.includes('Turn 802:')));

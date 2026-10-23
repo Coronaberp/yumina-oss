@@ -738,7 +738,7 @@ for (const path of ["send", "regenerate", "continue"] as const) {
     const f = structuralCorrectionFixture();
     f.ctx.audit.path = path;
     f.ctx.model = "openai/gpt-4o";
-    const correctionModel = "google/gemini-2.5-flash-lite";
+    const correctionModel = "google/gemini-3.1-flash-lite";
     f.ctx.resolveCorrection = async () => ({ provider: f.ctx.provider, model: correctionModel, maxContext: 128_000, apiKeyTier: "regular" });
     f.ctx.state.variables.journey = {
       posts: Array.from({ length: 24 }, (_, index) => ({ index, text: "下課後同學們在校園公告欄討論社團活動。".repeat(32) })),
@@ -880,7 +880,7 @@ test("bounded token estimate delegates per-piece CPU protection while preserving
   await preloadTokenizer();
   const text = "界".repeat(1000);
   assert.equal(boundedCorrectionInputTokens(text, "selected/model"), Buffer.byteLength(text, "utf8"));
-  for (const model of ["google/gemini-2.5-flash-lite", "anthropic/claude-sonnet-4.6", "deepseek/deepseek-v3.2"]) {
+  for (const model of ["google/gemini-3.1-flash-lite", "anthropic/claude-sonnet-4.6", "deepseek/deepseek-v3.2"]) {
     assert.equal(boundedCorrectionInputTokens(text, model), 1000);
     assert.equal(boundedCorrectionInputTokens("x".repeat(30_000), model), 7500);
   }

@@ -24,7 +24,7 @@ import i18n from "@/lib/i18n";
 import { getGlobalEditorMode, saveGlobalEditorMode } from "@/features/editor/lib/editor-mode";
 import { prepareStudioEntry } from "@/features/editor/editor-entry";
 import { fetchBlueprintAccess } from "@/lib/blueprint-access";
-import { getEditorSurface, saveEditorSurface, shouldOpenVisual } from "@/lib/editor-surface";
+import { getEditorSurface, isPhoneScreen, shouldOpenVisual } from "@/lib/editor-surface";
 import { requestQuietTour } from "@/lib/studio-entry";
 import { useUnsavedChangesGuard } from "@/features/editor/use-unsaved-changes-guard";
 import { UnsavedChangesDialog } from "@/features/editor/unsaved-changes-dialog";
@@ -481,10 +481,9 @@ function WorldCreatePage() {
       useEditorStore.getState().clearHistory();
       if (mode !== "advanced") return;
       if (!shouldOpenVisual({ mode: "advanced", last: getEditorSurface(),
-        allowed: await fetchBlueprintAccess(), guest: !isAuthenticated })) return;
+        allowed: await fetchBlueprintAccess(), guest: !isAuthenticated, phone: isPhoneScreen() })) return;
       const id = await prepareStudioEntry(useEditorStore.getState);
       if (!id) return;
-      saveEditorSurface("visual");
       // A template or an imported card opens on a board it filled; the
       // first-visit welcome would cover it, and its first lesson talks about
       // a greeting we wrote (it stays one click away under 帮助).

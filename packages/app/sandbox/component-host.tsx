@@ -98,6 +98,7 @@ function assembleState(channels: ChannelState): SandboxState {
     entries: channels.session?.entries ?? [],
     loreUiBindings: channels.session?.loreUiBindings ?? [],
     worldbooks: channels.session?.worldbooks ?? [],
+    replyRules: channels.session?.replyRules ?? [],
     speakerBubbles: channels.session?.speakerBubbles === true,
 
     // UI channel

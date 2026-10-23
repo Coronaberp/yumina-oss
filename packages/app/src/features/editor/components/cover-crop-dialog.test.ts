@@ -15,7 +15,7 @@ test("crop tabs preserve loaded dimensions, require a loaded image, and confirm 
     "@radix-ui/react-dialog": { Root: panel, Portal: panel, Content: panel, Title: panel },
     "react-image-crop": panel, "react-image-crop/dist/ReactCrop.css": {},
     "@/lib/cover-crop": cropping, "@/lib/world-cover-crop": artwork,
-    "@/lib/asset-url": { resolveImageUrl: (src: string) => src },
+    "@/lib/asset-url": { resolveImageUrl: (src: string) => src, isMotionCoverRef: () => false },
     "@/components/world-cover-previews": { WorldCoverPreviews: () => null },
   });
   const root = createRoot(env.dom.window.document.getElementById("root")!);

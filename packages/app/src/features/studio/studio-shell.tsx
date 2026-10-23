@@ -8,7 +8,6 @@ import { useTranslation } from "react-i18next";
 import { useRouter } from "@tanstack/react-router";
 import {
   ArrowLeft,
-  Save,
   Loader2,
   Play,
   History,
@@ -61,6 +60,7 @@ import "./studio-theme.css";
 import { captureHubEvent } from "@/lib/analytics";
 import { ownsTypingUndo } from "./lib/text-entry-target";
 import { stepBack } from "./lib/studio-back";
+import { SaveStatus } from "@/features/editor/save-status";
 
 function useIsMobileStudio() {
   const [isMobile, setIsMobile] = useState(() => {
@@ -119,8 +119,6 @@ function StudioDesktopShell() {
   const router = useRouter();
   const worldDraft = useEditorStore(s => s.worldDraft);
   const serverWorldId = useEditorStore(s => s.serverWorldId);
-  const isDirty = useEditorStore(s => s.isDirty);
-  const layoutDirty = useEditorStore(s => s.layoutDirty);
   const saving = useEditorStore(s => s.saving);
   const saveDraft = useEditorStore(s => s.saveDraft);
   const setField = useEditorStore(s => s.setField);
@@ -532,21 +530,9 @@ function StudioDesktopShell() {
             {isPlaytest ? <Square className="h-3 w-3 fill-current" /> : <Play className="h-3 w-3" />}
             {t(isPlaytest ? "studio.stopPlay" : "studio.play")}
           </button>
-          {/* Save. Enabled for a tidied canvas too (`layoutDirty`), which
-              saves the arrangement without counting as a card change. */}
-          <button
-            onClick={handleSave}
-            data-onboarding="save"
-            disabled={saving || (!isDirty && !layoutDirty)}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity disabled:opacity-40"
-          >
-            {saving ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Save className="h-3 w-3" />
-            )}
-            {t("studio.save")}
-          </button>
+          {/* Saved / saving / offline: the card saves itself. Counts a
+              tidied canvas too (`layoutDirty`). */}
+          <SaveStatus onSave={handleSave} data-onboarding="save" />
           {/* Publish + review state in one control — the only review entry point
               in Studio. Green "Publish update" when live & clean; otherwise the
               button shows the state (not live / changes to submit / in review /

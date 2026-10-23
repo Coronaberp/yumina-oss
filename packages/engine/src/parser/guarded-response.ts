@@ -5,6 +5,7 @@ import { ResponseParser, type ParseResult } from "./response-parser.js";
 import { StructuredResponseParser } from "./structured-response-parser.js";
 import { ThinkingTagFilter } from "./thinking-tag-filter.js";
 import { stripStateReceipts } from "./state-receipt.js";
+import { DIRECTIVE_BLOCK_RE, RATIONALE_BLOCK_RE, STATE_CHANGES_BLOCK_RE } from "./bookkeeping-blocks.js";
 import { parseLeadingSpeakerTag } from "../prompts/speaker-tag.js";
 
 export interface StateDiagnostic { code: string; start?: number; end?: number }
@@ -87,7 +88,14 @@ export function validateAiBatch(world: WorldDefinition, state: GameState, batch:
 /** Additive strict entry point. Existing permissive parsers remain unchanged. */
 export function parseGuardedResponse(raw: string, world: WorldDefinition, state: GameState): GuardedParseResult {
   const speakerTag = parseLeadingSpeakerTag(ThinkingTagFilter.strip(raw));
-  const text = speakerTag.text;
+  // A <rationale> explains changes (any `[x: y]` it quotes is not a write),
+  // and an empty <directive> / [state-changes] wrapper says nothing; neither
+  // may count as text after the receipt. Wrappers holding directives stay
+  // for the scanner below, and the legacy parser drops their tags.
+  const text = speakerTag.text
+    .replace(RATIONALE_BLOCK_RE, "")
+    .replace(DIRECTIVE_BLOCK_RE, (block, inner: string) => (inner.trim() ? block : ""))
+    .replace(STATE_CHANGES_BLOCK_RE, (block, inner: string) => (inner.trim() ? block : ""));
   const legacy = new ResponseParser();
   const structured = new StructuredResponseParser();
   const diagnostics: StateDiagnostic[] = [];
@@ -237,7 +245,8 @@ export function parseGuardedResponse(raw: string, world: WorldDefinition, state:
       header.lastIndex = cursor;
     }
     visible += body.slice(cursor);
-    const audio = legacy.parse(visible);
+    // Same display rule as the unguarded path; its writes were checked above.
+    const audio = legacy.parse(visible, undefined, { world });
     parsed = { cleanText: audio.cleanText, effects, audioEffects: audio.audioEffects };
     if (receipt === "none" && effects.length) fail("contradictory_none");
     if (receipt === "updated" && (!effects.length || declaredCount !== effects.length)) fail("count_mismatch");

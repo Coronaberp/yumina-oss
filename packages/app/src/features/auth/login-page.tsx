@@ -6,7 +6,7 @@ import { markLoginComplete } from "@/lib/auth-guard";
 import { getAuthErrorKey } from "@/lib/auth-errors";
 import { isCardReturnTo, isGameReturnTo, markAuthReturn, readSafeAuthReturnTo } from "@/lib/auth-return";
 import { isCreatorHost } from "@/lib/creator-hub-url";
-import { oauthAuthorizeResumeUrl } from "@/lib/oauth-authorize";
+import { oauthAuthorizeResumePath, oauthAuthorizeResumeUrl } from "@/lib/oauth-authorize";
 import { getLandingRoute } from "@/edition/routes";
 import { Separator } from "@/components/ui/separator";
 import { Turnstile, type TurnstileHandle } from "@/components/turnstile";
@@ -35,6 +35,12 @@ export function LoginPage() {
       ? undefined
       : readSafeAuthReturnTo(window.location.search)
   );
+  // An outside app's "Sign in with Yumina" (OAuth): the authorize request to
+  // resume after a sign-up, a social sign-in or an email verification.
+  const [oauthResume] = useState(() =>
+    typeof window === "undefined" ? null : oauthAuthorizeResumePath(window.location.search),
+  );
+  const registerReturnTo = returnTo ?? oauthResume ?? undefined;
 
   // Show verification screen when unverified user tries to log in
   const [showVerification, setShowVerification] = useState(false);
@@ -166,7 +172,9 @@ export function LoginPage() {
     // started from. The destination must be in trustedOrigins on the
     // server (it is — see auth.ts).
     if (returnTo && isCardReturnTo(returnTo)) markAuthReturn();
-    const callbackURL = returnTo === "/delete-account"
+    const callbackURL = oauthResume
+      ? `${window.location.origin}${oauthResume}`
+      : returnTo === "/delete-account"
       ? `${window.location.origin}/delete-account`
       : returnTo && (isGameReturnTo(returnTo) || isCardReturnTo(returnTo))
       ? `${window.location.origin}${returnTo}`
@@ -307,7 +315,7 @@ export function LoginPage() {
         {/* Footer */}
         <p className="mt-3 text-center text-[11px] text-[#B9B6AE]/60 sm:mt-4 sm:text-xs">
           {t("login.noAccount")}{" "}
-          <Link to="/register" search={returnTo ? { returnTo } : undefined} className="font-semibold text-gold transition-colors hover:text-[#F0C24A]">
+          <Link to="/register" search={registerReturnTo ? { returnTo: registerReturnTo } : undefined} className="font-semibold text-gold transition-colors hover:text-[#F0C24A]">
             {t("login.createOne")}
           </Link>
         </p>

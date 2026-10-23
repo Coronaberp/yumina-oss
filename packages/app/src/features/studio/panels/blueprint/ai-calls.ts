@@ -195,6 +195,8 @@ function codeRow(call: FrontendAiCall, key: string, books: readonly Worldbook[],
     when: String(t("blueprint.aiCalls.whenCode", { kind: t(`blueprint.codeCall.kind_${call.kind}`) })),
     model: model
       ? { mode: "author", text: modelLabel(model), warn: modelReachWarning(model, "player", t, "none") }
+      : call.modelVariable ? { mode: "code", text: String(t("blueprint.codeCall.modelVariable", { name: call.modelVariable })) }
+      : call.dynamicModel ? { mode: "code", text: String(t("blueprint.aiCalls.computed")) }
       : follows(t),
     params,
     open: { kind: "code", file: call.file, line: call.line },

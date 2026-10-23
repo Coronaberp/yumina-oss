@@ -66,6 +66,9 @@ test("the prompt carries what it sees, only the pieces that hold, its thread, an
   assert.match(system, /"delta": number between -5 and 5/);
   assert.deepEqual(prompt.slice(1).map((m) => m.role), ["user", "assistant", "user"]);
   assert.equal(prompt[prompt.length - 1]!.content, "在吗？");
+  assert.doesNotMatch(system, /What the interface hands you/, "nothing said about the input when the creator said nothing");
+  const told = buildAiCallPrompt({ world, state, book, station: { ...book.station!, takes: "玩家刚发的私信" }, input: "在吗？", history: [], thread: [] });
+  assert.match(String(told[0]!.content), /What the interface hands you when it calls: 玩家刚发的私信/);
 });
 
 test("an answer is found inside fences and words, checked, clamped and filtered", () => {
@@ -98,4 +101,15 @@ test("an AI that must move still moves: a random legal option when every try fai
   ], "……");
   assert.ok(["出牌", "质疑", "跳过"].includes(String(out.move)));
   assert.deepEqual({ bet: out.bet, cards: out.cards, line: out.line }, { bet: 1, cards: [], line: "……" });
+});
+
+test("an AI with no fields that answers in JSON is asked for one JSON object, not for plain words", () => {
+  const state = { variables: { favor: 10, bag: [] }, metadata: {} } as unknown as GameState;
+  const book = world.worldbooks![0]!;
+  const station = { ...book.station!, output: undefined, answer: "json" as const, task: "Judge the review. Reply {\"claims\": [], \"delta\": 0}." };
+  const system = buildAiCallPrompt({ world, state, book, station, input: "review", history: [], thread: [] })[0]!.content as string;
+  assert.match(system, /ONLY one JSON object, in the shape your job describes/);
+  assert.doesNotMatch(system, /words themselves only/);
+  const plain = buildAiCallPrompt({ world, state, book, station: { ...station, answer: undefined }, input: "review", history: [], thread: [] })[0]!.content as string;
+  assert.match(plain, /words themselves only/);
 });

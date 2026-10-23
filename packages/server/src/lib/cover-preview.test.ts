@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { animatedCoverHeader, createCoverPreviewService, type CoverPreviewStorage } from "./cover-preview.js";
 import { isPublicCdnKey } from "./cdn-key-policy.js";
+import { COVER_MOTION_LIMIT, coverMotionKey } from "./cover-upload.js";
 
 function webp(animated = true) {
   const bytes = Buffer.alloc(30);
@@ -81,4 +82,45 @@ test("persistent derivatives are reused without another encoding job", async () 
   await createCoverPreviewService(f.storage, async () => Buffer.from("video")).get(f.key); await settle();
   const service = createCoverPreviewService(f.storage, async () => assert.fail("existing derivative"));
   assert.equal((await service.get(f.key)).kind, "video");
+});
+
+test("normalized video covers serve their prebuilt motion without reading or re-encoding the poster", async () => {
+  const f = fixture();
+  const key = "worlds/card/thumbnail/processed/digest.motion.anim.image";
+  f.objects.set(key, { contentType: "image/webp", contentLength: 1000, etag: "poster" });
+  f.objects.set(coverMotionKey(key), { contentType: "video/mp4", contentLength: 50_000, etag: "motion" });
+  const service = createCoverPreviewService(f.storage, async () => assert.fail("already prepared"));
+  assert.deepEqual(await service.get(key), { kind: "video", key: coverMotionKey(key) });
+  assert.deepEqual(f.reads, []);
+  assert.equal(isPublicCdnKey(coverMotionKey(key)), false);
+});
+
+test("missing, oversized or wrong-type motion never falls back to an unverified movie", async () => {
+  const key = "worlds/card/thumbnail/processed/digest.motion.anim.image";
+  for (const motion of [null, { contentType: "video/mp4", contentLength: COVER_MOTION_LIMIT + 1 },
+    { contentType: "text/html", contentLength: 100 }]) {
+    const f = fixture();
+    f.objects.set(key, { contentType: "image/webp", contentLength: 1000, etag: "poster" });
+    if (motion) f.objects.set(coverMotionKey(key), { ...motion, etag: "motion" });
+    const service = createCoverPreviewService(f.storage, async () => assert.fail("must not encode"));
+    assert.deepEqual(await service.get(key), { kind: "still" });
+  }
+});
+
+test("a motion sidecar alone cannot be served after its public poster is removed", async () => {
+  const f = fixture();
+  const key = "worlds/card/thumbnail/processed/digest.motion.anim.image";
+  f.objects.set(coverMotionKey(key), { contentType: "video/mp4", contentLength: 50_000, etag: "motion" });
+  await assert.rejects(createCoverPreviewService(f.storage).get(key), /missing/);
+});
+
+test("normalized animations above the legacy threshold keep alpha and finite playback without another encode", async () => {
+  for (const [size, kind] of [[COVER_MOTION_LIMIT, "original"], [COVER_MOTION_LIMIT + 1, "still"]] as const) {
+    const f = fixture();
+    const key = "worlds/card/thumbnail/processed/digest.normalized.anim.image";
+    f.objects.set(key, { contentType: "image/webp", contentLength: size, etag: "alpha" });
+    const service = createCoverPreviewService(f.storage, async () => assert.fail("must retain original playback"));
+    assert.deepEqual(await service.get(key), { kind });
+    assert.deepEqual(f.reads, []);
+  }
 });

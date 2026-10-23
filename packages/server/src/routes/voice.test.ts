@@ -425,3 +425,63 @@ test("avatar unavailable and unexpected provider errors never disclose secrets",
     assert.doesNotMatch(await response.text(), /secret-token|api-key/);
   }
 });
+
+function liveCreditsFake(config: { available: boolean } | null = { available: true }) {
+  const log: string[] = [];
+  return { log, service: {
+    config: async () => config && { ...config, funding: "credits-live" as const, creditsPerMinute: 60, maxDurationSeconds: 900 },
+    begin: async (user: string, session: string, connection?: string) => { log.push(`begin:${user}:${session}:${connection}`); return "row-1"; },
+    activate: async (id: string, provider: string) => { log.push(`activate:${id}:${provider}`); return true; },
+    abandon: async (id: string) => { log.push(`abandon:${id}`); },
+    heartbeat: async (user: string, session: string) => { log.push(`beat:${user}:${session}`); return true; },
+    stop: async (user: string, session: string) => { log.push(`stop:${user}:${session}`); },
+  } };
+}
+
+test("credits-live: the 1984 world without a key is offered GPT-Live paid from credits, 15 minutes", async () => {
+  const live = liveCreditsFake();
+  const f = setup({ getOpenAiKey: async () => null, connectSponsored: async () => sdp, liveCredits: live.service, getLiveCreditsKey: () => "server-key" });
+  const config = await (await f.app.request(`/api/voice/${sessionId}/config`)).json() as Record<string, unknown>;
+  assert.deepEqual(config, { available: true, funding: "credits-live", creditsPerMinute: 60, maxDurationSeconds: 900, avatarAvailable: false, turnControl: "client-v1", liveModel: "gpt-live-1" });
+  assert.equal(JSON.stringify(config).includes("server-key"), false);
+  const short = setup({ getOpenAiKey: async () => null, connectSponsored: async () => sdp, liveCredits: liveCreditsFake({ available: false }).service, getLiveCreditsKey: () => "server-key" });
+  assert.equal(((await (await short.app.request(`/api/voice/${sessionId}/config`)).json()) as Record<string, unknown>).available, false);
+});
+
+test("credits-live: connect reserves the call, bills the first minute on the provider id, and a 15-minute backstop", async () => {
+  const live = liveCreditsFake();
+  const f = setup({ getOpenAiKey: async () => null, liveCredits: live.service, getLiveCreditsKey: () => "server-key",
+    connectSponsored: async request => {
+      assert.equal(request.apiKey, "server-key"); assert.equal(request.sponsored, false); assert.equal(request.maxDurationMs, 930_000);
+      assert.equal(await request.onProviderId!("rtc_paid"), true);
+      return sdp;
+    } });
+  const response = await f.post({ ...input, tools: [], turnControl: "live-v1" }, { "content-type": "application/json", "X-Voice-Connection-Id": "conn" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(live.log, [`begin:owner:${sessionId}:conn`, "activate:row-1:rtc_paid"]);
+});
+
+test("credits-live: a failed negotiation abandons the reservation; BYOK never touches credits", async () => {
+  const live = liveCreditsFake();
+  const f = setup({ getOpenAiKey: async () => null, liveCredits: live.service, getLiveCreditsKey: () => "server-key",
+    connectSponsored: async () => { throw new VoiceConnectionError("VOICE_CREDITS_REQUIRED"); } });
+  const response = await f.post({ ...input, tools: [], turnControl: "live-v1" });
+  assert.equal(response.status, 402);
+  assert.equal(await responseCode(response), "VOICE_CREDITS_REQUIRED");
+  assert.deepEqual(live.log, [`begin:owner:${sessionId}:undefined`, "abandon:row-1"]);
+  const byokLive = liveCreditsFake();
+  const byok = setup({ liveAvailable: () => true, liveCredits: byokLive.service, getLiveCreditsKey: () => "server-key", connectSponsored: async request => { assert.equal(request.apiKey, "sk-owner"); return sdp; } });
+  assert.equal((await byok.post({ ...input, tools: [], turnControl: "live-v1" })).status, 200);
+  assert.deepEqual(byokLive.log, []);
+});
+
+test("credits-live: heartbeat keeps the paid call alive and stop ends its billing", async () => {
+  const live = liveCreditsFake();
+  const f = setup({ getOpenAiKey: async () => null, liveCredits: live.service, getLiveCreditsKey: () => "server-key", stopSponsored: async () => {} });
+  const beat = await f.app.request(`/api/voice/${sessionId}/live/heartbeat`, { method: "POST" });
+  assert.equal(beat.status, 200);
+  assert.equal((await f.app.request(`/api/voice/${sessionId}/stop`, { method: "POST" })).status, 200);
+  assert.deepEqual(live.log, [`beat:owner:${sessionId}`, `stop:owner:${sessionId}`]);
+  const ended = setup({ liveCredits: { ...live.service, heartbeat: async () => false } });
+  assert.equal((await ended.app.request(`/api/voice/${sessionId}/live/heartbeat`, { method: "POST" })).status, 404);
+});

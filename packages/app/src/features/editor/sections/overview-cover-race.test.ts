@@ -33,13 +33,13 @@ for (const handler of ["handleCoverUpload", "handleCoverFromAsset"]) {
         const writes: Array<[string, unknown]> = [];
         const dialogs: unknown[] = [];
         const handlerFn = callback(handler, {
-          serverWorldId: "card-a", coverTarget: { current: target }, apiBase: "", FROM_ASSET_TIMEOUT_MS: 20_000,
+          serverWorldId: "card-a", coverTarget: { current: target }, apiBase: "",
           useEditorStore: { getState: () => current },
           uploadAssetWithPresignedUrl: () => response,
-          fetchWithTimeout: async () => ({ ok: true, json: async () => ({ data: await response }) }),
+          registerAssetWithRetry: () => response,
           setField: (key: string, value: unknown) => writes.push([key, value]),
           setCropDialog: (value: unknown) => dialogs.push(value),
-          adoptOwnWriteToken() {}, setUploadingCover() {},
+          adoptOwnWriteToken() {}, setUploadingCover() {}, setProcessingCover() {},
           setCoverError: (error: unknown) => { assert.equal(error, null); },
           getAssetUploadErrorMessage: (error: unknown) => String(error), t: (key: string) => key,
           saveDraft: () => { throw new Error("Existing card must not need a save"); },

@@ -1184,9 +1184,13 @@ export async function permanentlyDeleteAccount(
           eq(creatorEarnings.senderId, userId),
         ),
       );
+    // Detach the recipient here rather than leaving it to the user DELETE's
+    // SET NULL. When that action runs after the cascade has already removed
+    // the user's own rewarded thread, its UPDATE re-checks thread_id against
+    // the deleted thread and aborts the whole deletion with an FK violation.
     await tx
       .update(threadRewards)
-      .set({ reason: "Reward issued to a deleted account" })
+      .set({ reason: "Reward issued to a deleted account", recipientId: null })
       .where(eq(threadRewards.recipientId, userId));
     if (affectedGifts.length > 0) {
       await tx

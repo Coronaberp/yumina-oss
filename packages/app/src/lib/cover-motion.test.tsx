@@ -3,7 +3,7 @@ import test from "node:test";
 import { act, type ComponentType } from "react";
 import { clientDom, loadClientModule, settlePromises } from "./feed-beacon.test-helpers";
 
-async function mount(kind: string, reduced = false) {
+async function mount(kind: string, reduced = false, options: { normalized?: boolean; width?: number; motion?: boolean } = {}) {
   let visible: (entries: { isIntersecting: boolean }[]) => void = () => {};
   const env = clientDom({
     IntersectionObserver: class { constructor(callback: typeof visible) { visible = callback; } observe() {} disconnect() {} },
@@ -15,20 +15,45 @@ async function mount(kind: string, reduced = false) {
   env.dom.window.HTMLMediaElement.prototype.play = async () => {};
   env.dom.window.HTMLMediaElement.prototype.pause = () => {};
   const assets = loadClientModule<Record<string, unknown>>(new URL("./asset-url.ts", import.meta.url));
-  const { CroppedImage } = loadClientModule<{ CroppedImage: ComponentType<{ src: string; alt: string; width: number }> }>(new URL("./cover-crop.tsx", import.meta.url), {
+  const { CroppedImage } = loadClientModule<{ CroppedImage: ComponentType<{ src: string; alt: string; width?: number; motion?: boolean }> }>(new URL("./cover-crop.tsx", import.meta.url), {
     "./asset-url": assets,
     "./cropping": { defaultCropImageRenderer: { getImageStyle: () => ({ width: "100%", height: "100%" }) } },
     "./utils": { cn: (...values: unknown[]) => values.filter(Boolean).join(" ") },
   });
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(env.dom.window.document.getElementById("root")!);
-  const source = "/cdn/key/" + Buffer.from("worlds/one/image/unmarked.webp").toString("base64url");
-  await act(async () => root.render(<CroppedImage src={source} width={480} alt="Cover" />));
+  const source = "/cdn/key/" + Buffer.from(options.normalized ? "worlds/one/thumbnail/cover.motion.anim.image" : "worlds/one/image/unmarked.webp").toString("base64url");
+  await act(async () => root.render(<CroppedImage src={source} width={options.normalized ? options.width : 480} motion={options.motion} alt="Cover" />));
   return { document: env.dom.window.document, source, env,
     show: async (value: boolean) => { await act(async () => { visible([{ isIntersecting: value }]); await settlePromises(); }); },
     cleanup: async () => { await act(async () => root.unmount()); env.restore(); },
   };
 }
+
+test("normalized covers play without a resize width and retain their bounded poster on transform failure", async () => {
+  const app = await mount("video", false, {normalized:true});
+  try {
+    await app.show(true);
+    assert.ok(app.document.querySelector("video"));
+    assert.equal(app.document.querySelectorAll("img").length,1);
+  } finally { await app.cleanup(); }
+  const resized = await mount("video", false, {normalized:true,width:480});
+  try {
+    await resized.show(true);
+    const poster = resized.document.querySelector("img")!;
+    await act(async () => poster.dispatchEvent(new resized.env.dom.window.Event("error")));
+    assert.equal(new URL(poster.src).pathname,resized.source);
+    assert.ok(resized.document.querySelector("video"));
+  } finally { await resized.cleanup(); }
+});
+
+test("the crop dialog can keep motion paused without fetching the video", async () => {
+  const app = await mount("video", false, {normalized:true,width:480,motion:false});
+  try {
+    await app.show(true);
+    assert.equal(app.document.querySelector("video"),null);
+  } finally { await app.cleanup(); }
+});
 
 test("unmarked animated covers start with a safe still, use video in view and release it offscreen", async () => {
   const app = await mount("video");

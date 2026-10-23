@@ -52,7 +52,28 @@ export interface FrontendAiCall {
   maxTokens?: number;
   /** `temperature` or `maxTokens` is present but computed at runtime. */
   dynamicSampling?: boolean;
+  /** `model:` is written but computed at runtime. */
+  dynamicModel?: boolean;
+  /** With a computed model: the card variable it is read out of just before
+   *  the call (`api.variables["unperson-referee-model"]`), so the creator can
+   *  change it there. */
+  modelVariable?: string;
+  /** The code reads the card's entries itself (`api.entries`) just before
+   *  the call: it hands the AI lore it picked, not the engine's. */
+  picksEntries?: boolean;
+  /** A `callAi(` comes just before it: this call is the fallback for when
+   *  calling one of the card's AIs did not answer (1984's referee), not an
+   *  AI of its own. */
+  fallbackOfCallAi?: boolean;
 }
+
+/** How far before a call its arguments are looked for when they are built
+ *  in variables first (1984's referee builds them a few hundred characters
+ *  up). Short enough that an unrelated read further up the file is not it. */
+const LEAD = 1500;
+const MODEL_VARIABLE = /\bvariables\s*(?:\?\.\s*)?(?:\[\s*["']([^"']*model[^"']*)["']\s*\]|\.\s*([A-Za-z_$][\w$]*model[\w$]*))/gi;
+const READS_ENTRIES = /\bapi\s*\??\.\s*entries\b/;
+const CALLS_AI = /\bcallAi\s*\(/;
 
 // A member access, optional or not: `.`, `?.`, with any spacing.
 const DOT = String.raw`\s*\??\.\s*`;
@@ -358,8 +379,20 @@ function scanFiles(files: Record<string, string>): FrontendAiCall[] {
         const v = lore[1]!;
         call.includeLorebook = v === "true" ? true : v === "false" ? false : (v.slice(1, -1) as "all" | "matched");
       }
-      const model = /^["']([^"']+)["']/.exec(afterKey(argCode, arg, "model") ?? "");
+      const modelRaw = afterKey(argCode, arg, "model");
+      const model = /^["']([^"']+)["']/.exec(modelRaw ?? "");
+      const lead = Math.max(0, found[n]!.index - LEAD);
       if (model) call.model = model[1]!;
+      else if (modelRaw !== null || /[{,]\s*model\s*(?=[,}])/.test(argCode)) {
+        call.dynamicModel = true;
+        let v: RegExpExecArray | null, last: string | undefined;
+        MODEL_VARIABLE.lastIndex = 0;
+        const window = text.slice(lead, b);
+        while ((v = MODEL_VARIABLE.exec(window)) !== null) last = v[1] ?? v[2];
+        if (last) call.modelVariable = last;
+      }
+      if (READS_ENTRIES.test(code.slice(lead, b))) call.picksEntries = true;
+      if (CALLS_AI.test(code.slice(lead, found[n]!.index))) call.fallbackOfCallAi = true;
       for (const key of ["temperature", "maxTokens"] as const) {
         const raw = afterKey(argCode, arg, key);
         if (raw === null) {

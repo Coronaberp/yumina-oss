@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { playSessions } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -25,3 +25,13 @@ export const voiceServices: VoiceRouteServices = {
   releaseConnection: (userId) => releaseConcurrency(`voice:${userId}`),
   connect: createOpenAiVoiceCall,
 };
+
+/** True when the session plays the 1984 card ("Big Brother Is Listening"). Matched by its
+ * root component and dossier variable, never its display name: the name is the creator's to change. */
+export async function isUnpersonSession(sessionId: string): Promise<boolean> {
+  const result = await db.execute(sql`SELECT 1 FROM play_sessions s JOIN worlds w ON w.id = s.world_id
+    WHERE s.id = ${sessionId} AND w.schema->'rootComponent'->>'id' = 'unperson-root'
+      AND w.schema->'variables' @> '[{"id":"unperson-dossier"}]'::jsonb LIMIT 1`);
+  const rows = Array.isArray(result) ? result : (result as { rows?: unknown[] }).rows ?? [];
+  return rows.length > 0;
+}

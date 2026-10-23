@@ -9,11 +9,12 @@
  *
  * The remembered value is where the creator *left off*, not a setting they
  * ever opened a menu to change: flipping the switch on records "visual" and
- * every later card opens the canvas until they flip it back. While the canvas
- * is a beta, a creator who has never flipped it lands on the classic editor,
- * where the pill introduces the canvas once. Phones are excluded
- * — the canvas wants room a 390px screen does not have — so a phone always
- * lands on the classic editor without that counting as a choice.
+ * every later card opens the canvas until they flip it back; flipping it off
+ * records "classic" and every later card opens there. A creator who has never
+ * flipped it lands on the canvas on a computer. On a phone the never-chosen
+ * still land on the classic editor: the phone studio is a different page and
+ * is not the default yet. Arriving on the canvas is not a choice — only the
+ * switch is.
  *
  * localStorage throws in private windows and when site data is blocked, so
  * every accessor swallows its own failure: a browser that refuses to remember
@@ -52,17 +53,28 @@ export interface SurfaceDecision {
   allowed: boolean;
   /** A signed-out draft cannot open Studio: that route demands a session. */
   guest: boolean;
+  /** Under 768px, where Studio is the phone studio rather than the board. */
+  phone: boolean;
 }
 
 /** Whether opening `/app/worlds/:id/edit` should land on the canvas instead. */
-export function shouldOpenVisual({ mode, last, allowed, guest }: SurfaceDecision): boolean {
+export function shouldOpenVisual({ mode, last, allowed, guest, phone }: SurfaceDecision): boolean {
   if (mode !== "advanced") return false;
-  // A phone goes to Studio too: under 768px it is the phone studio (开场白 /
-  // 设定 / 玩家界面 / 测试), not the board. Sending phones to the classic
-  // editor put a newcomer who picked 画布 in the most crowded screen there is.
   if (!allowed || guest) return false;
-  // Beta: the canvas is opt-in. Never chosen lands on the classic editor.
-  return last === "visual";
+  if (last) return last === "visual";
+  // Never chosen: the canvas on a computer. A phone that chose 画布 goes to
+  // the phone studio (开场白 / 设定 / 玩家界面 / 测试); one that never chose
+  // stays on the classic editor until the phone studio is the default too.
+  return !phone;
+}
+
+/** The width below which Studio is the phone studio, not the board. */
+export function isPhoneScreen(): boolean {
+  try {
+    return window.innerWidth < 768;
+  } catch {
+    return false;
+  }
 }
 
 const SCREEN_FIRST_KEY = "yumina-screen-first";

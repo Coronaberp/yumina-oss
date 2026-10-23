@@ -6,7 +6,7 @@ Yumina creator terms, sorted alphabetically.
 
 ---
 
-**AI** — a model call that does a job in your card. Every card has one, the **Narrator**. Extra AIs come in four types: turn-based, UI-based, code-based and custom. Added with **Add → An AI call** on the canvas. See [AIs](/creator/ais).
+**AI** — a model call that does a job in your card. Every card has one, the **Narrator**. Extra AIs come in four types: turn-based, UI-based, event-based and custom. Added with **Add → An AI call** on the canvas. See [AIs](/creator/ais).
 
 **Audio Directive** — a special directive the AI embeds in replies using `[audio: trackId action]` syntax to control audio playback. Supports play, stop, crossfade, volume, and chain operations.
 

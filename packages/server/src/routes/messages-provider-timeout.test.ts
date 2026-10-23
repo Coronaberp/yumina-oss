@@ -18,7 +18,7 @@ test("provider progress timeout finishes send, regenerate and continue without l
   const priorKey = env.YUMINA_OPENROUTER_KEY;
   env.YUMINA_OPENROUTER_KEY = "synthetic-test-key";
   t.after(() => { env.YUMINA_OPENROUTER_KEY = priorKey; });
-  const model = "google/gemini-2.5-flash";
+  const model = "google/gemini-3.5-flash-lite";
   await db.insert(modelPrices).values({ modelId: model, inputPricePerM: 1, outputPricePerM: 1 });
   t.mock.method(globalThis, "fetch", async () => Response.json({ data: [
     { id: model, context_length: 1048576, architecture: { input_modalities: ["text"] } },

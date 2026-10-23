@@ -50,6 +50,10 @@ export interface VariableAuditSegment {
     flagged: Record<string, number>;
     proposed: string[];
     applied: string[];
+    /** Flagged because the story model wrote them in a shape the parser
+     * could not apply; `attempted` is what it wrote (clipped). */
+    hinted?: string[];
+    attempted?: string[];
   };
   dropped: Array<{ variableId: string; reason: "internal" | "read-only" | "inactive" | "judge" }>;
   rejected: string[];

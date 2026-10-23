@@ -56,6 +56,10 @@ export function createVoiceAPI(options: {
       if (params.avatar !== undefined && typeof params.avatar !== "boolean") throw new Error("Avatar opt-in must be a boolean.");
       if (params.tools !== undefined && !isVoiceToolAllowlist(params.tools)) throw new Error("Invalid voice tool allowlist.");
       if (params.interruptionMode !== undefined && params.interruptionMode !== "automatic" && params.interruptionMode !== "manual") throw new Error("Invalid voice interruption mode.");
+      if (params.reasoning !== undefined && params.reasoning !== 'world') throw new Error('Invalid voice reasoning mode.');
+      if (params.opening !== undefined && params.opening !== 'character' && params.opening !== 'silent') throw new Error('Invalid voice opening policy.');
+      if (params.transport !== undefined && params.transport !== 'live' && params.transport !== 'realtime') throw new Error('Invalid voice transport.');
+      if (params.holdFloor !== undefined && typeof params.holdFloor !== 'boolean') throw new Error('Invalid voice floor option.');
       const response = await options.call<{ status?: string; error?: string }>("realtimeVoice.start", [params], 180_000);
       if (response?.status !== "connected") throw new Error(response?.error || "Voice could not connect.");
       return { status: "connected" };
@@ -77,6 +81,7 @@ export function createVoiceAPI(options: {
       if (options.available) options.post("realtimeVoice.reactToScene", [{ id: notice.id, kind: notice.kind }]);
     },
     resolveTool: (callId, result) => options.post("realtimeVoice.resolveTool", [callId, result]),
+    resolveDelegation: (id, result) => { if(options.available) options.post('realtimeVoice.resolveDelegation',[id,result]); },
     setSpatial: pose => options.post("realtimeVoice.setSpatial", [pose]),
     onEvent(callback) {
       if (!options.available) return () => {};

@@ -1,8 +1,20 @@
 import { useEditorStore } from "@/stores/editor";
 
-/** The three kinds of AI, by what calls it: the player's turn, the player's
- *  screen, or the card's own logic (a value, a scenario ending, a silence). */
-export type AiType = "turn" | "ui" | "code" | "custom";
+/** The kinds of AI, by what calls it: the player's turn, the player's
+ *  screen, something happening in the card (a value, a scenario ending, a
+ *  silence), or code the creator has someone write against a declared shape.
+ *  `script` is not a kind anyone picks: it is a call the interface code makes
+ *  on its own, drawn on the board so it is not invisible. */
+export type AiType = "turn" | "ui" | "event" | "custom";
+export type AiRowType = AiType | "script" | "game";
+
+/** Asks the board to add an AI of a kind to the card and open it: the card's
+ *  own AI is always the one replying, so its type switch is the way to the
+ *  other kinds rather than a change to it. */
+export const ADD_AI_EVENT = "yumina:studio-add-ai";
+export function requestAddAi(type: AiType): void {
+  window.dispatchEvent(new CustomEvent(ADD_AI_EVENT, { detail: { type } }));
+}
 
 /**
  * A new AI that lives in `place` — the card ("card") or a scenario's id —

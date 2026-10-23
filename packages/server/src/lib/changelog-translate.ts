@@ -7,7 +7,7 @@
 import { env } from "./env.js";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
-export const CHANGELOG_TRANSLATE_MODEL = "google/gemini-2.5-flash";
+export const CHANGELOG_TRANSLATE_MODEL = "google/gemini-3.5-flash-lite";
 const TIMEOUT_MS = 60_000;
 const TARGETS = ["zh-Hant", "es", "ja"] as const;
 export type TranslateTarget = (typeof TARGETS)[number];

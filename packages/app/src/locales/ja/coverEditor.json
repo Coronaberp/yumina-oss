@@ -1,4 +1,11 @@
 {
+  "motion": {
+    "uploadHint": "画像は20 MBまで。動くカバーは64 MB・60秒まで。MP4・WebMに対応。",
+    "processing": "カバーを最適化中…",
+    "uploading": "カバーをアップロード中…",
+    "play": "再生",
+    "pause": "一時停止"
+  },
   "voiceField": {
     "characterLabel": "声",
     "characterHint": "プレイヤーが読み上げをオンにしたとき、このキャラのセリフはこの声で読まれます。未設定なら AI がキャラに合う声を選びます。",
@@ -669,10 +676,10 @@
         "shared": "共有エントリ {{lore}} · 共有変数 {{vars}}",
         "sharedHint": "カード本体のエントリと変数はすべてのシチュエーションに届きます。どのダンジョンにもある HP は一つの変数で、四つではありません。",
         "trap": "{{source}} はここまで届かない（{{via}} 経由）",
-        "memoryCardAlone": "会話ぜんぶを覚えている",
-        "memoryCardHint": "どのシチュエーションも引き継いでいないときに動くのがこの AI で、話されたことはすべて覚えています。",
+        "memoryCardAlone": "メインの会話をすべて覚えている",
+        "memoryCardHint": "シナリオが引き継がない間は、この AI が動きます。カードのメインの会話を読みます：どのシナリオで話したこともここに入り、どこまで遡るかは「履歴」の設定次第。画面から呼ばれる AI（スマホの連絡先ひとりひとりなど）はそれぞれ自分の会話を持ち、この AI には見えません。",
         "connections": "{{reads}} 件を読み取り · {{gives}} 個のシチュエーションから読まれる",
-        "reviewConnections": "確認が必要な間接参照 {{count}} 件",
+        "reviewConnections": "{{count}} 本の線がここまで届きません",
         "continuityOn": "スマートトラッキング：オン",
         "continuityOff": "スマートトラッキング：オフ"
       }
@@ -4585,8 +4592,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "未保存の変更",
-    "description": "保存せずに離れると変更は失われます。",
+    "title": "まだ保存していません",
+    "description": "このカードはまだ保存されていません。今離れると、書いた内容は消えます。",
     "stay": "とどまる",
     "leave": "保存せずに離れる",
     "saveAndLeave": "保存して移動",
@@ -4594,7 +4601,11 @@
     "switchDescription": "エディターを切り替える前に、さっきの変更を保存しておきましょう。保存しないと変更は失われます。",
     "switchCancel": "キャンセル",
     "switchWithoutSaving": "保存せずに切り替える",
-    "saveAndSwitch": "保存して切り替える"
+    "saveAndSwitch": "保存して切り替える",
+    "saving": "保存中…",
+    "failedTitle": "保存できませんでした",
+    "failedDescription": "直前の変更をサーバーに保存できませんでした。もう一度試すか、保存せずに離れてください。",
+    "retry": "もう一度試す"
   },
   "review": {
     "submittedTitle": "審査に申請しました",

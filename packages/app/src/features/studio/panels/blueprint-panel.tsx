@@ -4,12 +4,15 @@ import { LEARNING_CANCEL_EVENT, LEARNING_CANVAS_EVENT, LEARNING_REVEAL_EVENT, LE
 import { resolveLearningCanvasTarget, type LearningCanvasTarget } from "../learn/learning-target";
 import { flowNodeBlockKind, learningStageHides } from "../learn/learning-stage";
 import { TOUR_CARD_HEIGHT } from "../learn/tour-spotlight";
-import { aiRoster, hasSeveralAis } from "./blueprint/ai-roster";
+import { aiRoster, hasSeveralAis, renameAiPatch } from "./blueprint/ai-roster";
 import { AiTable } from "./blueprint/ai-table";
 import { AiCallsTable, OPEN_AI_CALLS_EVENT } from "./blueprint/ai-calls-table";
 import type { AiCallRow } from "./blueprint/ai-calls";
 import { NOTE_SIZE, StickyNoteLayer } from "./blueprint/sticky-note-layer";
 import { rowFacts, type Translate } from "./blueprint/row-facts";
+import { gameInterfaceOf, gameScreenOf } from "@/features/editor/lib/game-interface";
+import { GameScreenView } from "./blueprint/game-screen";
+import { useSession } from "@/lib/auth-client";
 import { useLearningWorkspace } from "../learn/learning-workspace";
 import { useStudioSidebarStore } from "@/stores/studio-sidebar";
 import { useTokenizerReady } from "@/hooks/use-tokenizer-ready";
@@ -59,7 +62,7 @@ import {
 } from "@yumina/engine";
 import { useAiFocus } from "../lib/ai-focus";
 import { describeFocus } from "../lib/ai-focus-describe";
-import { resolveBackground, UNPLACED_WORLDBOOK_ID } from "@yumina/engine";
+import { BLOCK_ROW_LIMIT, resolveBackground, UNPLACED_WORLDBOOK_ID } from "@yumina/engine";
 import type { Worldbook, WorldEntry } from "@yumina/engine";
 import { absoluteImageUrl } from "@/lib/asset-url";
 import {
@@ -123,6 +126,7 @@ import { captureHubEvent } from "@/lib/analytics";
 import { addStudioPanelInstance, getActiveStudioGroup } from "../studio-page-catalog";
 import { KIND_STYLE, edgeColor } from "./blueprint/style";
 import {
+  FRAME_RENAME_EVENT,
   BLOCK_MINI,
   BlockNode,
   GateNode,
@@ -132,16 +136,17 @@ import {
   type ContextRowView,
   type GateNodeData,
 } from "./blueprint/block-node";
-import { AI_RECEIVES_H, BLOCK_W, FRAME_GAP, FRAME_NOTE_H, FRAME_TITLE_H, TILE_ROW_LIMIT, blockHeight, rowColumns, type BlockChrome, type FrameBox } from "./blueprint/board";
-import { LETTERHEAD_W, letterheadBeside, letterheadRoom, tileBoardLayout } from "./blueprint/tile-board";
+import { AI_RECEIVES_H, BLOCK_W, FRAME_GAP, FRAME_NOTE_H, FRAME_TITLE_H, TILE_ROW_LIMIT, TILE_WRITING_ROW_LIMIT, blockHeight, rowColumns, type BlockChrome, type FrameBox } from "./blueprint/board";
+import { LETTERHEAD_GAP, LETTERHEAD_W, letterheadBeside, letterheadRoom, tileBoardLayout } from "./blueprint/tile-board";
 import { arrangeSituations, type SituationGroupBox } from "./blueprint/situation-map";
-import { livesSomewhere, placeAis, type PlaceAis } from "./blueprint/place-ais";
+import { entryReadBy, gameAiRows, gameBookIds, livesSomewhere, placeAis, storyAiIsCalled, type PlaceAis } from "./blueprint/place-ais";
+import { STUDIO_ASK_EVENT, type StudioAskDetail } from "../lib/block-ask";
 import { OPEN_CODE_EVENT } from "./blueprint/customization-hints";
 import { frontendFilesStripHeight } from "./blueprint/frontend-files-strip";
 import type { FrontendFileFacts } from "@yumina/engine";
-import { addAiTo, removeAi } from "./blueprint/add-ai";
+import { ADD_AI_EVENT, addAiTo, removeAi, type AiType } from "./blueprint/add-ai";
 import { SituationGroupNode } from "./blueprint/situation-group-node";
-import { memoryOf, poolColours } from "./blueprint/situation-describe";
+import { memoryOf, poolColours, wayInOf } from "./blueprint/situation-describe";
 import { wirePairs } from "./blueprint/wires";
 import { moduleActivationBadge } from "@/features/editor/lib/module-badge";
 import { computeContextBudget } from "@/features/editor/lib/context-budget";
@@ -185,6 +190,9 @@ import { getUnmappedSearchPanel, getWorldSearchNode, indexWorldContent, searchWo
 import { useTurnDiff } from "./blueprint/turn-diff";
 import { isTextEntryTarget } from "../lib/text-entry-target";
 import { readLocalPref, writeLocalPref } from "../lib/local-pref";
+
+/** How close two presses must be to open a page (see onCanvasDoubleClickCapture). */
+const DOUBLE_CLICK_MS = 260;
 
 const NODE_TYPES = { block: BlockNode, gate: GateNode, starter: StarterNode, writing: CanvasWritingNode, pieceSlot: PieceSlotNode, situationGroup: SituationGroupNode };
 const EDGE_TYPES = { wire: WireEdge };
@@ -239,6 +247,9 @@ function storedPinned(): Record<string, { x: number; y: number }> {
  *  ~11px on screen and the faces are still pictures; only the chips have
  *  gone small, and those are what zooming in is for. */
 const MIN_READABLE_ZOOM = 0.3;
+/** A phone's tiles: one width, the narrowest, which a 390px screen shows
+ *  at full size with a margin either side. */
+const PHONE_TILE_WIDTHS: readonly number[] = [360];
 /** Below this a row is its name; at or above GLANCE_LEAVE it says what it
  *  holds. Between the two it keeps whatever it was. */
 const GLANCE_ENTER = 0.72;
@@ -316,6 +327,8 @@ function tileBoxes(
     /** Receives the groups' outlines, for the board to draw behind them. */
     onGroups?: (groups: SituationGroupBox[]) => void;
     headerH?: number | ((frameId: string) => number);
+    /** Tile widths to choose from (see tileBoardLayout). */
+    widths?: readonly number[];
   },
 ): Map<string, FrameBox> {
   const noted = new Set(frames.filter((f) => typeof f.module?.data.note === "string" && f.module.data.note).map((f) => f.id));
@@ -324,8 +337,12 @@ function tileBoxes(
   const cardFrameId = blockId.frame(null);
   const letterhead = (frames.find((f) => f.id === cardFrameId)?.blocks ?? [])
     .filter((b) => b.kind === "card" || b.kind === "background");
-  const letterheadHeights = letterhead.map((b) => opts.heightAt(b, LETTERHEAD_W));
-  const room = letterheadRoom(letterheadHeights);
+  // On a phone (one tile width) the card's face and background stand under
+  // its tile, as wide as it: beside it they pushed every situation a screen
+  // further away.
+  const under = opts.widths?.length === 1 ? opts.widths[0]! : null;
+  const letterheadHeights = letterhead.map((b) => opts.heightAt(b, under ?? LETTERHEAD_W));
+  const room = under ? { w: 0, h: 0 } : letterheadRoom(letterheadHeights);
   // The player's screen is the card's too, but not inside it (owner, 10/6):
   // its own block, stuck to the top of the card's tile, as wide as it.
   const screen = (frames.find((f) => f.id === cardFrameId)?.blocks ?? []).find((b) => b.kind === "frontend" && !b.ownerId);
@@ -341,6 +358,7 @@ function tileBoxes(
       hasPreview: opts.hasPreview,
       rowW: Math.max(1100, opts.viewWidth / TILE_ROW_ZOOM),
       headerH: opts.headerH,
+      widths: opts.widths,
       // Without this the next module in the row is packed straight over the
       // letterhead: the packer lays out frames, and this is not one.
       reserve: (id) => (id === cardFrameId && letterhead.length ? room : { w: 0, h: 0 }),
@@ -349,7 +367,10 @@ function tileBoxes(
   const map = new Map(boxes.map((b) => [b.id, b]));
   const cardTile = map.get(cardFrameId);
   if (cardTile && letterhead.length) {
-    const spots = letterheadBeside(cardTile, letterheadHeights);
+    let below = cardTile.y + cardTile.height + LETTERHEAD_GAP;
+    const spots = under
+      ? letterheadHeights.map((h) => { const at = { x: cardTile.x, y: below, width: under }; below += h + LETTERHEAD_GAP; return at; })
+      : letterheadBeside(cardTile, letterheadHeights);
     letterhead.forEach((block, i) => {
       const spot = spots[i]!;
       map.set(block.id, { id: block.id, ...spot, height: letterheadHeights[i]!, blocks: {} });
@@ -728,6 +749,14 @@ type BlueprintCanvasCoreProps = {
   /** Where the board's toolbar goes when the stage has a row for it (the
    *  page tabs). Absent, it floats over the top of the canvas as before. */
   toolbarHost?: HTMLElement | null;
+  /**
+   * The board on a phone. Rows are names only (glance, always), every tile is
+   * one phone wide, and nothing is written on the board itself: whatever a
+   * tap would select — a row, an AI, a block's head — is handed to `onOpen`,
+   * which opens it on a page of its own. No floating card, no row opening in
+   * place: at 390px either one covers the board it was opened from.
+   */
+  phone?: { onOpen: (objectId: string) => void };
 };
 
 function BlueprintCanvas({
@@ -737,8 +766,10 @@ function BlueprintCanvas({
   edgeInsets,
   previewOwnedElsewhere,
   toolbarHost,
+  phone,
 }: BlueprintCanvasCoreProps) {
-  const { t } = useTranslation("editor");
+  const { t, i18n } = useTranslation("editor");
+  const { data: authSession } = useSession();
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** Whether the creator's last click landed on the board. A key aimed at
    *  the page itself (nothing focused) belongs to whatever was clicked last:
@@ -795,20 +826,35 @@ function BlueprintCanvas({
   // No summary nodes: a block folds its own long tail behind "N more", and
   // those rows keep their names and stay one click from being edited.
   const graphOptions = useMemo(() => ({ pinnedEntryIds, foldPlainEntries: false }), [pinnedEntryIds]);
-  const graph = useMemo(
-    () => toGraph(worldDraft, graphOptions),
+  // A card that is a game: its player's screen is the game, not a chat.
+  const gameScreen = useMemo(() => gameScreenOf(worldDraft),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [...logicDeps, graphOptions],
+    [(worldDraft as unknown as { game?: unknown }).game, (worldDraft as unknown as { spiretalk?: unknown }).spiretalk]);
+  const gamePage = gameScreen?.kind === "page";
+  const graph = useMemo(
+    () => {
+      const compiled = toGraph(worldDraft, graphOptions);
+      // A mod's NPC card has no interface file, and so no screen block: its
+      // screen is the game, somewhere else. The board still shows one.
+      if (!gameScreen || compiled.nodes.some((n) => n.id === "frontend")) return compiled;
+      return { ...compiled, nodes: [...compiled.nodes, { id: "frontend", kind: "component" as const, title: "Game", ports: [], data: {} }] };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [...logicDeps, graphOptions, gameScreen],
   );
   const graphById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
-  const defaultChat = isDefaultChatInterface(worldDraft);
+  const defaultChat = !gameScreen && isDefaultChatInterface(worldDraft);
   // The frontend node already carries the per-file facts the compiler
   // derived; the block draws them under the phone and the board sizes for them.
   const frontendFacts = useMemo(() => {
     const n = graph.nodes.find((x) => x.id === "frontend");
     const files = (Array.isArray(n?.data.files) ? (n!.data.files as FrontendFileFacts[]) : []);
     const aiCalls = Array.isArray(n?.data.aiCalls) ? (n!.data.aiCalls as unknown[]).length : 0;
-    return { files, aiCalls };
+    // 现场: the interface tells every AI turn what the screen shows
+    // (api.setScene), and the events the AI may set off there.
+    const scene = Array.isArray(n?.data.uses) && (n!.data.uses as string[]).includes("scene");
+    const sceneEvents = Array.isArray(n?.data.sceneEvents) ? (n!.data.sceneEvents as string[]) : [];
+    return { files, aiCalls, scene, sceneEvents };
   }, [graph]);
   const storyBoard = (worldDraft.worldbooks?.length ?? 0) === 0;
   // A 基础 lesson's canvas: the guide names the block kinds it is about and
@@ -892,12 +938,26 @@ function BlueprintCanvas({
     const bookNames = new Map((worldDraft.worldbooks ?? []).map((book) => [book.id, book.name]));
     const trackNames = new Map((worldDraft.audioTracks ?? []).map((track) => [track.id, track.name]));
     const behaviorNames = new Map((worldDraft.reactions ?? []).map((r) => [r.id, r.name || r.id]));
-    return { entries, variables, reactions, audio, images, bookNames, trackNames, behaviorNames };
+    // A game card's marker comes with the card and is never edited here.
+    const game = gameInterfaceOf(worldDraft);
+    // Variables the card's interface code writes, by id or name (the scan
+    // reads either): its own state, which no row on the board explains.
+    const interfaceWrites = new Set(frontendFacts.files.flatMap((f) => f.writes));
+    const interfaceReads = new Set(frontendFacts.files.flatMap((f) => f.reads));
+    // A setting the code reads by a key it builds (1984's rule numbers, read
+    // from a list of ids) is not a literal read the scan sees; a variable the
+    // AI cannot change whose id the code spells out is one the code reads.
+    const sources = Object.values(worldDraft.rootComponent?.files ?? {}).filter((x): x is string => typeof x === "string");
+    for (const v of worldDraft.variables) {
+      if (v.aiAccess !== "none" || interfaceReads.has(v.id) || interfaceWrites.has(v.id)) continue;
+      if (sources.some((src) => src.includes(`"${v.id}"`) || src.includes(`'${v.id}'`))) interfaceReads.add(v.id);
+    }
+    return { entries, variables, reactions, audio, images, bookNames, trackNames, behaviorNames, game, interfaceWrites, interfaceReads };
     // The five lists it indexes, not the draft: the draft is a new object on
     // every edit anywhere (the card's name, a sticky note, a frame drag), and
     // this feeds the node build, which then redrew every block for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worldDraft.entries, worldDraft.variables, worldDraft.reactions, worldDraft.audioTracks, worldDraft.sceneImages, worldDraft.worldbooks, t]);
+  }, [worldDraft.entries, worldDraft.variables, worldDraft.reactions, worldDraft.audioTracks, worldDraft.sceneImages, worldDraft.worldbooks, frontendFacts, t]);
   /** The chips and the note a row wears in detail mode — what kind of thing
    *  it is and what it is for — so the board says what the inspector knows.
    *  The rules live in row-facts.ts, with their tests. */
@@ -1141,6 +1201,42 @@ function BlueprintCanvas({
   // edge. A memory block is the sole exception: its inspector edits the
   // owning module without treating that whole module as the selected object.
   const [selection, setSelection] = useState<{ type: "node" | "edge"; id: string } | null>(null);
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+  const isPhone = Boolean(phone);
+  // On a phone, picking something is opening it: the page takes it, and the
+  // board keeps nothing selected that would light a row under the page.
+  useEffect(() => {
+    const open = phoneRef.current?.onOpen;
+    if (!open || selection?.type !== "node") return;
+    open(selection.id);
+    setSelection(null);
+  }, [selection]);
+  /** A frame (a situation, an AI, the card's tile) picked by a plain click:
+   *  it is selected, and no settings card opens over the board — the frame
+   *  already shows what is inside it (owner, 10/18: "this extra popup is not
+   *  needed"). A double-click on its title bar opens the settings. */
+  const [quietFrame, setQuietFrame] = useState<string | null>(null);
+  const openFrameSettingsRef = useRef<(frameId: string) => void>(() => {});
+  openFrameSettingsRef.current = (frameId: string) => { setQuietFrame(null); setSelection({ type: "node", id: frameId }); };
+  /** A situation or an AI is renamed as its settings card renamed it (an AI
+   *  by the name it is shown and called by); the card's tile keeps its name
+   *  in the layout, so 「这张卡」 can be called what the creator calls it. */
+  const renameFrameRef = useRef<(ownerId: string | null, name: string) => void>(() => {});
+  renameFrameRef.current = (ownerId, name) => {
+    const store = useEditorStore.getState();
+    if (!ownerId) {
+      const layout = store.worldDraft.graphLayout ?? { version: 5, nodes: {} };
+      const { cardTitle: _old, ...rest } = layout as typeof layout & { cardTitle?: string };
+      store.setGraphLayout(name ? { ...rest, cardTitle: name } : rest);
+      return;
+    }
+    if (!name) return;
+    const book = (store.worldDraft.worldbooks ?? []).find((b) => b.id === ownerId);
+    if (!book) return;
+    const patch = book.station ? renameAiPatch(book, name) : { name };
+    if (patch) store.updateWorldbook(ownerId, patch);
+  };
   /** Rows picked up beside the selection: Shift / Ctrl-click adds one, a
    *  Shift-drag on the pane sweeps up a rectangle of them. The inspector
    *  stays on `selection`; the batch bar and Delete act on these. */
@@ -1185,9 +1281,12 @@ function BlueprintCanvas({
     // is gone only when no block answers to that id any more.
     const isBlock = selection.type === "node" && isBlockId(selection.id)
       && blocksRef.current.some((b) => b.id === selection.id || b.sourceBlockId === selection.id);
+    // An AI the interface code runs (a call, a live voice) is a row of the AI
+    // block, not a graph node: its panel goes when the row does.
+    const isCodeAi = selection.type === "node" && /^ai:(?:code|voice|game):/.test(selection.id);
     const gone =
       selection.type === "node"
-        ? !isBlock && !resolveCanvasInspectorNode(selection.id, graph.nodes)
+        ? !isBlock && !isCodeAi && !resolveCanvasInspectorNode(selection.id, graph.nodes)
         : !graph.edges.some((e) => e.id === selection.id);
     if (gone) setSelection(null);
   }, [graph, selection]);
@@ -1381,8 +1480,11 @@ function BlueprintCanvas({
     }
     if (selection?.type === "node") forced.add(selection.id);
     for (const n of searchResults) forced.add(n.id);
+    // A game card's answers to the game are the few values the AI writes for
+    // it: they never fold behind the many the game hands in.
+    for (const varId of draftById.game?.outputs ?? []) forced.add(`var:${varId}`);
     return forced;
-  }, [recentIds, turnMark, recentChanges, pinnedEntryIds, selection, searchResults]);
+  }, [recentIds, turnMark, recentChanges, pinnedEntryIds, selection, searchResults, draftById.game]);
 
   /** What this card ships on every turn. On a card with no wiring — most of
    *  them — this is what the canvas has to say instead of "the first eight". */
@@ -1607,7 +1709,7 @@ function BlueprintCanvas({
         cardFrame: true,
         // A tile block shows two columns of eight before it folds; a chip
         // is a fraction of a row, so a chip board shows more.
-        rowLimits: { lore: TILE_ROW_LIMIT, state: TILE_ROW_LIMIT, behavior: TILE_ROW_LIMIT, opening: TILE_ROW_LIMIT },
+        rowLimits: { lore: TILE_WRITING_ROW_LIMIT, state: TILE_ROW_LIMIT, behavior: TILE_ROW_LIMIT, opening: TILE_WRITING_ROW_LIMIT },
       }), !readOnly, storyBoard,
       // Any lesson, basic or advanced, teaches the slots as blocks, so it
       // has no tray: the advanced ones frame no blocks of their own and still
@@ -1620,13 +1722,16 @@ function BlueprintCanvas({
         const book = (worldDraft.worldbooks ?? []).find((b) => b.id === block.ownerId);
         return !book || !livesSomewhere(book);
       })
+      // A card that opens a game page never mounts its chat: no empty
+      // opening or setting to invite writing that would never be read.
+      .filter((block) => !(gamePage && !block.ownerId && block.total === 0 && (block.kind === "opening" || block.kind === "lore")))
       // Who answers where: the card and every scenario end on their 「AI」
       // block, always — the card's own AI is one row of it — so the place
       // to add another is always where it would land.
       .concat([placeAisBlock(), ...situationBooks(worldDraft.worldbooks).map((b) => placeAisBlock(b.id))])
       // The card's Context too: the engine draws one for every scenario.
       .concat([{ id: blockId.context(), kind: "context", headSlots: [], rows: [], hiddenCount: 0, total: 0, sharedCount: 0 } satisfies Block]),
-    [boardGraph, forcedRowIds, presetEntryIds, budget.preferred, expandedBlocks, storyBoard, readOnly, teaching, inLesson, cardHasBackground, revealedSlots, worldDraft.worldbooks],
+    [boardGraph, forcedRowIds, presetEntryIds, budget.preferred, expandedBlocks, storyBoard, readOnly, teaching, inLesson, cardHasBackground, revealedSlots, worldDraft.worldbooks, gamePage],
   );
   /** 「这里的 AI」 of every frame, keyed by owner ("" is the card). */
   const placeAisByOwner = useMemo(() => {
@@ -1640,6 +1745,24 @@ function BlueprintCanvas({
   /** Groups opened by hand, as `block|group`, and the value each block's
    *  preview is set to. A block with no value set previews nothing. */
   const [openGateGroups, setOpenGateGroups] = useState<ReadonlySet<string>>(() => new Set());
+  /** Shown whole after "N more", and long enough that folding it back means
+   *  something: the foot line says 「收起」. */
+  const isUnfolded = useCallback((block: Block) => {
+    if (!expandedBlocks.has(resolveSourceBlockId(block.id, blocks))) return false;
+    const limit = block.kind === "lore" || block.kind === "opening" ? TILE_WRITING_ROW_LIMIT
+      : block.kind === "state" || block.kind === "behavior" ? TILE_ROW_LIMIT
+      : BLOCK_ROW_LIMIT[block.kind as keyof typeof BLOCK_ROW_LIMIT] ?? TILE_ROW_LIMIT;
+    return block.rows.length > limit + 1;
+  }, [expandedBlocks, blocks]);
+  /** A grouped block's groups shown whole, by `${block}|${group}`; and
+   *  `${block}|*` for every group rather than the first few. */
+  const [wholeGroups, setWholeGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const openGroupsOf = useCallback((block: Block): ReadonlySet<string> => {
+    const prefix = `${block.id}|`;
+    const out = new Set<string>();
+    for (const key of wholeGroups) if (key.startsWith(prefix)) out.add(key.slice(prefix.length));
+    return out;
+  }, [wholeGroups]);
   const [gatePreview, setGatePreview] = useState<Readonly<Record<string, number>>>({});
   const toggleGateGroup = useCallback((key: string) => setOpenGateGroups((prev) => {
     const next = new Set(prev);
@@ -2335,18 +2458,53 @@ function BlueprintCanvas({
       // of this place. Its settings are a click away.
       if (!ownerId) {
         const open = () => setSelection({ type: "node", id: blockId.context() });
-        const text = String(t("blueprint.ctx.row.memoryCardAlone")) + (cardHistoryLimit ? ` · ${t("blueprint.turnCtx.historyLimitCard", { count: cardHistoryLimit })}` : "");
-        const cardRows: ContextRowView[] = [{ key: "memory", icon: "memory", text, title: t("blueprint.ctx.row.memoryCardHint"), onClick: open }];
+        // An interface that never sends into the chat never wakes the story
+        // AI: what this block describes does not run (1984, Godot).
+        const called = storyAiIsCalled(useEditorStore.getState().worldDraft);
+        // A game page whose game runs its own AIs (PvZ's Crazy Dave): the
+        // reason is the game, not an interface that sends no chat.
+        const gameAis = Array.isArray((useEditorStore.getState().worldDraft as { game?: { ais?: unknown } | null }).game?.ais);
+        const text = called
+          ? String(t("blueprint.ctx.row.memoryCardAlone")) + (cardHistoryLimit ? ` · ${t("blueprint.turnCtx.historyLimitCard", { count: cardHistoryLimit })}` : "")
+          : String(t(gameAis ? "blueprint.ctx.row.notCalledGame" : "blueprint.ctx.row.notCalled"));
+        // Not a fault: a card that never uses the chat is built that way, so
+        // it reads as what it is, marked as the card's own (自定义).
+        const cardRows: ContextRowView[] = [{ key: "memory", icon: called ? "memory" : "in", text, title: t(called ? "blueprint.ctx.row.memoryCardHint" : gameAis ? "blueprint.ctx.row.notCalledGameHint" : "blueprint.ctx.row.notCalledHint"), ...(called ? {} : { tag: String(t("blueprint.aiType.custom")) }), onClick: open }];
+        // What the entries and variables beside this block hand the AI is
+        // not said again here: they are in the same frame, and that is what
+        // puts them in (owner, 10/17). What is said is what is not on the
+        // board: the screen the interface reports each turn.
+        if (frontendFacts.scene) cardRows.push({
+          key: "scene", icon: "scene",
+          text: frontendFacts.sceneEvents.length
+            ? t("blueprint.ctx.row.sceneEvents", { count: frontendFacts.sceneEvents.length })
+            : t("blueprint.ctx.row.scene"),
+          title: frontendFacts.sceneEvents.length
+            ? `${t("blueprint.ctx.row.sceneHint")}
+${frontendFacts.sceneEvents.join(" · ")}`
+            : t("blueprint.ctx.row.sceneHint"),
+          onClick: open,
+        });
         // A summary changes what the AI is handed, so a card with one says so
         // on the board rather than only in the form.
         if (cardSummaryOn) cardRows.push({ key: "summary", icon: "in", text: t("blueprint.ctx.row.summaryOn"), title: t("blueprint.insp.historySummaryHint"), onClick: open });
         // The card's own code asks the AI with contexts it builds itself
         // (Godot's companions, 1984's room director): the engine's recipe is
         // not the whole story, and the block says so.
-        if (frontendFacts.aiCalls) cardRows.push({ key: "code", icon: "in", text: t("blueprint.ctx.row.codeContext", { count: frontendFacts.aiCalls }), title: t("blueprint.custom.contextIntro"), onClick: open });
+        if (frontendFacts.aiCalls) cardRows.push({ key: "code", icon: "in", text: t("blueprint.ctx.row.codeContext", { count: frontendFacts.aiCalls }), title: t("blueprint.custom.contextIntro"), tag: String(t("blueprint.aiType.custom")), onClick: open });
         return cardRows;
       }
       if (!book) return rows;
+      // A situation the card's game reads (Crazy Dave): the game, not the
+      // chat, decides what its AI is handed.
+      const gameAi = gameAiRows(worldDraft, t as Translate).find((r) => r.game?.book === book.id);
+      if (gameAi) return [{ key: "game", icon: "in", text: t("blueprint.ctx.row.byGame", { name: gameAi.name }), tag: String(t("blueprint.aiType.custom")), ...(gameAi.game?.gets ? { title: gameAi.game.gets } : {}), onClick: pick }];
+      // A situation of plain lore on a card whose chat never speaks, read by
+      // the card's own code (1984's telescreen official: the interface hands
+      // these entries to its live voice). The chat's context is not where they go.
+      if (entryReadBy(worldDraft, book.id) === "interface") {
+        return [{ key: "interface", icon: "in", text: t("blueprint.ctx.row.byInterface"), title: t("blueprint.ctx.row.byInterfaceHint"), tag: String(t("blueprint.aiType.custom")), onClick: pick }];
+      }
       // A scenario with no AI of its own talks in the card's conversation.
       if (!station) {
         return [{ key: "memory", icon: "shared", text: t("blueprint.ctx.row.usesCard"), onClick: pick }];
@@ -2390,7 +2548,7 @@ function BlueprintCanvas({
       });
       return rows;
     },
-    [worldDraft.worldbooks, contextBadges, cardHistoryLimit, cardSummaryOn, frontendFacts.aiCalls, poolTint, t],
+    [worldDraft.worldbooks, worldDraft.rootComponent, (worldDraft as { game?: unknown }).game, contextBadges, cardHistoryLimit, cardSummaryOn, frontendFacts.aiCalls, frontendFacts.scene, frontendFacts.sceneEvents, poolTint, t],
   );
 
 
@@ -2478,6 +2636,13 @@ function BlueprintCanvas({
     };
   }, [cardName, cardEntries, cardVariables, cardReactions, cardRules, cardAvatar, t]);
 
+  /** A phone's card opening is one row: its header, saying what the opening
+   *  says and opening it (owner, 10/21: 「开场白有点太大了」). Only with an
+   *  opening to open; an empty card keeps its invitation row. */
+  const phoneHeadOnly = useCallback(
+    (block: Block, gate: unknown) => isPhone && block.kind === "opening" && !block.ownerId && !gate && !!block.head,
+    [isPhone],
+  );
   const chromeFor = useCallback(
     (block: Block, width: number = BLOCK_W): BlockChrome => ({
       collapsed: blockCollapsed(collapsedSet, block.id),
@@ -2495,22 +2660,24 @@ function BlueprintCanvas({
       // Only while the card has no opening written at all: a second, empty
       // opening (the tutorial adds one) collapsed the screen and took its
       // 手机/电脑 switch and 编辑界面 away from the lesson about them.
-      frontendThin: block.kind === "frontend" && ((defaultChat && !anyOpeningWritten) || screenFolded),
+      // A game's screen is the game: always open, at the desktop size.
+      frontendThin: block.kind === "frontend" && !gameScreen && ((defaultChat && !anyOpeningWritten) || screenFolded),
       // On a tile a writing block is a list of rows. Simple mode makes them
       // names; detail mode gives each one what it says and when the AI is
       // told it; an open row is that object's whole editor, in place.
       ...(isWritingBlock(block) ? (() => {
         const gate = gateLayoutFor(block);
         const entries = gate?.entries ?? writingEntriesFor(block);
-        return { collapsed: false, starterHeight: canvasWritingNodeHeight({ kind: block.kind === "opening" ? "opening" : "setting", entries, rows: gate ? [] : block.head ? [{ g: block.head, slots: block.headSlots }] : block.rows, compact: glance, expandedIds: openRowIds, columns: block.kind === "opening" ? 1 : rowColumns(entries.length, width), hiddenCount: gate ? 0 : block.hiddenCount, folders: gate?.folders ?? entryFolders, presetsTitle, collapsedFolders: gate?.collapsedFolders ?? collapsedFolders, gateBar: gate?.gateBar }) };
+        return { collapsed: false, starterHeight: canvasWritingNodeHeight({ kind: block.kind === "opening" ? "opening" : "setting", entries, headOnly: phoneHeadOnly(block, gate), rows: gate ? [] : block.head ? [{ g: block.head, slots: block.headSlots }] : block.rows, compact: glance, expandedIds: openRowIds, columns: block.kind === "opening" ? 1 : rowColumns(entries.length, width), hiddenCount: gate ? 0 : block.hiddenCount, unfolded: !gate && isUnfolded(block), openGroups: gate ? openGroupsOf(block) : undefined, folders: gate?.folders ?? entryFolders, presetsTitle, collapsedFolders: gate?.collapsedFolders ?? collapsedFolders, gateBar: gate?.gateBar }) };
       })() : {}),
       ...(block.kind === "context" ? { contextRows: contextRowsFor(block).length } : {}),
       ...(block.kind === "ais" ? { aiRows: placeAisByOwner.get(block.ownerId ?? "")?.rows.length ?? 1 } : {}),
       ...(block.kind === "scene" ? { sceneWide: device === "desktop", sceneBare: isBareScene(block) } : {}),
-      ...(block.kind === "frontend" ? { frontendDesktop: device === "desktop", frontendFilesH: defaultChat ? 0 : frontendFilesStripHeight(frontendFacts.files.length) } : {}),
+      ...(block.kind === "frontend" ? { frontendDesktop: !!gameScreen || device === "desktop", frontendFilesH: defaultChat || gameScreen ? 0 : frontendFilesStripHeight(frontendFacts.files.length) } : {}),
       ...(hasPackDoor(block) ? { packDoor: true } : {}),
+      ...(!isWritingBlock(block) && isUnfolded(block) ? { unfolded: true } : {}),
     }),
-    [collapsedSet, openedTexts, openRowIds, contextRowsFor, placeAisByOwner, glance, device, worldDraft.description, worldDraft.entries, defaultChat, isWritingBlock, writingEntriesFor, isBareScene, hasPackDoor, entryFolders, presetsTitle, collapsedFolders, cardHasBackground, anyOpeningWritten, screenFolded, frontendFacts, gateLayoutFor],
+    [isUnfolded, openGroupsOf, collapsedSet, openedTexts, openRowIds, contextRowsFor, placeAisByOwner, glance, phoneHeadOnly, device, worldDraft.description, worldDraft.entries, defaultChat, isWritingBlock, writingEntriesFor, isBareScene, hasPackDoor, entryFolders, presetsTitle, collapsedFolders, cardHasBackground, anyOpeningWritten, screenFolded, frontendFacts, gateLayoutFor, gameScreen],
   );
   /** Whether a face block (the card's interface, a module's scene) has a
    *  real preview to show — which puts it on a row of its own, full width. */
@@ -2528,6 +2695,7 @@ function BlueprintCanvas({
     (ownerId: string | null): string | undefined => {
       const book = ownerId ? (worldDraft.worldbooks ?? []).find((b) => b.id === ownerId) : undefined;
       if (!book) return undefined;
+      if (gameBookIds(worldDraft).has(book.id)) return String(t("blueprint.frame.readByGame"));
       if (book.enabled === false) return String(t("blueprint.moduleDisabled"));
       // A sentence, not a badge: when this situation is in use is the one
       // thing its frame has to say ("from the 码头 opening", "when 好感 ≥ 80").
@@ -2554,7 +2722,8 @@ function BlueprintCanvas({
       }
       return String(t(`modules.when.${a.mode}` as never));
     },
-    [worldDraft.worldbooks, worldDraft.variables, t],
+    // The game's AIs name the situations it reads.
+    [worldDraft.worldbooks, worldDraft.variables, (worldDraft as { game?: unknown }).game, t],
   );
 
   chromeRef.current = chromeFor;
@@ -2578,6 +2747,7 @@ function BlueprintCanvas({
       viewWidth: view.width,
       worldbooks: situationBooks(useEditorStore.getState().worldDraft.worldbooks),
       headerH: (id) => headerHForRef.current(id),
+      ...(phoneRef.current ? { widths: PHONE_TILE_WIDTHS } : {}),
     });
     const pos: Record<string, { x: number; y: number }> = {};
     for (const box of boxes.values()) {
@@ -2677,6 +2847,7 @@ function BlueprintCanvas({
       worldbooks: situationBooks(worldDraft.worldbooks),
       onGroups: (groups) => { situationGroupsRef.current = groups; },
       headerH: headerHFor,
+      ...(isPhone ? { widths: PHONE_TILE_WIDTHS } : {}),
     });
     // The signature carries every block height, so a block that grows for a
     // reason other than its rows — the scene block taking the live preview
@@ -2684,7 +2855,7 @@ function BlueprintCanvas({
     // the collapse/expand sets alone, the preview moved into a module whose
     // frame was still the old height and hung out of its bottom.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [framesForLayout, frames, blocks, openFrames, collapsedSet, openedTexts, pinnedSig, layoutSig, device, storyBoard, hasPreview, previewGreetingId, worldDraft.worldbooks, headerHFor]);
+  }, [framesForLayout, frames, blocks, openFrames, collapsedSet, openedTexts, pinnedSig, layoutSig, device, storyBoard, hasPreview, previewGreetingId, worldDraft.worldbooks, headerHFor, isPhone]);
   /** Where loose blocks stand: where they were put, unless that is on top of
   *  a frame or of another loose block — then beside the frames, one under
   *  another, so three new settings are three readable blocks, not a pile
@@ -2782,7 +2953,8 @@ function BlueprintCanvas({
    *  the toolbar up in the stage's page row there is no pill to clear. Read
    *  through a ref: the host arrives a render after the fit callbacks do. */
   const topChromeRef = useRef(56);
-  topChromeRef.current = toolbarHost ? 16 : 56;
+  // A phone's tools float over the board's top corner: the board starts under them.
+  topChromeRef.current = toolbarHost && !isPhone ? 16 : 56;
   /** ...and the zoom cluster sits in the bottom-left corner. Auto-fitting into
    *  the whole height parked content underneath it — on a fresh card the
    *  module you had just made landed with its bottom row behind the zoom
@@ -2825,6 +2997,17 @@ function BlueprintCanvas({
   const lastFitRef = useRef<{ at: number; args: [number, boolean, ReadonlySet<string> | undefined, boolean, { right?: number; bottom?: number }] } | null>(null);
   /** When the entrance last framed the board (0 when it has not). */
   const lastEntranceRef = useRef(0);
+  /** The person zooms or pinches: the camera is theirs from here. The
+   *  opening fit stops, and so does its follow-up — rows switching between
+   *  names and contents at the new zoom re-framed the board "after the
+   *  entrance" for 1.5s, so zooming straight after opening a card snapped
+   *  back to where it opened (owner, 10/18). */
+  const takeCamera = useCallback(() => {
+    cancelInitialFitRef.current();
+    lastEntranceRef.current = 0;
+    lastFitRef.current = null;
+  }, []);
+  const cancelInitialFitRef = useRef<() => void>(() => {});
   /** The same moment, kept: the settle above clears its copy. */
   const enteredAtRef = useRef(0);
   const fitEntranceRef = useRef<(() => unknown) | null>(null);
@@ -2906,6 +3089,8 @@ function BlueprintCanvas({
    * again, otherwise the block at the centre of the screen stays there.
    */
   const settleGlance = useCallback((zoom: number) => {
+    // A phone's rows are names at every zoom: what they say is a tap away.
+    if (phoneRef.current) return;
     if (performance.now() < glanceQuietUntilRef.current) return;
     const want = teachingRef.current ? false : glanceRef.current ? zoom < GLANCE_LEAVE : zoom < GLANCE_ENTER;
     if (want === glanceRef.current) return;
@@ -3122,6 +3307,13 @@ function BlueprintCanvas({
   // was not a frame on a card with modules; now it is.)
   const ENTRANCE_MIN_ZOOM = 0.6;
   const fitEntrance = useCallback(() => {
+    // A phone opens on the card's tile (and the player's screen standing on
+    // it) at reading size, from the top: one tile is one screen wide, and
+    // the situations beside it are a swipe away, or a pinch to see them all.
+    if (phoneRef.current) {
+      const first = new Set([blockId.frame(null), blockId.frontend]);
+      return fitBetweenDocks(0, false, first, false, { zoom: 1 });
+    }
     // A card's own openings come first: the board opens close enough on them
     // to read the opening, not on everything at once too small to read.
     const opening = blocksRef.current.find((b) => b.kind === "opening" && !b.ownerId && !b.loose);
@@ -3163,7 +3355,10 @@ function BlueprintCanvas({
       const x = target.width * zoom <= availW - pad * 2
         ? left + availW / 2 - (target.x + target.width / 2) * zoom
         : left + pad - target.x * zoom;
-      const y = top + pad - tile.y * zoom;
+      // From the top of whatever is highest: the player's screen sits above
+      // the card's tile, and starting at the tile cut its folded bar
+      // (「展开看看」) in half under the toolbar.
+      const y = top + pad - Math.min(tile.y, both.y) * zoom;
       requestAnimationFrame(updateBoardOverflow);
       lastEntranceRef.current = enteredAtRef.current = performance.now();
       return flow.setViewport({ x, y, zoom });
@@ -3175,6 +3370,7 @@ function BlueprintCanvas({
   }, [fitBetweenDocks, updateBoardOverflow]);
   fitEntranceRef.current = fitEntrance;
   const { isViewportSettled, cancelInitialFit } = useInitialBlueprintFit({ writing: false, worldId: blueprintDocumentKey, ready: Boolean(positions), viewportReady: rf.viewportInitialized, nodeCount: rfNodes.length, getNodes: measuredBlueprintNodes, getViewport: rf.getViewport, setViewport: rf.setViewport, fit: fitEntrance });
+  cancelInitialFitRef.current = cancelInitialFit;
 
   /** The nodes React Flow draws: the built board, minus whatever the
    *  current lesson keeps off screen. Derived, never written back — the
@@ -3328,6 +3524,19 @@ function BlueprintCanvas({
     },
     [reflowIfSystemOwned],
   );
+  /** "N more" clicked, then 「收起」: the block folds back to its limit. */
+  const foldBlockRows = useCallback(
+    (blockNodeId: string) => {
+      const id = resolveSourceBlockId(blockNodeId, blocksRef.current);
+      setExpandedBlocks((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
+      reflowIfSystemOwned();
+    },
+    [reflowIfSystemOwned],
+  );
+  const openWholeGroup = useCallback((block: Block, groupId: string) => {
+    setWholeGroups((prev) => new Set([...prev, `${block.id}|${groupId}`]));
+    reflowIfSystemOwned();
+  }, [reflowIfSystemOwned]);
 
   /** Show an opening's whole text rather than its first lines. */
   const toggleOpeningText = useCallback(
@@ -3363,6 +3572,7 @@ function BlueprintCanvas({
    *  opens the full page instead) never gets to move the board first. */
   const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickRow = useCallback((objId: string) => {
+    if (phoneRef.current) { phoneRef.current.onOpen(objId); return; }
     pickedByClickRef.current = objId;
     setMultiSelected(EMPTY_MULTI);
     if (expandTimer.current) { clearTimeout(expandTimer.current); expandTimer.current = null; }
@@ -3370,7 +3580,7 @@ function BlueprintCanvas({
     if (!canEditRowInline(objId)) { setSelection({ type: "node", id: objId }); return; }
     // A lesson says "click the row to write in it", and waits for it to open.
     if (learningStageRef.current) { pressInlineRow(objId); return; }
-    if (picked) { expandTimer.current = setTimeout(() => { expandTimer.current = null; pressInlineRow(objId); }, 280); return; }
+    if (picked) { expandTimer.current = setTimeout(() => { expandTimer.current = null; pressInlineRow(objId); }, DOUBLE_CLICK_MS + 20); return; }
     selectOnlyRef.current = objId;
     // Writing one row and clicking the next: that is "write this one now".
     // It opens a beat later in place of the other, which stays open until
@@ -3379,7 +3589,7 @@ function BlueprintCanvas({
     const writing = openRowIdRef.current !== null && openRowIdRef.current !== objId;
     if (writing) keepOpenRowRef.current = true;
     setSelection({ type: "node", id: objId });
-    if (writing) expandTimer.current = setTimeout(() => { expandTimer.current = null; setOpenRowId(objId); }, 280);
+    if (writing) expandTimer.current = setTimeout(() => { expandTimer.current = null; setOpenRowId(objId); }, DOUBLE_CLICK_MS + 20);
   }, [pressInlineRow]);
   const drillObject = useCallback((objId: string, how: { focus?: boolean } = {}) => {
     if (expandTimer.current) { clearTimeout(expandTimer.current); expandTimer.current = null; }
@@ -3523,7 +3733,8 @@ function BlueprintCanvas({
     const subtitleFor = (block: Block): string | undefined => {
       // Context's head carries the one line that says what the block is —
       // everything the AI here reads each turn — since its rows alone do not.
-      if (block.kind === "context") return String(t("blueprint.blocks.contextHint"));
+      // A card whose chat never speaks has no turns for it to be read on.
+      if (block.kind === "context") return String(t(storyAiIsCalled(worldDraft) ? "blueprint.blocks.contextHint" : "blueprint.blocks.contextHintNoChat"));
       if (block.kind !== "ais") return undefined;
       // The rows are right below; the head only says when they take turns.
       return placeAisByOwner.get(block.ownerId ?? "")?.group ? String(t("blueprint.placeAis.group")) : undefined;
@@ -3535,6 +3746,8 @@ function BlueprintCanvas({
       // floating above the tile with nothing to say it was where the cover
       // lives. The name is edited in the body now.
       if (block.kind === "opening") return block.head ? displayTitle(block.head) : t("blueprint.blocks.opening");
+      // The game picks these up itself; "on standby" would mean for the chat.
+      if (block.kind === "lore" && (block.trigger ?? "manual") === "manual" && block.ownerId && gameBookIds(worldDraft).has(block.ownerId)) return t("blueprint.blocks.lore.manualGame");
       if (block.kind === "lore") return storyBoard && block.trigger === "always" ? t("blueprint.starter.settingTitle") : t(("blueprint.blocks.lore." + (block.trigger ?? "manual")) as never);
       if (block.kind === "frontend" && defaultChat) return t("blueprint.starter.playerInterface");
       return t(("blueprint.blocks." + block.kind) as never);
@@ -3544,12 +3757,19 @@ function BlueprintCanvas({
 
     // Behind everything: the outline of each group of situations, titled with
     // how the player gets into them.
+    const gameBooks = gameBookIds(worldDraft);
+    const groupReadByGame = (way: string) => {
+      const members = (worldDraft.worldbooks ?? []).filter((b) => b.host === undefined && wayInOf(b) === way);
+      return members.length > 0 && members.every((b) => gameBooks.has(b.id));
+    };
     for (const group of situationGroupsRef.current) {
       nodes.push({
         id: group.id,
         type: "situationGroup",
         position: { x: group.x, y: group.y },
-        data: { title: t(`blueprint.situationGroups.${group.way}` as never), count: group.count, width: group.width, height: group.height } as never,
+        // A group the game reads, every one of them (PvZ's Dave and the
+        // plants, switched off for the chat): titled by that, not the switch.
+        data: { title: groupReadByGame(group.way) ? t("blueprint.frame.readByGame") : t(`blueprint.situationGroups.${group.way}` as never), count: group.count, width: group.width, height: group.height } as never,
         draggable: false,
         selectable: false,
         focusable: false,
@@ -3596,7 +3816,9 @@ function BlueprintCanvas({
           onToggle: () => toggleFrame(frame.id),
           onFocus: g ? () => focusModuleRef.current(frame.id) : undefined,
           drillId: g ? g.id : "world:root",
-          onOpenPage: () => drillObjectRef.current(g ? g.id : "world:root"),
+          onOpenPage: () => window.dispatchEvent(new CustomEvent(FRAME_RENAME_EVENT, { detail: { drillId: g ? g.id : "world:root" } })),
+          onSettings: () => openFrameSettingsRef.current(frame.id),
+          ...(readOnly ? {} : { onRename: (name: string) => renameFrameRef.current(frame.ownerId ?? null, name) }),
           dropping: dropFrameId === frame.id,
           dropLabel: dropFrameId === frame.id ? dropLabelFor(frame.ownerId, g?.title ?? "") : undefined,
           // `overlapping` is NOT set here: it changes on every mouse move of
@@ -3634,11 +3856,12 @@ function BlueprintCanvas({
         // Only the card's own frame: a module is a part of a card, and parts
         // are not the thing that gets published.
         ...(g ? {} : { readiness: cardProgress }),
-        title: g ? displayTitle(g) : t("blueprint.frame.cardFrame"),
+        title: g ? displayTitle(g) : (worldDraft.graphLayout?.cardTitle?.trim() || t("blueprint.frame.cardFrame")),
         // The card's own frame is deliberately colourless: it is not one of
         // the modules, it is what the modules sit beside.
         tint: g ? tintFor(frame.ownerId, idx) : "#8b8b96",
         ...(g ? { activationLabel: activationLabelFor(frame.ownerId) } : {}),
+        ...(frame.ownerId && gameBookIds(worldDraft).has(frame.ownerId) ? { readByGame: true } : {}),
         // Only the opening on show has its wires on the board — the others
         // are not drawn — so a situation entered from another opening says
         // which one, and that line puts it on show.
@@ -3699,7 +3922,7 @@ function BlueprintCanvas({
         const gate = gateLayoutFor(block);
         const entries = gate?.entries ?? writingEntriesFor(block);
         const data: CanvasWritingNodeData = {
-          kind, entries, readOnly, compact: glance, ownerId: block.ownerId, shared: block.sharedCount, total: block.total - block.sharedCount,
+          kind, entries, readOnly, compact: glance, headOnly: phoneHeadOnly(block, gate), ownerId: block.ownerId, shared: block.sharedCount, total: block.total - block.sharedCount,
           width: laid?.w, flush: !!laid && !block.loose, fillHeight: laid?.h,
           onPieceDrag, onPieceSelect,
           folders: gate?.folders ?? entryFolders, onSelectFolder: selectPieces, presetsTitle,
@@ -3721,7 +3944,11 @@ function BlueprintCanvas({
                 onPickOpening: selectPreviewOpening,
               }
             : {}),
-          onMore: () => { setRelationshipId(null); setSelection({ type: "node", id: resolveSourceBlockId(block.id, blocksRef.current) }); },
+          // In place (owner, 10/17): "… N more" shows the rest right there,
+          // and 「收起」 folds it back. It used to open the column instead.
+          onMore: () => expandBlockRows(block.id),
+          ...(gate ? {} : { unfolded: isUnfolded(block), onFold: () => foldBlockRows(block.id) }),
+          ...(gate ? { openGroups: openGroupsOf(block), onOpenGroup: (id: string) => openWholeGroup(block, id) } : {}),
           // Inside an AI, its settings are who it is: only it reads them.
           title: kind === "setting" && block.ownerId && aiFrameIds.has(blockId.frame(block.ownerId)) ? t("blueprint.aiForm.self") : block.total > 0 ? titleFor(block) : t(`blueprint.starter.${kind}Title`),
           // Grouped, the rows hand their wires to the block's head (hostsOf):
@@ -3734,11 +3961,12 @@ function BlueprintCanvas({
           // holds it. Moving the board on every click (a wide block was always
           // "out of view") made picking two rows a chase.
           onEngage: (id: string) => { preferredWritingHosts.current.set(id, block.id); },
-          expandedIds: openRowIds,
-          onToggleExpand: (id: string) => { preferredWritingHosts.current.set(id, block.id); toggleOpenRow(id); },
+          expandedIds: isPhone ? EMPTY_MULTI : openRowIds,
+          // A phone's chevron opens the row's page, as a tap on it does.
+          onToggleExpand: (id: string) => { preferredWritingHosts.current.set(id, block.id); if (isPhone) clickRow(id); else toggleOpenRow(id); },
           onToggleMulti: (id: string) => toggleMulti(id, selectionRef.current?.type === "node" ? selectionRef.current.id : null),
           onRename: (id: string, name: string) => useEditorStore.getState().updateEntry(id, { name }),
-          renderEditor: (id: string) => <BlueprintRowEditor objectId={id} onDrill={onDrillPanel} readOnly={readOnly} />,
+          renderEditor: isPhone ? undefined : (id: string) => <BlueprintRowEditor objectId={id} onDrill={onDrillPanel} readOnly={readOnly} />,
           onHoverObject: setHoveredRowId,
           onFocusEntry: id => {
             preferredWritingHosts.current.set(`${kind === "opening" ? "greeting" : "entry"}:${id}`, block.id);
@@ -3786,7 +4014,9 @@ function BlueprintCanvas({
         // left edge is one only when it shares the row with another piece.
         seamTop: !!laid && laid.y > headerHFor(blockId.frame(block.ownerId ?? null)), seamLeft: !!laid && laid.x > 0,
         ownerId: block.ownerId ?? null, onPieceDrag, onPieceSelect,
-        onMore: () => { setRelationshipId(null); setSelection({ type: "node", id: block.id }); },
+        // "… N more" unfolds in place; 「收起」 folds it back.
+        unfolded: isUnfolded(block),
+        onFold: () => foldBlockRows(block.id),
         tools: blockTools(block),
         // The two blocks where a new creator stalls get a second door: the "+"
         // opens a blank form, this opens a working example they can read.
@@ -3839,17 +4069,48 @@ function BlueprintCanvas({
                 // A row opens in the floating editor beside it, like every object on the board:
                 // an AI on its settings, the card's own AI on its judge. The
                 // open one is lit the way a selected row is.
+                // Every row opens on `ai:<its key>`: an AI on its book, the
+                // card's own AI on "narrator", a call in the code on its place.
                 openKey: selection?.type === "node" && (aiOpenedIn === null || aiOpenedIn === block.id)
-                  ? placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => aiInspectorId(r.bookId ?? undefined) === selection.id)?.key ?? null
+                  ? placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => `ai:${r.bookId ?? r.key}` === selection.id)?.key ?? null
                   : null,
                 onToggle: (key: string, _memory?: boolean, bookId?: string) => {
                   // A bare code call has no object to inspect: open the code at the call.
                   const row = placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => r.key === key);
-                  if (row?.code && !row.bookId) { setPendingCodeJump(row.code.file, row.code.line); onDrillPanel("code-view"); return; }
+                  // A call in the code opens like any AI, on what the code
+                  // says about it; the code itself is one button further.
                   setAiOpenedIn(block.id);
-                  setSelection({ type: "node", id: aiInspectorId(bookId) });
+                  setSelection({ type: "node", id: row && !row.bookId && (row.code || row.codeAt || row.game) ? `ai:${row.key}` : aiInspectorId(bookId) });
                 },
-                ...(readOnly ? {} : { onRemove: (bookId: string) => removeAi(bookId), onNote: () => addNoteOnRef.current(block.id) }),
+                ...(readOnly ? {} : {
+                  onRemove: (bookId: string) => removeAi(bookId),
+                  removeOther: (key: string) => {
+                    const row = placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => r.key === key);
+                    if (!row) return null;
+                    if (row.game) return "remove";
+                    const at = row.code ?? row.codeAt;
+                    if (!at) return null;
+                    // A compiled bundle has no source the assistant could edit.
+                    const line = worldDraft.rootComponent?.files?.[at.file]?.split("\n")[at.line - 1] ?? "";
+                    return line.length > 3000 ? null : "ask";
+                  },
+                  onRemoveOther: (key: string) => {
+                    const row = placeAisByOwner.get(block.ownerId ?? "")!.rows.find((r) => r.key === key);
+                    if (!row) return;
+                    if (row.game) {
+                      const game = (useEditorStore.getState().worldDraft as { game?: { ais?: unknown[] } | null }).game;
+                      if (!game || !Array.isArray(game.ais)) return;
+                      if (selection?.type === "node" && selection.id === `ai:${key}`) setSelection(null);
+                      useEditorStore.getState().setField("game" as never, { ...game, ais: game.ais.filter((_, i) => `game:${i}` !== key) } as never);
+                      return;
+                    }
+                    const at = row.code ?? row.codeAt;
+                    if (!at) return;
+                    const detail: StudioAskDetail = { prompt: t("blueprint.codeAi.removePrompt", { name: row.name, file: at.file, line: at.line }) };
+                    window.dispatchEvent(new CustomEvent(STUDIO_ASK_EVENT, { detail }));
+                  },
+                  onNote: () => addNoteOnRef.current(block.id),
+                }),
                 ...(readOnly || !block.ownerId
                   ? {}
                   : { onKeepNarrator: (keep: boolean) => useEditorStore.getState().updateWorldbook(block.ownerId!, { narratorHere: keep || undefined }) }),
@@ -3866,7 +4127,7 @@ function BlueprintCanvas({
         expandedIds: openRowIds,
         onToggleRowExpand: toggleOpenRow,
         canExpandRow: canEditRowInline,
-        renderEditor: (id: string) => <BlueprintRowEditor objectId={id} onDrill={onDrillPanel} readOnly={readOnly} />,
+        renderEditor: isPhone ? undefined : (id: string) => <BlueprintRowEditor objectId={id} onDrill={onDrillPanel} readOnly={readOnly} />,
         onExpandRows: () => expandBlockRows(block.id),
         onAdd: readOnly || !addLabel ? undefined : (anchor?: DOMRect) => blockActionsRef.current.onAdd(block, anchor),
         onRowClick,
@@ -3932,6 +4193,24 @@ function BlueprintCanvas({
           onCommitName: (v: string) => useEditorStore.getState().updateEntry(entryId, { name: v }),
           onCommitContent: (v: string) => useEditorStore.getState().updateEntry(entryId, { content: v }),
           seedCount: graph.edges.filter((e) => e.from === headId && e.fromPort === "seeds").length,
+        };
+      } else if (block.kind === "frontend" && gameScreen) {
+        // The game in place of an interface preview: no opening to pick, no
+        // interface to edit, no files under it, one size.
+        data.frontend = {
+          render: (
+            <GameScreenView
+              screen={gameScreen}
+              worldName={worldDraft.name ?? ""}
+              entries={worldDraft.entries}
+              variables={worldDraft.variables}
+              playerName={authSession?.user?.name || "Player"}
+              language={worldDraft.language || i18n.resolvedLanguage || "en"}
+            />
+          ),
+          readNames: [],
+          dynamicReads: 0,
+          device: "desktop",
         };
       } else if (block.kind === "frontend") {
         data.frontend = {
@@ -4062,16 +4341,19 @@ function BlueprintCanvas({
     blocks, gates, graph, positions, frameBoxes, collapsedSet, openedTexts, openRowIds, toggleOpenRow, selection, multiSelected, focusIds, firedBy,
     gateIndex, displayTitle, previewFor, graphById, draftById, t, readOnly, recentIds, turnMark,
     budget, linkCounts, liveGating, liveVars, recentChanges, lastTurn, lastWhy, onDrillPanel, toggleBlockCollapse, contextRowsFor, contextScopeFor, placeAisByOwner, aiOpenedIn,
-    toggleOpeningText, expandBlockRows, onRowClick, onRowDoubleClick, worldDraft.name,
+    toggleOpeningText, expandBlockRows, onRowClick, onRowDoubleClick, worldDraft.name, isPhone, phoneHeadOnly,
     worldDraft.description, previewOwnedElsewhere, glance, pickTrayItem, activationLabelFor, roster, litFrames, lightSources, headerHFor, clickRow, toggleMulti, screenFolded, toggleScreenFold,
     defaultChat, storyBoard, worldDraft.entries, chromeFor, presetsTitle, collapsedFolders, renamingFolderId, toggleFolder, gateLayoutFor, toggleGateGroup, cardHasBackground, blockTools, isWritingBlock, writingEntriesFor, showRelationships, blueprintDocumentKey, previewGreeting, previewGreetingId, selectPreviewOpening,
     sceneOverrides, sceneFiles, worldDraft.worldbooks, dropLabelFor, looseStored, loosePlaced, unloose, device, toggleDevice,
+    gameScreen, authSession?.user?.name, worldDraft.variables, worldDraft.language, i18n.resolvedLanguage,
     piece, onPieceDrag, worldDraft.sceneImages, worldDraft.continuity,
     // Read by the build but missing here, so the card frame's readiness and
     // the background strip only caught up when something else rebuilt.
     cardProgress, worldDraft.backgrounds,
     // The interface block lists the screen's pages.
     worldDraft.uiDoc?.pages, worldDraft.uiDoc?.entryPageId,
+    // What the creator calls the card's own tile.
+    worldDraft.graphLayout?.cardTitle,
   ]);
 
   // A block React Flow never measured stays `visibility: hidden` for good:
@@ -4714,6 +4996,7 @@ function BlueprintCanvas({
       setSelection({ type: "node", id: node.id });
       return;
     }
+    setQuietFrame(isFrameNodeId(node.id) ? node.id : null);
     setSelection({ type: "node", id: node.id });
   }, []);
   const onEdgeClick = useCallback((_e: unknown, edge: Edge) => {
@@ -4734,10 +5017,16 @@ function BlueprintCanvas({
   // double-clicking a row did the opposite of opening it. The first press on
   // a row is remembered, and a second one close to it in time and place is a
   // double-click on that row, whatever is under the pointer by then.
-  const lastRowPress = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
+  //
+  // Two presses count as a double-click only within DOUBLE_CLICK_MS, shorter
+  // than the system's (500ms on Windows): a creator clicking a row to pick
+  // it and again to open it in place, or a chevron twice to fold and unfold,
+  // was sent to the full page (owner, 10/17). A slower pair is two clicks,
+  // and the row's own double-click handler never sees it.
+  const lastRowPress = useRef<{ id: string; t: number; x: number; y: number; title?: boolean } | null>(null);
   const pairsWithRowPress = (e: React.MouseEvent) => {
     const prev = lastRowPress.current;
-    return prev && e.timeStamp - prev.t <= 500 && Math.abs(e.clientX - prev.x) <= 8 && Math.abs(e.clientY - prev.y) <= 8 ? prev : null;
+    return prev && e.timeStamp - prev.t <= DOUBLE_CLICK_MS && Math.abs(e.clientX - prev.x) <= 8 && Math.abs(e.clientY - prev.y) <= 8 ? prev : null;
   };
   const onCanvasClickCapture = useCallback((e: React.MouseEvent) => {
     // The click a box-drag ends with is not a click on the canvas: let
@@ -4774,13 +5063,19 @@ function BlueprintCanvas({
           ? null
           : target?.closest("[data-block-head]")?.closest(".react-flow__node")?.getAttribute("data-id"))
         ?? null;
-    lastRowPress.current = id && e.detail === 1 ? { id, t: e.timeStamp, x: e.clientX, y: e.clientY } : null;
+    lastRowPress.current = id && e.detail === 1 ? { id, t: e.timeStamp, x: e.clientX, y: e.clientY, ...(target?.closest("[data-frame-title]") ? { title: true } : {}) } : null;
   }, []);
   /** A double-click's destination, whatever was double-clicked: an object
    *  opens its own page on it; a block whose head is one object opens that;
    *  a list block (角色和世界, 变量, 行为…) opens the page of the kind of
    *  thing it lists, narrowed to the card or the module it belongs to. */
   const openPageFor = useCallback((id: string) => {
+    // A frame's title bar renames the frame (owner, 10/18: it went to the
+    // Overview page, which is the cover and blurb). Its settings are the gear.
+    if (isFrameNodeId(id) || id === "world:root") {
+      window.dispatchEvent(new CustomEvent(FRAME_RENAME_EVENT, { detail: { drillId: id === "frame:card" ? "world:root" : id } }));
+      return;
+    }
     if (!isBlockId(id)) { drillObject(id, { focus: true }); return; }
     const head = blockHeadIdRef.current.get(id);
     if (head) { drillObject(head, { focus: true }); return; }
@@ -4793,8 +5088,28 @@ function BlueprintCanvas({
     onDrillPanel(panelId, { focus: true });
   }, [drillObject, onDrillPanel]);
   const onCanvasDoubleClickCapture = useCallback((e: React.MouseEvent) => {
+    if ((e.target as Element | null)?.closest?.("[data-frame-title-input]")) return;
     const prev = pairsWithRowPress(e);
-    if (!prev) return;
+    // A double-click that began on a frame's name renames it, wherever the
+    // second press landed (selecting the card's tile redraws its title bar
+    // between the two presses, so the browser's own double-click missed it).
+    if (prev?.title) {
+      lastRowPress.current = null;
+      e.stopPropagation();
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent(FRAME_RENAME_EVENT, { detail: { drillId: prev.id } }));
+      return;
+    }
+    if (!prev) {
+      // The system called it a double-click; the board did not. Anything
+      // that would open a page on one (a row, a writing row's bar, a frame's
+      // or block's title) does not get it. Text keeps its double-click: that
+      // selects a word.
+      const target = e.target as Element | null;
+      if (!target?.closest("input, textarea, [contenteditable='true']")
+        && target?.closest("[data-row-anchor], [data-canvas-writing-object], [data-frame-drill], [data-block-head]")) e.stopPropagation();
+      return;
+    }
     lastRowPress.current = null;
     e.stopPropagation();
     e.preventDefault();
@@ -5081,19 +5396,29 @@ function BlueprintCanvas({
    *  whose 「AI」 block was used), otherwise the card. An AI is one more API
    *  call and nothing else, so it comes with nothing of its own; it is named
    *  AI, AI 2, … and opens in its row to be set up. One undo step. */
-  const addAiNow = useCallback((place?: string) => {
+  const addAiNow = useCallback((place?: string, type?: AiType) => {
     const where = place ?? currentModuleId() ?? "card";
     const taken = new Set((useEditorStore.getState().worldDraft.worldbooks ?? []).map((b) => b.name));
     let name = String(t("blueprint.placeAis.defaultName"));
     // The card's own AI is already called that.
     taken.add(name);
     for (let n = 2; taken.has(name); n++) name = `${t("blueprint.placeAis.defaultName")} ${n}`;
-    const made = addAiTo(where, name);
+    const made = addAiTo(where, name, type);
     if (!made) return;
     const block = blockId.ais(where === "card" ? undefined : where);
     setSelection({ type: "node", id: aiInspectorId(made.bookId) });
     window.setTimeout(() => fitFocusedBlockRef.current(block, 420), 300);
   }, [currentModuleId, t]);
+
+  // The card AI's kind switch adds an AI of the kind picked, on the card.
+  useEffect(() => {
+    const onAdd = (e: Event) => {
+      const type = (e as CustomEvent<{ type?: AiType }>).detail?.type;
+      if (!readOnly) addAiNow("card", type);
+    };
+    window.addEventListener(ADD_AI_EVENT, onAdd);
+    return () => window.removeEventListener(ADD_AI_EVENT, onAdd);
+  }, [addAiNow, readOnly]);
 
   /** A row of 「这张卡的 AI」 opens where that call is edited: an AI on its
    *  form, beside its place's AI block; a call in the code at its line. */
@@ -5534,6 +5859,18 @@ function BlueprintCanvas({
    *  size and zoom back out on an empty click, a zoom in and out on every
    *  other click, which people found dizzying.) */
   fitFocusedBlockRef.current = (hostId, duration) => {
+    // A phone is usually zoomed out to see the board: a glow on a block at a
+    // fifth of its size is nothing to watch. It goes to the block, at a size
+    // its rows read at.
+    if (phoneRef.current && !viewLockedRef.current) {
+      const at = blockFit(hostId);
+      const vp = flowViewportRef.current.getViewport();
+      if (at && (vp.zoom < 0.6 || !blockInView(hostId))) {
+        const zoom = Math.max(vp.zoom, 0.8);
+        void flowViewportRef.current.setCenter(at.abs.x + at.width / 2, at.abs.y + Math.min(at.height, 420) / 2, { zoom, ...glide(duration) });
+        return;
+      }
+    }
     if (viewLockedRef.current || blockInView(hostId)) return;
     const fit = blockFit(hostId);
     if (!fit) return;
@@ -6318,6 +6655,14 @@ function BlueprintCanvas({
   // ── Inspector target derivation ──
   const inspectorTarget: InspectorTarget | null = useMemo(() => {
     if (!active || !selection) return null;
+    if (selection.type === "node" && quietFrame === selection.id) return null;
+    if (selection.type === "node" && selection.id.startsWith("ai:")) {
+      const key = selection.id.slice(3);
+      for (const ais of placeAisByOwner.values()) {
+        const row = ais.rows.find((r) => r.key === key && !r.bookId && (r.code || r.codeAt || r.game));
+        if (row) return { type: "codeAi", row };
+      }
+    }
     if (selection.type === "node") {
       const resolved = resolveCanvasInspectorNode(selection.id, graph.nodes);
       const g = resolved?.node;
@@ -6350,7 +6695,7 @@ function BlueprintCanvas({
     const to = graphById.get(e.to);
     const describe = `${from ? displayTitle(from) : e.from} → ${to ? displayTitle(to) : e.to}${e.label ? `  (${e.label})` : ""}`;
     return { type: "edge", edgeId: e.id, describe };
-  }, [active, selection, graph, graphById, displayTitle, t]);
+  }, [active, selection, quietFrame, graph, graphById, displayTitle, placeAisByOwner, t]);
   const expandedObjectId = inspectorTarget?.type === "node" && !inspectorTarget.section && drillPanelFor(inspectorTarget.node, interfaceIsHandwritten)
     ? inspectorTarget.node.id
     : null;
@@ -6708,10 +7053,11 @@ function BlueprintCanvas({
         onPointerDownCapture={onCanvasPointerDownCapture}
         onClickCapture={onCanvasClickCapture}
         onDoubleClickCapture={onCanvasDoubleClickCapture}
-        onWheelCapture={cancelInitialFit}
+        onWheelCapture={takeCamera}
+        onTouchStartCapture={(e) => { if (e.touches.length > 1) takeCamera(); }}
       >
         <div aria-hidden className="studio-lamp-pool pointer-events-none absolute left-1/2 top-[-140px] z-0 h-[320px] w-[640px] -translate-x-1/2" />
-        {floatingPane && selection && (
+        {floatingPane && selection && !isPhone && (
           <FloatingEditor
             key={selection.id}
             container={containerRef.current}
@@ -7106,7 +7452,7 @@ function BlueprintCanvas({
                   )}
                 >
                   <Layers className="h-3.5 w-3.5" />
-                  {t("blueprint.directory.title")}
+                  <span className="@max-[46rem]:sr-only">{t("blueprint.directory.title")}</span>
                   <span className="rounded bg-white/10 px-1 text-[10px] text-foreground/70">{frames.filter((fr) => fr.ownerId).length}</span>
                 </button>
                 {showDirectory && (
@@ -7714,6 +8060,7 @@ class BlueprintErrorBoundary extends Component<
 }
 
 /** Host-agnostic canvas — the full-bleed stage renders this directly. */
+
 export function BlueprintCanvasCore(props: BlueprintCanvasCoreProps) {
   return (
     <BlueprintErrorBoundary>

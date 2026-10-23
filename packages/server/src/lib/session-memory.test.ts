@@ -286,13 +286,13 @@ test("the memory output cap fits a target-length CJK memory", async () => {
   const { MEMORY_TARGET_CHARS, MAX_MEMORY_OUTPUT_TOKENS } = await loadModule();
   const { estimateTokens } = await import("@yumina/engine");
   const cjk = "记".repeat(MEMORY_TARGET_CHARS);
-  assert.ok(estimateTokens(cjk, "google/gemini-2.5-flash-lite") <= MAX_MEMORY_OUTPUT_TOKENS);
+  assert.ok(estimateTokens(cjk, "google/gemini-3.1-flash-lite") <= MAX_MEMORY_OUTPUT_TOKENS);
   assert.ok(estimateTokens(cjk, "deepseek/deepseek-v3.2") <= MAX_MEMORY_OUTPUT_TOKENS);
 });
 
 test("isTruncatedMemoryOutput trusts the provider's stop reason first, then usage, then the text's size", async () => {
   const { isTruncatedMemoryOutput, MAX_MEMORY_OUTPUT_TOKENS } = await loadModule();
-  const model = "google/gemini-2.5-flash-lite";
+  const model = "google/gemini-3.1-flash-lite";
   // Provider said it stopped at the length limit — truncated regardless of counts.
   assert.equal(isTruncatedMemoryOutput({ stopReason: "max_tokens", completionTokens: 300, text: "x", model }), true);
   // Provider said it finished — not truncated even when reasoning tokens
@@ -309,7 +309,7 @@ test("isTruncatedMemoryOutput trusts the provider's stop reason first, then usag
 
 test("classifyMemoryOutput lets a repetitive output that hit the cap reach the degenerate retry, not the truncation error", async () => {
   const { classifyMemoryOutput, MAX_MEMORY_OUTPUT_TOKENS } = await loadModule();
-  const model = "google/gemini-2.5-flash-lite";
+  const model = "google/gemini-3.1-flash-lite";
   const looping = "她站在练习室门口，反复确认今晚的约定。".repeat(8);
   // The classic failure isDegenerateSessionMemoryText exists for: one bullet
   // looping until the output cap. That must stay a "degenerate" verdict (so

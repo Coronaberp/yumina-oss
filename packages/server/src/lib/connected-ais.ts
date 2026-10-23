@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db, readOwn } from "../db/index.js";
 import { oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from "../db/schema.js";
+import { parseAppMetadata } from "./oauth-apps.js";
 import { redis } from "./redis.js";
 
 /**
@@ -16,6 +17,8 @@ export interface ConnectedAi {
   clientId: string; name: string; connectedAt: Date | null; lastUsedAt: Date | null;
   /** The AI's latest tool call, so the "Connect your AI" wizard can confirm the first message arrived. */
   lastCallAt: string | null; lastTool: string | null;
+  /** What the player allowed (OAuth scopes), and whether Yumina registered this app itself. */
+  scopes: string[]; firstParty: boolean;
 }
 
 // Last tool call per creator and AI. Replicas share it through Redis (the
@@ -45,7 +48,10 @@ async function lastCallOf(userId: string, clientId: string): Promise<LastCall | 
 
 export async function listConnectedAis(userId: string): Promise<ConnectedAi[]> {
   const rows = await (await readOwn(userId))
-    .select({ clientId: oauthConsent.clientId, name: oauthClient.name, createdAt: oauthConsent.createdAt, updatedAt: oauthConsent.updatedAt })
+    .select({
+      clientId: oauthConsent.clientId, name: oauthClient.name, metadata: oauthClient.metadata, scopes: oauthConsent.scopes,
+      createdAt: oauthConsent.createdAt, updatedAt: oauthConsent.updatedAt,
+    })
     .from(oauthConsent)
     .innerJoin(oauthClient, eq(oauthClient.clientId, oauthConsent.clientId))
     .where(eq(oauthConsent.userId, userId));
@@ -64,6 +70,7 @@ export async function listConnectedAis(userId: string): Promise<ConnectedAi[]> {
     return {
       clientId: r.clientId, name: r.name?.trim() || "AI", connectedAt: r.createdAt,
       lastUsedAt: lastUsed.get(r.clientId) ?? r.updatedAt, lastCallAt: call?.at ?? null, lastTool: call?.tool ?? null,
+      scopes: r.scopes ?? [], firstParty: parseAppMetadata(r.metadata).firstParty,
     };
   }));
 }

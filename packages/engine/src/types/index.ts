@@ -771,6 +771,10 @@ export interface ModuleStation {
   // ── Custom (自定义) — what a card's hand-written AI calls do, as data. ──
   // Read by the ai-call runner (server lib/ai-call.ts): the card's screen
   // calls the AI with `api.callAi(name, input)` and gets the result back.
+  /** What the card's screen hands it when it calls (`api.callAi(name,
+   *  input)`), in the creator's words: 「玩家刚发的那条私信」. Told to the AI
+   *  with the input, and to whoever writes the code that calls it. */
+  takes?: string;
   /** What it sees besides the card's always-sent lore and its own entries. */
   sees?: AiSees;
   /** Prompt pieces added only while their conditions hold
@@ -794,6 +798,11 @@ export interface ModuleStation {
   /** Sampling temperature, 0–1.5. Absent: 0.2 (steady, for bookkeeping work).
    *  Never read by a narrator, which answers with the player's own settings. */
   temperature?: number;
+  /** A UI AI with no declared fields answers in plain words, or with one JSON
+   *  object of the shape its task describes ("json": the model is held to
+   *  JSON and the reply is handed back untouched, for the interface to read —
+   *  1984's referee). */
+  answer?: "text" | "json";
 }
 
 export interface AiSees {
@@ -1086,6 +1095,39 @@ export interface CoverCropSettings {
 }
 
 /** The full World definition — the complete game package */
+/**
+ * A card that is a game. `path`: the card opens a game page of ours instead
+ * of the chat (PvZ). `inputs` / `outputs`: the card is a character inside a
+ * game that runs elsewhere — its mod writes `inputs` (variable ids) before
+ * every turn and reads `outputs` back after the reply. A mod reads this to
+ * know which of the card's variables are its own; the editor locks their ids
+ * and shows the game's half of the conversation.
+ */
+export interface WorldGame {
+  path?: string;
+  /** The game's name, as the creator calls it (「杀戮尖塔 2」). */
+  name?: string;
+  inputs?: string[];
+  outputs?: string[];
+  /** The AIs the game itself runs on Yumina's server (PvZ's Crazy Dave),
+   *  declared so the canvas can show them: they are not in the card, and
+   *  editing the card does not change them. */
+  ais?: WorldGameAi[];
+}
+
+export interface WorldGameAi {
+  name: string;
+  /** What the game tells it each time it speaks. */
+  gets?: string;
+  /** What it hands back, and what the game does with it. */
+  returns?: string;
+  /** Where it is written (a server file), for whoever changes it. */
+  where?: string;
+  /** The situation on this card that holds its prose, when the game reads
+   *  it from the card (PvZ's server reads Crazy Dave's entries there). */
+  book?: string;
+}
+
 export interface WorldDefinition {
   id: string;
   version: string;
@@ -1141,6 +1183,11 @@ export interface WorldDefinition {
    *  world after v19→v20 migration. This is the ONLY visual-layer input the
    *  runtime reads. */
   rootComponent?: RootComponent;
+  /** The card is a game, or a character in one. Read by the hosts that run
+   *  it — never by the engine, which plays a game card's NPC like any other
+   *  card. Absent: a chat card. `null`: explicitly not a game any more (the
+   *  database keeps an omitted key, see worlds_sync_schema_derived). */
+  game?: WorldGame | null;
 
   /**
    * The card's interface as a document — what the drag editor and the Studio

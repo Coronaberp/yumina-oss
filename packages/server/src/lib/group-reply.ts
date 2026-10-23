@@ -128,7 +128,7 @@ async function runnableModel(userId: string, wanted: string | null | undefined):
 export function readVoiceAnswer(world: WorldDefinition, raw: string, name: string, scene: LiveScene | null) {
   // A thinking model can hand back its thoughts before the answer; only what
   // follows the last </think> is said in the story.
-  const parsed = responseParser.parse(raw.includes("</think>") ? raw.slice(raw.lastIndexOf("</think>") + "</think>".length) : raw);
+  const parsed = responseParser.parse(raw.includes("</think>") ? raw.slice(raw.lastIndexOf("</think>") + "</think>".length) : raw, undefined, { world });
   const ruled = applyReplyRules(world, parsed.cleanText);
   parsed.effects.push(...ruled.effects);
   const storyEvents = takeStoryEvents(parsed.effects, world, scene);

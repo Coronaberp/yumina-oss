@@ -7,6 +7,7 @@ import { authMiddleware } from "../middleware/auth.js";
 import { createAccessToken, listAccessTokens, revokeAccessToken } from "../lib/access-tokens.js";
 import { subscribeWorldEvents } from "../lib/world-events.js";
 import { disconnectAi, listConnectedAis } from "../lib/connected-ais.js";
+import { MCP_SCOPE } from "../lib/mcp-oauth.js";
 import type { AppEnv } from "../lib/types.js";
 
 /**
@@ -23,10 +24,11 @@ async function ownsWorld(userId: string, worldId: string): Promise<boolean> {
   return !!row;
 }
 
-// The AIs signed in to this account (OAuth), across all cards.
+// The AIs signed in to this account (OAuth) for the card MCP, across all
+// cards. Apps on the AI gateway (game mods) are listed in Settings instead.
 worldAccessRoutes.get("/connected-ais", async (c) => {
   const user = c.get("user");
-  return c.json({ data: await listConnectedAis(user.id) });
+  return c.json({ data: (await listConnectedAis(user.id)).filter((ai) => ai.scopes.includes(MCP_SCOPE)) });
 });
 
 worldAccessRoutes.delete("/connected-ais/:clientId", async (c) => {

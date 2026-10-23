@@ -32,12 +32,12 @@ export type NoteColor = keyof typeof NOTE_COLORS;
 
 const NOTE_MIN_W = 160;
 const NOTE_MIN_H = 40;
-/** How tall a note grows by itself to show its words. */
-const NOTE_MAX_FIT_H = 160;
-/** A new note: one line of words under a thin bar. */
-export const NOTE_SIZE = { w: 200, h: 44 };
+/** A new note: a line or two of words under a thin bar. At 200 wide a
+ *  sentence stood as a thin tall strip beside the board (owner, 10/18). */
+export const NOTE_SIZE = { w: 280, h: 56 };
 /** Notes made at an earlier default size take today's. */
-const heightOf = (n: { h: number }) => (n.h === 150 || n.h === 78 ? NOTE_SIZE.h : n.h);
+const heightOf = (n: { h: number }) => (n.h === 150 || n.h === 78 || n.h === 44 ? NOTE_SIZE.h : n.h);
+const widthOf = (n: { w: number }) => (n.w === 200 || n.w === 260 ? NOTE_SIZE.w : n.w);
 /** Above every block on the board (an entry block lifts itself to ~1000). */
 const Z_THREADS = 3000;
 const Z_NOTE = 3001;
@@ -107,6 +107,25 @@ export function StickyNoteLayer({
   /** Every block on the board: a note stands clear of all of them. */
   const [blocks, setBlocks] = useState<Rect[]>([]);
   const [drag, setDrag] = useState<{ id: string; mode: "move" | "size"; dx: number; dy: number; over?: Rect[] } | null>(null);
+  /** How tall each note has to be to show all of its words, measured on the
+   *  board. A note shows everything written on it (owner, 10/18): notes the
+   *  assistant or a script wrote were cut off at the height they were made
+   *  with, and only a note edited by hand grew, and then only so far. */
+  const [fitH, setFitH] = useState<Record<string, number>>({});
+  const hOf = (n: Note) => Math.max(heightOf(n), fitH[n.id] ?? 0);
+  useLayoutEffect(() => {
+    const root = document;
+    let grown: Record<string, number> | null = null;
+    for (const ta of root.querySelectorAll<HTMLTextAreaElement>("[data-sticky-note] textarea")) {
+      const id = ta.closest<HTMLElement>("[data-sticky-note]")?.dataset.stickyNote;
+      const note = id ? notes.find((x) => x.id === id) : undefined;
+      const need = ta.scrollHeight - ta.clientHeight;
+      if (!id || !note || need <= 2) continue;
+      const target = Math.ceil(hOf(note) + need);
+      if (target > (fitH[id] ?? 0)) (grown ??= { ...fitH })[id] = target;
+    }
+    if (grown) setFitH(grown);
+  });
   const draggingRef = useRef(false);
 
   const flowRectOf = useCallback((el: Element): Rect | null => {
@@ -156,10 +175,15 @@ export function StickyNoteLayer({
   const places = new Map<string, { x: number; y: number; anchor: Rect | null }>();
   const taken: Rect[] = [];
   const GAP = 18;
-  for (const n of notes) {
-    const anchor = noteTargets(n).map((id) => rects[id]).find(Boolean) ?? null;
-    const w = n.collapsed ? 34 : Math.max(NOTE_MIN_W, n.w);
-    const h = n.collapsed ? 34 : Math.max(NOTE_MIN_H, heightOf(n));
+  const anchorOf = (n: Note) => noteTargets(n).map((id) => rects[id]).find(Boolean) ?? null;
+  // Placed top to bottom by what they are stuck to, so a column of notes
+  // beside a column of rows keeps their order and the threads never cross
+  // (Paths of Ascension's ten code AIs drew ten crossing threads).
+  const order = [...notes].sort((a, b) => (anchorOf(a)?.y1 ?? -Infinity) - (anchorOf(b)?.y1 ?? -Infinity));
+  for (const n of order) {
+    const anchor = anchorOf(n);
+    const w = n.collapsed ? 34 : Math.max(NOTE_MIN_W, widthOf(n));
+    const h = n.collapsed ? 34 : Math.max(NOTE_MIN_H, hOf(n));
     if (!anchor) {
       places.set(n.id, { x: n.x, y: n.y, anchor: null });
       taken.push({ x1: n.x, y1: n.y, x2: n.x + w, y2: n.y + h });
@@ -173,18 +197,17 @@ export function StickyNoteLayer({
       .reduce<Rect>((best, b) => ((b.x2 - b.x1) * (b.y2 - b.y1) > (best.x2 - best.x1) * (best.y2 - best.y1) ? b : best), anchor);
     const free = (x: number, y: number) => ![...blocks, ...taken].some((b) =>
       x < b.x2 + GAP && x + w + GAP > b.x1 && y < b.y2 + GAP && y + h + GAP > b.y1);
-    // The nearest clear spot: beside the frame level with the target, then a
-    // little lower or higher, then the frame's other side, then further out.
+    // The nearest clear spot: beside the frame level with the target, then
+    // lower (the notes above are already placed), then higher, then the
+    // frame's other side, then further out.
     const y0 = anchor.y1 - 8;
     const right = outer.x2 + GAP + 10;
     const left = outer.x1 - GAP - 10 - w;
     let p: { x: number; y: number; anchor: Rect } | null = null;
-    // The right side first, well up and down; the left only when the right is full.
+    // The right side first, down and then up; the left only when the right is full.
     for (const x of [right, left]) {
-      for (let step = 0; step <= 50 && !p; step++) {
-        const dy = (step % 2 ? 1 : -1) * Math.ceil(step / 2) * 24;
-        if (free(x, y0 + dy)) p = { x, y: y0 + dy, anchor };
-      }
+      for (let step = 0; step <= 50 && !p; step++) if (free(x, y0 + step * 24)) p = { x, y: y0 + step * 24, anchor };
+      for (let step = 1; step <= 25 && !p; step++) if (free(x, y0 - step * 24)) p = { x, y: y0 - step * 24, anchor };
       if (p) break;
     }
     if (!p) {
@@ -234,7 +257,9 @@ export function StickyNoteLayer({
         return;
       }
       if (mode === "size") {
-        update(note.id, { w: Math.max(NOTE_MIN_W, Math.round(note.w + dx)), h: Math.max(NOTE_MIN_H, Math.round(heightOf(note) + dy)) });
+        update(note.id, { w: Math.max(NOTE_MIN_W, Math.round(widthOf(note) + dx)), h: Math.max(NOTE_MIN_H, Math.round(hOf(note) + dy)) });
+        // Sized by hand: that height, not the measured one, until the words outgrow it.
+        setFitH((prev) => { const { [note.id]: _drop, ...rest } = prev; return rest; });
         return;
       }
       // Dropped on something: stuck to it (or to the whole selection it is
@@ -266,7 +291,7 @@ export function StickyNoteLayer({
           const d = drag?.id === n.id && drag.mode === "move" ? drag : null;
           const p = placeOf(n);
           const nx = p.x + (d?.dx ?? 0);
-          const nw = n.collapsed ? 34 : Math.max(NOTE_MIN_W, n.w);
+          const nw = n.collapsed ? 34 : Math.max(NOTE_MIN_W, widthOf(n));
           const color = NOTE_COLORS[(n.color as NoteColor) ?? "yellow"]?.thread ?? NOTE_COLORS.yellow.thread;
           return noteTargets(n).map((id) => {
             const r = rects[id];
@@ -313,8 +338,8 @@ export function StickyNoteLayer({
             </div>
           );
         }
-        const w = Math.max(NOTE_MIN_W, n.w + (d?.mode === "size" ? d.dx : 0));
-        const h = Math.max(NOTE_MIN_H, heightOf(n) + (d?.mode === "size" ? d.dy : 0));
+        const w = Math.max(NOTE_MIN_W, widthOf(n) + (d?.mode === "size" ? d.dx : 0));
+        const h = Math.max(NOTE_MIN_H, hOf(n) + (d?.mode === "size" ? d.dy : 0));
         return (
           <div
             key={n.id}
@@ -372,12 +397,12 @@ export function StickyNoteLayer({
                 placeholder={t("blueprint.notePlaceholder")}
                 onBlur={(e) => {
                   onEdited();
-                  // Done writing: the note grows to show what was written (up to
-                  // a point) and reads from its first line again.
+                  // Done writing: the note grows to show all that was written
+                  // and reads from its first line again.
                   const ta = e.target;
                   const extra = ta.scrollHeight - ta.clientHeight;
                   ta.scrollTop = 0;
-                  const grown = extra > 2 ? Math.min(NOTE_MAX_FIT_H, heightOf(n) + extra) : undefined;
+                  const grown = extra > 2 ? hOf(n) + extra : undefined;
                   if (ta.value !== n.text || (grown && grown > heightOf(n))) update(n.id, { text: ta.value, ...(grown && grown > heightOf(n) ? { h: Math.round(grown) } : {}) });
                 }}
                 className="min-h-0 w-full flex-1 resize-none bg-transparent px-2.5 pb-1 pt-0.5 text-[13px] leading-[20px] outline-none placeholder:opacity-40"

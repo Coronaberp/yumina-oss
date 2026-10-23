@@ -1,4 +1,5 @@
 import { refreshSessionGreeting } from "../lib/refresh-session-greeting.js";
+import { historyCacheBreakpoint } from "../lib/history-cache-breakpoint.js";
 import { bodyLimit } from "hono/body-limit";
 import { appendPendingContext } from "../lib/pending-context.js";
 import { loadMessagePage, messagePageCursor } from "../lib/message-page.js";
@@ -124,7 +125,8 @@ import { checkRateLimit, acquireConcurrency, releaseConcurrency, checkTurnImageR
 import { fineAvailable, illustrateTurn, stripTurnImages } from "../lib/per-turn-image/illustrate.js";
 import { stripTurnVideos } from "../lib/realtime-video/turn-clip.js";
 import { perTurnImagesEnabled, turnImagePrefs } from "../lib/per-turn-image/availability.js";
-import { refundTurnImage, reserveTurnImage, turnImageQuote } from "../lib/per-turn-image/billing.js";
+import { turnImageQuote } from "../lib/per-turn-image/billing.js";
+import { cancelTurnImageTask, deliverTurnImageTask, failTurnImageTask, recoverExpiredTurnImages, startTurnImageTask, watchTurnImageTask } from "../lib/per-turn-image/tasks.js";
 import { redis } from "../lib/redis.js";
 import { checkBalance, validateModelAccess, calculateCost, deductCreditsUpToBalance, getModelCostRates, estimateCreditsFromChars, estimateTokensFromChars } from "../lib/credit-service.js";
 import { insertHashedTransaction } from "../lib/transaction-hash.js";
@@ -135,7 +137,7 @@ import { getAllModelPrices } from "../lib/model-price-cache.js";
 import { getModelPopularity } from "../lib/model-popularity.js";
 import { getModelCostStats } from "../lib/model-cost-stats.js";
 import type { ModelCostStats } from "@yumina/shared";
-import { DEFAULT_MODEL, MAX_USER_MESSAGE_CHARS, PLAY_MODELS, PLAY_MODEL_IDS, RETIRED_PLAY_MODEL_IDS, resolveStoryMemory, resolveLorebookBudget } from "@yumina/shared";
+import { DEFAULT_MODEL, MAX_USER_MESSAGE_CHARS, PLAY_MODELS, PLAY_MODEL_IDS, RETIRED_PLAY_MODEL_IDS, resolveStoryMemory, resolveLorebookBudget, type StoryMemoryResolution } from "@yumina/shared";
 import { env } from "../lib/env.js";
 import {
   compactTurnOverflowIfNeeded,
@@ -177,7 +179,7 @@ function turnStoryMemory(args: {
   override: number | undefined;
   maxContext: number;
   accountCreatedAt: Date | null | undefined;
-}): { tokens: number; source: "chosen" | "new-account-default" | "carried-over" } {
+}): StoryMemoryResolution {
   const raw = env.STORY_MEMORY_DEFAULT_AT;
   const parsed = raw ? Date.parse(raw) : Number.NaN;
   return resolveStoryMemory({
@@ -185,6 +187,7 @@ function turnStoryMemory(args: {
     maxContext: args.maxContext,
     accountCreatedAt: args.accountCreatedAt ?? null,
     newAccountsFrom: Number.isFinite(parsed) ? new Date(parsed) : null,
+    carriedOverDefault: env.STORY_MEMORY_CARRIED_OVER_DEFAULT ?? null,
   });
 }
 
@@ -1228,12 +1231,12 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   }));
 
   promptTracer.takeHistory(historyMessages);
+  const injectedDepthMessages = new Set<PromptMessage>();
   for (const de of depthEntries) {
     const insertIdx = Math.max(0, historyMessages.length - de.depth);
-    historyMessages.splice(insertIdx, 0, {
-      role: de.apiRole,
-      content: de.content,
-    });
+    const injected: PromptMessage = { role: de.apiRole, content: de.content };
+    injectedDepthMessages.add(injected);
+    historyMessages.splice(insertIdx, 0, injected);
   }
 
   let historyStart = contextMessages.length;
@@ -1321,6 +1324,9 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
     suffixCount,
     model,
     historyWindowBudget,
+    // The step is sized from the chosen story memory, not the per-turn
+    // allowance above, so the trim boundaries hold still between turns.
+    storyMemory.tokens,
   );
 
   if (outputContract.content) chatMessages.push({ role: "system", content: outputContract.content });
@@ -1328,7 +1334,11 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   // (max of MIN_CACHE_DEPTH_OFFSET and deepest keyword-triggered depth + 1) so every
   // volatile depth entry lands in the uncached tail.
   const cacheDepthOffset = computeCacheDepthOffset(worldDef);
-  const cacheBreakpointIndex = chatMessages.length - 1 - suffixCount - (outputContract.content ? 1 : 0) - cacheDepthOffset;
+  const cacheBreakpointIndex = historyCacheBreakpoint(
+    chatMessages,
+    injectedDepthMessages,
+    chatMessages.length - 1 - suffixCount - (outputContract.content ? 1 : 0) - cacheDepthOffset,
+  );
 
   // Two-breakpoint caching: (1) end of stable prefix (cheap insurance if triggered system
   // entries ever fire — always-send content stays cached), (2) depth-resilient floor.
@@ -1637,7 +1647,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
           // Parse response — use structured parser for JSON responses, regex for others
           const legacyParsed = structuredParser.isStructuredResponse(fullContent)
             ? structuredParser.parse(fullContent)
-            : responseParser.parse(fullContent, undefined, { shieldImages: !hasImageVariable(worldDef) });
+            : responseParser.parse(fullContent, undefined, { shieldImages: !hasImageVariable(worldDef), world: worldDef });
           const { parsed: parseResult } = await outputAttempt.validate({
             world: worldDef, state: stateManager.getSnapshot(), raw: fullContent, parsed: legacyParsed,
             provider: provider, model: correctionModel, maxContext: maxContext, signal: abortController.signal,
@@ -1656,6 +1666,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
             world: worldDef, state: stateManager.getSnapshot(), playerText: userContent, replyText: cleanText, effects,
             guardCorrected: guardRebuiltBatch(outputAttempt.audit),
             userId: currentUser.id, sessionId, path: "send", signal: abortController.signal,
+            unapplied: parseResult.unapplied, storyModel: actualModel,
           });
           effects.push(...missed.effects);
           const storyEvents = takeStoryEvents(effects, worldDef, liveScene);
@@ -2408,6 +2419,7 @@ messageRoutes.get("/messages/turn-images/settings", async (c) => {
   const currentUser = c.get("user");
   const prefs = await turnImagePrefs(currentUser.id);
   const available = perTurnImagesEnabled() && prefs.optedIn;
+  await recoverExpiredTurnImages(currentUser.id);
   const quote = available ? await turnImageQuote(currentUser.id) : null;
   return c.json({ data: {
     available,
@@ -2415,6 +2427,26 @@ messageRoutes.get("/messages/turn-images/settings", async (c) => {
     fine: available && fineAvailable(),
     ...(quote ? { price: quote.listPrice, freeLeft: quote.freeLeft, unlimited: quote.unlimited } : {}),
   } });
+});
+
+const turnImageDrawId = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+messageRoutes.post("/messages/:id/illustrate/cancel", async (c) => {
+  const currentUser = c.get("user");
+  const body = await c.req.json<{ drawId?: string }>().catch(() => ({} as { drawId?: string }));
+  if (!turnImageDrawId(body.drawId)) return c.json({ error: "Invalid draw id" }, 400);
+  const messageId = c.req.param("id");
+  const [msg] = await db.select().from(messages).where(eq(messages.id, messageId));
+  if (!msg || msg.role !== "assistant") return c.json({ error: "Message not found" }, 404);
+  const [session] = await db.select({ id: playSessions.id }).from(playSessions)
+    .where(and(eq(playSessions.id, msg.sessionId), eq(playSessions.userId, currentUser.id)));
+  if (!session) return c.json({ error: "Not authorized" }, 403);
+  const status = await cancelTurnImageTask(body.drawId, currentUser.id, messageId);
+  if (status === "invalid") return c.json({ error: "Draw not found" }, 404);
+  const quote = await turnImageQuote(currentUser.id);
+  // If delivery won the row lock, show the delivered image without claiming a refund.
+  const [current] = status === "completed" ? await db.select({ content: messages.content }).from(messages).where(eq(messages.id, messageId)) : [];
+  return c.json({ data: { ok: status === "cancelled" || status === "failed", status, balance: quote.balance, freeLeft: quote.freeLeft, ...(current ? { content: current.content } : {}) } });
 });
 
 // POST /api/messages/:id/illustrate — draw (or redraw) the picture for one reply.
@@ -2425,7 +2457,9 @@ messageRoutes.get("/messages/turn-images/settings", async (c) => {
 // with 403 before anything is read, charged or drawn.
 messageRoutes.post("/messages/:id/illustrate", async (c) => {
   const currentUser = c.get("user");
-  const body = await c.req.json<{ auto?: boolean; note?: string; fine?: boolean }>().catch(() => ({} as { auto?: boolean; note?: string; fine?: boolean }));
+  const body = await c.req.json<{ auto?: boolean; note?: string; fine?: boolean; drawId?: string }>().catch(() => ({} as { auto?: boolean; note?: string; fine?: boolean; drawId?: string }));
+  if (body.drawId !== undefined && !turnImageDrawId(body.drawId)) return c.json({ error: "Invalid draw id" }, 400);
+  const drawId = body.drawId ?? crypto.randomUUID();
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 200) : "";
   if (!perTurnImagesEnabled()) return c.json({ data: { ok: false, reason: "unavailable" } });
   const prefs = await turnImagePrefs(currentUser.id);
@@ -2462,15 +2496,16 @@ messageRoutes.post("/messages/:id/illustrate", async (c) => {
       return c.json({ data: { ok: false, reason: "unavailable" } });
     }
     // Paid before drawing, under the wallet lock; given back unless the picture lands.
-    const reserved = await reserveTurnImage(currentUser.id, crypto.randomUUID());
-    if (!reserved.charge) return c.json({ data: { ok: false, reason: "credits", price: reserved.price, balance: reserved.balance } });
+    const reserved = await startTurnImageTask(drawId, currentUser.id, messageId);
+    if (!reserved.charge) return c.json({ data: { ok: false, ...reserved } });
     const charge = reserved.charge;
-    let delivered = false;
+    const task = watchTurnImageTask(drawId);
     try {
       const replyText = stripTurnImages(msg.content);
       // Who "you" is (name, sex, looks): cards rarely say, the player's persona often does.
       const persona = await resolvePersonaForSession(ctx.session).catch(() => null);
       const result = await illustrateTurn({
+        signal: task.signal,
         world: ctx.worldDef, sessionId: msg.sessionId,
         playerText: prevUser?.content ?? "", replyText, ...(note ? { note } : {}), ...(body.fine === true ? { fine: true } : {}), userId: currentUser.id, auto: false,
         playerKey: await illustrationPlayerKey(currentUser.id, msg.model),
@@ -2479,17 +2514,20 @@ messageRoutes.post("/messages/:id/illustrate", async (c) => {
       if (!result.ok) return c.json({ data: { ok: false, reason: result.reason } });
       // The reply may have been regenerated, edited or deleted while this drew;
       // then the picture belongs to text that no longer exists.
-      const [current] = await db.select({ content: messages.content }).from(messages).where(eq(messages.id, messageId));
-      // A scene-video clip landing meanwhile is not a change: the picture joins it.
-      if (!current || stripTurnVideos(stripTurnImages(current.content)) !== stripTurnVideos(replyText)) return c.json({ data: { ok: false, reason: "stale" } });
-      const content = `${stripTurnImages(current.content).trimEnd()}\n\n${result.embed}`;
-      const [updated] = await db.update(messages).set(messageContentUpdate(content))
-        .where(and(eq(messages.id, messageId), eq(messages.content, current.content))).returning();
-      if (!updated) return c.json({ data: { ok: false, reason: "stale" } });
-      delivered = true;
+      const updated = await deliverTurnImageTask(drawId, async (tx) => {
+        const [current] = await tx.select({ content: messages.content }).from(messages).where(eq(messages.id, messageId));
+        // A scene-video clip landing meanwhile is not a change: the picture joins it.
+        if (!current || stripTurnVideos(stripTurnImages(current.content)) !== stripTurnVideos(replyText)) return null;
+        const content = `${stripTurnImages(current.content).trimEnd()}\n\n${result.embed}`;
+        const [landed] = await tx.update(messages).set(messageContentUpdate(content))
+          .where(and(eq(messages.id, messageId), eq(messages.content, current.content))).returning();
+        return landed ?? null;
+      });
+      if (!updated) return c.json({ data: { ok: false, reason: task.signal.reason === "cancelled" ? "cancelled" : "stale" } });
       return c.json({ data: { ok: true, content: updated.content, charged: charge.price, balance: charge.balance, freeLeft: charge.freeLeft } });
     } finally {
-      if (!delivered) await refundTurnImage(charge).catch((error) => {
+      task.close();
+      await failTurnImageTask(drawId).catch((error) => {
         console.error("[PerTurnImage] refund failed:", charge.referenceId, error instanceof Error ? error.message : error);
       });
     }
@@ -2894,12 +2932,12 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
   }));
 
   promptTracer.takeHistory(regenHistoryMessages);
+  const regenInjectedDepthMessages = new Set<PromptMessage>();
   for (const de of regenDepthEntries) {
     const insertIdx = Math.max(0, regenHistoryMessages.length - de.depth);
-    regenHistoryMessages.splice(insertIdx, 0, {
-      role: "system" as const,
-      content: de.content,
-    });
+    const injected: PromptMessage = { role: "system", content: de.content };
+    regenInjectedDepthMessages.add(injected);
+    regenHistoryMessages.splice(insertIdx, 0, injected);
   }
 
   let regenHistoryStart = regenContextMessages.length;
@@ -2979,12 +3017,17 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
     regenSuffixCount,
     model,
     regenHistoryWindowBudget,
+    regenStoryMemory.tokens,
   );
 
   // Two-breakpoint caching (see send path for rationale): stable prefix + depth-resilient floor.
   if (outputContract.content) chatMessages.push({ role: "system", content: outputContract.content });
   const regenCacheDepthOffset = computeCacheDepthOffset(worldDef);
-  const regenCacheBreakpointIndex = chatMessages.length - 1 - regenSuffixCount - (outputContract.content ? 1 : 0) - regenCacheDepthOffset;
+  const regenCacheBreakpointIndex = historyCacheBreakpoint(
+    chatMessages,
+    regenInjectedDepthMessages,
+    chatMessages.length - 1 - regenSuffixCount - (outputContract.content ? 1 : 0) - regenCacheDepthOffset,
+  );
   const regenBreakpoints = Array.from(new Set([regenStablePrefixEnd, regenCacheBreakpointIndex].filter((i) => i >= 0))).sort((a, b) => a - b);
 
   const providerMessages = await restoreChatImages(msg.sessionId, chatMessages);
@@ -3213,7 +3256,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
           // Parse response — use structured parser for JSON responses, regex for others
           const legacyParsed = structuredParser.isStructuredResponse(fullContent)
             ? structuredParser.parse(fullContent)
-            : responseParser.parse(fullContent, undefined, { shieldImages: !hasImageVariable(worldDef) });
+            : responseParser.parse(fullContent, undefined, { shieldImages: !hasImageVariable(worldDef), world: worldDef });
           const { parsed: regenParseResult } = await outputAttempt.validate({
             world: worldDef, state: stateManager.getSnapshot(), raw: fullContent, parsed: legacyParsed,
             provider: regenProvider, model: correctionModel, maxContext: regenMaxContext, signal: abortController.signal,
@@ -3229,6 +3272,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             world: worldDef, state: stateManager.getSnapshot(), playerText: lastUserText(priorMessages), replyText: regenParseResult.cleanText,
             effects: regenParseResult.effects, guardCorrected: guardRebuiltBatch(outputAttempt.audit),
             userId: currentUser.id, sessionId: msg.sessionId, path: "regenerate", signal: abortController.signal,
+            unapplied: regenParseResult.unapplied, storyModel: actualModel,
           });
           regenParseResult.effects.push(...regenMissed.effects);
           // Continuity judge (see the send path).
@@ -3985,12 +4029,12 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
   }));
 
   promptTracer.takeHistory(historyMessages);
+  const contInjectedDepthMessages = new Set<PromptMessage>();
   for (const de of depthEntries) {
     const insertIdx = Math.max(0, historyMessages.length - de.depth);
-    historyMessages.splice(insertIdx, 0, {
-      role: de.apiRole,
-      content: de.content,
-    });
+    const injected: PromptMessage = { role: de.apiRole, content: de.content };
+    contInjectedDepthMessages.add(injected);
+    historyMessages.splice(insertIdx, 0, injected);
   }
 
   let contHistoryStart = contextMessages.length;
@@ -4050,12 +4094,16 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
     nonRawHistoryMessages: contNonRawHistoryMessages,
     indices: contMemoryIndices,
   });
-  const chatMessages = await promptBuilder.buildMessageHistoryAsync(contextMessages, yieldForIO, maxContext - outputContract.reserve, contHistoryStart, contSuffixCount, model, contHistoryWindowBudget);
+  const chatMessages = await promptBuilder.buildMessageHistoryAsync(contextMessages, yieldForIO, maxContext - outputContract.reserve, contHistoryStart, contSuffixCount, model, contHistoryWindowBudget, storyMemory.tokens);
 
   // Two-breakpoint caching (see send path for rationale): stable prefix + depth-resilient floor.
   if (outputContract.content) chatMessages.push({ role: "system", content: outputContract.content });
   const contCacheDepthOffset = computeCacheDepthOffset(worldDef);
-  const contCacheBreakpointIndex = chatMessages.length - 1 - contSuffixCount - (outputContract.content ? 1 : 0) - contCacheDepthOffset;
+  const contCacheBreakpointIndex = historyCacheBreakpoint(
+    chatMessages,
+    contInjectedDepthMessages,
+    chatMessages.length - 1 - contSuffixCount - (outputContract.content ? 1 : 0) - contCacheDepthOffset,
+  );
   const contBreakpoints = Array.from(new Set([contStablePrefixEnd, contCacheBreakpointIndex].filter((i) => i >= 0))).sort((a, b) => a - b);
 
   // The last message in chatMessages should be the assistant's existing content.
@@ -4272,7 +4320,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
           // Parse the continuation — use structured parser for JSON responses, regex for others
           const legacyParsed = structuredParser.isStructuredResponse(continuationContent)
             ? structuredParser.parse(continuationContent)
-            : responseParser.parse(continuationContent, undefined, { shieldImages: !hasImageVariable(worldDef) });
+            : responseParser.parse(continuationContent, undefined, { shieldImages: !hasImageVariable(worldDef), world: worldDef });
           const { parsed: contParseResult } = await outputAttempt.validate({
             world: worldDef, state: stateManager.getSnapshot(), raw: continuationContent, parsed: legacyParsed,
             provider: provider, model: correctionModel, maxContext: maxContext, signal: abortController.signal,
@@ -4288,6 +4336,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
             world: worldDef, state: stateManager.getSnapshot(), playerText: lastUserText(currentRunHistory), replyText: contParseResult.cleanText,
             effects: contParseResult.effects, guardCorrected: guardRebuiltBatch(outputAttempt.audit),
             userId: currentUser.id, sessionId, path: "continue", signal: abortController.signal,
+            unapplied: contParseResult.unapplied, storyModel: actualModel,
           });
           contParseResult.effects.push(...contMissed.effects);
           // Continuity judge (see the send path). A continuation is judged on
@@ -4796,7 +4845,10 @@ messageRoutes.post("/messages/:id/swipe", async (c) => {
         const [updatedMessage] = await tx.update(messages).set({
           content: swipe.content, activeSwipeIndex: index,
           stateChanges: swipe.stateChanges ?? null,
-          stateSnapshot: restoredState ?? msg.stateSnapshot,
+          // A rewind checkpoint keeps only the row's snapshot (its swipes' are
+          // stripped): it describes the active swipe, so it cannot stand in
+          // for another one.
+          stateSnapshot: restoredState ?? (index === (msg.activeSwipeIndex ?? 0) ? msg.stateSnapshot : null),
           stateValidation: swipe.stateValidation ?? null,
           model: swipe.model ?? null, tokenCount: swipe.tokenCount ?? null,
         }).where(eq(messages.id, messageId)).returning();

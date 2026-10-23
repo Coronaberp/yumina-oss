@@ -924,7 +924,7 @@ ${trimmed}` : trimmed);
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Model selector */}
-      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+      <div data-ai-chat-header="" className="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <button
           data-learn="ai-model"
           onClick={() => setModelBrowserOpen(true)}
@@ -1025,7 +1025,7 @@ ${trimmed}` : trimmed);
       />
 
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex-1 space-y-3 overflow-y-auto overscroll-contain p-3">
+      <div ref={messagesContainerRef} data-ai-chat-messages="" className="flex-1 space-y-3 overflow-y-auto overscroll-contain p-3">
         {chatMessages.length === 0 && !isChatStreaming && !visibleCreditPause && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground/70">
             <p className="max-w-[240px] text-center text-xs">

@@ -7,7 +7,7 @@ import { AlertTriangle, Bot, Check as CheckIcon, ChevronRight, Copy, FolderOpen,
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Check, Field, Group, More, NumberInput, OpenToolButton, Row, Segmented, Stepper, Switch, inputClass, labelClass, rowControl } from "./controls";
 import { parseEditedValue } from "./variable-value";
-import { CONTEXT_BLOCK_ID, CardContextForm, CardNarratorForm, HistoryWindowControl } from "./context-forms";
+import { CardContextForm, CardNarratorForm, HistoryWindowControl } from "./context-forms";
 import { StoryAiSettings } from "./story-ai-settings";
 import { resolveImageUrl } from "@/lib/asset-url";
 import { feedback } from "@/lib/feedback";
@@ -30,13 +30,17 @@ import { ConditionSentences, EffectSentences, WhenSentence } from "./behavior-se
 import { VariableValueField } from "./variable-value-field";
 import { VariableActivationEditor } from "@/features/editor/components/variable-activation-editor";
 import { VariableIdEditor, VariableNameReferenceHint } from "@/features/editor/components/variable-id-editor";
+import { gameInterfaceOf, gameNameOf, gameSide } from "@/features/editor/lib/game-interface";
 import { OptionsEditor, suggestedDelta } from "@/features/editor/components/precise-tracking";
 import { CONTINUITY_MAX_OPTIONS } from "@yumina/engine";
 import { getEntryDeliverySummary } from "./entry-delivery";
 import { ModuleConsole, ModuleMemorySettings, StationModelFields, type FoldRender } from "@/features/editor/components/module/module-console";
-import { stationParamsCustom } from "@/features/editor/lib/ai-call-settings";
 import { aiRoster, hasSeveralAis, placeGivesTo, renameAiPatch, stationName, voiceOf, type AiVoice } from "./ai-roster";
 import { aiTypeOf } from "./place-ais";
+import { AiContract, AiTypePicker } from "./ai-contract";
+import { GameInterfaceGroup, GameSideControl } from "./game-interface-form";
+import { CodeAiForm } from "./code-ai-form";
+import type { PlaceAiRow } from "./place-ais";
 import { AiCustomForm } from "./ai-custom-form";
 import { ReplyRulesForm } from "./reply-rules-form";
 import { LiveCanonGroup, useLiveCanonAllowed } from "./live-canon";
@@ -627,7 +631,9 @@ export function EntryForm({ entryId }: { entryId: string }) {
           </More></div>
       </div>
 
-      <div className="flex min-h-[240px] flex-1 flex-col gap-1.5">
+      {/* Open in its row on the board, the row is as tall as the text needs
+          (openEntryEditorHeight), so the box gives up its floor there. */}
+      <div className="flex min-h-[240px] flex-1 flex-col gap-1.5 [[data-canvas-writing-editor]_&]:min-h-0">
         <label htmlFor={`studio-entry-content-${entryId}`} className={labelClass}>{t("entries.content")}</label>
         <DebouncedTextarea
           id={`studio-entry-content-${entryId}`}
@@ -635,7 +641,7 @@ export function EntryForm({ entryId }: { entryId: string }) {
           onCommit={(content) => updateEntry(entryId, { content })}
           syncKey={entryId}
           placeholder={guidance || t("blueprint.rowEdit.bodyPlaceholder")}
-          className={cn(inputClass, proseClass, "min-h-32")}
+          className={cn(inputClass, proseClass, "min-h-32 [[data-canvas-writing-editor]_&]:min-h-[52px]")}
         />
       </div>
 
@@ -753,8 +759,19 @@ export function VariableForm({ variableId }: { variableId: string }) {
     />
   );
 
+  // A value the card's game owns: the game finds it by its id.
+  const game = gameInterfaceOf(worldDraft);
+  const side = gameSide(game, variable.id);
+
   return (
     <div className="space-y-1">
+      {side && (
+        <p data-testid="game-variable-note" className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-2 text-[11.5px] leading-relaxed text-foreground/80">
+          {t(side === "in" ? "blueprint.game.inNote" : "blueprint.game.outNote", { game: gameNameOf(game!, t as Translate) })}
+        </p>
+      )}
+      {/* On a card that declares its game: which side of it this value is on. */}
+      <GameSideControl variableId={variable.id} />
       {/* What it is: the kind, in a row of four so the other three are seen;
           where it starts; the range a number lives in. */}
       <div data-learn="var-basics"><Group title="">
@@ -1119,6 +1136,8 @@ function WorldForm({ onDrill }: { onDrill: (panel: string) => void }) {
 
       <ReplyRulesForm />
 
+      <GameInterfaceGroup />
+
       <LiveCanonGroup />
     </div>
   );
@@ -1254,40 +1273,29 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
   // The three kinds first (owner, 10/6), by what calls it; then, inside the
   // kind, exactly when.
   const type = aiTypeOf(station);
-  const RUNS: Record<AiType, RunWhen[]> = { turn: ["reply", "turns", "after"], ui: [], code: ["conditions", "module-closed", "quiet"], custom: [] };
+  const RUNS: Record<AiType, RunWhen[]> = { turn: ["reply", "turns", "after"], ui: [], event: ["conditions", "module-closed", "quiet"], custom: [] };
   // 自定义: the AI is a declared slot the interface code implements. Nothing
   // of the run settings applies; the panel below shows the implementation.
   const setCustom = () => updateWorldbook(worldbookId, { station: { kind: "custom", ...(station.name ? { name: station.name } : {}) } });
   return (
     <div className="space-y-3" data-ai-form>
-      <Field label={t("blueprint.aiForm.type")}>
-        <div className="grid grid-cols-4 gap-1" role="radiogroup" data-ai-type-pick="">
-          {(["turn", "ui", "code", "custom"] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              role="radio"
-              aria-checked={type === k}
-              data-ai-type-option={k}
-              onClick={() => { if (k === type) return; if (k === "custom") setCustom(); else setRunWhen(RUNS[k][0] ?? "ui"); }}
-              className={cn(
-                "rounded-md border px-2 py-1.5 text-[11.5px] font-semibold transition-colors",
-                type === k ? "border-pink-400/60 bg-pink-400/[0.12] text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t(`blueprint.aiType.${k}`)}
-            </button>
-          ))}
-        </div>
-      </Field>
-      {type === "custom" && <CustomAiPanel worldbookId={worldbookId} />}
-      {/* Called by name from the card's screen (api.callAi), it runs on its
-          own model and settings like any AI behind the scenes. */}
-      {type === "custom" && (
-        <More label={t("blueprint.station.modelAndParams")} defaultOpen={Boolean(station.model) || stationParamsCustom(station)}>
+      {/* Its model and who sets its settings, first (owner, 10/17): the
+          player's or the author's is the choice the creator makes before
+          any other, and it was at the foot of a fold. */}
+      <Group title={t("blueprint.station.modelAndParams")}>
+        <div data-ai-model-first="">
           <StationModelFields book={book} onChange={(patch) => updateWorldbook(worldbookId, patch)} />
-        </More>
-      )}
+        </div>
+      </Group>
+      <AiTypePicker value={type} onPick={(k) => { if (k === "custom") setCustom(); else setRunWhen(RUNS[k][0] ?? "ui"); }} />
+      {/* 自定义 is an interface the card's code implements: what it is
+          called, what it is handed and answers, what it should do — then
+          what implements it so far, and the model it runs on. */}
+      {type === "custom" && (<>
+        <AiContract worldbookId={worldbookId} withNote />
+        <AiCustomForm worldbookId={worldbookId} open snippet={false} />
+        <CustomAiPanel worldbookId={worldbookId} />
+      </>)}
       {type !== "custom" && (<>
       {RUNS[type].length > 0 ? (
         <Field label={t("blueprint.aiForm.runWhen")}>
@@ -1347,7 +1355,10 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
       {/* Every fold on the AI's form is the column's own (a line and a
           chevron): 回答格式 was one, while 只有它知道, 模型 and the activity
           log were boxed ▶ disclosures, two ways of folding in one form. */}
-      <AiCustomForm worldbookId={worldbookId} />
+      {/* One the screen calls is an interface too: its name, what it is
+          handed, and (in 回答格式) what it answers. */}
+      {type === "ui" && <AiContract worldbookId={worldbookId} />}
+      <AiCustomForm worldbookId={worldbookId} open={type === "ui" ? true : undefined} snippet={type !== "ui"} />
       <More label={t("blueprint.aiForm.self")}>
         <ModuleContents book={book} editVia="studio" ownOnly onOpenObject={onOpenObject} />
       </More>
@@ -1358,6 +1369,7 @@ export function AiFrameForm({ worldbookId, onOpenObject }: { worldbookId: string
         kindControl={false}
         triggerPicker={false}
         summary={false}
+        showModel={false}
         fold={columnFold}
       />
       <div className="border-t border-white/[0.06] pt-2">
@@ -1602,7 +1614,10 @@ export type InspectorTarget =
   /** A whole list block — everything it holds, for the rows a tile folds
    *  behind "N more". The column is where the long list lives; the tile
    *  stays a tile. */
-  | { type: "block"; blockId: string; title: string; rows: Array<{ id: string; title: string; kind: GraphNode["kind"]; hint?: string }> };
+  | { type: "block"; blockId: string; title: string; rows: Array<{ id: string; title: string; kind: GraphNode["kind"]; hint?: string }> }
+  /** An AI the interface code runs itself (a call, a live voice): a row of
+   *  the AI block with no settings of its own, opened on what the code says. */
+  | { type: "codeAi"; row: PlaceAiRow };
 
 /** The list a tile folds: every row, a filter box above once there are
  *  enough to want one, each row a way to the object. */
@@ -1677,7 +1692,7 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
   const cardMemoryTarget = memoryTarget && target.type === "node" && target.node.kind === "world";
   const aiTarget = target.type === "node" && target.section === "ai";
   const cardAiTarget = aiTarget && target.type === "node" && target.node.kind === "world";
-  const targetKey = target.type === "node" ? `${target.node.id}:${target.section ?? "settings"}` : target.type === "edge" ? target.edgeId : target.blockId;
+  const targetKey = target.type === "node" ? `${target.node.id}:${target.section ?? "settings"}` : target.type === "edge" ? target.edgeId : target.type === "codeAi" ? `code-ai:${target.row.key}` : target.blockId;
   const isVariable = target.type === "node" && target.node.kind === "variable";
 
   useEffect(() => {
@@ -1710,7 +1725,10 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
    *  standing at the bottom of every form. */
   let remove: { confirm: string; run: () => void } | null = null;
 
-  if (target.type === "edge") {
+  if (target.type === "codeAi") {
+    heading = target.row.name;
+    body = <CodeAiForm key={target.row.key} row={target.row} />;
+  } else if (target.type === "edge") {
     heading = t("blueprint.inspector.title");
     body = <EdgeForm edgeId={target.edgeId} world={world} readOnly={readOnly} onPatch={onPatch} describe={target.describe} />;
   } else if (target.type === "block") {
@@ -1781,7 +1799,7 @@ export function BlueprintInspector({ target, world, readOnly, onPatch, onDrill, 
     } else if (cardMemoryTarget) {
       body = <CardContextForm />;
     } else if (cardAiTarget) {
-      body = <CardNarratorForm onOpenContext={onOpenObject ? () => onOpenObject(CONTEXT_BLOCK_ID) : undefined} />;
+      body = <CardNarratorForm />;
     } else if (aiTarget) {
       body = <AiFrameForm key={id} worldbookId={id} onOpenObject={onOpenObject} />;
     } else if (memoryTarget) {

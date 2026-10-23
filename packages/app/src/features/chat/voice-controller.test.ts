@@ -114,6 +114,25 @@ test("BYOK and testing still close transport immediately regardless of a pending
   }
 });
 
+test("queued work receipts expire when the confirmed attempt or assignment changes", async () => {
+  for (const change of ["attempt", "disabled"]) {
+    const f=fixture();await f.connect();
+    let attempt="a",enabled=true;
+    const event={id:"return-14",attempt:"a",at:0,kind:"work",actor:"resident",visibility:"public",data:{document:"correction-14",action:"submit",edition:"original"}};
+    const variables=()=>({"unperson-room":{version:1,attempt,clock:1,events:attempt==="a"?[event]:[]},"unperson-state":{phase:"conceal"},"unperson-work-enabled":enabled});
+    try {
+      const notice=hydrateVoiceSceneNotice({id:event.id,kind:"bulletin"},variables(),[],undefined,variables);assert.ok(notice);
+      f.controller.reactToScene(notice);
+      const item=f.channel.sent.find(e=>e.type==="conversation.item.create")!.item.id;
+      if(change==="attempt")attempt="b";else enabled=false;
+      f.controller.cancelSceneReaction();f.channel.event({type:"response.done"});
+      assert.equal(f.channel.sent.filter(e=>e.type==="response.create").length,1);
+      assert.ok(f.channel.sent.some(e=>e.type==="conversation.item.delete"&&e.item_id===item));
+      assert.equal(f.channel.sent.some(e=>e.type==="response.cancel"||e.type==="output_audio_buffer.clear"),false);
+    }finally{f.controller.stop();}
+  }
+});
+
 test("an obsolete police-only queue retires quietly when the existing reply ends", async () => {
   const f = fixture(); await f.connect();
   const event = (id: string, at: number, kind: string, actor: string, data: object) => ({ id, attempt: "a", at, kind, actor, visibility: kind === "director" ? "internal" : "public", data });
@@ -444,7 +463,8 @@ function fixture(overrides: Partial<VoiceDependencies> = {}) {
     ontrack: null as ((event: { streams: MediaStream[] }) => void) | null,
     onconnectionstatechange: null as (() => void) | null,
     createDataChannel: () => channel,
-    addTrack() {}, createOffer: async () => ({ type: "offer", sdp: "v=0\r\no=offer" }),
+    added: [] as Array<{ track: MediaStreamTrack; stream: MediaStream }>,
+    addTrack(track: MediaStreamTrack, stream: MediaStream) { this.added.push({ track, stream }); }, createOffer: async () => ({ type: "offer", sdp: "v=0\r\no=offer" }),
     setLocalDescription: async () => {}, setRemoteDescription: async () => { peer.remotes++; },
     close() { this.closed++; },
   };
@@ -467,12 +487,16 @@ function fixture(overrides: Partial<VoiceDependencies> = {}) {
 
 function avatarFixture() {
   const f = fixture();
+  const liveTrack = { enabled: true, readyState: 'live', stops: 0, stop() { this.stops++; } };
+  const liveStream = { getTracks: () => [liveTrack], getAudioTracks: () => [liveTrack] } as unknown as MediaStream;
+  let livePrepared = false;
   let callbacks: any;
   let inputLevel: (value: number) => void = () => {};
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const providerEvents: string[] = [], clientEvents: string[] = [], acknowledgements: number[] = [];
   const avatar = { ...f.audio,
-    close: () => { f.audio.closed++; },
+    prepareLiveInput: async () => { livePrepared = true; return liveStream; },
+    close: () => { f.audio.closed++; if (livePrepared) liveTrack.stop(); },
     connectAvatar: async (_connection: unknown) => {},
     handleProviderEvent: (event: Record<string, unknown>) => {
       providerEvents.push(String(event.type));
@@ -490,8 +514,72 @@ function avatarFixture() {
     return Response.json({ turnControl: "client-v1", sdp: "v=0\r\no=answer" });
   };
   const connect = async () => { const pending = f.controller.start({ instructions: "Ask what I saw.", avatar: true }); await tick(); f.channel.open(); await pending; };
-  return { ...f, avatar, requests, providerEvents, clientEvents, acknowledgements, callbacks: () => callbacks, connect, level: (value: number) => inputLevel(value) };
+  return { ...f, avatar, liveTrack, liveStream, requests, providerEvents, clientEvents, acknowledgements, callbacks: () => callbacks, connect, level: (value: number) => inputLevel(value) };
 }
+
+function liveFixture() {
+  const f = avatarFixture(), baseFetch = f.deps.fetch;
+  f.deps.fetch = async (url, init) => {
+    const response = await baseFetch(url, init);
+    if (String(url).endsWith('/config')) return Response.json({ ...await response.json(), liveModel: 'gpt-live-1' });
+    if (String(url).endsWith('/connect')) return Response.json({ turnControl: 'live-v1', sdp: 'v=0\r\no=answer' });
+    return response;
+  };
+  return f;
+}
+
+test('Live peer sends an enabled clock while protected native capture stays disabled', async () => {
+  const f = liveFixture();
+  let captureAtAttach: boolean | undefined;
+  f.avatar.attachInput = () => { captureAtAttach = f.track.enabled; };
+  const pending = f.controller.start({ instructions: 'Official', avatar: true, tools: [], interruptionMode: 'manual', reasoning: 'world', opening: 'silent' });
+  try {
+    await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await pending;
+    assert.equal(captureAtAttach, false, 'capture is closed before it joins the transport graph');
+    assert.deepEqual(f.peer.added, [{ track: f.liveTrack, stream: f.liveStream }]);
+    assert.equal(f.track.enabled, true);
+    f.controller.reactToScene({ id: 'clock-knock', kind: 'knock' });
+    assert.equal(f.track.enabled, false); assert.equal(f.liveTrack.enabled, true);
+    const mute = f.channel.sent.find(e => e.type === 'session.input_audio.mute'); assert.ok(mute);
+    f.channel.event({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+    for (const event of f.channel.sent.filter(e => e.type === 'session.instructions.append'))
+      f.channel.event({ type: 'session.instructions.appended', client_event_id: event.event_id });
+    assert.ok(f.channel.sent.some(e => e.content?.includes('knock')));
+    f.controller.setMuted({ input: true, output: false });
+    assert.equal(f.track.enabled, false); assert.equal(f.liveTrack.enabled, true);
+  } finally { f.controller.stop(); }
+  assert.equal(f.liveTrack.stops, 1); assert.equal(f.track.stops, 1); assert.equal(f.audio.closed, 1);
+});
+
+for (const failure of ['missing', 'denied', 'raw', 'disabled', 'ended', 'empty'] as const) {
+  test(`Live transport fails closed before provisioning with ${failure} clock`, async () => {
+    const f = liveFixture(), createAvatar = f.deps.createAvatarAudio!;
+    if (failure === 'missing') f.deps.createAvatarAudio = (...args) => ({ ...createAvatar(...args), prepareLiveInput: undefined });
+    else f.avatar.prepareLiveInput = async () => {
+      if (failure === 'denied') throw Error('private graph detail');
+      if (failure === 'raw') return f.stream;
+      if (failure === 'disabled') f.liveTrack.enabled = false;
+      if (failure === 'ended') f.liveTrack.readyState = 'ended';
+      if (failure === 'empty') return { getAudioTracks: () => [] } as unknown as MediaStream;
+      return f.liveStream;
+    };
+    const pending = f.controller.start({ instructions: 'Official', avatar: true, tools: [] });
+    const rejected = assert.rejects(pending, /audio|microphone|input/i);
+    try {
+      await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await rejected;
+      assert.equal(f.calls.peer, 0); assert.equal(f.requests.some(r => r.url.endsWith('/avatar/start') || r.url.endsWith('/connect')), false);
+      assert.equal(f.track.stops, 1); assert.equal(f.audio.closed, 1);
+      assert.doesNotMatch(JSON.stringify(f.events), /private graph detail/);
+    } finally { f.controller.stop(); }
+  });
+}
+
+test('legacy Realtime peers keep their native microphone transport', async () => {
+  const f = avatarFixture();
+  f.avatar.prepareLiveInput = async () => { assert.fail('legacy Realtime must not request a Live clock'); };
+  try { await f.connect(); assert.deepEqual(f.peer.added, [{ track: f.track, stream: f.stream }]); }
+  finally { f.controller.stop(); }
+});
 
 test("avatar waits for media readiness before opening the AI and never constructs direct playback", async () => {
   const f = avatarFixture(), ready = deferred<void>();
@@ -517,6 +605,36 @@ test("avatar opt-in fails visibly when unavailable and does not silently run dir
   assert.equal(f.calls.consent, 0); assert.equal(f.calls.media, 0); assert.equal(f.calls.audio, 0);
   await assert.rejects(f.controller.start({ instructions: "hello", avatar: "true" }), /avatar|video/i);
 });
+
+for (const [code, message] of [
+  ["AVATAR_DAILY_LIMIT", "The testing live-video daily allowance is exhausted. You can keep playing by typing and try voice again after the allowance resets."],
+  ["UNKNOWN_PROVIDER_ERROR", "The live telescreen video could not connect. Please wait a moment and try again."],
+]) {
+  test(`avatar start failure ${code} shows safe guidance, releases capture, and never reconnects automatically`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const f = avatarFixture(), fetch = f.deps.fetch;
+    f.deps.fetch = async (url, options) => {
+      const response = await fetch(url, options);
+      return String(url).endsWith("/avatar/start")
+        ? Response.json({ code, error: "private provider diagnostic" }, { status: 429 })
+        : response;
+    };
+    try {
+      await assert.rejects(f.controller.start({ instructions: "hello", avatar: true }), { message });
+      assert.ok(f.events.some(e => e.type === "status" && e.status === "error" && e.message === message));
+      assert.equal(JSON.stringify(f.events).includes("private provider diagnostic"), false);
+      assert.equal(f.track.stops, 1);
+      assert.equal(f.audio.closed, 1);
+      assert.equal(f.calls.peer, 0);
+      assert.equal(f.requests.filter(r => r.url.endsWith("/avatar/stop")).length, 1);
+      t.mock.timers.tick(300_000);
+      await tick();
+      assert.equal(f.calls.media, 1, "Failure must not reopen microphone capture.");
+      assert.equal(f.requests.filter(r => r.url.endsWith("/avatar/start")).length, 1, "Failure must not retry a billable avatar connection.");
+      assert.equal(f.requests.some(r => r.url.endsWith("/avatar/heartbeat")), false);
+    } finally { f.controller.stop(); }
+  });
+}
 
 test("actual avatar playback holds scene reactions and instructions beyond OpenAI generation", async () => {
   const f = avatarFixture(); await f.connect();
@@ -963,6 +1081,210 @@ test("active calls expire without auto-restarting billable capture", async () =>
   assert.equal(f.track.stops, 1); assert.equal(f.peer.closed, 1); assert.equal(f.calls.media, 1);
   assert.ok(f.events.some(e => e.type === "status" && e.status === "stopped" && /limit/i.test(e.message ?? "")));
 });
+
+test("avatar lifetime includes delayed provider startup, media readiness and later voice negotiation", async t => {
+  const f = avatarFixture(), advance = managedClock(t, f), fetch = f.deps.fetch;
+  const avatarStart = deferred<void>(), mediaReady = deferred<void>(), voiceAnswer = deferred<void>();
+  f.deps.connectTimeoutMs = 65000;
+  f.avatar.connectAvatar = () => mediaReady.promise;
+  f.deps.fetch = async (url, init) => {
+    const response = await fetch(url, init);
+    if (String(url).endsWith("/avatar/start")) await avatarStart.promise;
+    if (String(url).endsWith("/connect")) await voiceAnswer.promise;
+    return String(url).endsWith("/avatar/heartbeat") ? Response.json({ active: true }) : response;
+  };
+  t.after(() => f.controller.stop());
+  const pending = f.controller.start({ instructions: "hello", avatar: true }); await tick();
+  assert.equal(f.requests.filter(r => r.url.endsWith("/avatar/start")).length, 1);
+  advance(12000); avatarStart.resolve(); await tick();
+  advance(8000); mediaReady.resolve(); await tick();
+  assert.equal(f.requests.filter(r => r.url.endsWith("/connect")).length, 1);
+  advance(10000); voiceAnswer.resolve(); await tick(); f.channel.open(); await pending;
+  advance(269999); await tick(); assert.equal(f.track.stops, 0);
+  advance(1); await tick();
+  assert.equal(f.track.stops, 1, "expiry is anchored before avatar startup, not after both providers are ready");
+  assert.equal(f.peer.closed, 1); assert.equal(f.audio.closed, 1);
+  assert.ok(f.events.some(e => e.type === "status" && e.status === "stopped" && /limit.*start voice again/i.test(e.message ?? "")));
+  assert.equal(f.events.some(e => e.type === "status" && e.status === "error"), false);
+  assert.equal(f.requests.filter(r => r.url.endsWith("/avatar/stop")).length, 1);
+  assert.equal(f.requests.filter(r => r.url.endsWith("/stop") && !r.url.endsWith("/avatar/stop")).length, 1);
+  const owned = f.requests.filter(r => /\/(?:start|connect|stop)$/.test(r.url));
+  assert.equal(new Set(owned.map(r => new Headers(r.init?.headers).get("X-Voice-Connection-Id"))).size, 1);
+  const eventCount = f.events.length, requestCount = f.requests.length;
+  advance(300000); await tick();
+  assert.equal(f.events.length, eventCount); assert.equal(f.requests.length, requestCount);
+  assert.equal(f.calls.media, 1, "planned expiry cannot automatically renew paid capture");
+});
+
+test("voice-only lifetime starts with the paid request and includes SDP and channel setup but not consent", async t => {
+  const f = fixture(), advance = managedClock(t, f), fetch = f.deps.fetch;
+  const consent = deferred<void>(), answer = deferred<void>();
+  let connects = 0;
+  f.deps.connectTimeoutMs = 35000;
+  f.deps.requestConsent = async (_signal, prepareAudio) => { await consent.promise; prepareAudio(); return true; };
+  f.deps.fetch = async (url, init) => {
+    const response = await fetch(url, init);
+    if (String(url).endsWith("/connect")) { connects++; await answer.promise; }
+    return response;
+  };
+  t.after(() => f.controller.stop());
+  const pending = f.controller.start({ instructions: "hello" }); await tick();
+  advance(60000); assert.equal(connects, 0);
+  consent.resolve(); await tick(); assert.equal(connects, 1);
+  advance(15000); answer.resolve(); await tick();
+  advance(10000); f.channel.open(); await pending;
+  advance(274999); assert.equal(f.track.stops, 0);
+  advance(1);
+  assert.equal(f.track.stops, 1, "the 300 seconds start at POST /connect, not channel readiness or consent");
+  assert.ok(f.events.some(e => e.type === "status" && e.status === "stopped" && /limit/i.test(e.message ?? "")));
+  assert.equal(connects, 1);
+});
+
+test("the independent setup watchdog still cancels a stalled paid connection and all lifetime notices", async t => {
+  const f = fixture(), advance = managedClock(t, f), fetch = f.deps.fetch;
+  f.deps.connectTimeoutMs = 35000;
+  f.deps.fetch = async (url, init) => String(url).endsWith("/connect") ? new Promise<Response>(() => {}) : fetch(url, init);
+  const rejected = assert.rejects(f.controller.start({ instructions: "hello" }), /timed out/i);
+  await tick(); advance(34999); assert.equal(f.track.stops, 0);
+  advance(1); await rejected;
+  assert.equal(f.track.stops, 1); assert.equal(f.peer.closed, 1);
+  const eventCount = f.events.length;
+  advance(300000);
+  assert.equal(f.events.length, eventCount);
+  assert.equal(f.events.some(e => e.type === "call-notice" && e.notice !== null), false);
+});
+
+test("an overdue avatar setup continuation cannot open a second paid transport ahead of delayed timers", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = avatarFixture(), ready = deferred<void>();
+  let now = 0; f.deps.now = () => now;
+  f.avatar.connectAvatar = () => ready.promise;
+  t.after(() => f.controller.stop());
+  const rejected = assert.rejects(f.controller.start({ instructions: "hello", avatar: true }), /limit.*start voice again/i);
+  await tick(); now = 300000; ready.resolve(); await tick(); f.channel.open();
+  await rejected;
+  assert.equal(f.requests.some(r => r.url.endsWith("/connect")), false);
+  assert.equal(f.requests.filter(r => r.url.endsWith("/avatar/stop")).length, 1);
+  assert.equal(f.track.stops, 1);
+  assert.equal(f.events.some(e => e.type === "status" && e.status === "error"), false);
+});
+
+test("the thirty-second call notice preserves speech and uses a monotonic clock", async t => {
+  const f = fixture(), advance = managedClock(t, f);
+  t.after(() => f.controller.stop());
+  await f.connect(); created(f); f.channel.event({ type: "output_audio_buffer.started" });
+  t.mock.method(Date, "now", () => 9_000_000_000_000);
+  advance(269999);
+  assert.equal(f.events.some(e => e.type === "call-notice"), false);
+  const eventCount = f.events.length, sentCount = f.channel.sent.length;
+  advance(1);
+  assert.deepEqual(f.events.slice(eventCount), [{ type: "call-notice", notice: {
+    kind: "ending-soon", remainingMs: 30000,
+    message: "This voice call ends in about 30 seconds. Start voice again after it ends to continue.",
+  } }]);
+  assert.equal(f.channel.sent.length, sentCount, "the warning must not interrupt, start a turn, or create a transcript");
+  assert.equal(f.track.stops, 0);
+  assert.equal(f.events.filter(e => e.type === "activity").at(-1)?.status, "speaking");
+  t.mock.method(Date, "now", () => 1);
+  advance(30000);
+  assert.equal(f.track.stops, 1);
+  assert.equal(f.events.some(e => e.type === "input-hint"), false);
+  assert.deepEqual(f.events.filter(e => e.type === "call-notice").at(-1), { type: "call-notice", notice: null });
+});
+
+for (const output of [false, true]) test(`call notice survives microphone mute and output ${output ? "privacy" : "playback"}`, async t => {
+  const f = fixture(), advance = managedClock(t, f);
+  t.after(() => f.controller.stop());
+  f.controller.setMuted({ input: true, output });
+  await f.connect();
+  const sent = f.channel.sent.length;
+  advance(270000);
+  const notice = f.events.find(e => e.type === "call-notice");
+  assert.equal(notice?.type, "call-notice");
+  assert.equal(notice?.type === "call-notice" && notice.notice?.remainingMs, 30000);
+  assert.equal(f.events.some(e => e.type === "input-hint" || e.type === "transcript"), false);
+  assert.equal(f.channel.sent.length, sent, "a notice cannot reopen capture, speak, or send provider instructions");
+  assert.equal(f.track.enabled, false);
+  assert.equal(f.audio.muted, output);
+  f.controller.stop();
+  assert.deepEqual(f.events.filter(e => e.type === "call-notice").at(-1), { type: "call-notice", notice: null });
+});
+
+test("call notice countdown remains anchored when media becomes ready after the warning", async t => {
+  const f = fixture(), advance = managedClock(t, f), fetch = f.deps.fetch, answer = deferred<void>();
+  f.deps.connectTimeoutMs = 295000;
+  f.deps.fetch = async (url, init) => {
+    const response = await fetch(url, init);
+    if (String(url).endsWith("/connect")) await answer.promise;
+    return response;
+  };
+  t.after(() => f.controller.stop());
+  const pending = f.controller.start({ instructions: "hello" });
+  void pending.catch(() => {}); // Cleanup may reject it if an earlier assertion fails.
+  await tick();
+  advance(270000);
+  const notices = () => f.events.filter(e => e.type === "call-notice");
+  assert.equal(notices().length, 1);
+  assert.equal(notices()[0]?.notice?.remainingMs, 30000);
+  advance(10000); answer.resolve(); await tick(); f.channel.open(); await pending;
+  assert.equal(notices().length, 1, "readiness cannot clear or renew the notice");
+  advance(19999); assert.equal(f.track.stops, 0);
+  advance(1); assert.equal(f.track.stops, 1);
+  assert.deepEqual(notices().at(-1), { type: "call-notice", notice: null });
+});
+
+test("an active call notice clears on transport failure and cannot reach a replacement call", async t => {
+  const f = fixture(), advance = managedClock(t, f);
+  t.after(() => f.controller.stop());
+  await f.connect(); advance(270000);
+  assert.equal(f.events.filter(e => e.type === "call-notice").length, 1);
+  f.channel.onclose?.();
+  assert.deepEqual(f.events.filter(e => e.type === "call-notice").at(-1), { type: "call-notice", notice: null });
+  const before = f.events.length;
+  await f.connect(); advance(30000);
+  assert.equal(f.events.slice(before).some(e => e.type === "call-notice"), false);
+  assert.equal(f.track.stops, 1);
+});
+
+test("stopping and restarting cancels old warning and expiry timers without ending the replacement", async t => {
+  const f = fixture(), advance = managedClock(t, f);
+  t.after(() => f.controller.stop());
+  await f.connect(); advance(200000); f.controller.stop();
+  const before = f.events.length;
+  await f.connect();
+  advance(100000);
+  assert.equal(f.track.stops, 1, "the old deadline cannot stop the replacement");
+  assert.equal(f.events.slice(before).some(e => e.type === "call-notice" || e.type === "status" && e.status === "stopped"), false);
+  advance(170000);
+  assert.equal(f.events.slice(before).filter(e => e.type === "call-notice").length, 1);
+  f.controller.stop(); const after = f.events.length;
+  advance(300000);
+  assert.equal(f.events.length, after); assert.equal(f.track.stops, 2);
+});
+
+for (const teardown of ["channel", "avatar", "heartbeat"] as const) {
+  for (const elapsed of [299999, 300000]) {
+    test(`${teardown} teardown at ${elapsed}ms distinguishes planned expiry even when its timer has not run`, async t => {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const f = avatarFixture(), fetch = f.deps.fetch;
+      let now = 0; f.deps.now = () => now;
+      f.deps.fetch = async (url, init) => String(url).endsWith("/avatar/heartbeat") ? Response.json({ active: false }) : fetch(url, init);
+      t.after(() => f.controller.stop());
+      await f.connect();
+      now = elapsed; // The teardown event wins delivery over the delayed lifetime timer.
+      if (teardown === "channel") f.channel.onclose?.();
+      if (teardown === "avatar") f.callbacks().onError("Avatar media disconnected. Start voice again.");
+      if (teardown === "heartbeat") { t.mock.timers.tick(20000); await tick(); }
+      const terminal = f.events.filter(e => e.type === "status" && ["stopped", "error"].includes(e.status));
+      assert.equal(terminal.length, 1);
+      assert.equal(terminal[0]?.type === "status" && terminal[0].status, elapsed === 300000 ? "stopped" : "error");
+      if (elapsed === 300000) assert.match((terminal[0] as { message: string }).message, /limit.*start voice again/i);
+      assert.equal(f.track.stops, 1); assert.equal(f.audio.closed, 1);
+      const eventCount = f.events.length; t.mock.timers.tick(300000); await tick();
+      assert.equal(f.events.length, eventCount);
+    });
+  }
+}
 
 test("tool continuation waits for the preceding response to finish", async () => {
   const f = fixture(); await f.connect();
@@ -1490,7 +1812,7 @@ for (const revert of [false, true]) test(`Live instruction baseline uses the HTT
     assert.ok(posted.instructions.startsWith(revised), 'the startup HTTP request already includes the revised direction');
     if (revert) f.controller.updateInstructions(initial);
     await tick(); f.channel.open(); f.channel.event({type:'session.started'}); await pending;
-    const changes = f.channel.sent.filter(event => event.type === 'session.instructions.append' && !String(event.content).startsWith('The session just started.')).map(event => event.content).join('');
+    const changes = f.channel.sent.filter(event => event.type === 'session.instructions.append' && !String(event.content).startsWith('Follow the current connection-entry direction')).map(event => event.content).join('');
     assert.equal(changes, revert ? initial : '', 'only a difference from the posted prompt needs a correction');
   } finally { f.controller.stop(); }
 });
@@ -1527,6 +1849,77 @@ test("Live startup retains unseen events offered while configuration is pending"
   } finally { f.controller.stop(); }
 });
 
+for (const outcome of ['accepted', 'timeout', 'rejected'] as const) test(`Live controller waits for provider input control and cleans up ${outcome}`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = avatarFixture(), baseFetch = f.deps.fetch;
+  f.deps.fetch = async (url, init) => {
+    const response = await baseFetch(url, init);
+    if (String(url).endsWith('/config')) return Response.json({ ...await response.json(), liveModel: 'gpt-live-1' });
+    if (String(url).endsWith('/connect')) return Response.json({ turnControl: 'live-v1', sdp: 'v=0\r\no=answer' });
+    return response;
+  };
+  const pending = f.controller.start({ instructions: 'Official', avatar: true, tools: [], interruptionMode: 'manual', reasoning: 'world', opening: 'silent' });
+  try {
+    await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await pending;
+    f.controller.reactToScene({ id: 'ack-knock', kind: 'knock' });
+    const mute = f.channel.sent.find(e => e.type === 'session.input_audio.mute'); assert.ok(mute);
+    assert.equal(f.track.enabled, false); assert.equal(f.channel.sent.some(e => e.content?.includes('knock')), false);
+    if (outcome === 'timeout') t.mock.timers.tick(8001);
+    else if (outcome === 'rejected') f.channel.event({ type: 'error', error: { client_event_id: mute.event_id, message: 'Provider secret' } });
+    else {
+      f.channel.event({ type: 'session.input_audio.muted', client_event_id: 'stale-command' });
+      assert.equal(f.channel.sent.some(e => e.content?.includes('knock')), false);
+      f.channel.event({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+      for (const event of f.channel.sent.filter(e => e.type === 'session.instructions.append'))
+        f.channel.event({ type: 'session.instructions.appended', client_event_id: event.event_id });
+      assert.ok(f.channel.sent.some(e => e.content?.includes('knock')));
+      f.callbacks().onSourceActivity(true); f.callbacks().onQueue(1); f.callbacks().onPlayback('started');
+      f.callbacks().onSourceActivity(false); f.callbacks().onQueue(0); f.callbacks().onPlayback('stopped'); t.mock.timers.tick(700);
+      const unmute = f.channel.sent.find(e => e.type === 'session.input_audio.unmute'); assert.ok(unmute);
+      assert.equal(f.track.enabled, false); f.channel.event({ type: 'session.input_audio.unmuted', client_event_id: unmute.event_id });
+      assert.equal(f.track.enabled, true); assert.equal(f.track.stops, 0);
+    }
+    if (outcome !== 'accepted') {
+      assert.equal(f.track.enabled, false); assert.equal(f.track.stops, 1); assert.equal(f.peer.closed, 1); assert.equal(f.audio.closed, 1);
+      assert.ok(f.events.some(e => e.type === 'status' && e.status === 'error' && /microphone|input/i.test(e.message ?? '')));
+      assert.doesNotMatch(JSON.stringify(f.events), /Provider secret/);
+      f.channel.event({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+      assert.equal(f.channel.sent.some(e => e.content?.includes('knock')), false);
+    }
+  } finally { f.controller.stop(); }
+});
+
+for (const failure of ['unacknowledged', 'no-onset'] as const) test(`Live approved ${failure} cleanup releases provider and avatar ownership without reconnecting`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] }); const f = liveFixture();
+  const pending = f.controller.start({ instructions: 'Official', avatar: true, tools: [], interruptionMode: 'manual', reasoning: 'world', opening: 'silent' });
+  try {
+    await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await pending;
+    for (const event of f.channel.sent.filter(e => e.type === 'session.instructions.append'))
+      f.channel.event({ type: 'session.instructions.appended', client_event_id: event.event_id });
+    f.controller.reactToScene({ id: 'saved-reply', kind: 'reply', text: 'That is the saved record.' });
+    const mute = f.channel.sent.find(e => e.type === 'session.input_audio.mute'); assert.ok(mute);
+    f.channel.event({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
+    const performance = f.channel.sent.filter(e => e.type === 'session.instructions.append').slice(1);
+    assert.ok(performance.length);
+    if (failure === 'no-onset') for (const event of performance)
+      f.channel.event({ type: 'session.instructions.appended', client_event_id: event.event_id });
+    t.mock.timers.tick(failure === 'no-onset' ? 20001 : 8001); await tick();
+    assert.equal(f.track.enabled, false); assert.equal(f.track.stops, 1); assert.equal(f.liveTrack.stops, 1);
+    assert.equal(f.peer.closed, 1); assert.equal(f.audio.closed, 1);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/avatar/stop')).length, 1);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/stop') && !r.url.endsWith('/avatar/stop')).length, 1);
+    assert.ok(f.events.some(e => e.type === 'status' && e.status === 'error' && /Reconnect/.test(e.message ?? '')));
+    const count = f.channel.sent.length;
+    for (const event of performance) f.channel.event({ type: 'session.instructions.appended', client_event_id: event.event_id });
+    f.callbacks().onSourceActivity(true); f.callbacks().onPlayback('started');
+    f.controller.reactToScene({ id: 'later-knock', kind: 'knock' });
+    t.mock.timers.tick(30000); await tick();
+    assert.equal(f.channel.sent.length, count);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/connect')).length, 1);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/avatar/start')).length, 1);
+  } finally { f.controller.stop(); }
+});
+
 test("testing Live negotiates its protocol and protects capture through actual avatar playback", async () => {
   const f = avatarFixture(), baseFetch = f.deps.fetch;
   f.deps.fetch = async (url, init) => {
@@ -1543,6 +1936,8 @@ test("testing Live negotiates its protocol and protects capture through actual a
     assert.equal(f.channel.sent.some(e => e.type === "response.create" || e.type === "session.update"), false);
     f.callbacks().onSourceActivity(true); f.callbacks().onPending(); f.callbacks().onPlayback("started");
     assert.equal(f.track.enabled, false);
+    const mute = f.channel.sent.find(e => e.type === 'session.input_audio.mute'); assert.ok(mute);
+    f.channel.event({ type: 'session.input_audio.muted', client_event_id: mute.event_id });
     f.channel.event({ type: "session.output_transcript.delta", delta: "Stay where you are.", start_ms: 0, end_ms: 1000 });
     f.level(1);
     assert.equal(f.clientEvents.includes("live.interrupt"), false, "sensitive input cannot interrupt");
@@ -1552,6 +1947,9 @@ test("testing Live negotiates its protocol and protects capture through actual a
     assert.ok(f.clientEvents.includes("live.interrupt"));
     assert.equal(f.channel.sent.some(e => e.type === "response.cancel"), false);
     f.controller.setMuted({ input: false, output: true });await new Promise(resolve=>setTimeout(resolve,700));
+    const unmute = f.channel.sent.find(e => e.type === 'session.input_audio.unmute'); assert.ok(unmute);
+    assert.equal(f.track.enabled, false);
+    f.channel.event({ type: 'session.input_audio.unmuted', client_event_id: unmute.event_id });
     f.callbacks().onSourceActivity(true);f.callbacks().onQueue(1);f.callbacks().onPlayback('started');
     assert.equal(f.track.enabled,true,'silently playing PCM cannot capture the microphone floor');
     const setMuted=f.avatar.setMuted;
@@ -1563,6 +1961,68 @@ test("testing Live negotiates its protocol and protects capture through actual a
   } finally { f.controller.stop(); }
   assert.equal(f.channel.sent.at(-1)?.type, "session.close");
   assert.equal(f.track.stops, 1); assert.equal(f.audio.closed, 1);
+});
+
+for (const prepared of [false, true]) test(`silent opening is gated before provider negotiation (${prepared ? 'prepared' : 'consent'})`, async () => {
+  const f = avatarFixture(), baseFetch = f.deps.fetch, permissions: boolean[] = [];
+  let permissionAtConnect: boolean | undefined;
+  const client = f.avatar.handleClientEvent;
+  f.avatar.handleClientEvent = event => { if (event.type === 'live.output') permissions.push(event.allowed === true); client(event); };
+  f.deps.fetch = async (url, init) => {
+    const response = await baseFetch(url, init);
+    if (String(url).endsWith('/config')) return Response.json({ ...await response.json(), liveModel: 'gpt-live-1' });
+    if (String(url).endsWith('/connect')) {
+      permissionAtConnect = permissions.at(-1);
+      return Response.json({ turnControl: 'live-v1', sdp: 'v=0\r\no=answer' });
+    }
+    return response;
+  };
+  f.deps.hasUserActivation = () => true;
+  const intent = prepared ? await f.controller.prepare({ avatar: true }) : {};
+  const pending = f.controller.start({ ...intent, instructions: 'Official', avatar: true, tools: [], interruptionMode: 'manual', reasoning: 'world', opening: 'silent' });
+  try {
+    await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await pending;
+    assert.equal(permissionAtConnect, false, 'remote media may start before the data channel reports session.started');
+    assert.equal(f.track.enabled, true); assert.equal(permissions.at(-1), false);
+    f.controller.updateContext('The resident typed a refusal.');
+    f.callbacks().onSourceActivity(true);
+    f.channel.event({ type: 'session.output_transcript.delta', delta: 'Unapproved native answer.' });
+    assert.equal(f.track.enabled, true);
+    assert.equal(f.events.some(e => e.type === 'transcript' && e.role === 'assistant'), false);
+  } finally { f.controller.stop(); }
+});
+
+test('Live microphone evidence is attached before transport and consulted before transcript publication', async () => {
+  const f = avatarFixture(), baseFetch = f.deps.fetch, ready = deferred<void>();
+  f.deps.fetch = async (url, init) => {
+    const response = await baseFetch(url, init);
+    if (String(url).endsWith('/config')) return Response.json({ ...await response.json(), liveModel: 'gpt-live-1' });
+    if (String(url).endsWith('/connect')) return Response.json({ turnControl: 'live-v1', sdp: 'v=0\r\no=answer' });
+    return response;
+  };
+  let evidence: 'silent' | 'signal' = 'silent';
+  const createAvatar = f.deps.createAvatarAudio!;
+  f.deps.createAvatarAudio = (...args) => ({ ...createAvatar(...args), attachInput: () => ready.promise, inputEvidence: async () => evidence });
+  const pending = f.controller.start({ instructions: 'Official', avatar: true, tools: [], interruptionMode: 'manual', reasoning: 'world' });
+  try {
+    await tick(); assert.equal(f.calls.peer, 0); assert.equal(f.requests.some(r => r.url.endsWith('/avatar/start')), false);
+    ready.resolve(); await tick(); f.channel.open(); f.channel.event({ type: 'session.started' }); await pending;
+    f.channel.event({ type: 'session.input_transcript.delta', delta: 'a man with' }); await tick();
+    assert.equal(f.events.some(e => e.type === 'transcript' && e.role === 'user'), false);
+    evidence = 'signal'; f.channel.event({ type: 'session.input_transcript.delta', delta: 'I remember Anna.' }); await tick();
+    assert.equal(f.events.some(e => e.type === 'transcript' && e.role === 'user' && e.text === 'I remember Anna.'), true);
+  } finally { f.controller.stop(); }
+});
+
+test('invalid opening policies reject before consent, capture or transport', async () => {
+  for (const opening of [null, 'Silent', 'always', true, {}, []]) {
+    const f = fixture();
+    try {
+      const rejected = assert.rejects(f.controller.start({ instructions: 'Official', opening }), /opening/i);
+      await tick(); f.channel.open(); await rejected;
+      assert.equal(f.calls.consent, 0); assert.equal(f.calls.media, 0); assert.equal(f.calls.fetch, 0);
+    } finally { f.controller.stop(); }
+  }
 });
 
 const activity = (f: ReturnType<typeof fixture>) => f.events.filter(e => e.type === "activity").at(-1)?.status;

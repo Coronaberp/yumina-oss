@@ -5,7 +5,7 @@ import type { FrontendAiCall, Worldbook } from "@yumina/engine";
 
 /** What the scan read off a call, as label/value lines: the same facts on
  *  the AI block's row and in Context's 自定义 list. */
-export function codeCallFacts(call: FrontendAiCall, books: readonly Worldbook[], t: TFunction<"editor">): Array<[string, string]> {
+export function codeCallFacts(call: FrontendAiCall, books: readonly Worldbook[], t: TFunction<"editor">, variables: ReadonlyArray<{ id: string; name?: string }> = []): Array<[string, string]> {
   const name = (id: string) => {
     const b = books.find((x) => x.id === id);
     return b ? (b.station?.name?.trim() || b.name) : id;
@@ -15,6 +15,9 @@ export function codeCallFacts(call: FrontendAiCall, books: readonly Worldbook[],
     call.includeLorebook === false ? t("blueprint.codeCall.loreNone")
     : call.includeLorebook === true || call.includeLorebook === "all" ? t("blueprint.codeCall.loreAll")
     : call.includeLorebook === "matched" || call.sessionContext ? t("blueprint.codeCall.loreMatched")
+    // Lore the code picked itself (1984's referee hands the AI the entries it
+    // filtered): the AI does get the card's lore, just not the engine's pick.
+    : call.picksEntries ? t("blueprint.codeCall.lorePicked")
     : t("blueprint.codeCall.loreRaw");
   const rows: Array<[string, string]> = [
     [t("blueprint.codeCall.kind"), t(`blueprint.codeCall.kind_${call.kind}`)],
@@ -25,7 +28,13 @@ export function codeCallFacts(call: FrontendAiCall, books: readonly Worldbook[],
   else if (call.dynamicWorldbookIds) rows.push([t("blueprint.codeCall.situations"), t("blueprint.codeCall.situationsDynamic")]);
   rows.push([t("blueprint.codeCall.session"), call.sessionContext ? t("blueprint.codeCall.yes") : t("blueprint.codeCall.no")]);
   rows.push([t("blueprint.codeCall.answer"), call.json ? t("blueprint.codeCall.answerJson") : t("blueprint.codeCall.answerText")]);
-  if (call.model) rows.push([t("blueprint.codeCall.model"), call.model]);
+  // Always said: a call without one runs on the player's chat model.
+  const variable = call.modelVariable ? variables.find((v) => v.id === call.modelVariable) : undefined;
+  rows.push([t("blueprint.codeCall.model"),
+    call.model ? call.model
+    : call.modelVariable ? t("blueprint.codeCall.modelVariable", { name: variable?.name?.trim() || call.modelVariable })
+    : call.dynamicModel ? t("blueprint.codeCall.modelComputed")
+    : t("blueprint.codeCall.modelPlayer")]);
   return rows;
 }
 

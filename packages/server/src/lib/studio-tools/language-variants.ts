@@ -36,7 +36,7 @@ export const VARIANT_TOOL_NAMES = new Set([
   "read_entities", "grep_world", "read_ui_doc", "validate_world", "analyze_token_cost",
   "write_entry", "write_variable", "write_behavior", "write_custom_ui", "edit_custom_ui", "set_ui_knobs",
   "write_ui_knob_groups", "edit_ui_doc", "write_audio", "write_scene_image", "update_settings",
-  "write_worldbook", "write_lore_binding", "delete_entities",
+  "write_worldbook", "write_lore_binding", "write_note", "delete_entities",
 ]);
 
 const VARIANT_PARAM = {

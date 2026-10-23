@@ -114,7 +114,8 @@ test("a row offers both ways in: the click keeps the drawer, the chevron opens i
     assert.equal(open.querySelector("[data-canvas-writing-preview]"), null, "and drops the taste of it that the shut row showed");
     assert.equal(open.querySelector('[data-canvas-writing-expand="entry:worldview"]')!.getAttribute("aria-expanded"), "true");
     // The board has to know the row grew, or the module below it is drawn over.
-    assert.equal(canvasWritingNodeHeight(data()), 40 + 2 + (40 + 460) + 96);
+    // A line of text opens as two lines of box (openEntryEditorHeight), not the full editor.
+    assert.equal(canvasWritingNodeHeight(data()), 40 + 2 + (40 + 180 + 2 * 26) + 96);
   });
 });
 

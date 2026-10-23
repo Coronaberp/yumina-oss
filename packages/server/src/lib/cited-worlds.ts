@@ -26,7 +26,7 @@ export const citedWorldSelect = {
   ...citedWorldCardSelect,
   description: worlds.description,
   creatorId: worlds.creatorId,
-  downloadCount: aggregatedCounters.downloadCount,
+  downloadCount: aggregatedCounters.displayDownloadCount,
   averageRating: aggregatedCounters.averageRating,
 } as const;
 

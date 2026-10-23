@@ -29,7 +29,7 @@ function lines(text: string): string[] {
   return text.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
 }
 
-export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
+export function AiCustomForm({ worldbookId, open, snippet = true }: { worldbookId: string; open?: boolean; snippet?: boolean }) {
   const { t } = useTranslation("editor");
   const book = useEditorStore((s) => (s.worldDraft.worldbooks ?? []).find((w) => w.id === worldbookId));
   const variables = useEditorStore((s) => s.worldDraft.variables);
@@ -54,7 +54,7 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
 
   return (
     <div data-ai-custom="">
-    <More label={t("blueprint.aiCustom.title")} defaultOpen={used}>
+    <More label={t("blueprint.aiCustom.title")} defaultOpen={open ?? used}>
       <Group title={t("blueprint.aiCustom.sees")}>
         <div className="flex flex-wrap gap-1">
           {(sees.variables ?? []).map((id) => (
@@ -125,7 +125,26 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
       </Group>
 
       <Group title={t("blueprint.aiCustom.output")} right={<button type="button" data-ai-field-add="" onClick={() => patch({ output: [...output, { name: output.length ? `field${output.length + 1}` : "text", type: "text", ...(output.length ? {} : { to: { kind: "say" as const } }) }] })} className="text-muted-foreground hover:text-foreground"><Plus className="h-3.5 w-3.5" /></button>}>
-        {output.length === 0 && <p className="text-[11px] text-muted-foreground">{t("blueprint.aiCustom.outputText")}</p>}
+        {output.length === 0 && (station.trigger?.on === "ui" ? (
+          // With no fields, a UI AI answers in words or with one JSON object
+          // of the shape its job describes, handed back to the interface.
+          <div className="space-y-1" data-ai-answer-kind="">
+            <div className="flex gap-1">
+              {(["text", "json"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  data-ai-answer={k}
+                  onClick={() => patch({ answer: k === "json" ? "json" : undefined })}
+                  className={cn(small, (station.answer ?? "text") === k ? "border-pink-400/60 text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  {t(`blueprint.aiCustom.answerKind.${k}`)}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">{t(station.answer === "json" ? "blueprint.aiCustom.outputJson" : "blueprint.aiCustom.outputText")}</p>
+          </div>
+        ) : <p className="text-[11px] text-muted-foreground">{t("blueprint.aiCustom.outputText")}</p>)}
         {output.map((f, i) => {
           const to = f.to;
           const toValue = !to ? "" : to.kind === "say" ? "say" : to.kind === "event" ? "event" : `var:${to.variableId}`;
@@ -209,9 +228,11 @@ export function AiCustomForm({ worldbookId }: { worldbookId: string }) {
 
       {/* How the card's own code calls it: the line a creator (or their AI)
           pastes into the interface. */}
-      <div className="rounded-md border border-white/[0.06] bg-black/20 px-2 py-1.5 font-mono text-[10.5px] text-muted-foreground" data-ai-call-snippet="">
-        {`await api.callAi(${JSON.stringify(name)}, input)`}
-      </div>
+      {snippet && (
+        <div className="rounded-md border border-white/[0.06] bg-black/20 px-2 py-1.5 font-mono text-[10.5px] text-muted-foreground" data-ai-call-snippet="">
+          {`await api.callAi(${JSON.stringify(name)}, input)`}
+        </div>
+      )}
     </More>
     </div>
   );

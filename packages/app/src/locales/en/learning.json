@@ -304,8 +304,8 @@
       "bodyMobile": "Save keeps a version; Test starts a real round and uses credits. To publish, the cover needs a 2:3 portrait and a 16:9 landscape.",
       "beats": {
         "save": {
-          "title": "Save",
-          "body": "Save keeps a version of your card."
+          "title": "Autosave",
+          "body": "Edits save automatically, and a version is kept every 15 minutes while you work. Find them in version history."
         },
         "playtest": {
           "title": "Playtest",

@@ -1,4 +1,5 @@
 import type { AudioTrack, GraphNode, SceneImage, Variable } from "@yumina/engine";
+import { gameNameOf, gameSide, type GameInterface } from "@/features/editor/lib/game-interface";
 
 /** The board's rows say what they are, so a beginner reading the canvas
  *  learns what a variable, a track or a scene image can be without opening
@@ -11,7 +12,7 @@ export type Translate = (key: string, options?: Record<string, unknown>) => stri
 export interface RowFacts {
   /** What kind of thing the row is, in a word or two; `accent` marks a
    *  setting that is turned on rather than a kind. */
-  tags?: Array<{ text: string; accent?: boolean }>;
+  tags?: Array<{ text: string; accent?: boolean; hint?: string }>;
   /** The author's one line saying what the row is for. */
   note?: string;
   /** The line is the row's own quiet remark (no cue, so the AI leaves it
@@ -23,6 +24,14 @@ export interface RowFactsDraft {
   variables: ReadonlyMap<string, Variable>;
   audio: ReadonlyMap<string, AudioTrack>;
   images: ReadonlyMap<string, SceneImage>;
+  /** Set when the card is a character inside a game (game-interface.ts). */
+  game?: GameInterface | null;
+  /** Variables the card's interface code writes, by id or name. */
+  interfaceWrites?: ReadonlySet<string>;
+  /** ...and the ones it only reads: a setting the interface runs by. */
+  interfaceReads?: ReadonlySet<string>;
+  /** The card's behaviours by id, for what sets each one off. */
+  reactions?: ReadonlyMap<string, { when?: { eventType?: string; match?: Record<string, { value?: unknown } | undefined> } }>;
 }
 
 /** The first sentence of the author's text, and no more of it than a row
@@ -40,8 +49,32 @@ export function rowFacts(g: Pick<GraphNode, "id" | "kind">, draft: RowFactsDraft
     const v = draft.variables.get(id);
     if (!v) return {};
     // A variable's row is its name and its value. Its type, tracking and
-    // rules are in its editor, one click away.
-    return {};
+    // rules are in its editor, one click away. The one exception is a value
+    // the card's game owns: that is not in any editor, and renaming it breaks
+    // the game, so the row says which side of the game it is on.
+    const side = gameSide(draft.game, id);
+    if (!side) {
+      // State the interface keeps for itself (1984's ledger, Godot's stage):
+      // the row says who writes it, since nothing else on the board does.
+      if (draft.interfaceWrites?.has(v.id) || draft.interfaceWrites?.has(v.name)) return { tags: [{ text: t("blueprint.row.byInterface"), hint: t("blueprint.row.byInterfaceHint") }] };
+      // A number the interface runs by (1984's "seconds crouching before he
+      // notices"): changing it here changes the game, and the row says so.
+      // Only a setting the AI cannot change: a value the AI writes and the
+      // screen merely shows (health, hunger) is the AI's, not a setting.
+      if (v.aiAccess === "none" && (draft.interfaceReads?.has(v.id) || draft.interfaceReads?.has(v.name))) return { tags: [{ text: t("blueprint.row.readByInterface"), hint: t("blueprint.row.readByInterfaceHint") }] };
+      return {};
+    }
+    const game = gameNameOf(draft.game!, t);
+    return { tags: [{ text: t(side === "in" ? "blueprint.game.in" : "blueprint.game.out"), accent: true, hint: t(side === "in" ? "blueprint.game.inHint" : "blueprint.game.outHint", { game }) }] };
+  }
+  if (g.kind === "rule" && g.id.startsWith("reaction:")) {
+    // A behaviour the interface sets off when something happens in it (the
+    // room saw the player crouch): its row says the game reports it, since
+    // its trigger is a name in the code, not anything on the board.
+    const when = draft.reactions?.get(id)?.when;
+    if (when?.eventType !== "action:fired") return {};
+    const action = when.match?.actionId?.value;
+    return { tags: [{ text: t("blueprint.row.firedByInterface"), hint: t("blueprint.row.firedByInterfaceHint", { action: typeof action === "string" ? action : id }) }] };
   }
   if (g.kind === "audio") {
     const track = draft.audio.get(id);

@@ -465,7 +465,8 @@ export function buildBoard(graph: CardGraph, opts: BuildBoardOptions = {}): Bloc
     const listed = (cardFrame ? all.filter((m) => !m.shared) : all).filter((m) => !omit.has(m.g.id));
 
     let shown: Member[];
-    if (expanded.has(id) || listed.length <= limit) {
+    // A fold that would hide one row costs a row of its own: show the row.
+    if (expanded.has(id) || listed.length <= limit + 1) {
       shown = listed;
     } else {
       // What the creator just made, picked or searched for always shows.

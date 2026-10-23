@@ -113,9 +113,12 @@ export function buildAiCallPrompt(args: {
     args.scene ? liveSceneMessage(args.scene).content : "",
     historyText ? `The latest of the story:\n${historyText}` : "",
     station.task?.trim() ? `Your job:\n${station.task.trim()}` : "",
+    station.takes?.trim() ? `What the interface hands you when it calls: ${station.takes.trim()}` : "",
     pieces.length ? pieces.join("\n\n") : "",
     fields.length
       ? `Answer with ONLY one JSON object, no other text, with exactly these fields:\n{\n${fields.map(describeField).join(",\n")}\n}`
+      : station.answer === "json"
+      ? "Answer with ONLY one JSON object, in the shape your job describes, no other text."
       : "Answer with the words themselves only — no labels, no notes about the prompt.",
   ].filter(Boolean).join("\n\n");
   const thread = args.thread.flatMap((t) => [
@@ -231,7 +234,9 @@ export async function runAiCall(args: {
   scene?: LiveScene | null;
 }): Promise<AiCallResult> {
   const { sessionId, userId, world } = args;
-  const input = textPrefix(args.input ?? "", 4000);
+  // Long enough for a whole review (1984's referee hands over ~5,000
+  // characters on a busy morning), short enough to bound the prompt.
+  const input = textPrefix(args.input ?? "", 16000);
   const [session] = await db
     .select({ state: playSessions.state, summaryModel: playSessions.summaryModel })
     .from(playSessions)
@@ -289,11 +294,18 @@ export async function runAiCall(args: {
     const signal = AbortSignal.timeout(timeoutMs);
     const raw = await generateStorySummaryText({
       signal, userId, sessionId, model, prompt: messagesForTry, endpoint: "module-worker", ...stationSampling(full, 800),
+      ...(!fields.length && full.answer === "json" ? { responseFormat: { type: "json_object" as const } } : {}),
     }).catch((err) => {
       console.error(`[AiCall] ${sessionId} ${book.id} try ${attempt + 1} failed:`, err instanceof Error ? err.message : err);
       return "";
     });
     if (!raw.trim()) continue;
+    if (!fields.length && full.answer === "json") {
+      // Handed back as the model wrote it (fences off): the interface reads it.
+      const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+      if (text) answer = { text, fields: {}, fallback: false };
+      continue;
+    }
     if (!fields.length) {
       const text = stripStageNotes(raw);
       if (text) answer = { text, fields: {}, fallback: false };

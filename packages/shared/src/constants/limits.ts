@@ -86,7 +86,7 @@ export const EVENT_PROOF_ALLOWED_MIME_TYPES = [
 ] as const;
 
 // ── Chat / Completions ───────────────────────────────────
-export const MAX_USER_MESSAGE_CHARS = 15_000;
+export const MAX_USER_MESSAGE_CHARS = 50_000;
 export const MAX_COMPLETION_MESSAGES = 50;
 export const MAX_COMPLETION_TOTAL_CHARS = 50_000;
 

@@ -14,7 +14,7 @@ const noop = () => {};
 
 function fixtureController() {
   let state: VideoState = { status: "idle", engine: "comfy-h3", elapsed: 0, cost: 0, credits: 0, clips: 0,
-    waiting: false, currentShot: "", currentStatus: "", muted: true, steps: [], scenes: [], currentScene: null, cut: null };
+    waiting: false, currentShot: "", currentStatus: null, muted: true, steps: [], scenes: [], currentScene: null, cut: null };
   const listeners = new Set<() => void>();
   const calls = { start: 0, stop: 0, attach: 0, detach: 0 };
   return { calls, lastShot: "", getState: () => state,
@@ -100,6 +100,7 @@ async function harness(url = "http://localhost", mobile = false, touch = false) 
         ["features/chat/game-frame.tsx", ["GameFrame"]], ["features/chat/session-header.tsx", ["SessionHeader"]],
         ["features/chat/combat-panel.tsx", ["CombatPanel"]], ["features/chat/world-renderer.tsx", ["WorldRenderer"]],
         ["features/chat/persona-manager-dialog.tsx", ["PersonaManagerDialog"]],
+        ["features/chat/prompt-composer-dialog.tsx", ["PromptComposerDialog"]],
         ["features/chat/share-playthrough-modal.tsx", ["SharePlaythroughModal"]], ["features/chat/model-browser.tsx", ["ModelBrowser"]],
         ["features/chat/use-playtime-tracker.ts", ["usePlaytimeTracker"]],
         ["lib/tts-stop-signal.ts", ["haltTts"]], ["lib/voice-input.ts", ["cancelVoiceRecording"]],

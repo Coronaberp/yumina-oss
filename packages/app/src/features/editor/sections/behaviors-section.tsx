@@ -297,7 +297,7 @@ export function BehaviorsSection({ compact, mobileListMode }: { compact?: boolea
         {/* Left sidebar */}
         <div
           className={cn(
-            "w-full @[640px]:w-80 @[640px]:shrink-0 flex flex-col border-b @[640px]:border-b-0 @[640px]:border-r border-border bg-sidebar",
+            "w-full min-h-0 @[640px]:w-80 @[640px]:shrink-0 flex flex-col border-b @[640px]:border-b-0 @[640px]:border-r border-border bg-sidebar",
             selected && "hidden @[640px]:flex"
           )}
         >

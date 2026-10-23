@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { historyModeSettings, historyWindowOf, type HistoryMode } from "@/features/editor/lib/history-mode";
 import { contextPreviewCounts } from "./entry-delivery";
 import { StoryAiSettings } from "./story-ai-settings";
+import { AiTypePicker } from "./ai-contract";
 
 /**
  * The history window: 全部 / 最新 N 条 / 摘要 + 最新 N 条, the count, and the
@@ -211,18 +212,34 @@ export function CardContextForm() {
   );
 }
 
-/** The card's own AI: the one that answers when no situation has taken over.
- *  Its one switch is the judge; what it reads is the Context block's. */
-export function CardNarratorForm({ onOpenContext }: { onOpenContext?: () => void }) {
+/**
+ * The card's own AI: the one that answers when no situation has taken over.
+ *
+ * Laid out like every other AI's form (owner, 10/17): its kind, when it
+ * runs, where it is, its model, its judge. On a card with nothing else it is
+ * the only AI there is, so its kind switch shows all of them, and picking
+ * another adds that AI beside it. What it reads is the Context block's own
+ * business, one click away on the board, so the form no longer sends there.
+ */
+export function CardNarratorForm() {
   const { t } = useTranslation("editor");
   const continuityEnabled = useEditorStore((s) => s.worldDraft.continuity?.enabled !== false);
   const updateContinuity = useEditorStore((s) => s.updateContinuity);
   return (
-    <div className="space-y-1">
-      <p className="pb-2 text-xs leading-relaxed text-foreground/55">{t("blueprint.ctx.row.memoryCardHint")}</p>
-      {/* Its model and sampling: who decides them, and the way to every
-          other AI call on the card. */}
-      <StoryAiSettings showAll />
+    <div className="space-y-3" data-card-ai-form="">
+      {/* Who sets its settings first (owner, 10/17), then what it is. */}
+      <div className="space-y-1">
+        {/* Its model and sampling: who decides them, and the way to every
+            other AI call on the card. */}
+        <StoryAiSettings showAll />
+      </div>
+      <AiTypePicker value="turn" card />
+      <Field label={t("blueprint.aiForm.runWhen")}>
+        <p className="studio-control rounded-lg border px-2.5 py-1.5 text-xs text-foreground/80">{t("blueprint.aiForm.run.reply")}</p>
+      </Field>
+      <Field label={t("blueprint.aiForm.where")}>
+        <p className="studio-control rounded-lg border px-2.5 py-1.5 text-xs text-foreground/80">{t("blueprint.aiForm.whereCard")}</p>
+      </Field>
       <Group title={t("overview.continuity")} hint={t("overview.continuityDesc")}>
         <Check
           label={t("blueprint.insp.continuityOn")}
@@ -230,18 +247,6 @@ export function CardNarratorForm({ onOpenContext }: { onOpenContext?: () => void
           onChange={(enabled) => updateContinuity({ enabled: enabled ? undefined : false })}
         />
       </Group>
-      {onOpenContext && (
-        <Group title={t("blueprint.blocks.context")}>
-          <button
-            type="button"
-            onClick={onOpenContext}
-            className="studio-control flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:text-foreground"
-          >
-            <span>{t("blueprint.insp.openContext")}</span>
-            <span aria-hidden className="text-foreground/40">›</span>
-          </button>
-        </Group>
-      )}
     </div>
   );
 }

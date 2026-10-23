@@ -76,6 +76,9 @@ export interface GenerateParams {
   reasoningEffort?: string;
   /** Disable provider-default reasoning when the selected API exposes a supported opt-out. */
   disableReasoning?: boolean;
+  /** OpenRouter host slugs this call must not route to (e.g. one that ignores
+   *  disableReasoning). Other providers and user-owned OpenRouter keys ignore it. */
+  ignoreProviders?: readonly string[];
   /** Message indices for explicit cache breakpoints (provider-specific optimization) */
   cacheBreakpoints?: number[];
   /** Claude cache lifetime for those message breakpoints (default "1h"). Must

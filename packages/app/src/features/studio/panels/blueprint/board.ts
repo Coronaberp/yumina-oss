@@ -124,6 +124,8 @@ export const LOOSE_BANNER_H = 44;
 
 export interface BlockChrome {
   collapsed: boolean;
+  /** A list shown whole after "N more": a line at its foot folds it back. */
+  unfolded?: boolean;
   /** Opening blocks: the creator asked for the whole text. */
   expanded: boolean;
   /** Context blocks: how many lines it takes to say what this frame's AI
@@ -192,6 +194,10 @@ export function listColumns(block: Block, chrome: Pick<BlockChrome, "width" | "e
  *  columns of eight. Past that the block is a wall, and the column beside
  *  the board lists the rest. */
 export const TILE_ROW_LIMIT = 16;
+/** Settings and openings carry two lines of their text, so a tile folds them
+ *  sooner: two columns of four (owner, 10/17: "past a number, the rest is
+ *  "…" until clicked"). */
+export const TILE_WRITING_ROW_LIMIT = 8;
 
 /**
  * A block's height, computed rather than measured.
@@ -269,7 +275,7 @@ function listBodyHeight(block: Block, chrome: BlockChrome): number {
     heights[column] = heights[column]! + rowH + open + row.slots.length * SLOT_ROW_H;
   });
   let body = BLOCK_BODY_PAD * 2 + Math.max(0, ...heights);
-  if (block.hiddenCount > 0) body += BLOCK_FOOT_H;
+  if (block.hiddenCount > 0 || chrome.unfolded) body += BLOCK_FOOT_H;
   if (block.rows.length === 0) body += rowH + (chrome.packDoor ? PACK_DOOR_H : 0);
   return body;
 }

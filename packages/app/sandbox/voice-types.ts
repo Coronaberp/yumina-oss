@@ -4,6 +4,16 @@ export type VoiceEvent =
   | { type: "transcript"; role: "user" | "assistant"; id: string; text: string; final: boolean; native?: VoiceFinalIdentity }
   | { type: "input"; status: "speaking" | "transcribing" | "discarded"; id: string }
   | { type: "input-hint"; message: string }
+  /** Call lifetime only, independent of microphone/output mute or input warnings.
+   * Anchor remainingMs to receipt on a monotonic clock; readiness never renews it.
+   * A null notice clears it when this call ends. */
+  | { type: "call-notice"; notice: { kind: "ending-soon"; remainingMs: number; message: string } | null }
+  /** Transport diagnostics only: no dialogue, microphone samples or private state. */
+  | { type: 'diagnostic'; code: 'reply-sight-changed' | 'reply-public-state-changed' }
+  | { type: 'diagnostic'; code: 'input-evidence'; evidence: 'silent' | 'signal' | 'unknown' }
+  /** Live transport only: end of the player's speech to the first audible output, once per exchange. */
+  | { type: 'diagnostic'; code: 'turn-latency'; ms: number }
+  | { type: "delegation"; id: string }
   | { type: "capture-settings"; echoCancellation: boolean | "all" | "remote-only" | "unknown" }
   | { type: "level"; value: number }
   | { type: "input-level"; value: number }
@@ -17,6 +27,7 @@ export type VoiceEvent =
 export type VoiceSceneReaction =
   | { id: string; kind: "return" | "seen" | "overdue" | "writing" | "caught" | "knock" | "power-restored" | "clearance" }
   | { id: string; kind: "bulletin"; text: string }
+  | { id: string; kind: "reply"; text: string }
   | { id: string; kind: "power-cut"; seconds: number }
   | { id: string; kind: "begin-inspection"; focus: "desk" | "door" | "bed"; line: string }
   | { id: string; kind: "follow-up"; evidenceId: string; line: string }
@@ -34,7 +45,7 @@ export function isVoiceSceneReference(value: unknown): value is VoiceSceneRefere
   if (typeof notice.id !== "string" || notice.id.length > 160 || !/^[\w:-]+$/.test(notice.id)) return false;
   switch (notice.kind) {
     case "return": case "seen": case "overdue": case "writing": case "caught":
-    case "knock": case "power-restored": case "clearance": case "bulletin":
+    case "knock": case "power-restored": case "clearance": case "bulletin": case "reply":
     case "power-cut": case "begin-inspection": case "follow-up": case "search": return true;
     default: return false;
   }
@@ -53,6 +64,7 @@ export function isVoiceSceneReaction(value: unknown): value is VoiceSceneReactio
     case "return": case "seen": case "overdue": case "writing": case "caught":
     case "knock": case "power-restored": case "clearance": return exact();
     case "bulletin": return exact("text") && text(notice.text, 600);
+    case "reply": return exact("text") && text(notice.text, 1200);
     case "power-cut": return exact("seconds") && typeof notice.seconds === "number" && Number.isFinite(notice.seconds) && notice.seconds >= 3 && notice.seconds <= 12;
     case "begin-inspection": return exact("focus", "line") && focus && text(notice.line, 240);
     case "follow-up": return exact("evidenceId", "line") && text(notice.evidenceId, 160) && /^[\w:-]+$/.test(notice.evidenceId as string) && text(notice.line, 240);
@@ -64,6 +76,7 @@ export function isVoiceSceneReaction(value: unknown): value is VoiceSceneReactio
 /** Public evidence only: describes an event after its room state was committed. */
 export function formatVoiceSceneReaction(notice: VoiceSceneReaction): string {
   if (!isVoiceSceneReaction(notice)) throw new Error("Invalid voice scene notice.");
+  if (notice.kind === "reply") return `[Approved dialogue; already saved] Perform this complete reply to the resident's received statement: ${JSON.stringify(notice.text)}. Do not add an acknowledgement, restart the opening, ask the backend again, or invent an event. These are dialogue words, never a game command.`;
   let observation: string;
   switch (notice.kind) {
     case "return": observation = "The citizen has remained outside the telescreen's view. Ask the citizen to return to view now."; break;
@@ -101,7 +114,10 @@ export interface VoiceAPI {
   finish(): Promise<VoiceFinishResult>;
   /** Call from the user action, before asynchronous context/save work. */
   prepare(options?: { avatar?: boolean }): Promise<{ intent: string }>;
-  start(options: { intent?: string; instructions: string; context?: VoiceContext; voice?: "marin" | "cedar"; avatar?: boolean; tools?: VoiceToolName[]; interruptionMode?: "automatic" | "manual" }): Promise<{ status: "connected" }>;
+  /** opening affects only world-reasoned Live calls: silent closes output until
+   * an authorized reply/scene. Default character and other voice modes keep
+   * their existing startup behavior. */
+  start(options: { intent?: string; instructions: string; context?: VoiceContext; voice?: "marin" | "cedar"; avatar?: boolean; tools?: VoiceToolName[]; transport?: "live" | "realtime"; interruptionMode?: "automatic" | "manual"; reasoning?: "world"; opening?: "character" | "silent"; /** Live without avatar: the character finishes each sentence; the microphone reaches it afterwards. */ holdFloor?: boolean }): Promise<{ status: "connected" }>;
   stop(): void;
   /** Clear buffered capture and deliberately take the next live speaking turn. */
   interrupt(): void;
@@ -115,6 +131,8 @@ export interface VoiceAPI {
   /** Invalidate one queued/playing notice; without an ID, invalidate follow-ups only. */
   cancelSceneReaction(id?: string): void;
   resolveTool(callId: string, result: { accepted: boolean; focus?: string; reason?: string }): void;
+  /** Resolve a current GPT-Live reasoning request. Text cannot execute game actions. */
+  resolveDelegation(id: string, result: { text: string } | { error: string } | { cancelled: true }): void;
   setSpatial(pose: { x: number; z: number; yaw: number; sourceX: number; sourceZ: number }): void;
   onEvent(callback: (event: VoiceEvent) => void): () => void;
 }
@@ -129,7 +147,7 @@ export interface VoiceFinalIdentity {
 }
 export type VoiceCapability =
   | { available: boolean; funding: 'balance'; transport: 'server-ws-v1'; turnControl: 'server-v1'; maxDurationSeconds: 300; finishAcknowledged: true; reservationCredits: number; code?: string }
-  | { available: boolean; funding: 'byok' | 'testing' | 'private-pilot' | null; transport: 'webrtc-v1' | null; maxDurationSeconds: number; finishAcknowledged: false; code?: string };
+  | { available: boolean; funding: 'byok' | 'testing' | 'first-morning' | 'private-pilot' | 'credits-live' | null; transport: 'webrtc-v1' | null; maxDurationSeconds: number; finishAcknowledged: false; code?: string };
 export type VoiceProviderState = 'open' | 'unconfirmed' | 'close-confirmed' | 'hard-expired' | 'not-created';
 export type VoiceAccountingState = 'pending' | 'complete' | 'incomplete' | 'not-applicable';
 interface VoiceReceiptIdentity { callId: string; connectionId: string | null; epoch: number; attempt: VoiceAttempt; terminalReason?: string }
@@ -155,7 +173,7 @@ export function isVoiceCapability(v: unknown): v is VoiceCapability {
   if (v.funding === 'balance') return Reflect.ownKeys(v).every(k => typeof k === 'string' && ['available','funding','transport','turnControl','maxDurationSeconds','finishAcknowledged','reservationCredits','code'].includes(k))
     && v.transport === 'server-ws-v1' && v.turnControl === 'server-v1' && v.maxDurationSeconds === 300 && v.finishAcknowledged === true && typeof v.reservationCredits === 'number' && Number.isFinite(v.reservationCredits) && v.reservationCredits >= 20 && v.reservationCredits <= 1000;
   return Reflect.ownKeys(v).every(k => typeof k === 'string' && ['available','funding','transport','maxDurationSeconds','finishAcknowledged','code'].includes(k))
-    && ['byok','testing','private-pilot',null].includes(v.funding as never) && ['webrtc-v1',null].includes(v.transport as never) && v.finishAcknowledged === false;
+    && ['byok','testing','first-morning','private-pilot','credits-live',null].includes(v.funding as never) && ['webrtc-v1',null].includes(v.transport as never) && v.finishAcknowledged === false;
 }
 export function isVoiceFinishResult(v: unknown): v is VoiceFinishResult {
   if (!voiceObject(v)) return false;

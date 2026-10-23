@@ -9,7 +9,8 @@ import { transform } from "sucrase";
 import type { AssetPicker as Picker } from "./asset-picker";
 
 for (const linkSucceeds of [true, false]) {
-  test(`picker upload enters personal library and ${linkSucceeds ? "links before selecting" : "does not select after a failed link"}`, async () => {
+  for (const filterType of ["image", "media"] as const) {
+  test(`${filterType} picker filters before pagination, then ${linkSucceeds ? "links before selecting" : "does not select after a failed link"}`, async () => {
     const dom = new JSDOM('<div id="root"></div>');
     const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
     const previous = Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
@@ -19,7 +20,8 @@ for (const linkSucceeds of [true, false]) {
     const library: { id: string; type: string }[] = [];
     const upload = async () => { events.push("personal upload"); const asset = { id: "uploaded", type: "image" }; library.push(asset); return asset; };
     const worldState = { assets: [], fetchAssets: async () => {}, uploadAsset: async () => { events.push("world upload"); return { id: "world-only" }; } };
-    const personalState = { assets: [], fetchAssets: async () => {}, uploadAsset: upload };
+    const requests: unknown[] = [];
+    const personalState = { assets: [], fetchAssets: async (options: unknown) => { requests.push(options); }, uploadAsset: upload };
     const source = readFileSync(new URL("./asset-picker.tsx", import.meta.url), "utf8").replaceAll("import.meta.env.VITE_API_URL", '""');
     const module = { exports: {} as { AssetPicker: typeof Picker } };
     const require = createRequire(import.meta.url);
@@ -45,7 +47,8 @@ for (const linkSucceeds of [true, false]) {
     };
     const root = createRoot(dom.window.document.getElementById("root")!);
     try {
-      await act(async () => root.render(createElement(module.exports.AssetPicker, { worldId: "world", filterType: "image", onClose: () => {}, onSelect: ref => events.push(ref) })));
+      await act(async () => root.render(createElement(module.exports.AssetPicker, { worldId: "world", filterType, onClose: () => {}, onSelect: ref => events.push(ref) })));
+      assert.deepEqual(requests, [{ page: 1, type: filterType }]);
       const input = dom.window.document.querySelector('input[type="file"]')!;
       Object.defineProperty(input, "files", { value: [new dom.window.File(["image"], "cover.png", { type: "image/png" })] });
       await act(async () => { input.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
@@ -61,4 +64,5 @@ for (const linkSucceeds of [true, false]) {
       dom.window.close();
     }
   });
+  }
 }

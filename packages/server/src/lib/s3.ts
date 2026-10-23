@@ -139,7 +139,7 @@ export async function getObjectBufferLimited(key: string, maxBytes: number): Pro
 }
 
 /** Inspect an object without exposing it through the public CDN proxy. */
-export async function headObject(key: string): Promise<{
+export async function headObject(key: string, options?: { signal?: AbortSignal }): Promise<{
   contentType: string;
   contentLength: number;
   etag: string | null;
@@ -148,7 +148,7 @@ export async function headObject(key: string): Promise<{
   const response = await getClient().send(new HeadObjectCommand({
     Bucket: env.AWS_S3_BUCKET_NAME,
     Key: key,
-  }));
+  }), { abortSignal: options?.signal });
   return {
     contentType: response.ContentType ?? "application/octet-stream",
     contentLength: response.ContentLength ?? 0,

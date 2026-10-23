@@ -445,7 +445,8 @@ export { blendModelPopularity, type ModelPopularitySnapshot } from "./types/mode
 export { DISCOVERY_INTEREST_IDS, DISCOVERY_INTEREST_GROUPS, DISCOVERY_INTEREST_TAGS,
   discoveryInterestsForTags, discoveryStarterStrength, type DiscoveryInterestId } from "./constants/discovery-interests.js";
 export { MODEL_POPULARITY_SEED } from "./constants/model-popularity-seed.js";
-export { PICKER_MODEL_FAMILIES, groupPlayModels, activeVariant, type PickerModelFamily, type PlayModelGroup, type PlayModelVariant } from "./constants/model-families.js";
+export { orderOfficialModels, type OfficialModelSort } from "./constants/official-model-order.js";
+export { PICKER_MODEL_FAMILIES, groupPlayModels, activeVariant, type PickerModelFamily, type PlayModelGroup, type PlayModelVariant, type ModelGroup, type ModelVariant, type GroupableModel } from "./constants/model-families.js";
 export type { StateValidationAudit, StateGuardSettings } from "./types/state-validation.js";
 export { parseStateGuardModel, stateGuardModelSelection, DEFAULT_STATE_GUARD_MODEL, FREE_STATE_GUARD_MODEL } from "./types/state-guard-model.js";
 export {

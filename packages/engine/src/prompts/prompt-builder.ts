@@ -6,7 +6,7 @@ import type {
   Variable,
 } from "../types/index.js";
 import { expandMacros, primaryCharacterEntry } from "./macros.js";
-import { estimateTokens } from "./token-utils.js";
+import { estimateTokens, estimateTokensByChars } from "./token-utils.js";
 import { filterEntriesByActiveWorldbooks } from "../lorebook/worldbook.js";
 import { filterEntriesByActiveLoreSlots } from "../lorebook/lore-slot.js";
 import { isStandbyOn, isVariableBoundEntry } from "../lorebook/entry-triggers.js";
@@ -25,6 +25,140 @@ function isAiExposedStatic(v: { internal?: boolean; aiAccess?: "write" | "read" 
 /** Static check: may AI directives ever write this variable? */
 function isAiWritableStatic(v: { internal?: boolean; formula?: string; aiAccess?: "write" | "read" | "none" }): boolean {
   return !v.internal && !v.formula && (v.aiAccess ?? "write") === "write";
+}
+
+/** A short sample value of a string variable for an example line. */
+function sampleString(v: Variable): string {
+  const option = v.options?.find((o) => o.trim());
+  if (option) return option.trim();
+  const d = typeof v.defaultValue === "string" ? v.defaultValue.trim() : "";
+  return d && d.length <= 24 && !d.includes("\n") ? d : "…";
+}
+
+/**
+ * The directive examples in the format block, written with THIS world's own
+ * AI-writable variable ids. A placeholder format line (`[variableId: …]`)
+ * was copied literally by models (`[variable: mood: set "angry"]`,
+ * `[variableId: game-state.location: …]`), and generic ids (`hp`, `gold`)
+ * invited writes to variables the card does not have. One line per type the
+ * world has, up to three variables; the generic lines only for a world where
+ * none of those types is writable. Depends on definitions only, so the block
+ * stays byte-stable across turns (cacheable).
+ */
+export function buildDirectiveExamples(writable: Variable[]): { examples: string[]; stringId?: string; jsonLines: string[] } {
+  const firstOf = (type: Variable["type"]) => writable.find((v) => v.type === type);
+  const picks = (["number", "string", "json", "boolean"] as const)
+    .map(firstOf)
+    .filter((v): v is Variable => v !== undefined)
+    .slice(0, 3);
+  const examples: string[] = [];
+  let stringId: string | undefined;
+  const jsonLines: string[] = [];
+  for (const v of picks) {
+    if (v.type === "number") {
+      examples.push(`Numbers:   [${v.id}: +1]   [${v.id}: -1]   [${v.id}: set ${typeof v.defaultValue === "number" ? v.defaultValue : 0}]`);
+    } else if (v.type === "string") {
+      stringId = v.id;
+      examples.push(`Text:      [${v.id}: set ${JSON.stringify(sampleString(v))}]`);
+    } else if (v.type === "boolean") {
+      examples.push(`Switches:  [${v.id}: toggle]   [${v.id}: set true]`);
+    } else if (v.type === "json") {
+      const d = v.defaultValue;
+      if (Array.isArray(d)) {
+        examples.push(`Lists:     [${v.id}: push "new item"]   [${v.id}: delete 0]`);
+        jsonLines.push(
+          `  [${v.id}: push {"name": "…"}]   append to the list`,
+          `  [${v.id}: delete 0]               remove the item at index 0`,
+        );
+      } else {
+        const key = d && typeof d === "object" ? Object.keys(d)[0] : undefined;
+        const field = key && /^[\w\p{L}\p{N}$·・-]+$/u.test(key) ? key : "field";
+        const sample = key && d && typeof d === "object" ? (d as Record<string, unknown>)[key] : undefined;
+        const value = typeof sample === "number" || typeof sample === "boolean" ? String(sample) : '"…"';
+        examples.push(`Objects:   [${v.id}.${field}: set ${value}]`);
+        jsonLines.push(
+          `  [${v.id}.${field}: set ${value}]   one field at a dot-path`,
+          `  [${v.id}: merge {"${field}": ${value}}]   patch several fields at once`,
+          `  [${v.id}: delete "${field}"]   remove a key`,
+        );
+      }
+    }
+  }
+  if (!examples.length) {
+    examples.push('Numbers:   [hp: -10]   [gold: +50]', 'Text:      [location: set "forest"]', 'Switches:  [hasKey: toggle]');
+  }
+  return { examples, stringId, jsonLines };
+}
+
+/** Smallest trim step, so a modest story memory still moves in whole scenes. */
+const HISTORY_STEP_FLOOR = 4_000;
+/** About one message in this many may anchor the trim grid. */
+const HISTORY_ANCHOR_EVERY = 32;
+
+/**
+ * How far the start of the history jumps when it has to move. A third of the
+ * player's story memory: the window keeps 2/3 to all of it (5/6 on average)
+ * and the cached conversation survives a third of a budget of new turns
+ * before it is cut again. Sized from a number that holds still between turns
+ * (`basis`), never from the per-turn budget, or the grid would wobble with
+ * every keyword-triggered entry. When the budget actually left is under
+ * three steps (a big world under the overall ceiling), the step halves until
+ * it fits, which keeps the coarser grid's lines.
+ */
+function historyTrimStep(basis: number, budget: number): number {
+  let step = Math.max(HISTORY_STEP_FLOOR, (Number.isFinite(basis) ? basis : budget) / 3);
+  while (step > budget / 3 && step > 1) step /= 2;
+  return step;
+}
+
+/** A stored message's own fingerprint picks it, so the pick survives the
+ *  loaded window sliding past older rows. FNV-1a over role, length and the
+ *  opening: stable for one message, cheap for a long one. */
+function isHistoryAnchor(msg: ChatMessage): boolean {
+  const key = `${msg.role}:${msg.content.length}:${msg.content.slice(0, 256)}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) % HISTORY_ANCHOR_EVERY === 0;
+}
+
+/**
+ * Where the kept history starts once it no longer fits: the first grid
+ * boundary at or after `fill`, the oldest message a plain newest-first fill
+ * would keep. Lines fall every `step` tokens counted from an anchor among the
+ * dropped messages; a message that starts on or past a line its predecessor
+ * started before is a boundary. Lines depend only on old messages, so the cut
+ * holds still turn after turn until the tail outgrows the budget, then jumps
+ * a whole step, which is what lets a cached conversation stay cached.
+ */
+function* steppedHistoryCut(history: ChatMessage[], fill: number, step: number): Generator<void, number, void> {
+  if (fill >= history.length - 1) return fill;
+  // The oldest dropped message its fingerprint picks; the oldest message
+  // when none is. Only dropped ones: the kept tail carries this turn's
+  // injected lore, which comes and goes.
+  let anchor = 0;
+  for (let i = 0; i < fill; i++) {
+    if (isHistoryAnchor(history[i]!)) {
+      anchor = i;
+      break;
+    }
+    yield;
+  }
+  // Positions by the character heuristic, not the model's tokenizer: one
+  // cheap pass, and the grid does not move when the player switches models.
+  const lineOf: number[] = [];
+  let at = 0;
+  for (let i = anchor; i < history.length; i++) {
+    lineOf.push(Math.floor(at / step));
+    at += estimateTokensByChars(history[i]!.content) + (history[i]!.imageTokens ?? 0);
+    yield;
+  }
+  for (let i = fill; i < history.length; i++) {
+    if (lineOf[i - anchor]! > lineOf[i - 1 - anchor]!) return i;
+  }
+  return fill;
 }
 
 export interface ChatMessage {
@@ -319,34 +453,33 @@ export class PromptBuilder {
     const writableVariables = world.variables.filter(v => opts?.state ? isAiWritable(v, opts.state) : isAiWritableStatic(v));
     if (writableVariables.length > 0) {
       const hasJsonVar = writableVariables.some(v => v.type === "json");
+      const { examples, stringId, jsonLines } = buildDirectiveExamples(writableVariables);
       const lines = [
         "<directive-format>",
         "State changes ONLY happen through directives. Describing a change in prose alone does nothing.",
         "",
-        "Format: [variableId: operation value]",
-        "",
-        'Numbers:   [hp: -10]   [gold: +50]   [score: *2]',
-        'Strings:   [location: set "forest"]   [log: append ", found the key"]',
-        'Booleans:  [hasKey: toggle]   [armed: set true]',
-        "",
-        // `append` was supported by the engine but absent here, so a card whose
-        // string variable is a running list left the model no legal way to add
-        // to it. It reached for `add`, which is a silent no-op on strings, and
-        // the variable simply never moved. Spell both halves out.
-        "To extend a string, use `append` — `add` only works on numbers and is",
-        "ignored on a string. `append` concatenates exactly what you pass, so put",
-        'any separator inside the value: [items: append ", rope"].',
+        // Real ids from this card, never a placeholder word: models copied the
+        // old `[variableId: operation value]` line literally.
+        "Write each change in square brackets: the variable's id exactly as listed in the game state, a colon, then the change. One change per bracket.",
+        ...examples,
       ];
+      if (stringId) {
+        lines.push(
+          "",
+          // `append` was supported by the engine but absent here, so a card whose
+          // string variable is a running list left the model no legal way to add
+          // to it. It reached for `add`, which is a silent no-op on strings, and
+          // the variable simply never moved. Spell both halves out.
+          "To extend a string, use `append` — `add` only works on numbers and is",
+          "ignored on a string. `append` concatenates exactly what you pass, so put",
+          `any separator inside the value: [${stringId}: append ", …"].`,
+        );
+      }
       if (hasJsonVar) {
         lines.push(
           "",
           "JSON variables — use dot-paths to target nested fields:",
-          '  [npcs.aria.affinity: +3]               number at a nested path',
-          '  [npcs.aria.mood: set "happy"]          string at a nested path',
-          '  [npcs.aria: merge {"trust": 80}]       patch several fields at once',
-          '  [inventory: push {"name": "Sword"}]    append to a JSON array',
-          '  [npcs: delete "aria"]                  remove a key from an object',
-          '  [inventory: delete 0]                  remove element at index 0',
+          ...(jsonLines.length ? jsonLines : writableVariables.filter(v => v.type === "json").slice(0, 1).map(v => `  [${v.id}.field: set "…"]   one field at a dot-path`)),
           "",
           "JSON values must use double quotes around keys and strings."
         );
@@ -734,6 +867,11 @@ export class PromptBuilder {
    * (format block, post-history) are always kept. Only the middle portion
    * (chat history + depth entries) is trimmed from oldest first.
    *
+   * History that fits is kept whole. History that does not loses its oldest
+   * messages in steps (see steppedHistoryCut), not one or two a turn: a start
+   * that moves every turn leaves nothing of the conversation for the provider's
+   * prompt cache to reuse.
+   *
    * @param pinnedPrefix Number of messages at the start to always keep
    * @param pinnedSuffix Number of messages at the end to always keep
    * @param modelId Optional model id so the budget uses the right tokenizer
@@ -761,6 +899,9 @@ export class PromptBuilder {
    *   small world lets it sprawl, because one number governed both. With it,
    *   the world is charged to the overall ceiling and the conversation is charged to
    *   this, so lowering one does not silently change the other.
+   * @param historyStepBasis What sizes the trim step: the player's story
+   *   memory as chosen, before this turn's injected lore is added to
+   *   `maxHistoryTokens`. Defaults to `maxHistoryTokens`, else `maxTokens`.
    */
   async buildMessageHistoryAsync(
     messages: ChatMessage[],
@@ -770,8 +911,9 @@ export class PromptBuilder {
     pinnedSuffix?: number,
     modelId?: string,
     maxHistoryTokens?: number,
+    historyStepBasis?: number,
   ): Promise<ChatMessage[]> {
-    const steps = this.messageHistorySteps(messages, maxTokens, pinnedPrefix, pinnedSuffix, modelId, maxHistoryTokens);
+    const steps = this.messageHistorySteps(messages, maxTokens, pinnedPrefix, pinnedSuffix, modelId, maxHistoryTokens, historyStepBasis);
     let deadline = performance.now() + 8;
     let step = steps.next();
     while (!step.done) {
@@ -791,6 +933,7 @@ export class PromptBuilder {
     pinnedSuffix?: number,
     modelId?: string,
     maxHistoryTokens?: number,
+    historyStepBasis?: number,
   ): Generator<void, ChatMessage[], void> {
     if (!maxTokens && !maxHistoryTokens) return [...messages];
     if (messages.length === 0) return [...messages];
@@ -824,25 +967,30 @@ export class PromptBuilder {
     // budget used to return here too, which dropped the ENTIRE conversation
     // including the message the player had just typed, leaving the model
     // nothing to answer. The loop below always keeps the newest message
-    // (its break is guarded on trimmed.length), so a world that leaves no
+    // (its break is guarded on fill), so a world that leaves no
     // room now costs history, never the current turn.
     if (history.length === 0) {
       return [...prefix, ...suffix];
     }
 
-    // Trim history from oldest, keeping most recent messages
-    const trimmed: ChatMessage[] = [];
+    // Fill from the newest message back: `fill` is the oldest one that fits.
+    let fill = history.length;
     let totalTokens = 0;
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i]!;
       const msgTokens = (estimateTokens(msg.content, modelId) + (msg.imageTokens ?? 0));
       yield;
-      if (totalTokens + msgTokens > historyBudget && trimmed.length > 0) break;
+      if (totalTokens + msgTokens > historyBudget && fill < history.length) break;
       totalTokens += msgTokens;
-      trimmed.unshift(msg);
+      fill = i;
     }
+    if (fill === 0) return [...prefix, ...history, ...suffix];
 
-    return [...prefix, ...trimmed, ...suffix];
+    // Then start at the step boundary at or after it, which only ever keeps
+    // less, so the budget still holds.
+    const basis = historyStepBasis ?? maxHistoryTokens ?? maxTokens ?? historyBudget;
+    const cut = yield* steppedHistoryCut(history, fill, historyTrimStep(basis, historyBudget));
+    return [...prefix, ...history.slice(cut), ...suffix];
   }
 
   /**
@@ -1128,7 +1276,7 @@ export class PromptBuilder {
     // Format instructions (approximate — actual text is built dynamically in buildFormatBlock)
     const formatText =
       "IMPORTANT — Variable directives are the ONLY way to change game state.\n" +
-      "Directive format: [variableId: operation value]\n" +
+      "Directive format: [id: operation value]\n" +
       'Examples: [health: -10], [gold: +50], [location: set "forest"], [hasKey: toggle]';
 
     blocks.push({

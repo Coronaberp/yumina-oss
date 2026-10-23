@@ -50,6 +50,10 @@ interface UiState {
   /** In-play "share this playthrough" overlay. Opened from the composer "+"
    *  menu (sandbox → world-renderer → this store). Transient — not persisted. */
   sharePlaythroughOpen: boolean;
+  /** In-play "write your own prompt" dialog. Opened from the 提示词 quick panel
+   *  (sandbox → world-renderer → this store) so the save happens in host UI that
+   *  card code can't fill in. Transient — not persisted. */
+  promptComposerOpen: boolean;
   /** In-play scene-image gallery. Opened from the play header, the fullscreen
    *  floating bar, or a card via the bridge. Transient — not persisted. */
   sceneGalleryOpen: boolean;
@@ -86,6 +90,8 @@ interface UiState {
   closePersonaManager: () => void;
   openSharePlaythrough: () => void;
   closeSharePlaythrough: () => void;
+  openPromptComposer: () => void;
+  closePromptComposer: () => void;
   openSceneGallery: () => void;
   closeSceneGallery: () => void;
   openTipModal: () => void;
@@ -141,6 +147,7 @@ export const useUiStore = create<UiState>()(
       sessionManagerOpen: false,
       personaManagerOpen: false,
       sharePlaythroughOpen: false,
+      promptComposerOpen: false,
       sceneGalleryOpen: false,
       tipModalOpen: false,
       studioTakeover: false,
@@ -169,6 +176,8 @@ export const useUiStore = create<UiState>()(
       closePersonaManager: () => set({ personaManagerOpen: false }),
       openSharePlaythrough: () => set({ sharePlaythroughOpen: true }),
       closeSharePlaythrough: () => set({ sharePlaythroughOpen: false }),
+      openPromptComposer: () => set({ promptComposerOpen: true }),
+      closePromptComposer: () => set({ promptComposerOpen: false }),
       openSceneGallery: () => set({ sceneGalleryOpen: true }),
       closeSceneGallery: () => set({ sceneGalleryOpen: false }),
       openTipModal: () => set({ tipModalOpen: true }),
@@ -200,7 +209,7 @@ export const useUiStore = create<UiState>()(
       name: "yumina-ui",
       // Don't persist the transient persona-manager overlay flag, or it would
       // auto-reopen on the next page load.
-      partialize: ({ personaManagerOpen: _omit, sharePlaythroughOpen: _omit2, tipModalOpen: _omit3, studioTakeover: _omit4, sceneGalleryOpen: _omit5, ...rest }) => rest,
+      partialize: ({ personaManagerOpen: _omit, sharePlaythroughOpen: _omit2, tipModalOpen: _omit3, studioTakeover: _omit4, sceneGalleryOpen: _omit5, promptComposerOpen: _omit6, ...rest }) => rest,
       // Migrate the legacy "r18" guestContentLevel value (persisted before the
       // sensitive-content rename) so old browser caches don't keep round-tripping it.
       // Also drop the retired sidebar-collapse keys so old persisted state can't

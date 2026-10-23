@@ -14,7 +14,7 @@ import { invalidateModelPriceCache } from "../lib/model-price-cache.js";
 import type { AppEnv } from "../lib/types.js";
 import { completionRoutes } from "./completions.js";
 
-const BUDGET_MODEL = "google/gemini-2.5-flash-lite";
+const BUDGET_MODEL = "google/gemini-3.1-flash-lite";
 const PREMIUM_MODEL = "anthropic/claude-sonnet-4.6";
 const FREE_MODEL = "openrouter/free";
 

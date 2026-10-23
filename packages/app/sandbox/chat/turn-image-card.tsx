@@ -102,13 +102,13 @@ export function TurnImageCard({ embed, message, api, t }: { embed: string; messa
 
   return (
     <div ref={wrapRef} className="group relative my-3 w-full" style={{ maxWidth: "24rem" }}>
-      <button type="button" onClick={() => setLarge(true)} aria-label={t("turnImageViewLarge")}
+      <button type="button" disabled={drawing} onClick={() => setLarge(true)} aria-label={t("turnImageViewLarge")}
         className="block w-full overflow-hidden rounded-lg border border-border/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <img src={src} alt="" loading="lazy" className={`block h-auto w-full transition ${drawing ? "scale-[1.02] blur-sm brightness-50" : ""}`} />
       </button>
       {drawing && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-foreground" role="status" aria-live="polite">
-          <TurnImageDrawingLabel t={t} />
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-foreground" role="status" aria-live="polite">
+          <TurnImageDrawingLabel t={t} message={message} api={api} />
         </div>
       )}
 

@@ -7,7 +7,7 @@ import { BACKGROUND_FALLBACK_MODEL, lookupCatalogModel, setModelCatalogForTests 
 import { STUDIO_TOOLS } from "./tools.js";
 
 const CATALOG = [
-  { id: "google/gemini-2.5-flash-lite", minPlan: "free" },
+  { id: "google/gemini-3.1-flash-lite", minPlan: "free" },
   { id: "deepseek/deepseek-chat-v3.1", minPlan: "free" },
   { id: "anthropic/claude-sonnet-4.5", minPlan: "plus" },
 ];

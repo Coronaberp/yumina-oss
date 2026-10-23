@@ -6,7 +6,15 @@
  * the shape a phone wants. One screen at a time, the creation assistant one
  * tap away at all times, and the card's own panels behind a bottom bar:
  *
- *   助手 · 开场白 · 设定 · 试玩 · 更多
+ * (superseded — see below)
+ *
+ * 10/21: the board IS the phone Studio. The canvas fills the screen — the same
+ * board the computer draws, panned and pinched, rows as names, a tap opening
+ * a page (mobile-board.tsx) — and the assistant is a drawer over its foot
+ * (phone-assistant-sheet.tsx), so the board above shows what it changes. The
+ * bottom bar of separate 助手 / 开场白 / 设定 tabs split one workspace into
+ * screens that never saw each other (owner: 「很不合理」); the other panels
+ * are still here, a page each, from ⋮ → 面板.
  *
  * The assistant is the first tab and where a card opens on a phone: it can
  * write any part of the card, so on a small screen it is the fastest way to
@@ -40,15 +48,12 @@ import {
   History,
   LayoutGrid,
   Loader2,
-  MessageCircle,
-  Monitor,
   MoreVertical,
   Package,
   Play,
   Redo2,
-  Save,
   SlidersHorizontal,
-  Sparkles,
+  Square,
   Star,
   Undo2,
   Upload,
@@ -106,11 +111,17 @@ import { takeRequestedPanel } from "@/lib/studio-entry";
 import { ownsTypingUndo } from "./lib/text-entry-target";
 import { rememberEditorChoice, type EditorChoice } from "@/features/editor/lib/editor-mode";
 import { VisualSurfaceSwitch } from "@/features/editor/visual-surface-switch";
+import { MobileBoard } from "./mobile-board";
+import { PhoneAssistantSheet, SHEET_PEEK_H, type SheetState } from "./phone-assistant-sheet";
+import { AiPresenceLayer } from "./ai-presence";
+import { useAgentPresence } from "./lib/agent-presence";
+import { SaveStatus } from "@/features/editor/save-status";
 
 const VersionHistoryDialog = lazy(() => importWithChunkRecovery(() => import("../editor/version-history-dialog")).then(m => ({ default: m.VersionHistoryDialog })));
 
 type MobileStudioPanelId =
   | "ai-chat"
+  | "board"
   | "lorebook"
   | "modules"
   | "variables"
@@ -130,23 +141,9 @@ type MobileStudioPanelId =
   | "marketplace"
   | "generation";
 
-/** The bottom bar, in order. Everything else is behind 更多. */
-const TAB_PANELS = ["ai-chat", "first-message", "lorebook", "playtest"] as const;
-type TabPanelId = (typeof TAB_PANELS)[number];
-
-const TAB_LABEL_KEYS: Record<TabPanelId, string> = {
-  "ai-chat": "studio.mobile.tabAssistant",
-  "first-message": "studio.mobile.tabOpening",
-  lorebook: "studio.mobile.tabLorebook",
-  playtest: "studio.mobile.tabPlaytest",
-};
-
-const TAB_ICONS: Record<TabPanelId, typeof Sparkles> = {
-  "ai-chat": Sparkles,
-  "first-message": MessageCircle,
-  lorebook: BookOpen,
-  playtest: Play,
-};
+/** The board is home; these are not pages of their own on a phone: the
+ *  assistant is the drawer over the board, a playtest takes the screen. */
+const NOT_A_PAGE = new Set<MobileStudioPanelId>(["board", "ai-chat", "playtest"]);
 
 type MobileReviewPayload = {
   title: string;
@@ -162,6 +159,8 @@ type MobileServerReviewPayload = MobileReviewPayload & {
 
 const MOBILE_PANEL_COMPONENTS: Record<MobileStudioPanelId, React.FC<IDockviewPanelProps>> = {
   "ai-chat": AiChatPanel,
+  // Home, under every page: rendered by the shell itself, never as a page.
+  board: () => null,
   lorebook: LorebookPanel,
   modules: ModulesPanel,
   variables: VariablesPanel,
@@ -184,6 +183,7 @@ const MOBILE_PANEL_COMPONENTS: Record<MobileStudioPanelId, React.FC<IDockviewPan
 
 const MOBILE_PANEL_LABEL_KEYS: Record<MobileStudioPanelId, string> = {
   "ai-chat": "studio.panels.aiAssistant",
+  board: "studio.mobile.tabCanvas",
   lorebook: "studio.panels.lorebook",
   modules: "studio.panels.modules",
   variables: "studio.panels.variables",
@@ -210,41 +210,6 @@ function isMobileStudioPanelId(id: string): id is MobileStudioPanelId {
   return MOBILE_PANEL_IDS.has(id as MobileStudioPanelId);
 }
 
-function isTabPanel(id: MobileStudioPanelId): id is TabPanelId {
-  return (TAB_PANELS as readonly string[]).includes(id);
-}
-
-/** Where they left off on this card. The key and the `activePanel` field are
- *  the earlier phone shell's, so a card opened before this layout keeps its
- *  panel; the split-workspace fields it also wrote are ignored. */
-function getMobileLayoutKey(worldId: string) {
-  return `yumina-studio-mobile-layout-${worldId}`;
-}
-
-const DEFAULT_PANEL: MobileStudioPanelId = "ai-chat";
-
-function loadActivePanel(worldId: string | null): MobileStudioPanelId {
-  if (typeof window === "undefined") return DEFAULT_PANEL;
-  try {
-    const saved = localStorage.getItem(getMobileLayoutKey(worldId ?? "new"));
-    if (!saved) return DEFAULT_PANEL;
-    const parsed = JSON.parse(saved) as { activePanel?: unknown };
-    return typeof parsed.activePanel === "string" && isMobileStudioPanelId(parsed.activePanel)
-      ? parsed.activePanel
-      : DEFAULT_PANEL;
-  } catch {
-    return DEFAULT_PANEL;
-  }
-}
-
-function saveActivePanel(worldId: string | null, activePanel: MobileStudioPanelId) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(getMobileLayoutKey(worldId ?? "new"), JSON.stringify({ activePanel }));
-  } catch {
-    // Layout persistence is a convenience; editor data is saved separately.
-  }
-}
 
 /** "Undo (Ctrl+Z)" → "Undo": the trailing shortcut, in any locale's brackets. */
 function withoutShortcut(label: string): string {
@@ -419,7 +384,7 @@ function MobilePanelRenderer({ panelId }: { panelId: MobileStudioPanelId }) {
   return <Component {...({} as IDockviewPanelProps)} />;
 }
 
-/** 更多: every panel that is not on the bar, grouped like the desktop menu.
+/** ⋮ → 面板: every panel, a page each, grouped like the desktop menu.
  *  A sheet from the bottom, under the thumb that opened it. */
 function MorePanelsSheet({
   open,
@@ -438,7 +403,7 @@ function MorePanelsSheet({
     PANEL_MENU_GROUPS.map(group => ({
       labelKey: group.labelKey,
       items: group.items.filter((item): item is typeof item & { id: MobileStudioPanelId } =>
-        isMobileStudioPanelId(item.id) && !isTabPanel(item.id)),
+        isMobileStudioPanelId(item.id) && !NOT_A_PAGE.has(item.id)),
     })).filter(group => group.items.length > 0)
   ), []);
 
@@ -599,7 +564,6 @@ export function MobileStudioShell() {
   const router = useRouter();
   const worldDraft = useEditorStore(s => s.worldDraft);
   const serverWorldId = useEditorStore(s => s.serverWorldId);
-  const isDirty = useEditorStore(s => s.isDirty || s.layoutDirty);
   const saving = useEditorStore(s => s.saving);
   const saveDraft = useEditorStore(s => s.saveDraft);
   const setField = useEditorStore(s => s.setField);
@@ -613,7 +577,11 @@ export function MobileStudioShell() {
   const readOnlyInspect = useEditorStore(s => s.readOnlyInspect);
   const mode = useStudioStore(s => s.mode);
   const setMode = useStudioStore(s => s.setMode);
-  const [activePanel, setActivePanel] = useState<MobileStudioPanelId>(() => loadActivePanel(serverWorldId));
+  // "board" is home: the canvas under everything. Any other panel is a page
+  // standing over it, with a way back.
+  const [activePanel, setActivePanel] = useState<MobileStudioPanelId>("board");
+  const [sheet, setSheet] = useState<SheetState>("peek");
+  useAgentPresence();
   const [moreOpen, setMoreOpen] = useState(false);
   const [reviewPayload, setReviewPayload] = useState<MobileReviewPayload | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -626,11 +594,13 @@ export function MobileStudioShell() {
   // One place every panel change goes through: the studio store's mode
   // follows the playtest tab, and a change under review is dismissed.
   const showPanel = useCallback((panelId: MobileStudioPanelId) => {
-    setActivePanel(panelId);
-    setMode(panelId === "playtest" ? "playtest" : "edit");
     setMoreOpen(false);
     setReviewPayload(null);
     setReviewLoading(false);
+    if (panelId === "ai-chat") { setActivePanel("board"); setMode("edit"); setSheet("open"); return; }
+    if (panelId === "playtest") { setMode("playtest"); return; }
+    setActivePanel(panelId);
+    setMode("edit");
   }, [setMode]);
 
   useEffect(() => {
@@ -643,21 +613,17 @@ export function MobileStudioShell() {
     // and would overwrite a panel chosen before it.
     if (!serverWorldId) return;
     const wanted = takeRequestedPanel(isMobileStudioPanelId);
-    setActivePanel(wanted && isMobileStudioPanelId(wanted) ? wanted : loadActivePanel(serverWorldId));
+    setActivePanel(wanted && isMobileStudioPanelId(wanted) && !NOT_A_PAGE.has(wanted) ? wanted : "board");
+    if (wanted === "ai-chat") setSheet("open");
   }, [serverWorldId]);
-
-  useEffect(() => {
-    saveActivePanel(serverWorldId, activePanel);
-  }, [activePanel, serverWorldId]);
 
   // The assistant can start a playtest of its own; the screen follows it.
   useEffect(() => {
-    if (mode === "playtest" && activePanel !== "playtest") {
-      setActivePanel("playtest");
+    if (mode === "playtest") {
       setReviewPayload(null);
       setReviewLoading(false);
     }
-  }, [mode, activePanel]);
+  }, [mode]);
 
   const [showPublishModal, setShowPublishModal] = useState(false);
   const { features } = useEdition();
@@ -698,12 +664,12 @@ export function MobileStudioShell() {
   useEffect(() => {
     const open = (event: Event) => {
       const { panelId: requested, canvasTarget } = (event as CustomEvent<{ panelId: string; canvasTarget?: string }>).detail;
-      const panelId = requested === "blueprint" ? "lorebook" : requested;
+      // The board is here too; a guide pointing at a setting on it still
+      // lands on the settings list, opened on the entry it is talking about,
+      // so nobody has to guess which row hides the text box.
+      const panelId = requested === "blueprint" ? (canvasTarget === "setting" ? "lorebook" : "board") : requested;
       if (!isMobileStudioPanelId(panelId)) return;
       showPanel(panelId);
-      // The canvas highlights the setting node; the phone has a list instead.
-      // Open the entry the guide is talking about, so nobody has to guess
-      // which row hides the text box.
       if (canvasTarget === "setting") {
         const entry = useEditorStore.getState().worldDraft.entries.find(item => item.role !== "greeting" && !item.presetId);
         if (entry) useEditorStore.getState().focusObject("entry", entry.id);
@@ -796,7 +762,9 @@ export function MobileStudioShell() {
 
   const isPlaytest = mode === "playtest";
   const reviewing = reviewPayload !== null;
-  const moreActive = !reviewing && !isTabPanel(activePanel);
+  const onPage = activePanel !== "board" && !NOT_A_PAGE.has(activePanel);
+  // The assistant plays a playtest of its own; then its drawer stays.
+  const aiPlaying = useStudioStore(s => Boolean(s.aiPlaytest && !s.aiPlaytest.done));
 
   // Off on the Studio pill (→ 完整) or 简单模式 in ⋮ (→ 简单): the same /edit
   // route, which renders whichever editor this card's mode now says. The
@@ -829,33 +797,137 @@ export function MobileStudioShell() {
     <div className="mobile-studio-shell flex h-full min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background">
       <header
         className={cn(
-          "flex shrink-0 flex-col gap-1 border-b px-2 pb-2 pt-[calc(env(safe-area-inset-top)+0.5rem)] transition-colors",
+          "flex shrink-0 flex-col border-b px-1.5 pb-1.5 pt-[calc(env(safe-area-inset-top)+0.375rem)] transition-colors",
           isPlaytest ? "border-emerald-500/40 bg-emerald-950/10" : "border-border bg-background/95",
         )}
       >
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"
             onClick={backToLibrary}
-            className="hover-surface inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground"
+            className="hover-surface inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground"
             title={t("studio.backToLibrary")}
             aria-label={t("studio.backToLibrary")}
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
+          <input
+            type="text"
+            data-onboarding="name"
+            value={isPlaceholderCardName(worldDraft.name) ? "" : worldDraft.name}
+            onChange={(e) => setField("name", e.target.value)}
+            placeholder={t("shell.namePlaceholder", { defaultValue: "Untitled" })}
+            readOnly={readOnlyInspect}
+            className={cn(
+              "h-9 min-w-0 flex-1 truncate rounded-lg bg-transparent px-1 text-[15px] font-semibold text-foreground placeholder:text-amber-200/55 focus:outline-none",
+              isPlaceholderCardName(worldDraft.name) && !readOnlyInspect && "ring-1 ring-amber-400/40",
+            )}
+          />
+          {variants.length >= 2 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-8 max-w-[4.5rem] shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 text-[11px] font-medium text-muted-foreground"
+                >
+                  <span className="truncate">
+                    {currentVariantTrigger(variants, serverWorldId, variantLabel, t("studio.variant"))}
+                  </span>
+                  {variantsLoading ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                {variants.map((variant) => {
+                  const isActive = variant.id === serverWorldId;
+                  const sameLangCount = variants.filter((x) => (x.language ?? "") === (variant.language ?? "")).length;
+                  const showStar = variant.isPrimaryVariant && sameLangCount >= 2;
+                  // Show 设为主 for any same-language 副 (discoverable); a draft one
+                  // is muted + guides to publish first.
+                  const canPromote = variant.isPrimaryVariant === false && sameLangCount >= 2;
+                  const promoteReady = canPromote && variant.status === "published";
+                  return (
+                    <DropdownMenuItem
+                      key={variant.id}
+                      onClick={() => handleVariantSwitch(variant.id)}
+                      disabled={isActive || saving}
+                      className={cn("flex items-center gap-2 text-xs", isActive && "bg-primary/10")}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{variantRowLabels(variants).get(variant.id) ?? (variant.variantLabel || variant.name)}</span>
+                      {variant.language && (
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                          {LANGUAGE_SHORT[variant.language] ?? variant.language.toUpperCase()}
+                        </span>
+                      )}
+                      {showStar && <Star className="h-3.5 w-3.5 shrink-0 fill-[#C9A25E] text-[#C9A25E]" aria-label={t("variantBar.primaryBadge", "主")} />}
+                      {/* Only a published version can be promoted. The button
+                          stays visible but disabled, labelled "(publish
+                          first)", so the reason sits on the control. */}
+                      {canPromote && (
+                        <button
+                          type="button"
+                          disabled={!promoteReady}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void useEditorStore.getState().setPrimary(variant.id);
+                          }}
+                          title={promoteReady ? t("variantBar.setPrimary", "Set as primary") : t("variantBar.setPrimaryDraft", "Set as primary (publish first)")}
+                          className={cn(
+                            "shrink-0 rounded-full p-1 transition-colors",
+                            promoteReady
+                              ? "text-muted-foreground/60 active:bg-[#C9A25E]/15 active:text-[#C9A25E]"
+                              : "cursor-not-allowed text-muted-foreground/30",
+                          )}
+                        >
+                          <Star className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {isActive && <Check className="h-3.5 w-3.5 text-primary" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {/* Studio, on — the same pill as the 完整 editor's, which turns it
               on. Off is the way back to 完整; 简单模式 is in ⋮. */}
           <VisualSurfaceSwitch
             on
             surface="studio"
-            className="mr-auto h-9 rounded-xl"
+            compact
+            className="h-8 gap-1.5 rounded-lg px-2"
             onToggle={() => leaveStudio("classic")}
           />
+
+          {/* 试玩: the card running, over the board; 停止 comes back to it. */}
+          <button
+            type="button"
+            data-onboarding="playtest"
+            title={t(isPlaytest ? "studio.stopPlay" : "studio.play")}
+            onClick={() => setMode(isPlaytest ? "edit" : "playtest")}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors",
+              isPlaytest ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200" : "border-emerald-500/40 text-emerald-300 active:bg-emerald-500/10",
+            )}
+          >
+            {isPlaytest ? <Square className="h-3 w-3 fill-current" /> : <Play className="h-3.5 w-3.5" />}
+            <span className="sr-only">{t(isPlaytest ? "studio.stopPlay" : "studio.play")}</span>
+          </button>
+          {!readOnlyInspect && (
+            <SaveStatus onSave={handleSave} data-onboarding="save" iconOnly />
+          )}
+          {/* Publish + review state in one control (green when live & clean;
+              otherwise shows the state + opens a popover with the action). */}
+          {!readOnlyInspect && features.publishing && (
+            <ReviewStateControl onPublish={handlePublishClick} size="sm" disabled={saving || !serverWorldId} />
+          )}
+          {!readOnlyInspect && !features.publishing && (
+            <ExportCardMenu worldId={serverWorldId} size="sm" disabled={saving || !serverWorldId} />
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="hover-surface inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground"
+                className="hover-surface inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-xl text-muted-foreground"
                 title={t("studio.moreActions")}
                 aria-label={t("studio.moreActions")}
               >
@@ -863,6 +935,11 @@ export function MobileStudioShell() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onClick={() => setMoreOpen(true)} className="min-h-11 gap-2 text-xs" data-phone-panels="">
+                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("studio.mobile.panels")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {/* The desktop strings carry their shortcut; a phone has no Ctrl. */}
               <DropdownMenuItem onClick={undo} disabled={!canUndo} className="min-h-11 gap-2 text-xs">
                 <Undo2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -923,187 +1000,59 @@ export function MobileStudioShell() {
                   </DropdownMenuItem>
                 </>
               )}
-              {/* Phone creators come here looking for the board they heard
-                  about; it lives on the computer. A note, not an item. */}
-              <DropdownMenuSeparator />
-              <div className="flex items-start gap-2 px-2 py-2 text-[11px] leading-snug text-muted-foreground" data-desktop-canvas-note="">
-                <Monitor className="mt-px h-3.5 w-3.5 shrink-0" />
-                {t("shell.desktopCanvasNote")}
-              </div>
             </DropdownMenuContent>
           </DropdownMenu>
-
-          {!readOnlyInspect && (
-            <button
-              type="button"
-              onClick={handleSave}
-              data-onboarding="save"
-              disabled={saving || !isDirty}
-              className="relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              <span className="max-[399px]:sr-only">{t("studio.save")}</span>
-              {isDirty && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-300" />}
-            </button>
-          )}
-          {/* Publish + review state in one control (green when live & clean;
-              otherwise shows the state + opens a popover with the action). */}
-          {!readOnlyInspect && features.publishing && (
-            <ReviewStateControl onPublish={handlePublishClick} size="sm" disabled={saving || !serverWorldId} />
-          )}
-          {!readOnlyInspect && !features.publishing && (
-            <ExportCardMenu worldId={serverWorldId} size="sm" disabled={saving || !serverWorldId} />
-          )}
-        </div>
-        <div className="flex min-w-0 items-center gap-1 px-1">
-          <input
-            type="text"
-            data-onboarding="name"
-            value={isPlaceholderCardName(worldDraft.name) ? "" : worldDraft.name}
-            onChange={(e) => setField("name", e.target.value)}
-            placeholder={t("shell.namePlaceholder", { defaultValue: "Untitled" })}
-            readOnly={readOnlyInspect}
-            className={cn(
-              "h-9 w-full min-w-0 truncate rounded-lg bg-transparent px-1.5 text-base font-semibold text-foreground placeholder:text-amber-200/55 focus:outline-none",
-              isPlaceholderCardName(worldDraft.name) && !readOnlyInspect && "ring-1 ring-amber-400/40",
-            )}
-          />
-          {variants.length >= 2 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-8 max-w-[6rem] shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 text-[11px] font-medium text-muted-foreground"
-                >
-                  <span className="truncate">
-                    {currentVariantTrigger(variants, serverWorldId, variantLabel, t("studio.variant"))}
-                  </span>
-                  {variantsLoading ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                {variants.map((variant) => {
-                  const isActive = variant.id === serverWorldId;
-                  const sameLangCount = variants.filter((x) => (x.language ?? "") === (variant.language ?? "")).length;
-                  const showStar = variant.isPrimaryVariant && sameLangCount >= 2;
-                  // Show 设为主 for any same-language 副 (discoverable); a draft one
-                  // is muted + guides to publish first.
-                  const canPromote = variant.isPrimaryVariant === false && sameLangCount >= 2;
-                  const promoteReady = canPromote && variant.status === "published";
-                  return (
-                    <DropdownMenuItem
-                      key={variant.id}
-                      onClick={() => handleVariantSwitch(variant.id)}
-                      disabled={isActive || saving}
-                      className={cn("flex items-center gap-2 text-xs", isActive && "bg-primary/10")}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{variantRowLabels(variants).get(variant.id) ?? (variant.variantLabel || variant.name)}</span>
-                      {variant.language && (
-                        <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
-                          {LANGUAGE_SHORT[variant.language] ?? variant.language.toUpperCase()}
-                        </span>
-                      )}
-                      {showStar && <Star className="h-3.5 w-3.5 shrink-0 fill-[#C9A25E] text-[#C9A25E]" aria-label={t("variantBar.primaryBadge", "主")} />}
-                      {/* Only a published version can be promoted. The button
-                          stays visible but disabled, labelled "(publish
-                          first)", so the reason sits on the control. */}
-                      {canPromote && (
-                        <button
-                          type="button"
-                          disabled={!promoteReady}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void useEditorStore.getState().setPrimary(variant.id);
-                          }}
-                          title={promoteReady ? t("variantBar.setPrimary", "Set as primary") : t("variantBar.setPrimaryDraft", "Set as primary (publish first)")}
-                          className={cn(
-                            "shrink-0 rounded-full p-1 transition-colors",
-                            promoteReady
-                              ? "text-muted-foreground/60 active:bg-[#C9A25E]/15 active:text-[#C9A25E]"
-                              : "cursor-not-allowed text-muted-foreground/30",
-                          )}
-                        >
-                          <Star className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {isActive && <Check className="h-3.5 w-3.5 text-primary" />}
-                    </DropdownMenuItem>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
         </div>
       </header>
 
       <VariantTranslateBanner />
 
-      <main className="min-h-0 flex-1 overflow-hidden">
-        {reviewing && reviewPayload ? (
-          <MobileReviewFrame
-            review={reviewPayload}
-            loading={reviewLoading}
-            onBackToAgent={openAgentWorkspace}
-          />
-        ) : (
-          <MobilePanelRenderer panelId={activePanel} />
-        )}
-      </main>
+      <main className="relative min-h-0 flex-1 overflow-hidden">
+        {/* The board, always mounted: every page below stands over it, so
+            coming back finds it where it was. */}
+        <MobileBoard bottomInset={SHEET_PEEK_H} />
 
-      <nav
-        className="grid shrink-0 grid-cols-5 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
-        aria-label={t("studio.mobile.quickActions")}
-      >
-        {TAB_PANELS.map((panelId) => {
-          const Icon = TAB_ICONS[panelId];
-          const active = !reviewing && activePanel === panelId;
-          const assistant = panelId === "ai-chat";
-          return (
-            <button
-              key={panelId}
-              type="button"
-              aria-pressed={active}
-              data-onboarding={assistant ? "assistant" : panelId === "playtest" ? "playtest" : undefined}
-              onClick={() => showPanel(panelId)}
-              className={cn(
-                "flex min-h-[3.5rem] flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors",
-                active ? "text-primary" : "text-muted-foreground active:text-foreground",
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-flex h-7 w-11 items-center justify-center rounded-full transition-colors",
-                  active && "bg-primary/15",
-                  // The assistant is the tab to find: gold even when it is not
-                  // the one open.
-                  assistant && !active && "text-primary/80",
-                )}
+        {onPage && (
+          <section className="absolute inset-0 z-30 flex min-h-0 flex-col bg-background" data-phone-panel-page={activePanel}>
+            <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-1.5">
+              <button
+                type="button"
+                onClick={() => setActivePanel("board")}
+                className="hover-surface inline-flex h-9 items-center gap-1.5 rounded-xl px-2 text-xs font-medium text-muted-foreground"
               >
-                <Icon className={cn("h-[18px] w-[18px]", assistant && active && "fill-primary/20")} />
-              </span>
-              <span className="leading-none">{t(TAB_LABEL_KEYS[panelId] as never)}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          aria-pressed={moreActive}
-          aria-haspopup="dialog"
-          onClick={() => setMoreOpen(true)}
-          className={cn(
-            "flex min-h-[3.5rem] flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors",
-            moreActive ? "text-primary" : "text-muted-foreground active:text-foreground",
-          )}
-        >
-          <span className={cn("inline-flex h-7 w-11 items-center justify-center rounded-full transition-colors", moreActive && "bg-primary/15")}>
-            <LayoutGrid className="h-[18px] w-[18px]" />
-          </span>
-          {/* When a panel from the sheet is open, the tab says which one. */}
-          <span className="max-w-full truncate px-1 leading-none">
-            {moreActive ? t(MOBILE_PANEL_LABEL_KEYS[activePanel] as never) : t("studio.mobile.tabMore")}
-          </span>
-        </button>
-      </nav>
+                <ArrowLeft className="h-4 w-4" />
+                {t("studio.mobile.tabCanvas")}
+              </button>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t(MOBILE_PANEL_LABEL_KEYS[activePanel] as never)}</span>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <MobilePanelRenderer panelId={activePanel} />
+            </div>
+          </section>
+        )}
+
+        {/* A playtest is the player's screen across the whole frame. */}
+        {isPlaytest && (
+          <section className="absolute inset-0 z-30 flex min-h-0 flex-col bg-background" data-phone-playtest="">
+            <PlaytestPanel {...({} as IDockviewPanelProps)} />
+          </section>
+        )}
+
+        {reviewing && reviewPayload && (
+          <div className="absolute inset-0 z-40 flex min-h-0 flex-col bg-background">
+            <MobileReviewFrame
+              review={reviewPayload}
+              loading={reviewLoading}
+              onBackToAgent={openAgentWorkspace}
+            />
+          </div>
+        )}
+
+        <PhoneAssistantSheet state={sheet} onState={setSheet} hidden={onPage || reviewing || (isPlaytest && !aiPlaying)}>
+          <AiChatPanel {...({} as IDockviewPanelProps)} />
+        </PhoneAssistantSheet>
+      </main>
+      <AiPresenceLayer />
 
       <MorePanelsSheet
         open={moreOpen}

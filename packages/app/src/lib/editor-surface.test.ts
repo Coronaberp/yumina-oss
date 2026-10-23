@@ -23,10 +23,15 @@ beforeEach(() => {
   (globalThis as { localStorage?: Storage }).localStorage = fakeStorage();
 });
 
-const base: SurfaceDecision = { mode: "advanced", last: null, allowed: true, guest: false };
+const base: SurfaceDecision = { mode: "advanced", last: null, allowed: true, guest: false, phone: false };
 
-test("a creator who has never chosen lands on the 完整 editor (the canvas is a beta)", () => {
-  assert.equal(shouldOpenVisual(base), false);
+test("a creator who has never chosen lands on the canvas on a computer", () => {
+  assert.equal(shouldOpenVisual(base), true);
+});
+
+test("a phone that never chose stays on the 完整 editor", () => {
+  assert.equal(shouldOpenVisual({ ...base, phone: true }), false);
+  assert.equal(shouldOpenVisual({ ...base, phone: true, last: "visual" }), true);
 });
 
 test("the switch is where they left it", () => {

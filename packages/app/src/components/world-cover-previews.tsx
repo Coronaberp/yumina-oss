@@ -20,16 +20,17 @@ export interface CoverPlacementPreview {
 
 /** Image frames and crop math match public cards; overlays reveal occupied space.
  * Presentation only: no nested actions, fake statistics, or hosted dependencies. */
-export function WorldCoverPreview({ src, crop, shape, details = {} }: {
+export function WorldCoverPreview({ src, crop, shape, details = {}, motion }: {
   src?: string | null;
   crop?: CoverCropSettings | null;
   shape: "portrait" | "landscape";
   details?: CoverPreviewDetails;
+  motion?: boolean;
 }) {
   const { t } = useTranslation("coverEditor");
   return <div className="cover-preview-card" data-shape={shape}>
     <div className="cover-preview-image" style={{ aspectRatio: shape === "portrait" ? DISCOVER_COVER_ASPECTS.cover : DISCOVER_COVER_ASPECTS.gallery }}>
-      {src ? <CroppedImage src={src} alt="" crop={crop} renderer={discoveryCoverImageRenderer}
+      {src ? <CroppedImage src={src} alt="" crop={crop} renderer={discoveryCoverImageRenderer} motion={motion}
         width={540} className="absolute inset-0 h-full w-full" /> : <ImageIcon className="m-auto opacity-30" />}
     </div>
     {shape === "portrait" && <Bookmark className="cover-preview-bookmark" aria-hidden="true" size={17} />}
@@ -44,30 +45,31 @@ export function WorldCoverPreview({ src, crop, shape, details = {} }: {
   </div>;
 }
 
-export function WorldCoverPreviews({ src, landscapeSrc, coverCrop, landscapeCoverCrop, details, placements = [] }: {
+export function WorldCoverPreviews({ src, landscapeSrc, coverCrop, landscapeCoverCrop, details, placements = [], motion }: {
   src?: string | null;
   landscapeSrc?: string | null;
   coverCrop?: CoverCropSettings | null;
   landscapeCoverCrop?: CoverCropSettings | null;
   details?: CoverPreviewDetails;
   placements?: CoverPlacementPreview[];
+  motion?: boolean;
 }) {
   const { t } = useTranslation("coverEditor");
   return <div className="space-y-4" data-cover-previews>
     <p className="text-xs leading-relaxed text-muted-foreground">{t("extra.crop.previewHint")}</p>
     <div>
       <p className="mb-2 text-[11px] font-medium text-muted-foreground">{t("extra.crop.phone")}</p>
-      <div className="max-w-[190px]"><WorldCoverPreview src={src} crop={coverCrop} shape="portrait" details={details} /></div>
+      <div className="max-w-[190px]"><WorldCoverPreview src={src} crop={coverCrop} shape="portrait" details={details} motion={motion} /></div>
     </div>
     <div>
       <p className="mb-2 text-[11px] font-medium text-muted-foreground">{t("extra.crop.desktop")}</p>
-      {landscapeSrc ? <WorldCoverPreview src={landscapeSrc} crop={landscapeCoverCrop} shape="landscape" details={details} />
+      {landscapeSrc ? <WorldCoverPreview src={landscapeSrc} crop={landscapeCoverCrop} shape="landscape" details={details} motion={motion} />
         : <div className="flex aspect-video items-center justify-center rounded-lg border border-dashed border-border bg-muted/10 px-3 text-center text-xs text-muted-foreground">{t("overview.landscapeNeeded")}</div>}
     </div>
     {placements.map(placement => <div key={placement.label}>
       <p className="mb-2 text-[11px] font-medium text-muted-foreground">{placement.label}</p>
       <div className="relative overflow-hidden rounded-lg bg-[#24212a]" style={{ aspectRatio: placement.aspectRatio }}>
-        <CroppedImage src={(placement.shape === "portrait" ? src : landscapeSrc || src) ?? ""} alt=""
+        <CroppedImage src={(placement.shape === "portrait" ? src : landscapeSrc || src) ?? ""} alt="" motion={motion}
           crop={placement.shape === "portrait" ? coverCrop : landscapeCoverCrop} renderer={discoveryCoverImageRenderer}
           className="absolute inset-0 h-full w-full" width={540} />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#10121ceb] to-transparent px-3 pb-3 pt-12">

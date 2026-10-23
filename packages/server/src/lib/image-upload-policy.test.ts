@@ -65,8 +65,29 @@ test("corrupt files, lying formats, excessive frames, duration and decoded pixel
   await assert.rejects(prepareUploadedImage(await image(32, 32).png().toBuffer(), "image/jpeg"), HTTPException);
   await assert.rejects(prepareUploadedImage(await animation("gif", 121, 100), "image/gif"), HTTPException);
   await assert.rejects(prepareUploadedImage(await animation("webp", 2, 8000), "image/webp"), HTTPException);
-  const oversized = await image(7000, 6000).png().toBuffer();
+  const oversized = await image(12000, 9000).png().toBuffer();
   await assert.rejects(prepareUploadedImage(oversized, "image/png"), HTTPException);
+});
+
+test("rejections name the actual reason: format, dimensions, frames, damage", async () => {
+  const jpeg = await image(3000, 2000).jpeg().toBuffer();
+  const cases: [() => Promise<unknown>, RegExp][] = [
+    [async () => prepareUploadedImage(Buffer.from("not an image"), "image/png"), /couldn't be read as an image/],
+    [async () => prepareUploadedImage(await image(32, 32).avif().toBuffer(), "image/jpeg"), /AVIF images aren't supported/],
+    [async () => prepareUploadedImage(jpeg, "image/png"), /actually a JPEG image but is named as PNG\. Rename it to \.jpg/],
+    [async () => prepareUploadedImage(jpeg.subarray(0, Math.floor(jpeg.length * 0.8)), "image/jpeg"), /JPEG file is damaged or incomplete/],
+    [async () => prepareUploadedImage(await image(12000, 9000).png().toBuffer(), "image/png"), /12000×9000 \(108\.0 MP\)\. The limit is 100\.0 MP\. Resize it to about 11547×8660/],
+    [async () => prepareUploadedImage(await animation("gif", 121, 100), "image/gif"), /121 frames\. The limit is 120/],
+    [async () => prepareUploadedImage(await animation("webp", 2, 8000), "image/webp"), /16\.0 seconds long/],
+  ];
+  for (const [upload, message] of cases) await assert.rejects(upload(), message);
+});
+
+test("48 MP phone photos and long screenshots are resized instead of refused", async () => {
+  const photo = await prepareUploadedImage(await image(8064, 6048).jpeg().toBuffer(), "image/jpeg");
+  assert.deepEqual([(await sharp(photo.buffer).metadata()).width, (await sharp(photo.buffer).metadata()).height], [1440, 1080]);
+  const screenshot = await prepareUploadedImage(await image(1290, 40000).png().toBuffer(), "image/png");
+  assert.equal((await sharp(screenshot.buffer).metadata()).height, 1920);
 });
 
 test("already-small dimensions cannot bypass the optimized byte ceiling", async () => {

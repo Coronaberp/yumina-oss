@@ -49,6 +49,7 @@ import { hasUncertainMemoryCoverage } from "../lib/session-memory-core.js";
 import { memoryCursorAfterSettingsChange } from "../lib/session-memory-guards.js";
 import { normalizeSessionSummaryLanguage } from "../lib/summary-language.js";
 import { canRunMemoryQa, memoryQaPage } from "../lib/session-memory-qa.js";
+import { dropMemoryVersions } from "../lib/session-memory-versions.js";
 import type { GenerateParams } from "../lib/llm/types.js";
 import {
   estimateTextTokens,
@@ -844,6 +845,8 @@ sessionMemoryRoutes.delete("/:sessionId/memory", async (c) => {
     .returning();
 
   if (!updated) return c.json({ error: "Session not found" }, 404);
+  // A cleared memory must not come back through a rebuild.
+  await dropMemoryVersions(sessionId);
   return c.json({ data: await toPayload(updated) });
 });
 

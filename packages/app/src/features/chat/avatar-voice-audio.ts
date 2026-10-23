@@ -15,6 +15,7 @@ export interface AvatarConnection {
 }
 export interface AvatarAudioOptions {
   signal: AbortSignal;
+  beforePlayback?(): boolean;
   onPlayback(event: AvatarPlayback): void;
   onPending?(): void;
   onQueue?(count: number): void;
@@ -44,6 +45,7 @@ export interface AvatarAudioRuntime {
   cancelFrame(id: number): void;
   connectTimeoutMs: number;
   reconnectTimeoutMs?: number;
+  liveStartupBufferMs?: number;
 }
 const browserRuntime: AvatarAudioRuntime = {
   createOutput: (onLevel, onInputLevel) => createVoiceAudio(onLevel, undefined, onInputLevel),
@@ -54,7 +56,7 @@ const browserRuntime: AvatarAudioRuntime = {
     const url = URL.createObjectURL(new Blob([AVATAR_PCM_WORKLET], { type: "text/javascript" }));
     try {
       await context.audioWorklet.addModule(url);
-      return new AudioWorkletNode(context, "yumina-avatar-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      return new AudioWorkletNode(context, "yumina-avatar-pcm", { numberOfInputs: 1, numberOfOutputs: 0 });
     } finally { URL.revokeObjectURL(url); }
   },
   createSocket: url => new WebSocket(url),
@@ -76,15 +78,16 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
   options: AvatarAudioOptions, runtime: AvatarAudioRuntime = browserRuntime): AvatarAudio {
   let continuous = false, captureEpoch = 0, liveSequence = 0;
   let held = false, heldBytes = 0, heldPackets: Record<string, unknown>[] = [];
+  let sending: {id:unknown; sealed:boolean; ended:boolean} | undefined;
   let heldDrainTimer: ReturnType<typeof setTimeout> | undefined;
   const liveSegments = new LiveVoiceSegments({
     start() {
-      options.onSourceActivity?.(true);
       state.provider({ type: "output_audio_buffer.started", response_id: `live-audio-${++liveSequence}` });
     },
     pcm: data => state.pcm(captureEpoch, data),
-    end() { state.drained(captureEpoch); options.onSourceActivity?.(false); },
-  });
+    end() { state.drained(captureEpoch); },
+    activity: active => options.onSourceActivity?.(active),
+  }, runtime.liveStartupBufferMs ?? 1600);
   const output = runtime.createOutput(onLevel, onInputLevel);
   let context: AudioContext;
   try { context = runtime.createCaptureContext(); }
@@ -96,8 +99,10 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
   clock.muted = true; clock.setAttribute("playsinline", "");
   video.muted = true; video.autoplay = true; video.playsInline = true;
   video.setAttribute("playsinline", "");
-  // Both the processor and this gain guarantee zero original OpenAI output.
-  const silent = context.createGain(); silent.gain.value = 0; silent.connect(context.destination);
+  // Capture is an automatic-pull worklet with no speaker output. Connecting a
+  // zero-valued output to destination lets Chromium switch to its silent sink
+  // after 30 seconds; that clock can run slowly and starve LiveAvatar. The
+  // outputless processor keeps capturing in real time without audible leakage.
   let worklet: AudioWorkletNode | undefined, source: MediaStreamAudioSourceNode | undefined, sourceStream: MediaStream | undefined;
   let control: AvatarControlSocket | undefined, room: Room | undefined, closed = false, failed = false, connectionStarted = false;
   let socketReady = false, roomReady = false, audioReady = false, videoReady = false, videoLive = false;
@@ -115,11 +120,11 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
     uuid: () => crypto.randomUUID(),
     send: event => {
       if (event.type === 'agent.interrupt') {
-        heldPackets = []; heldBytes = 0;
+        heldPackets = []; heldBytes = 0; sending = undefined;
         clearTimeout(heldDrainTimer); heldDrainTimer = undefined;
       }
       if (event.type !== 'agent.interrupt' && event.type !== 'session.keep_alive') {
-        if (!held && heldPackets.length === 0 && control?.trySend(event)) return;
+        if (!held && heldPackets.length === 0 && sendSpeech(event)) return;
         if (closed) return;
         heldBytes += JSON.stringify(event).length;
         if (heldBytes > 768 * 1024 || heldPackets.length >= 128) { fail('The live reply could not wait for input to finish. Reconnect to continue.'); return; }
@@ -139,13 +144,42 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
       }
       worklet?.port.postMessage(event);
     },
+    beforePlayback: () => options.beforePlayback?.() !== false,
     playback: event => options.onPlayback(event), pending: () => options.onPending?.(), queue: count => options.onQueue?.(count),
     mute: value => output.setMuted(value), error: message => fail(message),
   });
+  function blockedByPlayback(event: Record<string,unknown>) {
+    return !!sending && (event.type==='agent.speak'||event.type==='agent.speak_end') && event.event_id!==sending.id;
+  }
+  function sendSpeech(event: Record<string,unknown>) {
+    if(blockedByPlayback(event)||!control?.trySend(event))return false;
+    if(event.type==='agent.speak'){
+      sending??={id:event.event_id,sealed:false,ended:false};
+      sending.ended=false;
+    }else if(event.type==='agent.speak_end'&&sending&&sending.id===event.event_id){
+      sending.sealed=true;
+      if(sending.ended)sending=undefined;
+    }
+    return true;
+  }
+  function avatarEvent(event: Record<string,unknown>) {
+    state.avatar(event);
+    if(sending&&event.source_event_id===sending.id){
+      if(event.type==='agent.speak_started')sending.ended=false;
+      if(event.type==='agent.speak_ended'||event.type==='agent.speak_interrupted'){
+        sending.ended=true;
+        if(sending.sealed||event.type==='agent.speak_interrupted')sending=undefined;
+      }
+    }
+    drainHeld();
+  }
   function drainHeld() {
     if (closed || held || !control) return;
     while (heldPackets.length) {
-      if (!control.trySend(heldPackets[0])) {
+      // The provider can coalesce distinct sources sent in a single burst.
+      // Continue streaming this source, but start the next only after playback.
+      if(blockedByPlayback(heldPackets[0]))return;
+      if (!sendSpeech(heldPackets[0])) {
         if (!closed && !heldDrainTimer) heldDrainTimer = setTimeout(() => { heldDrainTimer = undefined; drainHeld(); }, 25);
         return;
       }
@@ -158,7 +192,7 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
   try {
     workletReady = runtime.createWorklet(context).then(node => {
       if (closed) { node.port.close(); node.disconnect(); return { error: new Error("Avatar audio closed.") }; }
-      worklet = node; node.connect(silent);
+      worklet = node;
       node.onprocessorerror = () => fail("Avatar audio capture failed. Start voice again.");
       node.port.onmessage = ({ data }: MessageEvent<{ type: string; epoch: number; pcm?: ArrayBuffer }>) => {
         if (closed) return;
@@ -199,7 +233,7 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
   function close(message?: string) {
     if (closed) return;
     closed = true;
-    heldPackets = []; heldBytes = 0;
+    heldPackets = []; heldBytes = 0; sending = undefined;
     clearTimeout(heldDrainTimer); heldDrainTimer = undefined;
     liveSegments.close(); state.close(); frameGate.close();
     clearTimeout(connectTimer); clearTimeout(mediaRecoveryTimer); clearInterval(watchdog);
@@ -210,7 +244,7 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
     video.removeEventListener("loadeddata", videoLoaded); video.removeEventListener("error", videoError);
     clock.pause(); clock.srcObject = null; video.pause(); video.srcObject = null;
     source?.disconnect(); sourceStream?.getTracks().forEach(track => track.stop());
-    worklet?.port.close(); worklet?.disconnect(); silent.disconnect();
+    worklet?.port.close(); worklet?.disconnect();
     output.close(); void context.close().catch(() => {});
     control?.close();
     for (const track of tracks) { track.detach(); track.mediaStreamTrack.stop(); }
@@ -322,6 +356,11 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
       } finally { clearTimeout(deadline); }
     },
     attachInput: stream => output.attachInput(stream), setSpatial: pose => output.setSpatial(pose),
+    async prepareLiveInput(options) {
+      if (closed || !output.prepareLiveInput) throw new Error('Live microphone audio is unavailable. Start voice again.');
+      return output.prepareLiveInput(options);
+    },
+    inputEvidence: () => output.inputEvidence?.() ?? Promise.resolve('unknown'),
     setMuted: value => state.setMuted(value),
     handleProviderEvent: event => continuous ? false : state.provider(event),
     handleClientEvent: event => {
@@ -330,8 +369,10 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
       } else if (event.type === 'live.hold') {
         held = event.held === true;
         if (!held) drainHeld();
+      } else if (event.type === 'live.output') {
+        liveSegments.allow(event.allowed === true);
       } else if (event.type === "live.interrupt") {
-        liveSegments.interrupt(); state.client({ type: "output_audio_buffer.clear" }); options.onSourceActivity?.(false);
+        liveSegments.interrupt(); state.client({ type: "output_audio_buffer.clear" });
       } else state.client(event);
     },
     ackVideoFrame: id => frameGate.ack(id), close,
@@ -347,7 +388,7 @@ export function createAvatarVoiceAudio(onLevel: (value: number) => void, onInput
         control = new AvatarControlSocket(connection.wsUrl, {
           create: url => runtime.createSocket(url),
           ready: () => { socketReady = true; state.connected(); connected(); },
-          event: event => state.avatar(event), fail, canRecover: () => rejectConnection === undefined,
+          event: avatarEvent, fail, canRecover: () => rejectConnection === undefined,
           recovering: () => {
             // A speak_ended event may have been lost during the socket gap.
             // Retire uncertain playback; replay could repeat already heard words.

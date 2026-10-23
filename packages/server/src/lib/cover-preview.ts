@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { COVER_ANIMATION_SUFFIX, COVER_MOTION_LIMIT, COVER_MOTION_SUFFIX, coverMotionKey } from "./cover-upload.js";
 
 export type CoverPreview = { kind: "static" | "original" | "pending" | "still" | "video"; key?: string };
 type Head = { contentType: string; contentLength: number; etag: string | null };
@@ -71,6 +72,26 @@ export function createCoverPreviewService(storage: CoverPreviewStorage, encode =
   };
   async function inspect(key: string): Promise<CoverPreview> {
     const head = await storage.head(key); // Also prevents serving derivatives after source deletion.
+    // This bounded WebP intentionally preserves alpha or finite playback.
+    // Legacy MP4 conversion would silently destroy those semantics above 4 MB.
+    if (key.endsWith(COVER_ANIMATION_SUFFIX)) {
+      return save(key, { kind: head.contentType === "image/webp" && head.contentLength > 0
+        && head.contentLength <= COVER_MOTION_LIMIT ? "original" : "still" });
+    }
+    // New covers are already normalized at upload: the public key is a small
+    // image poster, with its validated motion stored behind this route. Never
+    // re-encode them or mistake the poster for an ordinary static cover.
+    if (key.endsWith(COVER_MOTION_SUFFIX)) {
+      try {
+        const motionKey = coverMotionKey(key);
+        const motion = await storage.head(motionKey);
+        if (head.contentType === "image/webp" && head.contentLength > 0 && head.contentLength <= 1024 * 1024
+          && motion.contentType === "video/mp4" && motion.contentLength > 0 && motion.contentLength <= COVER_MOTION_LIMIT) {
+          return save(key, { kind: "video", key: motionKey });
+        }
+      } catch { /* An incomplete package displays its bounded poster only. */ }
+      return save(key, { kind: "still" }, 5000);
+    }
     if (!/^image\/(webp|gif|png|apng)$/i.test(head.contentType.split(";")[0]!)) return save(key, { kind: "static" });
     const header = await storage.read(key, 256 * 1024, true);
     if (!animatedCoverHeader(header)) return save(key, { kind: "static" });

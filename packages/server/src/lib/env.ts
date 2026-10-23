@@ -55,6 +55,23 @@ const envSchema = z.object({
    */
   STORY_MEMORY_DEFAULT_AT: z.preprocess(emptyToUndefined, z.string().optional()),
   /**
+   * Story memory for accounts older than STORY_MEMORY_DEFAULT_AT that never
+   * chose one (tokens, e.g. 32000). Unset = they keep their whole window.
+   * Meant to be flipped together with STORY_SUMMARY_DEFAULT_ON so what falls
+   * out of the window is summarized rather than forgotten.
+   */
+  STORY_MEMORY_CARRIED_OVER_DEFAULT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  /**
+   * Run the story summary for every player, not only those who installed the
+   * memory extension or play a card that asks for it. Overflow-driven only:
+   * it summarizes exactly what the trimmed window drops, so it costs nothing
+   * until a chat outgrows its story memory. An explicit uninstall still wins.
+   */
+  STORY_SUMMARY_DEFAULT_ON: z.preprocess(
+    (v) => (typeof v === "string" ? ["1", "true", "on"].includes(v.trim().toLowerCase()) : v),
+    z.boolean().default(false),
+  ),
+  /**
    * Treat story memory as a RESERVATION rather than a leftover: the lorebook
    * budget becomes what remains after setting it aside, so triggered entries
    * trim to make room instead of the conversation being squeezed out. Only
@@ -71,6 +88,11 @@ const envSchema = z.object({
   // decrypting). Set it on a fresh install so rotating the auth secret never
   // bricks every stored provider key. Changing it AFTER keys exist invalidates them.
   ENCRYPTION_KEY: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
+  // Comma-separated retired key material, tried after ENCRYPTION_KEY when
+  // decrypting. Rotate by moving the old value here (for a deployment that
+  // never set ENCRYPTION_KEY, that is the old BETTER_AUTH_SECRET), re-encrypt
+  // the rows, then drop it.
+  ENCRYPTION_KEY_PREVIOUS: z.preprocess(emptyToUndefined, z.string().optional()),
   // Stable, comma-separated HMAC keys for deleted-identity tombstones. Put a
   // new key first and retain old keys while rotating. Falls back to the auth
   // secret for existing deployments, but production should set this explicitly.

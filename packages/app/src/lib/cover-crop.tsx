@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
-import { resolveImageUrl, originalImageUrl, cardImageUrl, isAnimatedImageRef, coverPreviewUrl } from "./asset-url";
+import { resolveImageUrl, originalImageUrl, cardImageUrl, isAnimatedImageRef, isMotionCoverRef, coverPreviewUrl } from "./asset-url";
 import {
   defaultCropImageRenderer,
   type CoverCropSettings,
@@ -43,6 +43,7 @@ interface CroppedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "s
    *  full resolution — turns multi-MB originals into ~30-80KB. Omit for
    *  must-be-full-res images (e.g. a lightbox). */
   width?: number;
+  motion?: boolean;
 }
 
 export function CroppedImage({
@@ -56,6 +57,7 @@ export function CroppedImage({
   renderer = defaultCropImageRenderer,
   placeholder = false,
   ambientBackdrop = false,
+  motion = true,
   style,
   ...imgProps
 }: CroppedImageProps) {
@@ -76,8 +78,9 @@ export function CroppedImage({
   // An animated cover paints its first frame first (a ~20KB still), and the
   // animation is layered on top once the card is on screen. Before this the
   // slot stayed dark until a multi-MB GIF had fully downloaded.
-  const previewUrl = width ? coverPreviewUrl(src) : undefined;
-  const animated = !!width && !fallbackSrc && (!!previewUrl || isAnimatedImageRef(src));
+  const managedMotion = isMotionCoverRef(src);
+  const previewUrl = width || managedMotion ? coverPreviewUrl(src) : undefined;
+  const animated = (!!width || managedMotion) && (!fallbackSrc || managedMotion) && (!!previewUrl || isAnimatedImageRef(src));
   // Size through the CF resizer when a display width is given; on a transform
   // 404 the onError handler swaps to the untransformed original (see below).
   const posterUrl = (pixels: number) => {
@@ -101,6 +104,7 @@ export function CroppedImage({
   }, [src]);
   useEffect(() => {
     const element = containerRef.current;
+    if (!motion) { setInView(false); return; }
     if (!animated || !element) return;
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     if (typeof IntersectionObserver === "undefined") {
@@ -112,7 +116,7 @@ export function CroppedImage({
     }, { rootMargin: "0px" });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [animated, src]);
+  }, [animated, src, motion]);
   useEffect(() => {
     if (!previewUrl || !inView) return;
     const controller = new AbortController();
@@ -236,7 +240,7 @@ export function CroppedImage({
         onError={(event) => {
           setPosterFailed(true);
           const original = originalImageUrl(resolvedSrc);
-          if (!previewUrl && original !== resolvedSrc) {
+          if ((!previewUrl || managedMotion) && original !== resolvedSrc) {
             // Transform endpoint unavailable — retry with the original image.
             setFallbackSrc(original);
             return;

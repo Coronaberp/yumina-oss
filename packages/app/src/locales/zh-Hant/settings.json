@@ -157,6 +157,25 @@
       "connectError": "連線失敗",
       "disconnectError": "斷開失敗"
     },
+    "connectedApps": {
+      "title": "已連結的應用",
+      "description": "用你的 Yumina 帳號登入過的遊戲模組、應用和 AI。中斷後，它們立刻不能再使用你的帳號。",
+      "loading": "載入中…",
+      "loadError": "載入失敗，請重新整理再試。",
+      "empty": "還沒有連結任何應用。",
+      "verified": "官方",
+      "connectedOn": "{{date}} 連結",
+      "disconnect": "中斷",
+      "disconnecting": "正在中斷…",
+      "disconnectError": "沒有中斷成功，請再試一次。",
+      "scope": {
+        "aiChat": "用你的蘑菇幣對話",
+        "walletRead": "查看餘額",
+        "quests": "任務",
+        "cards": "讀寫你的卡",
+        "profile": "暱稱"
+      }
+    },
     "validation": {
       "usernameMinLength": "使用者名稱至少需要 3 個字元",
       "usernameTaken": "使用者名稱已被佔用",
@@ -179,7 +198,7 @@
     },
     "sensitive": {
       "label": "無限制",
-      "description": "沒有內容限制"
+      "description": "沒有內容限制。模型還是不肯寫的話，可以去提示詞廣場裝「解除限制」。"
     },
     "minorRestriction": "此帳號無法使用「無限制」模式。",
     "audiencePreference": {

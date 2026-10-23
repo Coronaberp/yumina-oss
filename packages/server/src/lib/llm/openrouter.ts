@@ -197,9 +197,22 @@ const GOOGLE_VERTEX_SLUG = "google-vertex";
  * even when OpenRouter's normal provider fallback is enabled. */
 const VERTEX_BROKEN_MODELS = new Set<string>();
 
+/** Hosts that answer HTTP 200 with no visible text for a model often enough
+ *  that the first attempt is better spent elsewhere. OpenInference on the
+ *  DeepSeek V4 flash line keeps the whole completion in reasoning: prod
+ *  2026-10-12..19, 110 of 150 platform-key v4-flash turns that still ended
+ *  empty after three attempts were served by it, against 49 of a random 400
+ *  successful turns (12%); v4.1-flash 18 of 18 empties. Both models keep 15+
+ *  other endpoints. Drop a row once a replay shows the host recovered. */
+const EMPTY_REPLY_HOSTS: Record<string, readonly string[]> = {
+  "deepseek/deepseek-v4-flash": ["open-inference"],
+  "deepseek/deepseek-v4.1-flash": ["open-inference"],
+};
+
 /** Build the `provider` routing preferences for one request attempt, merging
  *  the static per-model rules (Claude first-party pin, Bedrock cache_control
- *  avoidance, Gemini AI-Studio preference) with dynamic exclusions collected
+ *  avoidance, Gemini AI-Studio preference, known empty-reply hosts) with
+ *  dynamic exclusions collected
  *  by the retry loop from previous failed attempts. Returns undefined when
  *  there is nothing to send. Exported for tests. */
 export function providerRoutingFor(
@@ -214,6 +227,7 @@ export function providerRoutingFor(
   if (preserveAccountRouting) return undefined;
 
   const ignore = new Set<string>(excludeProviders);
+  for (const host of EMPTY_REPLY_HOSTS[model] ?? []) ignore.add(host);
   let order: string[] | undefined;
 
   if (shouldPinAnthropicFirstParty(model)) {
@@ -233,6 +247,11 @@ export function providerRoutingFor(
   };
 }
 
+/** The caller's standing exclusions plus hosts that failed earlier attempts. */
+function withIgnoredProviders(params: GenerateParams, excludeProviders?: readonly string[]): readonly string[] | undefined {
+  return params.ignoreProviders?.length ? [...params.ignoreProviders, ...(excludeProviders ?? [])] : excludeProviders;
+}
+
 /** Map an OpenRouter provider identifier (routing slug, endpoint tag like
  *  "google-vertex/global", or display name like "Google AI Studio") to the
  *  slug accepted by `provider.ignore`. Returns undefined for anything that
@@ -242,6 +261,23 @@ const PROVIDER_NAME_TO_SLUG: Record<string, string> = {
   // "Google" is the display name of the Vertex storefront; AI Studio spells
   // itself out. Only names that don't normalize 1:1 to their slug need a row.
   google: "google-vertex",
+  // The rest: every display name in GET /api/v1/providers (2026-10-19) whose
+  // lower-cased, hyphenated form is not its slug. Both the SSE `provider`
+  // field and openrouter_metadata carry only the display name, and OpenRouter
+  // accepts an unknown slug in `provider.ignore` with a 200 and no warning —
+  // so "OpenInference" → "openinference" (real slug "open-inference") meant
+  // the empty-reply retry re-rolled OpenInference all three times.
+  openinference: "open-inference",
+  atlascloud: "atlas-cloud",
+  inferencenet: "inference-net",
+  aionlabs: "aion-labs",
+  "moonshot-ai": "moonshotai",
+  "z.ai": "z-ai",
+  "mancer-2": "mancer",
+  "sakana-ai": "sakana",
+  "thinking-machines": "thinkingmachines",
+  "voyageai-by-mongodb": "voyageai",
+  "claude-platform-on-aws": "claude-on-aws",
 };
 export function normalizeProviderSlug(raw: unknown): string | undefined {
   if (typeof raw !== "string" || !raw) return undefined;
@@ -357,6 +393,21 @@ function isProviderTermsError(status: number, body: string): boolean {
  *  see FREE_ROUTER_FALLBACK_MODEL in routes/messages.ts for who eats the cost. */
 export function isFreePoolExhaustedError(status: number, body: string): boolean {
   return status === 429 && /free-models-per-day/i.test(body);
+}
+
+/** Some endpoints always think (GLM 5.3, several Gemini and free-pool routes)
+ *  and reject `reasoning: { effort: "none" }` with
+ *    400 "Reasoning is mandatory for this endpoint and cannot be disabled."
+ *  Background jobs that ask for no reasoning (story memory, summaries) are
+ *  re-sent once at low effort instead of failing. `singleAttempt` callers keep
+ *  their one request and handle it themselves (summary-fallback.ts). */
+export function isReasoningMandatoryError(status: number, body: string): boolean {
+  return status === 400 && /reasoning is mandatory/i.test(body);
+}
+
+/** The same request with reasoning allowed at low effort — see isReasoningMandatoryError. */
+function withMandatoryReasoning(params: GenerateParams): GenerateParams {
+  return { ...params, disableReasoning: false, reasoningEffort: "low" };
 }
 
 /**
@@ -722,7 +773,7 @@ export class OpenRouterProvider implements LLMProvider {
     const existingRouting = providerRoutingFor(
       params.model,
       !!params.cacheBreakpoints?.length,
-      excludeProviders,
+      withIgnoredProviders(params, excludeProviders),
       this.preserveAccountRouting,
     );
     const providerRouting = params.responseFormat?.type === "json_schema"
@@ -786,6 +837,7 @@ export class OpenRouterProvider implements LLMProvider {
         // including error responses — so failures can name the provider that
         // caused them (see extractFailedProviderSlug).
         "X-OpenRouter-Metadata": "enabled",
+        ...stickySessionHeader(params.conversationId),
       },
       signal: fetchSignal,
       body: JSON.stringify(requestBody),
@@ -798,6 +850,11 @@ export class OpenRouterProvider implements LLMProvider {
       console.warn(
         `[OpenRouter] ${response.status} for ${params.model} — ${requestSignature(requestBody)}`,
       );
+      if (params.disableReasoning && !params.singleAttempt && isReasoningMandatoryError(response.status, error)) {
+        console.warn(`[OpenRouter] ${params.model} cannot disable reasoning; retrying at low effort`);
+        yield* this.streamOnce(withMandatoryReasoning(params), excludeProviders);
+        return;
+      }
       const fallbackModel = shouldFallbackToAnotherModel(response.status, error, params.fallbackOnTransientErrors) ? nextFallbackModel(params) : null;
       if (fallbackModel) {
         if (params.model === "openrouter/free" && isFreePoolExhaustedError(response.status, error)) rememberFreePoolExhaustion(this.apiKey);
@@ -1071,7 +1128,7 @@ export class OpenRouterProvider implements LLMProvider {
     const existingRouting = providerRoutingFor(
       params.model,
       !!params.cacheBreakpoints?.length,
-      excludeProviders,
+      withIgnoredProviders(params, excludeProviders),
       this.preserveAccountRouting,
     );
     const providerRouting = params.responseFormat?.type === "json_schema"
@@ -1133,6 +1190,7 @@ export class OpenRouterProvider implements LLMProvider {
           "X-Title": "Yumina",
           // See streaming path — lets error responses name the failing provider.
           "X-OpenRouter-Metadata": "enabled",
+          ...stickySessionHeader(params.conversationId),
         },
         signal: fetchSignal,
         body: JSON.stringify(requestBody),
@@ -1150,6 +1208,11 @@ export class OpenRouterProvider implements LLMProvider {
       console.warn(
         `[OpenRouter] ${response.status} for ${params.model} (non-stream) — ${requestSignature(requestBody)}`,
       );
+      if (params.disableReasoning && !params.singleAttempt && isReasoningMandatoryError(response.status, error)) {
+        console.warn(`[OpenRouter] ${params.model} cannot disable reasoning; retrying at low effort (non-stream)`);
+        yield* this.generateNonStream(withMandatoryReasoning(params), excludeProviders);
+        return;
+      }
       const fallbackModel = shouldFallbackToAnotherModel(response.status, error, params.fallbackOnTransientErrors) ? nextFallbackModel(params) : null;
       if (fallbackModel) {
         if (params.model === "openrouter/free" && isFreePoolExhaustedError(response.status, error)) rememberFreePoolExhaustion(this.apiKey);
@@ -1554,6 +1617,21 @@ function parseRetryAfterMs(header: string | null): number | undefined {
   if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
   const at = Date.parse(header);
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+}
+
+/**
+ * Sticky routing key. Without it OpenRouter keys a conversation on the first
+ * system + first non-system message, and our first non-system message shifts
+ * once history trims, so multi-host models (GLM, DeepSeek, Hy3, MiniMax) hop
+ * hosts between turns: 28% of consecutive turns in a 2026-10 sample, with
+ * cache hits falling from 64% on the same host to 18% after a hop. Hashed so
+ * the ids we namespace in (sessions, users) never leave the server. A header
+ * rather than the body `session_id` so json_schema requests, which set
+ * require_parameters, never filter hosts on an unknown field.
+ */
+export function stickySessionHeader(conversationId: string | undefined): Record<string, string> {
+  if (!conversationId) return {};
+  return { "x-session-id": createHash("sha256").update(`yumina:${conversationId}`).digest("hex") };
 }
 
 /** Add extra fields to the last element of an array (shallow copy). Used to annotate the last tool with cache_control. */

@@ -14,7 +14,7 @@ import { CustomProvider } from "./llm/custom.js";
 import type { GenerateParams, StreamChunk } from "./llm/types.js";
 import { compactStorySummaryForSession, compactStorySummaryForSessionManually } from "./session-compaction.js";
 
-const officialModel = "google/gemini-2.5-flash-lite";
+const officialModel = "google/gemini-3.1-flash-lite";
 const privateModel = "custom/deepseek-chat";
 const paths = ["automatic", "manual", "regenerate-small", "regenerate-window"] as const;
 type Path = typeof paths[number];

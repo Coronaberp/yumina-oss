@@ -8,7 +8,7 @@
  * All communication happens via structured postMessage calls.
  */
 
-import type { Condition, LoreUiBinding, Worldbook, StateChannel } from "@yumina/engine";
+import type { Condition, LoreUiBinding, Worldbook, StateChannel, ReplyRule } from "@yumina/engine";
 import type { TranscriptPosition } from "./chat/transcript-position-types";
 import type { VoicePlaybackFrame } from "../src/lib/voice-playback-performance";
 export type { VoicePlaybackFrame } from "../src/lib/voice-playback-performance";
@@ -158,6 +158,7 @@ export interface SandboxState {
   /** LoreSlot → entry bindings from world schema. */
   loreUiBindings: SandboxLoreUiBinding[];
   worldbooks: SandboxWorldbook[];
+  replyRules?: ReplyRule[];
   /** The card's setting: split one reply into a bubble per speaker. */
   speakerBubbles?: boolean;
 
@@ -270,6 +271,7 @@ export interface SessionChannelData {
   entries: SandboxEntry[];
   loreUiBindings: SandboxLoreUiBinding[];
   worldbooks: SandboxWorldbook[];
+  replyRules?: ReplyRule[];
   /** The card's setting: split one reply into a bubble per speaker. */
   speakerBubbles?: boolean;
 }

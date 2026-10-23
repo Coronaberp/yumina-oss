@@ -11,7 +11,7 @@
 // through api.navigate.
 
 import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Compass, Info, RotateCcw, ScrollText, ShieldAlert, Shuffle, SlidersHorizontal, X } from "lucide-react";
+import { Compass, Info, Plus, RotateCcw, ShieldAlert, Shuffle, SlidersHorizontal, Upload, X } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { PLAY_MODELS, formatModelId } from "@yumina/shared";
 import { useYumina } from "../sandbox-context";
@@ -21,6 +21,7 @@ import { ModelPickerModal } from "./model-picker-modal";
 import type { SandboxMessage } from "./types";
 
 const PROMPTS_HUB = "/app/prompts";
+const PROMPTS_UPLOAD = "/app/prompts/upload";
 const SETTINGS_PROMPTS = "/app/settings#prompts";
 
 // ─── Tiny shared store (panel open state, dismissals) ────────────────────────
@@ -165,6 +166,33 @@ export function PromptsQuickSheet() {
           </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 pb-1 pt-2">
+            {/* The plaza sits under Discover › 模块与提示词, which players rarely find on
+                their own — so the way to download or share prompts is the first thing here. */}
+            <section className="flex items-center gap-2.5 rounded-2xl border border-primary/25 bg-primary/[0.05] py-2.5 pl-3.5 pr-2.5">
+              <Compass className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-foreground">{t("hubTitle")}</div>
+                <div className="truncate text-xs text-muted-foreground">{t("hubSub")}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => go(PROMPTS_HUB)}
+                className="inline-flex min-h-8 shrink-0 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                {t("hubBrowse")}
+              </button>
+              <button
+                type="button"
+                onClick={() => go(PROMPTS_UPLOAD)}
+                aria-label={t("hubUpload")}
+                title={t("hubUpload")}
+                className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 text-xs font-medium text-foreground/85 transition-colors hover:border-primary/40 hover:text-foreground"
+              >
+                <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                {t("hubUpload")}
+              </button>
+            </section>
+
             {/* Per-model binding status for the current model. */}
             <section className={`rounded-2xl border p-3.5 ${pp.boundPromptName ? "border-primary/35 bg-primary/[0.06]" : "border-border bg-muted/30"}`}>
               <div className="text-xs text-muted-foreground">{t("currentModelIs", { model })}</div>
@@ -183,9 +211,18 @@ export function PromptsQuickSheet() {
             </section>
 
             <section className="rounded-2xl border border-border bg-muted/20">
-              <div className="flex items-baseline justify-between px-3.5 pb-1 pt-3">
+              <div className="flex items-center gap-2 pb-1 pl-3.5 pr-2 pt-2">
                 <span className="text-sm font-semibold text-foreground">{t("myPrompts")}</span>
                 {pp.prompts.length > 0 && <span className="text-xs text-muted-foreground">{t("myPromptsOn", { n: onCount })}</span>}
+                {/* The host draws the editor (card code shares this sandbox); we only ask it to open. */}
+                <button
+                  type="button"
+                  onClick={() => { closePromptsPanel(); api.openPromptComposer(); }}
+                  className="ml-auto inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("writeOne")}
+                </button>
               </div>
               {pp.prompts.length === 0 ? (
                 <p className="px-3.5 pb-3.5 pt-1 text-xs leading-relaxed text-muted-foreground">{t("myPromptsEmpty")}</p>
@@ -213,7 +250,7 @@ export function PromptsQuickSheet() {
             </section>
           </div>
 
-          <div className="flex shrink-0 gap-2 px-4 pt-3">
+          <div className="flex shrink-0 px-4 pt-3">
             <button
               type="button"
               onClick={() => go(SETTINGS_PROMPTS)}
@@ -221,14 +258,6 @@ export function PromptsQuickSheet() {
             >
               <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
               {t("fullSettings")}
-            </button>
-            <button
-              type="button"
-              onClick={() => go(PROMPTS_HUB)}
-              className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
-            >
-              <Compass className="h-4 w-4" />
-              {t("toHub")}
             </button>
           </div>
           <style>{`
@@ -261,18 +290,13 @@ export function RefusalBar({
   useStoreVersion();
   const api = useYumina();
   const t = usePromptsT();
-  const pp = api.playerPrompts;
   const [pickerOpen, setPickerOpen] = useState(false);
   if (dismissKey && dismissedRefusals.has(dismissKey)) return null;
 
-  const eligible = !!pp?.eligible;
-  const bound = !!pp?.boundPromptName;
-  // With no prompt bound to this model, an eligible player is nudged to pick one;
-  // otherwise the useful action is a plain retry.
-  const showPick = eligible && !bound;
+  // No nudge toward prompts here: a refusal offers retry or another model, and
+  // players find the prompt plaza on their own.
   const disabled = api.isStreaming || api.readOnly;
   const model = modelName(api.selectedModel) || t("currentModelFallback");
-  const goPick = () => api.navigate(PROMPTS_HUB);
 
   const picker = (
     <ModelPickerModal
@@ -307,15 +331,9 @@ export function RefusalBar({
             <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
             {t("switchModelRetry")}
           </button>
-          {showPick ? (
-            <button type="button" disabled={disabled} onClick={goPick} className={`${btn} border border-destructive/30 hover:bg-destructive/10`}>
-              {t("pickOne")}
-            </button>
-          ) : (
-            <button type="button" disabled={disabled} onClick={onRetry} className={`${btn} border border-destructive/30 hover:bg-destructive/10`}>
-              {t("retry")}
-            </button>
-          )}
+          <button type="button" disabled={disabled} onClick={onRetry} className={`${btn} border border-destructive/30 hover:bg-destructive/10`}>
+            {t("retry")}
+          </button>
         </div>
         {picker}
       </div>
@@ -330,17 +348,10 @@ export function RefusalBar({
           {t("refusedLabel")}
         </span>
         <div className="flex flex-wrap gap-2">
-          {showPick ? (
-            <button type="button" disabled={disabled} onClick={goPick} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>
-              <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
-              {t("pickOne")}
-            </button>
-          ) : (
-            <button type="button" disabled={disabled} onClick={onRetry} className={`${btn} border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20`}>
-              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-              {t("retry")}
-            </button>
-          )}
+          <button type="button" disabled={disabled} onClick={onRetry} className={`${btn} border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20`}>
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+            {t("retry")}
+          </button>
           <button type="button" disabled={disabled} onClick={() => setPickerOpen(true)} className={`${btn} border border-border text-foreground/80 hover:border-primary/40 hover:text-foreground`}>
             <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
             {t("switchModel")}

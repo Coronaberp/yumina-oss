@@ -13,6 +13,7 @@ import type { TFunction } from "i18next";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { DEFAULT_ENGINE, DIRECTOR_MODELS, FILM_SETTINGS_KEY, getVideoController, type VideoEngine, type VideoStartOptions, type VideoState, type VideoStep } from "./controller";
+import { filmText, shortReason, type FilmT } from "./film-text";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Panel = "none" | "settings" | "log" | "scenes" | "edit";
@@ -245,7 +246,7 @@ export function RealtimeVideoFloat({ sessionId, defaultOpen = false, suppressIdl
             )}
             <IconBtn title={muted ? t("film.soundOn") : t("film.soundOff")} onClick={() => { setMuted(!muted); controller.setMuted(!muted); }}>{muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}</IconBtn>
             {!shorts && <IconBtn title={t("film.scenes")} active={panel === "scenes"} onClick={() => togglePanel("scenes")}><Layers className="h-4 w-4" /></IconBtn>}
-            <div className="min-w-0 flex-1 truncate px-1 text-[11px] text-white/50">{isAdmin && state.currentStatus && running ? state.currentStatus : ""}</div>
+            <div className="min-w-0 flex-1 truncate px-1 text-[11px] text-white/50">{isAdmin && state.currentStatus && running ? filmText(filmT(t), state.currentStatus) : ""}</div>
             {isAdmin && <IconBtn title={t("film.log")} active={panel === "log"} onClick={() => togglePanel("log")}><ScrollText className="h-4 w-4" /></IconBtn>}
             <IconBtn title={t("film.settings")} active={panel === "settings"} onClick={() => togglePanel("settings")}><Settings2 className="h-4 w-4" /></IconBtn>
           </div>
@@ -278,7 +279,7 @@ export function RealtimeVideoFloat({ sessionId, defaultOpen = false, suppressIdl
                   </div>
                 </div>
               )}
-              {panel === "log" && isAdmin && state.steps.map((s) => <StepRow key={s.id} s={s} />)}
+              {panel === "log" && isAdmin && state.steps.map((s) => <StepRow key={s.id} s={s} t={t} />)}
             </div>
           )}
 
@@ -304,7 +305,6 @@ function engineLabel(t: TFunction<"chat">, engine: VideoEngine): string {
   return engine === "fal" ? t("film.engineFal") : engine === "shorts" ? t("film.engineShorts") : engine === "comfy-h3" ? t("film.engineComfy") : t("film.engineCausal");
 }
 
-const SHORT_REASONS: Record<string, string> = { busy: "film.shortBusy", credits: "film.noCredits", timeout: "film.shortTimeout", unavailable: "film.unavailable" };
 type ShortCells = NonNullable<VideoState["shortNow"]>["cells"];
 
 /** Short films: nothing filmed yet, over the empty picture. */
@@ -361,7 +361,7 @@ function ShortStrip({ t, state, onJump, onRetry }: { t: TFunction<"chat">; state
           <span className="shrink-0 text-white/40">{t("film.shortNextLabel")}</span>
           <span className="min-w-0 truncate text-white/70">{replyName(t, q)}</span>
           {q.status === "failed"
-            ? <span className="min-w-0 truncate text-red-300">{t("film.shortFailed", { reason: t((SHORT_REASONS[q.reason ?? ""] ?? "film.unavailable") as "film.unavailable") })}</span>
+            ? <span className="min-w-0 truncate text-red-300">{t("film.shortFailed", { reason: filmText(filmT(t), shortReason(q.reason)) })}</span>
             : q.status === "writing"
               ? <span className="flex min-w-0 items-center gap-1.5 truncate text-white/55"><span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-rose-400" />{t("film.shortDirector")}</span>
               : <span className="shrink-0 text-white/55">{t("film.shortDoneOf", { done: q.cells.filter((c) => c === "done").length, total: q.cells.filter((c) => c !== "failed").length })}</span>}
@@ -438,18 +438,23 @@ function SettingsForm({ value, onChange, running, uploaded, onUpload }: { value:
   );
 }
 
-function StepRow({ s }: { s: VideoStep }) {
+/** The film's words (film-text.ts) through the window's own `t`. */
+function filmT(t: TFunction<"chat">): FilmT {
+  return (key, params) => String(t(key as never, params as never));
+}
+
+function StepRow({ s, t }: { s: VideoStep; t: TFunction<"chat"> }) {
+  const state = s.status?.state;
   return (
     <div className="mb-2 leading-snug">
       <span className="mr-1.5 text-[11px] tabular-nums text-white/40">{s.t.toFixed(1)}s</span>
-      <span className={KIND_CLASS[s.kind]}>{KIND_LABEL[s.kind]}</span>{" "}
-      <span>{s.text}</span>
+      <span className={KIND_CLASS[s.kind]}>{s.kind === "info" ? "·" : t(`film.kind.${s.kind}`)}</span>{" "}
+      <span>{filmText(filmT(t), s.text)}</span>
       {s.version != null && (
-        <span className={`ml-1.5 rounded px-1 text-[11px] ${s.status?.startsWith("画面") ? "bg-emerald-900/70 text-emerald-300" : s.status?.startsWith("被拒") || s.status?.startsWith("失败") ? "bg-red-900/70 text-red-300" : "bg-white/10 text-white/60"}`}>v{s.version} {s.status}</span>
+        <span className={`ml-1.5 rounded px-1 text-[11px] ${state === "shown" ? "bg-emerald-900/70 text-emerald-300" : state === "rejected" || state === "failed" ? "bg-red-900/70 text-red-300" : "bg-white/10 text-white/60"}`}>v{s.version} {filmText(filmT(t), s.status)}</span>
       )}
-      {s.shot && <details className="mt-0.5 text-[11px] text-white/45"><summary className="cursor-pointer">镜头指令</summary>{s.shot}</details>}
+      {s.shot && <details className="mt-0.5 text-[11px] text-white/45"><summary className="cursor-pointer">{t("film.shotPrompt")}</summary>{s.shot}</details>}
     </div>
   );
 }
-const KIND_LABEL: Record<VideoStep["kind"], string> = { opening: "开场镜头", user: "玩家", reply: "AI 回复", shot: "新镜头", info: "·", error: "错误" };
 const KIND_CLASS: Record<VideoStep["kind"], string> = { opening: "text-sky-300", user: "text-pink-300", reply: "text-amber-200", shot: "text-sky-300", info: "text-white/50", error: "text-red-400" };

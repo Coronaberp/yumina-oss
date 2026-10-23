@@ -17,6 +17,12 @@ export const STUDIO_OPEN_PANEL_KEY = "yumina-studio-open-panel";
  *  it, and a greeting held for "the next visit" turned up on a mode switch or
  *  a remount a minute later, over the same card. */
 export const STUDIO_QUIET_TOUR_KEY = "yumina-studio-quiet-tour";
+/** Read once by the tour: do not greet this visit, and do not count it as the
+ *  offer either. Left by the redirect that opens an existing card on the
+ *  canvas — a returning author's own card, often a published one, is not
+ *  where the first lesson should stage itself and write 「你好！Yumina」.
+ *  The welcome waits for the next card they start. */
+export const STUDIO_HOLD_TOUR_KEY = "yumina-studio-hold-tour";
 
 const storage = (): Storage | null => {
   try { return typeof sessionStorage === "undefined" ? null : sessionStorage; } catch { return null; }
@@ -37,6 +43,13 @@ export function requestQuietTour(): void {
   const s = storage();
   if (!s) return;
   try { s.setItem(STUDIO_QUIET_TOUR_KEY, "1"); } catch { /* private mode: the welcome may show once */ }
+}
+
+/** Open an existing card on the canvas without the welcome, keeping it for a new card. */
+export function requestHeldTour(): void {
+  const s = storage();
+  if (!s) return;
+  try { s.setItem(STUDIO_HOLD_TOUR_KEY, "1"); } catch { /* private mode: the welcome may show once */ }
 }
 
 /**
@@ -66,6 +79,20 @@ export function consumeQuietTour(): boolean {
     forgetSoon(s, STUDIO_QUIET_TOUR_KEY);
     return true;
   } catch { return false; }
+}
+
+/** Whether this visit asked to hold the welcome. Safe to call while
+ *  rendering; take the note with `consumeHeldTour` after commit. */
+export function heldTourRequested(): boolean {
+  const s = storage();
+  if (!s) return false;
+  try { return s.getItem(STUDIO_HOLD_TOUR_KEY) === "1"; } catch { return false; }
+}
+
+export function consumeHeldTour(): void {
+  const s = storage();
+  if (!s) return;
+  try { if (s.getItem(STUDIO_HOLD_TOUR_KEY) === "1") forgetSoon(s, STUDIO_HOLD_TOUR_KEY); } catch { /* ignore */ }
 }
 
 /** Take the pending "open this panel" note if it names one of `accepted`. */

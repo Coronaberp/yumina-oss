@@ -77,7 +77,7 @@ export type TurnClipJob =
 export interface FilmState {
   /** The cover's art style in words; null when the cover could not be read. */
   look: string | null;
-  cast: { name: string; look: string }[];
+  cast: { name: string; look: string; entry?: string }[];
   scenes: { id: string; sheet: string }[];
   currentScene: string | null;
   prevShot: string;

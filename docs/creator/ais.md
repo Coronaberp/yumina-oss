@@ -22,7 +22,9 @@ You can drag an AI row straight onto another scenario or onto the card. That mov
 
 ## Add an AI
 
-**Add → An AI call**. It's added to whichever scenario you're looking at (or the card, if no scenario is selected), and its settings open on the right at the same time. The first thing at the top is choosing what kind of AI it is. To change it later, click its row and the settings open again.
+**Add → An AI call**. It's added to whichever scenario you're looking at (or the card, if no scenario is selected), and its settings open on the right at the same time. At the top is **Model & settings**: whether the AI runs on the **Player's settings** or ones **Set by author**. Below that you pick what kind of AI it is. To change it later, click its row and the settings open again.
+
+The card's own AI shows all four kinds too. It is always the one that replies to the player, so it stays **Turn-based**; the other three carry a **+**, and picking one adds an AI of that kind to the card and opens it.
 
 ## Four kinds of AI
 
@@ -30,8 +32,8 @@ You can drag an AI row straight onto another scenario or onto the card. That mov
 |---|---|
 | **Turn-based** | Runs with the player's turns: it answers every time the player speaks, or runs behind the scenes every few turns, or waits for another AI to reply first |
 | **UI-based** | Waits for a button in the player interface to call it |
-| **Code-based** | Picks its own moment: when a value meets a condition, when a scenario ends, after a quiet spell |
-| **Custom** | The kind a form can't build. You hold its place on the canvas and code makes it work (see below) |
+| **Event-based** | Runs by itself when something happens in the card: when a value meets a condition, when a scenario ends, after a quiet spell |
+| **Custom** | The kind a form can't build. You declare how it is called and what it answers, and code implements it (see below) |
 
 Fine-tune it under **When it runs** in its settings:
 
@@ -49,9 +51,16 @@ Fine-tune it under **When it runs** in its settings:
 
 Some AIs can't be set up with a form: two characters on stage, each with rules only code can handle, or a director who only speaks up after watching what happens in the room. For those, pick **Custom**.
 
-Once picked, the AI is a placeholder. It has a name, lives in a scenario, and gets to read that scenario's lore, but it won't run by itself. Code has to run it. You don't need to know how to write it. Stick a note on it saying what it should do, and the Creation assistant, or an outside AI you've hooked up with "Connect your AI", will come and write it.
+Once picked, the AI is declared like a small interface, so whoever implements it knows exactly what to build:
 
-Once it's written, click its row to see which file and line implement it. If nothing's written yet, it's empty and says "not implemented yet".
+- **How it's called**: the line the interface code calls it with, `await api.callAi("name", input)`, and after the arrow what it answers. Its name is the title of its settings: rename it and the call is renamed.
+- **What it's handed**: what the interface passes in, in your words ("the message the player just sent"). The AI is told this too.
+- **What it should do**: for whoever writes the code. The Creation assistant and any outside AI you've hooked up with "Connect your AI" read this before writing anything, so you don't need to know how to code.
+- **Answer format**: the fields it answers with (text, a number, one of a few choices, a list) and where each one goes.
+
+Once it's written, the settings show which file and line implement it. If nothing's written yet, it says "not implemented yet". On the board, a custom AI's row shows what it answers, like `→ { mood, reply }`.
+
+A card can also be a character inside someone else's game, run by that game's mod: see [Characters in games](./games).
 
 ## Group chat
 
@@ -84,7 +93,7 @@ The **Smart tracking** switch lives in **Card settings**, and you'll also see it
 
 Every AI's settings have a memory part and a "wired in" part:
 
-- **Remembers the whole conversation**, **remembers only what was said here**, **shares memory with** someone: the same system as [scenario memory](/creator/modules#memory)
+- **Remembers everything in the main chat**, **remembers only what was said here**, **shares memory with** someone: the same system as [scenario memory](/creator/modules#memory)
 - **Recent messages it reads**: a combat AI might only need the last 10, for example. Cheaper, and less likely to get sidetracked by small talk from three hundred turns ago
 - **＋ Wire one in**: hands it something from somewhere else to read. You can wire in a scenario's history, something a behind-the-scenes AI wrote, a scenario's variables, or a scenario's raw messages. Wired-in history can count as **Lived it** (something the main character went through) or **Archive** (records they found, not lived through). Raw messages are expensive, so use history whenever you can
 

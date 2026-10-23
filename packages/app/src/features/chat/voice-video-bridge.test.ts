@@ -3,6 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import * as voiceSDK from "../../../sandbox/voice-api";
 import { wrapMessage, unwrapMessage, type SessionChannelData, type UIChannelData } from "../../../sandbox/protocol";
+import type { VoiceEvent } from "../../../sandbox/voice-types";
 
 function bitmap() {
   let closes = 0;
@@ -40,6 +41,48 @@ test("voice SDK passes explicit avatar opt-in, rejects malformed opt-in and supp
   voiceSDK.createVoiceAPI({ ...options, available: false }).onEvent(() => { received = true; });
   target.dispatchEvent(new CustomEvent(voiceSDK.VOICE_EVENT, { detail: { type: "video-status", status: "live" } }));
   assert.equal(received, false);
+});
+
+test("call notices cross the parent bridge and SDK unchanged, independently of microphone hints", async () => {
+  const dom = new JSDOM('<iframe></iframe>', { url: "https://yumina.test" });
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.assign(globalThis, { window: dom.window });
+  const { SandboxBridge } = await import("../sandbox/bridge-parent");
+  const iframe = dom.window.document.querySelector("iframe")!;
+  const target = new EventTarget(), received: VoiceEvent[] = [], posts: unknown[] = [];
+  let available = true;
+  const api = voiceSDK.createVoiceAPI({ available, target, call: async () => { throw Error("No provider call"); }, post(method, args) { posts.push([method, args]); } });
+  const unsubscribe = api.onEvent(event => received.push(event));
+  iframe.contentWindow!.postMessage = ((message: unknown) => {
+    const payload = unwrapMessage<{ type: string; event: VoiceEvent }>(message);
+    if (payload?.type === "voice-event") voiceSDK.dispatchVoiceEvent(payload.event, {
+      available, target, post() { assert.fail("Lifetime notices require no provider or media acknowledgement"); },
+    });
+  }) as typeof window.postMessage;
+  const bridge = new SandboxBridge({ onApiCall() {} });
+  const warning: VoiceEvent = { type: "call-notice", notice: {
+    kind: "ending-soon", remainingMs: 27950,
+    message: "This voice call ends soon. Start voice again after it ends to continue.",
+  } };
+  const hint: VoiceEvent = { type: "input-hint", message: "Please repeat those words." };
+  const clear: VoiceEvent = { type: "call-notice", notice: null };
+  try {
+    bridge.attach(iframe);
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+      data: wrapMessage({ type: "ready", protocolVersion: 2 }), source: iframe.contentWindow, origin: "null",
+    }));
+    api.setMuted({ input: true, output: true });
+    bridge.sendVoiceEvent(warning); bridge.sendVoiceEvent(hint); bridge.sendVoiceEvent(clear);
+    assert.deepEqual(received, [warning, hint, clear]);
+    assert.deepEqual(posts, [["realtimeVoice.setMuted", [{ input: true, output: true }]]]);
+    available = false; bridge.sendVoiceEvent(warning);
+    assert.equal(received.length, 3, "inactive sandbox scopes cannot receive call notices");
+    available = true; unsubscribe(); bridge.sendVoiceEvent(warning);
+    assert.equal(received.length, 3, "a replaced card subscription cannot receive notices");
+  } finally {
+    unsubscribe(); bridge.destroy(); dom.window.close();
+    if (saved) Object.defineProperty(globalThis, "window", saved); else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("parent bridge transfers one bitmap, rejects foreign/stale acks, and closes unavailable frames without queueing or JSON fallback", async () => {

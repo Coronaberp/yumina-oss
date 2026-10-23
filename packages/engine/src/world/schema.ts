@@ -450,6 +450,7 @@ export const moduleStationSchema = z.object({
   task: z.string().max(4000).optional(),
   name: z.string().max(60).optional(),
   // 自定义 — see ModuleStation in types/index.ts.
+  takes: z.string().max(600).optional(),
   sees: z.object({
     variables: z.array(z.string().max(200)).max(40).optional(),
     history: z.number().int().min(0).max(60).optional(),
@@ -483,6 +484,7 @@ export const moduleStationSchema = z.object({
   cooldownSec: z.number().int().min(0).max(3600).optional(),
   maxTokens: z.number().int().min(50).max(4000).optional(),
   temperature: z.number().min(0).max(1.5).optional(),
+  answer: z.enum(["text", "json"]).optional(),
 });
 
 /** A situation can also be a door the player opens by saying a word — a
@@ -672,6 +674,21 @@ export const worldDefinitionSchema = z.object({
   lorebookEntries: z.array(lorebookEntrySchema).optional(),
   customUI: z.array(customUIComponentSchema).default([]),
   rootComponent: rootComponentSchema.optional(),
+  // A game card (see WorldGame in types/index.ts): kept through validation,
+  // or an import would turn the card back into a chat.
+  game: z.object({
+    path: z.string().max(500).optional(),
+    name: z.string().max(80).optional(),
+    inputs: z.array(z.string().max(200)).max(200).optional(),
+    outputs: z.array(z.string().max(200)).max(200).optional(),
+    ais: z.array(z.object({
+      name: z.string().max(80),
+      gets: z.string().max(1000).optional(),
+      returns: z.string().max(1000).optional(),
+      where: z.string().max(300).optional(),
+      book: z.string().max(200).optional(),
+    }).passthrough()).max(20).optional(),
+  }).passthrough().nullable().optional(),
   /** The interface document. Never read by the runtime — save-time compiles it
    *  into `rootComponent`, which stays the only visual-layer input. */
   uiDoc: _uiDocSchema.optional(),
@@ -701,6 +718,7 @@ export const worldDefinitionSchema = z.object({
   graphLayout: z
     .object({
       version: z.number(),
+      cardTitle: z.string().max(80).optional(),
       nodes: z.record(
         z.object({
           x: z.number(),

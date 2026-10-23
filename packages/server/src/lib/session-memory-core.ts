@@ -115,7 +115,11 @@ export function classifyMemoryOutput(args: {
 }
 
 export const MEMORY_UPDATE_MIN_TURNS = 3;
-export const MEMORY_UPDATE_MIN_CHARS = 4_000;
+/** Early trigger for fewer than three pending turns. Roughly three long turns:
+ * at 4,000 one long reply (prod exchange p90 4.6k, 10/12–10/19) ran the full
+ * rewrite every turn. Unprocessed turns stay in raw history, so waiting for
+ * the third turn loses nothing (−27% incremental runs in a replay of that week). */
+export const MEMORY_UPDATE_MIN_CHARS = 15_000;
 export const MEMORY_BATCH_MAX_CHARS = 60_000;
 
 /** Input must be the oldest unprocessed rows, ending no later than lag-one.
@@ -153,11 +157,13 @@ export function shouldUpdateSessionMemory(args: {
   pendingChars: number;
   hasMemory: boolean;
   failed: boolean;
-  overBudget: boolean;
   force?: boolean;
 }): boolean {
+  // An over-target memory is no longer a reason to run every turn: output up
+  // to MAX_MEMORY_CHARS is accepted, and memoryBudgetInstruction asks every
+  // batched update to compress it anyway.
   if (args.pendingTurns === 0) return false;
-  return !!args.force || !args.hasMemory || args.failed || args.overBudget
+  return !!args.force || !args.hasMemory || args.failed
     || args.pendingTurns >= MEMORY_UPDATE_MIN_TURNS || args.pendingChars >= MEMORY_UPDATE_MIN_CHARS;
 }
 

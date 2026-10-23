@@ -1,4 +1,11 @@
 {
+  "motion": {
+    "uploadHint": "图片限 20 MB；动态封面限 64 MB、60 秒，支持 MP4、WebM。",
+    "processing": "正在优化封面…",
+    "uploading": "正在上传封面…",
+    "play": "播放",
+    "pause": "暂停"
+  },
   "voiceField": {
     "characterLabel": "音色",
     "characterHint": "玩家开语音朗读时，这个角色的台词用这个声音念。不设的话由 AI 按角色自动挑一个。",
@@ -660,9 +667,9 @@
         "sharedHint": "卡本身的词条和变量进每一个情境。每个副本里都有的那个血量是同一个变量，不是四个。",
         "trap": "{{source}} 传不到这里（经 {{via}}）",
         "connections": "读取 {{reads}} 项 · 被 {{gives}} 个情境读取",
-        "reviewConnections": "{{count}} 处间接引用待检查",
-        "memoryCardAlone": "记得整段对话",
-        "memoryCardHint": "没有情境接管时，跑的就是这个 AI；说过的话它全都记得。",
+        "reviewConnections": "{{count}} 条连线传不到这里",
+        "memoryCardAlone": "记得主对话里的每一句",
+        "memoryCardHint": "没有情境接管时，跑的就是这个 AI。它读这张卡的主对话：每个情境里说过的话都在里面，读多远看「历史」设置。界面叫的 AI（比如手机里的每个联系人）各有自己的对话，它看不到。",
         "continuityOn": "智能追踪：开",
         "continuityOff": "智能追踪：关"
       }
@@ -4649,8 +4656,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "未保存的更改",
-    "description": "如果离开而不保存，您的更改将丢失。",
+    "title": "还没保存",
+    "description": "这张卡还没存过。现在离开，刚才写的就没了。",
     "stay": "留下",
     "leave": "不保存离开",
     "saveAndLeave": "保存并离开",
@@ -4658,7 +4665,11 @@
     "switchDescription": "切换编辑界面前，先把刚才的改动存上。不保存的话，这些改动会丢失。",
     "switchCancel": "取消",
     "switchWithoutSaving": "不保存直接切换",
-    "saveAndSwitch": "保存并切换"
+    "saveAndSwitch": "保存并切换",
+    "saving": "正在保存…",
+    "failedTitle": "没存上",
+    "failedDescription": "刚才的改动没能存到服务器。可以再试一次，或者不保存离开。",
+    "retry": "再试一次"
   },
   "save": {
     "staleWorldToast": "保存失败，请稍后再试",

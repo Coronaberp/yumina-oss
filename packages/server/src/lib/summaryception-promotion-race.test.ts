@@ -15,7 +15,7 @@ after(async () => { await (db as unknown as { $client: { close(): Promise<void> 
 
 test("a restart during layer promotion cannot resurrect snippets or compacted flags", async t => {
   const userId = randomUUID();
-  const model = "google/gemini-2.5-flash-lite";
+  const model = "google/gemini-3.1-flash-lite";
   const previousKey = env.YUMINA_OPENROUTER_KEY;
   env.YUMINA_OPENROUTER_KEY = "test-only-never-sent-key";
   await db.insert(user).values({ id: userId, name: "Promotion", email: `${userId}@example.test` });

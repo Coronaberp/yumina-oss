@@ -12,6 +12,7 @@ import type {
   LiveCanonApiResult,
   LiveCanonEntryInput,
 } from "@yumina/shared";
+import type { ReplyRule } from "@yumina/engine";
 import type { SandboxCapabilities, SandboxEntry, SandboxLoreUiBinding, SandboxWorldbook, SandboxMode, SandboxState, LocalBridgeChannelData, TtsChannelData, VoiceInputChannelData, VoicePlaybackFrame } from "./protocol";
 import { wrapMessage, postToParentWindow, type ApiCallMessage } from "./protocol";
 import { renderMarkdown } from "./chat/markdown";
@@ -137,6 +138,7 @@ export interface SandboxedYuminaAPI {
   speakerBubbles?: boolean;
   /** Worldbooks (lore modules) defined on the world. */
   worldbooks: ReadonlyArray<SandboxWorldbook>;
+  replyRules?: ReadonlyArray<ReplyRule>;
   /** Lookup helper: find a single entry by exact name (case-sensitive). Returns
    *  null if missing. Convenience for the common "give me 人物：X's profile" pattern. */
   getEntry: (name: string) => SandboxEntry | null;
@@ -336,6 +338,7 @@ export interface SandboxedYuminaAPI {
   /** Draw (or redraw) the illustration for one assistant reply */
   /** Draw (or redraw) a reply's picture; `note` is the player's ask for the redraw ("keep the black sweater"). */
   illustrateMessage: (messageId: string, note?: string, fine?: boolean) => Promise<boolean>;
+  cancelTurnImage: (messageId: string) => Promise<boolean>;
   /** Whether per-turn illustration is available to this player (server flag + their experimental opt-in), and their auto switch */
   getTurnImageSettings: () => Promise<{ available: boolean; auto: boolean; price?: number; freeLeft?: number; unlimited?: boolean; fine?: boolean } | null>;
   /** Open the host's mushie top-up popup. */
@@ -441,6 +444,9 @@ export interface SandboxedYuminaAPI {
   playerPrompts: import("./protocol").PlayerPromptsChannelData | null;
   /** Switch one of the player's own prompts on/off. */
   togglePlayerPrompt: (promptId: string, enabled: boolean) => Promise<{ ok: boolean }>;
+  /** Open the host's "write your own prompt" dialog. The sandbox never writes
+   *  the prompt itself: the player types and saves in host UI. Fire-and-forget. */
+  openPromptComposer: () => void;
 
   // ─── Session memory ────────────────────────────────────────────────────
   getStateGuardSettings: () => Promise<import("@yumina/shared").StateGuardSettings>;
@@ -787,6 +793,7 @@ const defaultAPI: SandboxedYuminaAPI = {
   entries: [],
   loreUiBindings: [],
   worldbooks: [],
+  replyRules: [],
   getEntry: () => null,
   pickChatImage: async () => null,
   sendMessage: () => {},
@@ -858,6 +865,7 @@ const defaultAPI: SandboxedYuminaAPI = {
   editMessage: () => noopPromise(false),
   deleteMessage: () => noopPromise(false),
   illustrateMessage: () => noopPromise(false),
+  cancelTurnImage: () => noopPromise(false),
   getTurnImageSettings: () => noopPromise(null),
   openCreditTopUp: () => {},
   setAutoTurnImages: () => noopPromise(false),
@@ -911,6 +919,7 @@ const defaultAPI: SandboxedYuminaAPI = {
   setPoolWeight: () => {},
   playerPrompts: null,
   togglePlayerPrompt: () => noopPromise({ ok: false }),
+  openPromptComposer: () => {},
   getStateGuardSettings: () => Promise.reject(new Error("No active session")),
   setStateGuardSettings: () => Promise.reject(new Error("No active session")),
   getSessionMemory: () =>
@@ -1008,7 +1017,7 @@ const defaultAPI: SandboxedYuminaAPI = {
     finish: async () => ({ status: 'unsupported', reason: 'no-scoped-relay-call', providerState: 'unconfirmed', accounting: 'unknown' }),
     prepare: () => Promise.reject(new Error("Voice is unavailable in this view.")),
     start: () => Promise.reject(new Error("Voice is unavailable in this view.")),
-    stop: () => {}, interrupt: () => {}, setMuted: () => {}, updateContext: () => {}, updateInstructions: () => {}, reactToScene: () => {}, cancelSceneReaction: () => {}, resolveTool: () => {}, setSpatial: () => {},
+    stop: () => {}, interrupt: () => {}, setMuted: () => {}, updateContext: () => {}, updateInstructions: () => {}, reactToScene: () => {}, cancelSceneReaction: () => {}, resolveTool: () => {}, resolveDelegation: () => {}, setSpatial: () => {},
     onEvent: () => () => {},
   },
   injectContext: () => {},
@@ -1279,6 +1288,7 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     entries: state.entries ?? [],
     loreUiBindings: state.loreUiBindings ?? [],
     worldbooks: state.worldbooks ?? [],
+    replyRules: state.replyRules ?? [],
     getEntry: (name: string) => {
       const list = state.entries ?? [];
       for (const e of list) if (e.name === name) return e;
@@ -1457,6 +1467,7 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
       ? callParent("illustrateMessage", fine ? [messageId, note ?? "", true] : note ? [messageId, note] : [messageId], 120_000)
       : guardedCall(false, true),
     getTurnImageSettings: () => sessionApisAvailable ? callParent("getTurnImageSettings", []) : Promise.resolve(null),
+    cancelTurnImage: (messageId) => sessionApisAvailable ? callParent("cancelTurnImage", [messageId], 35_000) : guardedCall(false, true),
     openCreditTopUp: () => { if (sessionApisAvailable) void callParent("openCreditTopUp", []); },
     setAutoTurnImages: (on) => sessionApisAvailable ? callParent("setAutoTurnImages", [on]) : guardedCall(false, true),
     regenerateMessage: (messageId) => { if (sessionApisAvailable) postToParent("regenerateMessage", [messageId]); else promptAuth(); },
@@ -1514,6 +1525,7 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
       sessionApisAvailable
         ? callParent<{ ok: boolean }>("togglePlayerPrompt", [promptId, enabled], 20_000).catch(() => ({ ok: false }))
         : Promise.resolve({ ok: false }),
+    openPromptComposer: () => { if (sessionApisAvailable) postToParent("openPromptComposer", []); },
     getStateGuardSettings: () => sessionApisAvailable ? callParent("getStateGuardSettings", []) : Promise.reject(new Error("No active session")),
     setStateGuardSettings: (patch) => sessionApisAvailable ? callParent("setStateGuardSettings", [patch]) : Promise.reject(new Error("No active session")),
     getSessionMemory: () =>

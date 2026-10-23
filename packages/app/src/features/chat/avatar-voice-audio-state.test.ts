@@ -14,6 +14,41 @@ function harness() {
   return { state, commands, capture, playback, muted };
 }
 
+test('delivery authority is checked before opening the avatar mute gate and never cuts an already audible utterance', () => {
+  for (const initiallyCurrent of [false, true]) {
+    const muted: boolean[] = [], playback: string[] = [], commands: Record<string, unknown>[] = [];
+    let current = initiallyCurrent, checks = 0;
+    const state = new AvatarUtterances({ uuid: () => 'speech', send: e => commands.push(e), capture() {},
+      mute: value => muted.push(value), playback: value => playback.push(value), beforePlayback: () => { checks++; return current; } });
+    state.connected(); state.provider({ type: 'output_audio_buffer.started', response_id: 'approved' }); state.pcm(1, new Uint8Array([1, 2]));
+    state.avatar({ type: 'agent.speak_started', source_event_id: 'speech' });
+    assert.equal(muted.includes(false), initiallyCurrent);
+    assert.deepEqual(playback, [initiallyCurrent ? 'started' : 'cleared']);
+    assert.equal(checks, 1);
+    if (initiallyCurrent) {
+      state.avatar({ type: 'agent.speak_ended', source_event_id: 'speech' }); current = false;
+      state.pcm(1, new Uint8Array([3, 4])); state.avatar({ type: 'agent.speak_started', source_event_id: 'speech' });
+      assert.equal(muted.at(-1), false); assert.equal(checks, 1, 'A chunk gap is still the same audible utterance');
+      assert.equal(commands.some(e => e.type === 'agent.interrupt'), false);
+    } else {
+      assert.ok(commands.some(e => e.type === 'agent.interrupt'));
+      state.avatar({ type: 'agent.speak_started', source_event_id: 'speech' }); assert.equal(checks, 1);
+    }
+    state.close();
+  }
+});
+
+test('a newer correlated playback cannot leave a sealed skipped source permanently pending',()=>{
+  let id=0,now=0;const queue:number[]=[],errors:string[]=[];
+  const state=new AvatarUtterances({uuid:()=>String(++id),send(){},capture(){},playback(){},mute(){},now:()=>now,queue:n=>queue.push(n),error:e=>errors.push(e)});
+  state.connected();
+  for(let n=1;n<=2;n++){state.provider({type:'output_audio_buffer.started',response_id:'r'+n});state.pcm(n,new Uint8Array([1,2]));state.drained(n);}
+  state.avatar({type:'agent.speak_started',source_event_id:'2'});
+  state.avatar({type:'agent.speak_ended',source_event_id:'2'});
+  assert.equal(queue.at(-1),0);
+  now=60000;state.checkTimeout();assert.deepEqual(errors,[]);state.close();
+});
+
 test("source chunks cannot speak before connected, or without an active output utterance", () => {
   const h = harness();
   h.state.pcm(0, new Uint8Array([1, 2]));

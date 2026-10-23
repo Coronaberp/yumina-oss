@@ -33,6 +33,7 @@ import {
   Mail,
   MessageSquare,
   Link2,
+  Plug,
   MonitorSmartphone,
   ShieldOff,
   X,
@@ -458,6 +459,7 @@ const SINGLE_USER_HIDDEN_ACCOUNT_ITEMS: ReadonlySet<string> = new Set([
   "account-password",
   "account-sign-out",
   "account-devices",
+  "account-apps",
   "account-delete",
 ]);
 
@@ -490,6 +492,7 @@ function createSettingsSearchItems(
     { id: "account-username", sectionId: "account", targetId: "settings-target-account-username", title: t("account.usernameLabel"), description: t("account.usernameHint"), category: category.account },
     { id: "account-password", sectionId: "account", targetId: "settings-target-account-password", title: t("account.changePassword.title"), description: t("account.changePassword.description"), category: category.account },
     { id: "account-connections", sectionId: "account", targetId: "settings-target-account-connections", title: t("account.connectedAccounts.title"), description: t("account.connectedAccounts.description"), category: category.account },
+    { id: "account-apps", sectionId: "account", targetId: "settings-target-account-apps", title: t("account.connectedApps.title"), description: t("account.connectedApps.description"), category: category.account, keywords: ["OAuth", "mod"] },
     { id: "account-devices", sectionId: "account", targetId: "settings-target-account-devices", title: t("account.loginDevices.title"), description: t("account.loginDevices.description"), category: category.account },
     { id: "account-sign-out", sectionId: "account", targetId: "settings-target-account-sign-out", title: t("account.signOut.title"), description: t("account.signOut.description"), category: category.account },
     { id: "account-delete", sectionId: "account", targetId: "settings-target-account-delete", title: t("account.deleteAccount.title"), description: t("account.deleteAccount.description"), category: category.account },
@@ -1513,6 +1516,123 @@ function ConnectedAccountsCard() {
   );
 }
 
+/** Short labels for what a connected app may do (OAuth scopes). */
+const CONNECTED_APP_SCOPE_LABELS = [
+  ["ai:chat", "aiChat"],
+  ["wallet:read", "walletRead"],
+  ["quests", "quests"],
+  ["cards", "cards"],
+] as const;
+
+interface ConnectedApp {
+  clientId: string; name: string; connectedAt: string | null; scopes: string[]; firstParty: boolean;
+}
+
+/**
+ * Game mods, apps and outside AIs signed in to this account through Yumina's
+ * OAuth server. Disconnecting revokes the app's refresh tokens and consent, and
+ * the gateway / card MCP check the consent on every call, so it stops at once.
+ */
+function ConnectedAppsCard() {
+  const { t, i18n } = useTranslation("settings");
+  const [apps, setApps] = useState<ConnectedApp[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/connected-apps`, { credentials: "include" });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as { data?: ConnectedApp[] };
+      setApps(body.data ?? []);
+      setFailed(false);
+    } catch {
+      setFailed(true);
+      setApps([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const handleDisconnect = useCallback(async (clientId: string) => {
+    setBusyId(clientId);
+    setActionError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/connected-apps/${encodeURIComponent(clientId)}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) setActionError(t("account.connectedApps.disconnectError"));
+      else await refresh();
+    } catch {
+      setActionError(t("account.connectedApps.disconnectError"));
+    } finally {
+      setBusyId(null);
+    }
+  }, [refresh, t]);
+
+  return (
+    <Card id="settings-target-account-apps">
+      <CardIcon icon={Plug} />
+      <div className="min-w-0 flex-1 space-y-4">
+        <div>
+          <div className="font-semibold text-main">{t("account.connectedApps.title")}</div>
+          <div className="mt-0.5 text-xs text-sub">{t("account.connectedApps.description")}</div>
+        </div>
+
+        {apps === null ? (
+          <div className="flex items-center gap-2 text-xs text-sub">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {t("account.connectedApps.loading")}
+          </div>
+        ) : failed ? (
+          <div className="text-xs text-sub">{t("account.connectedApps.loadError")}</div>
+        ) : apps.length === 0 ? (
+          <div className="text-xs text-sub/60">{t("account.connectedApps.empty")}</div>
+        ) : (
+          <div className="space-y-2">
+            {apps.map((app) => {
+              const can = CONNECTED_APP_SCOPE_LABELS.filter(([scope]) => app.scopes.includes(scope))
+                .map(([, key]) => t(`account.connectedApps.scope.${key}`));
+              return (
+                <div
+                  key={app.clientId}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-main">{app.name}</span>
+                      {app.firstParty && (
+                        <span className="shrink-0 rounded-full border border-gold/30 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold">
+                          {t("account.connectedApps.verified")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-xs text-sub/60">
+                      {[
+                        app.connectedAt ? t("account.connectedApps.connectedOn", { date: formatSessionTime(app.connectedAt, i18n.language) }) : null,
+                        can.length ? can.join(" · ") : null,
+                      ].filter(Boolean).join(" · ")}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void handleDisconnect(app.clientId)}
+                    disabled={busyId !== null}
+                    className="shrink-0 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-400 transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyId === app.clientId ? t("account.connectedApps.disconnecting") : t("account.connectedApps.disconnect")}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <FieldError message={actionError} />
+      </div>
+    </Card>
+  );
+}
+
 function AccountSection({
   session, profile, editUsername, setEditUsername, savingUsername, handleSaveUsername,
   usernameError, usernameSavedAt,
@@ -1618,6 +1738,7 @@ function AccountSection({
       {auth.mode === "multi-user" && (
         <>
           <ConnectedAccountsCard />
+          <ConnectedAppsCard />
           <LoginDevicesCard currentToken={session?.session?.token ?? null} />
         </>
       )}

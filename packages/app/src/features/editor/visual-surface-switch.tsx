@@ -62,9 +62,12 @@ interface VisualSurfaceSwitchProps {
   /** What the switch is named: the canvas on a wide screen, Studio on a phone,
    *  where the surface behind it is the phone shell and not a board. */
   surface?: "canvas" | "studio";
+  /** The icon and the switch, no words: a phone's one header row has no room
+   *  for them. Still one tap, still says what it is (title, aria). */
+  compact?: boolean;
 }
 
-export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", intro = !on, className, surface = "canvas" }: VisualSurfaceSwitchProps) {
+export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", intro = !on, className, surface = "canvas", compact = false }: VisualSurfaceSwitchProps) {
   const { t } = useTranslation("editor");
   const studio = surface === "studio";
   const [showIntro, setShowIntro] = useState(false);
@@ -106,7 +109,7 @@ export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", i
         )}
       >
         <Workflow className="h-3.5 w-3.5" />
-        <span>{t(studio ? "shell.studioSwitch" : "shell.visualSwitch")}</span>
+        <span className={cn(compact && "sr-only")}>{t(studio ? "shell.studioSwitch" : "shell.visualSwitch")}</span>
         <span
           aria-hidden
           className={cn(
@@ -125,6 +128,7 @@ export function VisualSurfaceSwitch({ on, onToggle, disabled, tour = "studio", i
           data-visual-surface-beta=""
           className={cn(
             "rounded-full border px-1.5 py-px text-[9px] font-bold uppercase leading-none tracking-wide",
+            compact && "hidden",
             on ? "border-primary/40 text-primary" : "border-border text-muted-foreground/80",
           )}
         >

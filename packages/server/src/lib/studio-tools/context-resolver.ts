@@ -314,10 +314,22 @@ export function buildInventory(world: WorldDefinition, assets: AssetSummary[]): 
     }
     return out;
   };
+  // A card that is a character in a game its mod runs: the mod finds these
+  // variables by id, so renaming or deleting one silently cuts the game off.
+  const game = (world as { game?: { path?: unknown; name?: unknown; inputs?: unknown; outputs?: unknown } | null }).game;
+  const ids = (list: unknown) => (Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : []);
+  if (game && typeof game === "object" && typeof game.path !== "string" && (Array.isArray(game.inputs) || Array.isArray(game.outputs))) {
+    const name = typeof game.name === "string" && game.name.trim() ? game.name.trim() : "its game";
+    parts.push(`
+GAME INTERFACE — this card is a character inside ${name}, run by that game's mod (schema.game). Before every turn the game writes: ${ids(game.inputs).join(", ") || "(none yet)"}. After the reply it reads back what the AI wrote into: ${ids(game.outputs).join(", ") || "(none yet)"}. Never rename or delete these variable ids; their values on the card are only playtest samples. Change which variables are on which side only when the creator asks (write schema.game.inputs / outputs).`);
+  } else if ((world as { spiretalk?: unknown }).spiretalk) {
+    parts.push(`
+GAME INTERFACE — this is a SpireTalk card (Slay the Spire 2 mod, schema.spiretalk): the mod injects the run's state into its variables every turn and reads affection_delta, choices and action back. Never rename or delete existing variable ids.`);
+  }
   const customAis = worldbooks.filter((b) => b.station?.kind === "custom");
   const customBehaviors = (world.reactions ?? []).filter((r) => r.custom);
   if (customAis.length > 0 || customBehaviors.length > 0) {
-    parts.push(`\nCUSTOM SLOTS (自定义) — the creator declared these on the canvas for CODE to implement; a sticky note on one says what it should do. Implement a custom AI by calling api.ai.complete({ messages, context: "session", includeLorebook: "matched", worldbookIds: ["<module id>"] }) from the rootComponent (its entries become that call's lore), or — when the declared shape fits — turn it into a worker station (write_worldbook station { kind: "worker", trigger: { on: "ui" }, output... }) and call api.callAi("<name>"). Implement a custom behaviour by giving it \`code\` (write_behavior; ctx.get/set/add/push/toast/say/callAi) or by firing it from the interface with api.executeAction("<behavior id>"). Read the note first; keep the slot (do not change its kind) unless the creator says otherwise.`);
+    parts.push(`\nCUSTOM SLOTS (自定义) — the creator declared these on the canvas for CODE to implement; its 📌 note (or a sticky note on it) says what it should do, and a custom AI's contract line says what it is called, handed and must answer — code to that shape. Implement a custom AI by calling api.ai.complete({ messages, context: "session", includeLorebook: "matched", worldbookIds: ["<module id>"] }) from the rootComponent (its entries become that call's lore), or — when the declared shape fits — turn it into a worker station (write_worldbook station { kind: "worker", trigger: { on: "ui" }, output... }) and call api.callAi("<name>"). Implement a custom behaviour by giving it \`code\` (write_behavior; ctx.get/set/add/push/toast/say/callAi) or by firing it from the interface with api.executeAction("<behavior id>"). Read the note first; keep the slot (do not change its kind) unless the creator says otherwise.`);
   }
   if (worldbooks.length > 0) {
     parts.push(`\nMODULES / WORLDBOOKS (${worldbooks.length}) — members with no book = always-on Core; an inactive module gates its entries AND variables AND behaviors:`);
@@ -348,6 +360,12 @@ export function buildInventory(world: WorldDefinition, assets: AssetSummary[]): 
           ? " [WORKER station: background AI, never speaks to the player; its output is context for others]"
           : ` [NARRATOR station: its own AI answers the player while active${st.onClose === "archive" ? "; on deactivation its span folds into a summary (副本)" : ""}${st.memoryPool ? `; memory pool "${st.memoryPool}" — remembers only the runs of modules in that pool` : ""}]`;
       parts.push(`  ${wb.id}: "${wb.name}" — activation=${actStr}; ${members.join(", ")}${off}${run}`);
+      // A custom AI is a declared interface: what it is called, what it is
+      // handed and what it answers. The one implementing it codes to that.
+      if (wb.station?.kind === "custom") {
+        const fields = (wb.station.output ?? []).map((f) => `${f.name}: ${f.type === "choice" && f.options?.length ? f.options.map((o) => JSON.stringify(o)).join(" | ") : f.type}${f.hint ? ` (${f.hint})` : ""}`);
+        parts.push(`    contract: api.callAi(${JSON.stringify(wb.station.name?.trim() || wb.name)}, input)${wb.station.takes?.trim() ? ` — input: ${wb.station.takes.trim().replace(/\n/g, " / ")}` : ""} → ${fields.length ? `{ ${fields.join(", ")} }` : "text"}`);
+      }
       // The sticky note is the creator's own statement of what this module IS
       // and what they intend for it — read it before touching the module, and
       // keep it current via write_worldbook { note } when intent changes.

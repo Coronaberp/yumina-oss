@@ -540,7 +540,7 @@ export function toGraph(world: WorldLogic, options?: ToGraphOptions): CardGraph 
       data: {
         drillTarget: "code-view", slotIds, readIds,
         ...(uiScan.dynamicReads > 0 ? { dynamicReads: uiScan.dynamicReads } : {}),
-        ...(manifest ? { files: manifest.files, aiCalls: manifest.aiCalls, uses: manifest.uses } : {}),
+        ...(manifest ? { files: manifest.files, aiCalls: manifest.aiCalls, uses: manifest.uses, sceneEvents: manifest.sceneEvents } : {}),
       },
     });
     // "Which variable drives this panel?" — the wire the whole canvas was for.

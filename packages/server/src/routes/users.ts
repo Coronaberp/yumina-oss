@@ -17,7 +17,7 @@ import { isReservedUsername } from "@yumina/shared";
 import { updateProfileSchema, getAgeFromBirthYear, aiConfigSchema, MAX_PROFILE_POST_LENGTH, PROFILE_POSTS_PAGE_SIZE, normalizeProfileWorldSort, normalizeProfileWorldOrder, sanitizeTtsVoicePool, sanitizeTtsCustomVoices } from "@yumina/shared";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { sanitizeDisplayName } from "../lib/sanitize.js";
-import { aggregatedCounters } from "../lib/world-aggregates.js";
+import { aggregatedCounters, displayDownloadColumn } from "../lib/world-aggregates.js";
 import { getBlockStatus, listBlockedUsersForHiding } from "../lib/blocks.js";
 import {
   canViewRestrictedProfile,
@@ -112,7 +112,7 @@ users.get("/me", authMiddleware, async (c) => {
   return c.json({ data: {
     ...row,
     showcasedAchievement,
-    defaultStoryMemory: profileStoryMemoryDefault(row.createdAt, env.STORY_MEMORY_DEFAULT_AT),
+    defaultStoryMemory: profileStoryMemoryDefault(row.createdAt, env.STORY_MEMORY_DEFAULT_AT, env.STORY_MEMORY_CARRIED_OVER_DEFAULT),
     // Whether this server offers per-turn pictures at all: Settings shows the
     // experimental opt-in only then.
     turnImagesOffered: perTurnImagesEnabled(),
@@ -144,7 +144,7 @@ users.get("/me/playtime", authMiddleware, async (c) => {
       .from(worlds)
       .where(eq(worlds.creatorId, currentUser.id)),
     rd
-      .select({ total: sql<number>`coalesce(sum(${worlds.downloadCount}), 0)::int` })
+      .select({ total: sql<number>`coalesce(sum(${displayDownloadColumn}), 0)::int` })
       .from(worlds)
       .where(eq(worlds.creatorId, currentUser.id)),
     rd
@@ -507,7 +507,7 @@ users.get("/:id", optionalAuthMiddleware, async (c) => {
         .from(user)
         .where(eq(user.id, userId)),
       rd
-        .select({ total: sql<number>`coalesce(sum(${worlds.downloadCount}), 0)::int` })
+        .select({ total: sql<number>`coalesce(sum(${displayDownloadColumn}), 0)::int` })
         .from(worlds)
         .where(and(eq(worlds.creatorId, userId), worldAudienceCondition(worlds.creatorId))),
       rd
@@ -682,7 +682,7 @@ users.get("/:id/library", optionalAuthMiddleware, async (c) => {
       worldAgeRating: worlds.ageRating,
       worldIsNsfw: worlds.isNsfw,
       worldBlurCover: worlds.blurCover,
-      worldDownloadCount: aggregatedCounters.downloadCount,
+      worldDownloadCount: aggregatedCounters.displayDownloadCount,
       worldMessageCount: aggregatedCounters.messageCount,
       creatorId: worlds.creatorId,
       creatorName: user.name,
@@ -973,7 +973,7 @@ users.on(["POST", "PATCH"], "/me", authMiddleware, rateLimitMiddleware("profile-
 
   return c.json({ data: {
     ...updated,
-    defaultStoryMemory: profileStoryMemoryDefault(updated.createdAt, env.STORY_MEMORY_DEFAULT_AT),
+    defaultStoryMemory: profileStoryMemoryDefault(updated.createdAt, env.STORY_MEMORY_DEFAULT_AT, env.STORY_MEMORY_CARRIED_OVER_DEFAULT),
   } });
   } catch (err) {
     console.error("[USERS] Error updating profile:", err);

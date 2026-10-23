@@ -14,6 +14,7 @@ import { parseImportedFile } from "@/lib/import-world";
 import {
   getAssetUploadErrorMessage,
   uploadAssetWithPresignedUrl,
+  registerAssetWithRetry,
 } from "@/lib/asset-upload";
 import {
   type CoverCropSettings,
@@ -29,6 +30,7 @@ import { CoverCropDialog } from "../components/cover-crop-dialog";
 import { confirmAction } from "@/components/ui/global-confirm-dialog";
 import { TwoTapDeleteButton } from "@/components/ui/two-tap-delete-button";
 import { LiveCanonGroup } from "@/features/studio/panels/blueprint/live-canon";
+import { focusCoverSettings, type CoverSettingsTarget } from "../lib/cover-settings-target";
 
 
 
@@ -46,13 +48,21 @@ function fetchWithTimeout(input: RequestInfo, init: RequestInit, timeoutMs: numb
 }
 
 /** `embedded`: inside the canvas inspector, which already scrolls and pads. */
-export function OverviewSection({ embedded = false }: { embedded?: boolean } = {}) {
+export function OverviewSection({ embedded = false, focusCover, coverOnly = false }: {
+  embedded?: boolean;
+  focusCover?: CoverSettingsTarget;
+  coverOnly?: boolean;
+} = {}) {
   const { enabled: discoverPreview } = useDiscoverAccess();
   const { t } = useTranslation(["editor", "coverEditor"]);
   const { t: tLibrary } = useTranslation("library");
   const creator = useSession().data?.user;
   const worldDraft = useEditorStore(s => s.worldDraft);
   const serverWorldId = useEditorStore(s => s.serverWorldId);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (contentRef.current && focusCover) return focusCoverSettings(contentRef.current, focusCover);
+  }, [focusCover, discoverPreview, serverWorldId]);
   const readOnlyInspect = useEditorStore(s => s.readOnlyInspect);
   const guestMode = useEditorStore(s => s.guestMode);
   const historyState = useEditorStore(s => `${s.worldStatus}:${s.pendingEdit?.status ?? ""}`);
@@ -65,6 +75,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
   const continuityEnabled = useEditorStore((s) => s.worldDraft.continuity?.enabled !== false);
 
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [processingCover, setProcessingCover] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
   const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
@@ -153,6 +164,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
     async (file: File) => {
       const target = coverTarget.current;
       setUploadingCover(true);
+      setProcessingCover(false);
       setCoverError(null);
       try {
         let id = serverWorldId;
@@ -167,7 +179,9 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
 
         const data = await uploadAssetWithPresignedUrl<{ thumbnailUrl: string; previousUpdatedAt?: string | null; updatedAt?: string }>({
           file,
-          preferredType: "image",
+          normalizedByServer: true,
+          registerTimeoutMs: 240_000,
+          onStage: stage => setProcessingCover(stage === "register"),
           resizeImageMaxDimension: 2048, // card cover — don't store the full original
           prepareUrl: `${apiBase}/api/worlds/${id}/thumbnail`,
           registerUrl: `${apiBase}/api/worlds/${id}/thumbnail/confirm`,
@@ -203,6 +217,8 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
       if (!match) return;
       const assetId = match[1]!;
 
+      setUploadingCover(true);
+      setProcessingCover(true);
       setCoverError(null);
       try {
         let id = serverWorldId;
@@ -215,22 +231,11 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
           return;
         }
 
-        const res = await fetchWithTimeout(
+        const data = await registerAssetWithRetry<{ thumbnailUrl: string; previousUpdatedAt?: string | null; updatedAt?: string }>(
           `${apiBase}/api/worlds/${id}/thumbnail/from-asset`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ assetId, target }),
-          },
-          FROM_ASSET_TIMEOUT_MS,
+          { assetId, target, processingMode: "async" },
+          { timeoutMs: 240_000, retryTransient: true },
         );
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          setCoverError((err as { error?: string }).error || t("overview.coverFromAssetFailed"));
-          return;
-        }
-        const { data } = await res.json();
         if (useEditorStore.getState().serverWorldId !== id) return;
         adoptOwnWriteToken(id, data);
         const draft = useEditorStore.getState().worldDraft;
@@ -244,8 +249,10 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
           coverCrop: target === "portrait" ? undefined : draft.coverCrop,
           landscapeCoverCrop: target === "landscape" ? undefined : draft.landscapeCoverCrop,
         });
-      } catch {
-        setCoverError(t("overview.coverFromAssetFailed"));
+      } catch (error) {
+        setCoverError(getAssetUploadErrorMessage(error));
+      } finally {
+        setUploadingCover(false);
       }
     },
     [serverWorldId, saveDraft, setField, t]
@@ -417,8 +424,9 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
   );
 
   return (
-    <div className={embedded ? "@container" : "@container flex-1 overflow-y-auto p-6"}>
+    <div ref={contentRef} className={`${embedded ? "@container" : "@container flex-1 overflow-y-auto p-6"} [&_[data-cover-focus]]:rounded-lg [&_[data-cover-focus]]:ring-1 [&_[data-cover-focus]]:ring-primary/50 [&_[data-cover-focus]]:ring-offset-4 [&_[data-cover-focus]]:ring-offset-background`}>
       <div className={embedded ? "space-y-6" : "mx-auto max-w-3xl space-y-8"}>
+        {!coverOnly && <>
         <div>
           <h2 className="text-lg font-semibold text-foreground">{t("overview.title")}</h2>
           <p className="mt-1 text-sm text-muted-foreground/50">
@@ -507,7 +515,8 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
           </div>
         </div>
 
-        {/* Cover Image */}
+        </>}
+        {/* Cover shortcuts on secondary variants expose artwork only, not primary-only metadata. */}
         {discoverPreview ? <DiscoverCoverFields /> : <div data-learn="ov-cover" className="rounded-lg border border-border bg-background p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-foreground">{t("overview.coverImage")}</h3>
@@ -524,7 +533,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
                 src: worldDraft.avatar, landscapeSrc, mode: portrait ? "cover" : "gallery",
                 coverCrop, landscapeCoverCrop: landscapeSrc === worldDraft.landscapeCover ? landscapeCoverCrop : undefined,
               });
-              return <section key={target} className="min-w-0" aria-label={t(portrait ? "extra.crop.phone" : "extra.crop.desktop")}>
+              return <section key={target} data-cover-shape={target} className="min-w-0" aria-label={t(portrait ? "extra.crop.phone" : "extra.crop.desktop")}>
                 <div className="mb-2 flex items-baseline justify-between gap-2">
                   <h4 className="text-sm font-medium">{t(portrait ? "extra.crop.phone" : "extra.crop.desktop")}</h4>
                   <span className="text-[11px] text-muted-foreground">{portrait ? "1000 × 1500" : "1600 × 900"}</span>
@@ -539,7 +548,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
                 </button>
                 <p className="mb-3 mt-2 text-xs leading-relaxed text-muted-foreground">{t(portrait ? "overview.portraitUse" : "overview.landscapeUse")}</p>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled={uploadingCover} onClick={() => { coverTarget.current = target; coverFileRef.current?.click(); }}
+                  <button type="button" data-cover-upload disabled={uploadingCover} onClick={() => { coverTarget.current = target; coverFileRef.current?.click(); }}
                     className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border px-3 text-xs hover:bg-accent disabled:opacity-40">
                     {uploadingCover && coverTarget.current === target ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     {t(source ? "overview.changeCover" : "overview.uploadCover")}
@@ -561,10 +570,12 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
             })}
           </div>
           <FieldError id="cover-error" message={coverError} />
+          <p className="mt-3 text-xs text-muted-foreground">{t("coverEditor:motion.uploadHint")}</p>
+          {uploadingCover && <p role="status" className="mt-2 text-xs text-muted-foreground">{t(processingCover ? "coverEditor:motion.processing" : "coverEditor:motion.uploading")}</p>}
           <input
             ref={coverFileRef}
             type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp"
+            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -574,6 +585,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
           />
         </div>}
 
+        {!coverOnly && <>
         {/* Gallery Images */}
         <div data-learn="ov-gallery" className="rounded-lg border border-border bg-background p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -816,6 +828,7 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
         {!embedded && <LiveCanonGroup card />}
 
         {/* Variant Group removed — variant management is now in the tab bar above */}
+        </>}
       </div>
 
       {cropDialog && (
@@ -837,7 +850,8 @@ export function OverviewSection({ embedded = false }: { embedded?: boolean } = {
         <AssetPicker
           mediaUsage="public"
           worldId={(serverWorldId || useEditorStore.getState().serverWorldId)!}
-          filterType="image"
+          filterType="media"
+          onUploadFile={async file => { setShowCoverPicker(false); await handleCoverUpload(file); }}
           onSelect={(ref) => {
             handleCoverFromAsset(ref);
             setShowCoverPicker(false);

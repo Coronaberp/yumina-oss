@@ -304,8 +304,8 @@
       "bodyMobile": "Guardar conserva una versión; Probar abre una partida real y gasta créditos. Para publicar, la portada necesita una vertical 2:3 y una horizontal 16:9.",
       "beats": {
         "save": {
-          "title": "Guardar",
-          "body": "Guardar crea una versión de tu tarjeta."
+          "title": "Guardado automático",
+          "body": "Los cambios se guardan solos y cada 15 minutos de trabajo se conserva una versión. Las encuentras en el historial de versiones."
         },
         "playtest": {
           "title": "Probar",

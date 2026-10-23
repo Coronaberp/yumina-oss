@@ -40,8 +40,8 @@ import { absoluteImageUrl } from "@/lib/asset-url";
 import type { YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
 import { dispatchAwaitedAction } from "./awaited-action";
 import { dispatchActorContextCall } from "./actor-context-bridge";
-import { hydrateVoiceSceneNotice } from "./voice-scene-notice";
-import type { Condition, LoreUiBinding, Worldbook, StateChannel } from "@yumina/engine";
+import { hydrateVoiceSceneNotice, bindVoiceReplyAuthority } from "./voice-scene-notice";
+import type { Condition, LoreUiBinding, Worldbook, StateChannel, ReplyRule } from "@yumina/engine";
 import type {
   VariablesChannelData,
   MessagesChannelData,
@@ -78,6 +78,8 @@ import { feedback } from "@/lib/feedback";
 import { haltTts, loadTtsUnlessHalted } from "@/lib/tts-stop-signal";
 import { getVideoController, type RealtimeVideoController, type VideoStartOptions } from "./realtime-video/controller";
 import { FastForwardVeil } from "./realtime-video/fast-forward-veil";
+import { filmText, type FilmT } from "./realtime-video/film-text";
+import appI18n from "@/lib/i18n";
 import { toPillText } from "@/lib/feedback-policy";
 
 /**
@@ -185,6 +187,7 @@ interface WorldRendererProps {
   }>;
   loreUiBindings?: LoreUiBinding[];
   worldbooks?: Worldbook[];
+  replyRules?: ReplyRule[];
   /** The card's setting: split one reply into a bubble per speaker. */
   speakerBubbles?: boolean;
 }
@@ -207,6 +210,7 @@ export function WorldRenderer({
   entries,
   loreUiBindings,
   worldbooks,
+  replyRules,
   speakerBubbles,
 }: WorldRendererProps) {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -457,10 +461,16 @@ export function WorldRenderer({
         }
         case 'realtimeVoice.getConfig': case 'realtimeVoice.finish':
         case "realtimeVoice.prepare": case "realtimeVoice.start": case "realtimeVoice.stop": case "realtimeVoice.interrupt": case "realtimeVoice.setMuted":
-        case "realtimeVoice.updateContext": case "realtimeVoice.updateInstructions": case "realtimeVoice.cancelSceneReaction": case "realtimeVoice.reactToScene": case "realtimeVoice.resolveTool": case "realtimeVoice.setSpatial": case "realtimeVoice.ackVideoFrame": {
+        case "realtimeVoice.updateContext": case "realtimeVoice.updateInstructions": case "realtimeVoice.cancelSceneReaction": case "realtimeVoice.reactToScene": case "realtimeVoice.resolveTool": case "realtimeVoice.resolveDelegation": case "realtimeVoice.setSpatial": case "realtimeVoice.ackVideoFrame": {
           // The existing generic bridge resolves results; contain rejections here
           // so consent denial reaches the SDK immediately instead of timing out.
           try {
+            if (method === 'realtimeVoice.resolveDelegation') {
+              const state = useChatStore.getState(), sceneSession = sessionIdRef.current;
+              if (state.session?.id !== sceneSession || args.length !== 2 || confirmedSceneRef.current.sessionId !== sceneSession) return { error: 'Voice reply session changed.' };
+              args = [args[0], bindVoiceReplyAuthority(args[1], confirmedSceneRef.current.variables,
+                () => confirmedSceneRef.current.sessionId === sceneSession ? confirmedSceneRef.current.variables : {}, state.session.world?.schema.version)];
+            }
             if (method === "realtimeVoice.reactToScene") {
               const state = useChatStore.getState();
               if (state.session?.id !== sessionIdRef.current || args.length !== 1) return { error: "Invalid voice scene request." };
@@ -787,6 +797,9 @@ export function WorldRenderer({
         case "openPersonaManager":
           useUiStore.getState().openPersonaManager();
           return;
+        case "openPromptComposer":
+          if (mode === "session") useUiStore.getState().openPromptComposer();
+          return;
         case "sharePlaythrough":
           useUiStore.getState().openSharePlaythrough();
           return;
@@ -1008,6 +1021,11 @@ export function WorldRenderer({
           // show up on the message itself.
           return import("./turn-image-drawing").then(({ drawTurnImage }) => drawTurnImage(msgId, false, typeof note === "string" && note ? note : undefined, fine === true))
             .then((r) => r.ok).catch(() => false);
+        }
+        case "cancelTurnImage": {
+          const [msgId] = args as [string];
+          if (!sessionIdRef.current || isPendingMessageId(msgId)) return Promise.resolve(false);
+          return import("./turn-image-drawing").then(({ cancelTurnImage }) => cancelTurnImage(msgId)).catch(() => false);
         }
         case "openCreditTopUp": {
           return import("@/edition/slots.state").then(({ handleStreamCreditError }) => handleStreamCreditError("NO_CREDITS"));
@@ -2325,10 +2343,11 @@ export function WorldRenderer({
       entries: slimEntries,
       loreUiBindings: loreUiBindings ?? [],
       worldbooks: worldbooks ?? [],
+      replyRules: (replyRules ?? []).filter((rule) => !rule.hide).map(({ id, enabled, match }) => ({ id, enabled, match })),
       ...(speakerBubbles ? { speakerBubbles: true } : {}),
     };
     pushIfChanged("session", data);
-  }, [worldId, sessionId, mediaShareId, api.worldName, api.worldCover, api.currentUser, user, entries, loreUiBindings, worldbooks, speakerBubbles]);
+  }, [worldId, sessionId, mediaShareId, api.worldName, api.worldCover, api.currentUser, user, entries, loreUiBindings, worldbooks, replyRules, speakerBubbles]);
 
   // Push UI channel. Intentionally left without a dependency array: it carries
   // ~15 small fields (pendingChoices, model picker, checkpoints, volumes, …),
@@ -2500,12 +2519,27 @@ export function WorldRenderer({
   );
 }
 
+/** The film's words in the player's language, as cards receive them (strings). */
+const cardFilmT: FilmT = (key, params) => String(appI18n.t(key as never, { ns: "chat", ...params } as never));
+
 /** The realtime video state as cards receive it: the recent steps, trimmed (cards show the pipeline
- *  player → story → shot → on screen, and the passage each shot films). */
-function videoStateEvent({ steps, ...state }: ReturnType<RealtimeVideoController["getState"]>) {
+ *  player → story → shot → on screen, and the passage each shot films). The status words are
+ *  sent as text in the player's language; `textKey` / `statusKey` / `state` are the stable
+ *  codes (keys under chat:film.) for cards that want to word things themselves. */
+function videoStateEvent({ steps, currentStatus, ...state }: ReturnType<RealtimeVideoController["getState"]>) {
   return {
     type: "state",
-    state: { ...state, steps: steps.slice(-30).map((x) => ({ kind: x.kind, t: Math.round(x.t * 10) / 10, text: x.text.slice(0, 160), status: x.status ?? null, shot: x.shot ? x.shot.slice(0, 600) : null, version: x.version ?? null, excerpt: x.excerpt ?? null, shownAt: x.shownAt ?? null })) },
+    state: {
+      ...state,
+      currentStatus: filmText(cardFilmT, currentStatus),
+      currentStatusKey: currentStatus?.key ?? null,
+      steps: steps.slice(-30).map((x) => ({
+        kind: x.kind, t: Math.round(x.t * 10) / 10,
+        text: filmText(cardFilmT, x.text).slice(0, 160), textKey: x.text.key,
+        status: x.status ? filmText(cardFilmT, x.status) : null, statusKey: x.status?.key ?? null, state: x.status?.state ?? null,
+        shot: x.shot ? x.shot.slice(0, 600) : null, version: x.version ?? null, excerpt: x.excerpt ?? null, shownAt: x.shownAt ?? null,
+      })),
+    },
   };
 }
 

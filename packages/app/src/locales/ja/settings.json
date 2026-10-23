@@ -157,6 +157,25 @@
       "connectError": "連携に失敗しました",
       "disconnectError": "連携解除に失敗しました"
     },
+    "connectedApps": {
+      "title": "連携中のアプリ",
+      "description": "Yumina アカウントでログインしたゲーム MOD、アプリ、AI です。解除するとすぐにアカウントを使えなくなります。",
+      "loading": "読み込み中…",
+      "loadError": "読み込めませんでした。再読み込みしてください。",
+      "empty": "連携中のアプリはまだありません。",
+      "verified": "公式",
+      "connectedOn": "{{date}} に連携",
+      "disconnect": "解除",
+      "disconnecting": "解除中…",
+      "disconnectError": "解除できませんでした。もう一度お試しください。",
+      "scope": {
+        "aiChat": "コインで会話",
+        "walletRead": "残高",
+        "quests": "ミッション",
+        "cards": "カードの編集",
+        "profile": "名前"
+      }
+    },
     "validation": {
       "usernameMinLength": "ユーザー名は3文字以上にしてください",
       "usernameTaken": "このユーザー名は既に使われています",
@@ -179,7 +198,7 @@
     },
     "sensitive": {
       "label": "無制限",
-      "description": "「無制限」のコンテンツを含める"
+      "description": "「無制限」のコンテンツを含めます。それでもモデルが書いてくれないときは、プロンプト広場の「制限解除」を入れてみてください。"
     },
     "minorRestriction": "このアカウントでは「無制限」モードを利用できません。",
     "audiencePreference": {

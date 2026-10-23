@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS worlds (
     allow_live_canon_additions BOOLEAN NOT NULL DEFAULT false,
     age_rating TEXT NOT NULL DEFAULT 'all', visibility TEXT NOT NULL DEFAULT 'public',
     download_count INTEGER NOT NULL DEFAULT 0,
+    display_download_count INTEGER,
     tags JSONB NOT NULL DEFAULT '[]', gallery_images JSONB DEFAULT '[]',
     announcement TEXT, total_tokens INTEGER DEFAULT 0, approx_time TEXT,
     source_world_id TEXT,

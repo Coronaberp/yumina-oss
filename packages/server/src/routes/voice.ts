@@ -3,6 +3,7 @@ import type { PilotCleanupResult } from "../lib/voice-lifetime.js";
 import { z } from "zod";
 import type { AppEnv, SessionUser } from "../lib/types.js";
 import { isVoiceSdp, isVoiceToolAllowlist, VOICE_MAX_INSTRUCTIONS, VoiceConnectionError, type VoiceConnectRequest, type VoiceToolName } from "../lib/voice-realtime.js";
+import { LIVE_MAX_MINUTES } from "../lib/voice-live-credits.js";
 
 export interface VoiceAvatarConnection {
   sessionId: string;
@@ -49,16 +50,30 @@ export interface VoiceRouteServices {
   connect(request: VoiceConnectRequest): Promise<string>;
   /** Host-controlled rollout; a world cannot enable another paid transport. */
   liveAvailable?(): boolean;
+  /** Seconds a call may last; the client enforces it and the sponsor lease closes shortly after. */
+  maxDurationSeconds?(): number;
   getTestingKey?(): string | null;
+  /** One sponsored live morning per account for the 1984 card; consume=false only peeks. */
+  getFirstMorningKey?(userId: string, sessionId: string, consume: boolean): Promise<string | null>;
   getPilotKey?(userId: string, sessionId: string): Promise<string | null>;
   connectPilot?(request: VoiceConnectRequest & { sessionId: string; connectionId: string }): Promise<string>;
   stopPilot?(userId: string, sessionId: string, connectionId: string): Promise<PilotCleanupResult|null|void>;
-  connectSponsored?(request: VoiceConnectRequest & { sessionId: string; connectionId?: string; sponsored?: boolean }): Promise<string>;
+  connectSponsored?(request: VoiceConnectRequest & { sessionId: string; connectionId?: string; sponsored?: boolean; replace?: boolean; onProviderId?: (id: string) => Promise<boolean>; maxDurationMs?: number }): Promise<string>;
   stopSponsored?(userId: string, sessionId: string, connectionId?: string): Promise<void>;
   avatarAvailable?(): boolean;
   startAvatar?(request: VoiceAvatarRequest): Promise<VoiceAvatarConnection>;
   stopAvatar?(userId: string, sessionId: string, connectionId: string): Promise<void>;
   heartbeatAvatar?(userId: string, sessionId: string, connectionId: string): Promise<boolean>;
+  /** Credits-paid GPT-Live for the worlds it prices (null config: not this session). */
+  liveCredits?: {
+    config(userId: string, sessionId: string): Promise<{ available: boolean; funding: "credits-live"; creditsPerMinute: number; maxDurationSeconds: number; code?: string } | null>;
+    begin(userId: string, sessionId: string, connectionId?: string): Promise<string>;
+    activate(id: string, providerId: string): Promise<boolean>;
+    abandon(id: string): Promise<void>;
+    heartbeat(userId: string, sessionId: string): Promise<boolean>;
+    stop(userId: string, sessionId: string): Promise<void>;
+  };
+  getLiveCreditsKey?(): string | null;
 }
 
 const connectSchema = z.object({
@@ -96,14 +111,18 @@ export function createVoiceRoutes(services: VoiceRouteServices | (() => Promise<
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId) || !await deps.ownsSession(sessionId, user.id)) return c.json({ error: "Session not found.", code: "SESSION_NOT_FOUND" }, 404);
         if (action === "stop") {
           await deps.stopSponsored?.(user.id, sessionId, connection);
+          await deps.liveCredits?.stop(user.id, sessionId);
           return c.json({ stopped: true });
         }
         const balance = await deps.balanceConfig?.(user.id, sessionId);
         if (balance) return c.json(balance);
         const ownKey = await deps.getOpenAiKey(user.id);
         const funding = ownKey?.trim() ? "byok" : deps.connectSponsored && deps.getTestingKey?.() ? "testing"
+          : deps.connectSponsored && await deps.getFirstMorningKey?.(user.id, sessionId, false) ? "first-morning"
           : deps.connectPilot && await deps.getPilotKey?.(user.id, sessionId) ? "private-pilot" : null;
-        return c.json({ available: funding !== null, funding, maxDurationSeconds: 300, avatarAvailable: avatarAvailable(deps), turnControl: "client-v1", ...(deps.liveAvailable?.() ? { liveModel: "gpt-live-1" } : {}) });
+        const credits = funding === null && deps.connectSponsored && deps.getLiveCreditsKey?.() ? await deps.liveCredits?.config(user.id, sessionId) : null;
+        if (credits) return c.json({ ...credits, avatarAvailable: false, turnControl: "client-v1", liveModel: "gpt-live-1" });
+        return c.json({ available: funding !== null, funding, maxDurationSeconds: deps.maxDurationSeconds?.() ?? 300, avatarAvailable: avatarAvailable(deps), turnControl: "client-v1", ...(deps.liveAvailable?.() ? { liveModel: "gpt-live-1" } : {}) });
       } catch { return c.json({ error: "Voice is temporarily unavailable. Please try again.", code: "VOICE_UNAVAILABLE" }, 503); }
     });
   }
@@ -144,6 +163,19 @@ export function createVoiceRoutes(services: VoiceRouteServices | (() => Promise<
       }
     });
   }
+  // A credits-paid call proves its tab is alive; a silent one is hung up and stops billing.
+  routes.post("/:sessionId/live/heartbeat", async c => {
+    try {
+      const deps = typeof services === "function" ? await services() : services;
+      const user = await deps.authenticate(c);
+      if (!user) return c.json({ error: "Sign in to use live voice.", code: "UNAUTHORIZED" }, 401);
+      const sessionId = c.req.param("sessionId");
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId) || !deps.liveCredits) return c.json({ error: "Session not found.", code: "SESSION_NOT_FOUND" }, 404);
+      const rateLimit = await deps.checkRateLimit(`${user.id}:live-heartbeat`);
+      if (rateLimit) return c.json({ error: "Too many requests.", code: "VOICE_RATE_LIMITED" }, 429);
+      return await deps.liveCredits.heartbeat(user.id, sessionId) ? c.json({ alive: true }) : c.json({ alive: false, code: "VOICE_CALL_ENDED" }, 404);
+    } catch { return c.json({ error: "Voice is temporarily unavailable. Please try again.", code: "VOICE_UNAVAILABLE" }, 503); }
+  });
   routes.post("/:sessionId/connect", async (c) => {
     try {
       const deps = typeof services === "function" ? await services() : services;
@@ -160,7 +192,7 @@ export function createVoiceRoutes(services: VoiceRouteServices | (() => Promise<
       if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId) || !body.success) {
         return c.json({ error: "Invalid voice connection request.", code: "INVALID_VOICE_REQUEST" }, 400);
       }
-      if (body.data.turnControl === "live-v1" && (!deps.liveAvailable?.() || body.data.tools?.length !== 0)) {
+      if (body.data.turnControl === "live-v1" && ((!deps.liveAvailable?.() && !deps.getLiveCreditsKey?.()) || body.data.tools?.length !== 0)) {
         throw new VoiceConnectionError("INVALID_VOICE_REQUEST");
       }
       const rateLimit = await deps.checkRateLimit(currentUser.id);
@@ -175,7 +207,7 @@ export function createVoiceRoutes(services: VoiceRouteServices | (() => Promise<
         return c.json({ error: "This session uses normal-balance voice.", code: "VOICE_BALANCE_REQUIRED" }, 409);
       }
       const ownKey = await deps.getOpenAiKey(currentUser.id);
-      const testingKey = !ownKey?.trim() && deps.connectSponsored ? deps.getTestingKey?.() : null;
+      const testingKey = !ownKey?.trim() && deps.connectSponsored ? (deps.getTestingKey?.() || await deps.getFirstMorningKey?.(currentUser.id, sessionId, true) || null) : null;
       const pilotKey = !ownKey?.trim() && !testingKey && deps.connectPilot ? await deps.getPilotKey?.(currentUser.id, sessionId) : null;
       if (pilotKey && deps.connectPilot) {
         const connectionId = readConnectionId(c.req.raw);
@@ -185,13 +217,27 @@ export function createVoiceRoutes(services: VoiceRouteServices | (() => Promise<
       }
       const apiKey = ownKey?.trim() || testingKey;
       if (testingKey && deps.connectSponsored) {
-        const sdp = await deps.connectSponsored({ ...body.data, apiKey: testingKey, userId: currentUser.id, sessionId, connectionId: readConnectionId(c.req.raw), signal: c.req.raw.signal });
+        // A new call always wins over the account's older one (its hangup can be refused; see voice-sponsored).
+        const sdp = await deps.connectSponsored({ ...body.data, apiKey: testingKey, userId: currentUser.id, sessionId, connectionId: readConnectionId(c.req.raw), signal: c.req.raw.signal, replace: true });
         return c.json(body.data.turnControl ? { sdp, turnControl: body.data.turnControl } : { sdp });
       }
+      const creditsKey = !apiKey?.trim() && body.data.turnControl === "live-v1" && deps.connectSponsored && deps.liveCredits ? deps.getLiveCreditsKey?.() : null;
+      if (creditsKey && deps.connectSponsored && deps.liveCredits && await deps.liveCredits.config(currentUser.id, sessionId)) {
+        const credits = deps.liveCredits, connectionId = readConnectionId(c.req.raw);
+        const call = await credits.begin(currentUser.id, sessionId, connectionId);
+        try {
+          const sdp = await deps.connectSponsored({ ...body.data, apiKey: creditsKey, userId: currentUser.id, sessionId, connectionId,
+            signal: c.req.raw.signal, sponsored: false, replace: true, onProviderId: id => credits.activate(call, id),
+            // The billing sweep hangs up at the cap; this backstop follows a little later.
+            maxDurationMs: LIVE_MAX_MINUTES * 60_000 + 30_000 });
+          return c.json({ sdp, turnControl: "live-v1" });
+        } catch (error) { await credits.abandon(call).catch(() => {}); throw error; }
+      }
+      if (body.data.turnControl === "live-v1" && !deps.liveAvailable?.()) throw new VoiceConnectionError("INVALID_VOICE_REQUEST");
       if (!apiKey?.trim()) throw new VoiceConnectionError("OPENAI_KEY_REQUIRED");
       if (body.data.turnControl === "live-v1" && deps.connectSponsored) {
         const sdp = await deps.connectSponsored({ ...body.data, apiKey, userId: currentUser.id, sessionId,
-          connectionId: readConnectionId(c.req.raw), signal: c.req.raw.signal, sponsored: false });
+          connectionId: readConnectionId(c.req.raw), signal: c.req.raw.signal, sponsored: false, replace: true });
         return c.json({ sdp, turnControl: "live-v1" });
       }
       if (!await deps.acquireConnection(currentUser.id)) {

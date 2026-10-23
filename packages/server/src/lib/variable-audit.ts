@@ -66,6 +66,8 @@ export function buildVariableAudit(args: {
     repair: {
       ran: args.repair.ran, audit: args.repair.audit, flagged: args.repair.flagged,
       proposed: args.repair.effects.map(e => e.variableId), applied: appliedRepair,
+      ...(args.repair.hinted?.length && { hinted: args.repair.hinted.slice(0, MAX_ITEMS) }),
+      ...(args.repair.attempted?.length && { attempted: args.repair.attempted }),
     },
     dropped: trace.dropped.slice(0, MAX_ITEMS), rejected: trace.rejected.slice(0, MAX_ITEMS),
     blocked: blocked.slice(0, MAX_ITEMS).map(b => ({ ...b, attemptedValue: valueForAudit(b.attemptedValue) })),

@@ -1,7 +1,7 @@
 import { resolveDisplayMacros } from "@/lib/resolve-display-macros";
 import { memo, useEffect, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { BookOpen, ChevronDown, FolderMinus, FolderOpen, GripVertical, Link2, MessageCircle, MoreHorizontal, Pencil, Plus, Volume2 } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronUp, FolderMinus, FolderOpen, GripVertical, Link2, MessageCircle, MoreHorizontal, Pencil, Plus, Volume2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { isPlaceholderCharacterName, portHandleId, rowHandleId, type WorldEntry } from "@yumina/engine";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { useTemplateContentPlaceholder } from "@/features/editor/template-placeh
 import { isLessonHello } from "@/lib/world-templates";
 import type { BlockRowView } from "./block-node";
 import { getEntryDeliverySummary } from "./entry-delivery";
+import { entryReadBy } from "./place-ais";
 
 export const CANVAS_WRITING_NODE_WIDTH = 420;
 export const CANVAS_WRITING_NODE_HEADER_HEIGHT = 40;
@@ -29,6 +30,37 @@ export const CANVAS_WRITING_OPEN_EDITOR_HEIGHT = 460;
 const OPENING_OPEN_EDITOR_HEIGHT = 320;
 const openEditorHeight = (kind: CanvasWritingNodeData["kind"]) =>
   kind === "opening" ? OPENING_OPEN_EDITOR_HEIGHT : CANVAS_WRITING_OPEN_EDITOR_HEIGHT;
+/** What sits around the text box of an open entry — when it is sent, when
+ *  the AI uses it, the label above, the gap below (measured on the board,
+ *  10/18) — and one line of its text. */
+const OPEN_EDITOR_CHROME = 180;
+const OPEN_EDITOR_LINE = 26;
+/** Latin characters to a line of the text box on a usual block; a CJK
+ *  character counts two. An open row spans its block (about 860px at its
+ *  narrowest); on a wide block the box comes out a little roomy,
+ *  on a narrow one its text scrolls. */
+const OPEN_EDITOR_CHARS_PER_LINE = 110;
+/** The box grows two lines at a time — the text and a line to write on —
+ *  so typing does not move the board under the writer at every new line. */
+const OPEN_EDITOR_STEP = 2;
+const lineWeight = (text: string) => {
+  let w = 0;
+  for (const ch of text) w += /[\u2E80-\u9FFF\uAC00-\uD7AF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
+  return w;
+};
+/**
+ * An open entry is as tall as what is written in it, up to the full height:
+ * a one-line entry used to open in a 460px box that was mostly empty box
+ * (owner, 10/18). Worked out from the text, not measured, because the board
+ * counts every row's height before it draws. An opening keeps its own box.
+ */
+export function openEntryEditorHeight(kind: CanvasWritingNodeData["kind"], content: string | undefined): number {
+  const max = openEditorHeight(kind);
+  if (kind === "opening") return max;
+  const lines = (content ?? "").split("\n").reduce((n, para) => n + Math.max(1, Math.ceil(lineWeight(para) / OPEN_EDITOR_CHARS_PER_LINE)), 0);
+  const shown = Math.ceil(lines / OPEN_EDITOR_STEP) * OPEN_EDITOR_STEP;
+  return Math.min(max, OPEN_EDITOR_CHROME + shown * OPEN_EDITOR_LINE);
+}
 const ROW_HEADER_HEIGHT = 40;
 const SLOT_HEIGHT = 24;
 
@@ -112,10 +144,25 @@ export type CanvasWritingNodeData = Record<string, unknown> & {
    *  the same as a double-click on any other row on the board. */
   onDrill?: (objectId: string) => void;
   compact?: boolean;
+  /**
+   * The block is its header and nothing under it: a phone's card opening,
+   * one opening a block of its own used to say twice — 「开场」 over a row
+   * named 「开场」, two rows of an 844px screen for one thing. The header
+   * carries what the opening says and opens it.
+   */
+  headOnly?: boolean;
   /** Rows two abreast on a wide tile (see `rowColumns` in board.ts). */
   columns?: 1 | 2;
-  /** Entries folded behind "N more"; the column lists them all. */
+  /** Entries folded behind "N more"; a click on it shows them here. */
   hiddenCount?: number;
+  /** Shown whole after "N more" was clicked: the line at the foot folds it
+   *  back. */
+  unfolded?: boolean;
+  onFold?: () => void;
+  /** A grouped block's groups shown whole (`OPEN_ALL_GROUPS`: every group,
+   *  not only the first few). See GROUP_ROW_LIMIT. */
+  openGroups?: ReadonlySet<string>;
+  onOpenGroup?: (id: string) => void;
   /** What dragging the header carries, when it is not the rows drawn: a
    *  block grouped by chapter draws none and still carries all it holds. */
   pieceIds?: string[];
@@ -165,7 +212,15 @@ export type CanvasWritingNodeData = Record<string, unknown> & {
   onPickOpening?: (id: string) => void;
 };
 
-type WritingLayout = Pick<CanvasWritingNodeData, "kind" | "entries" | "compact" | "columns" | "hiddenCount" | "expandedIds" | "folders" | "presetsTitle" | "collapsedFolders" | "gateBar"> & { rows?: Pick<BlockRowView, "g" | "slots">[] };
+type WritingLayout = Pick<CanvasWritingNodeData, "kind" | "entries" | "compact" | "columns" | "hiddenCount" | "unfolded" | "openGroups" | "expandedIds" | "folders" | "presetsTitle" | "collapsedFolders" | "gateBar" | "headOnly"> & { rows?: Pick<BlockRowView, "g" | "slots">[] };
+/** In a block grouped by chapter, an open group draws this many rows and
+ *  folds the rest behind "… N more"; the block draws this many groups and
+ *  folds the rest the same way (owner, 10/17: a card of 466 gated entries
+ *  was a block 2,400px tall). A grouped block's rows hand their wires to
+ *  the block's head, so a folded one loses nothing. */
+export const GROUP_ROW_LIMIT = 6;
+export const GROUP_LIMIT = 8;
+export const OPEN_ALL_GROUPS = "*";
 /** The "N more" row under a folded list. */
 export const CANVAS_WRITING_MORE_HEIGHT = 28;
 const objectIdFor = (kind: CanvasWritingNodeData["kind"], entry: WorldEntry) => `${kind === "opening" ? "greeting" : "entry"}:${entry.id}`;
@@ -193,7 +248,7 @@ const isOpenRow = (data: WritingLayout, entry?: WorldEntry) => Boolean(entry && 
  *  board it was most of the words on a new card's first screen. */
 const isUnwritten = (entry?: WorldEntry) => !!entry && (!entry.content?.trim() || isLessonHello(entry.content));
 const rowBaseHeight = (data: WritingLayout, entry?: WorldEntry) =>
-  isOpenRow(data, entry) ? ROW_HEADER_HEIGHT + openEditorHeight(data.kind)
+  isOpenRow(data, entry) ? ROW_HEADER_HEIGHT + openEntryEditorHeight(data.kind, entry?.content)
     : data.compact || isUnwritten(entry) ? CANVAS_WRITING_COMPACT_ROW_HEIGHT
     : CANVAS_WRITING_ROW_HEIGHT;
 const rowHeight = (data: WritingLayout, entry?: WorldEntry) =>
@@ -243,7 +298,13 @@ export function writingItems(data: WritingLayout): WritingItem[] {
 /** `entries` are the rows drawn under the header; `members` are everything
  *  in the folder, drawn or not. A shut folder draws no rows but its header
  *  still counts — and selects — every member, the same number as when open. */
-export type WritingSection = { folder?: WritingFolder; members?: WorldEntry[]; entries: WorldEntry[] };
+export type WritingSection = {
+  folder?: WritingFolder; members?: WorldEntry[]; entries: WorldEntry[];
+  /** Rows of this group folded behind "… N more". */
+  more?: number;
+  /** Groups of the block folded behind "… N more groups" (the last line). */
+  moreGroups?: number;
+};
 export function writingSections(data: WritingLayout): WritingSection[] {
   const sections: WritingSection[] = [];
   for (const item of writingItems(data)) {
@@ -254,7 +315,18 @@ export function writingSections(data: WritingLayout): WritingSection[] {
       else sections.push({ entries: [item.entry] });
     }
   }
-  return sections;
+  if (!data.gateBar) return sections;
+  const open = (id: string) => data.openGroups?.has(id) ?? false;
+  for (const section of sections) {
+    // Never fold one row away: "1 more" takes the room the row would.
+    if (!section.folder || open(section.folder.id) || section.entries.length <= GROUP_ROW_LIMIT + 1) continue;
+    section.more = section.entries.length - GROUP_ROW_LIMIT;
+    section.entries = section.entries.slice(0, GROUP_ROW_LIMIT);
+  }
+  const groups = sections.filter((section) => section.folder);
+  if (open(OPEN_ALL_GROUPS) || groups.length <= GROUP_LIMIT + 1) return sections;
+  const kept = new Set(groups.slice(0, GROUP_LIMIT));
+  return [...sections.filter((section) => !section.folder || kept.has(section)), { entries: [], moreGroups: groups.length - GROUP_LIMIT }];
 }
 /** The rows of one run dealt into columns. The grid shares its rows between
  *  the columns (gridAutoFlow column, rows `auto`), so each line is as tall as
@@ -289,15 +361,17 @@ export const writingColumns = (data: WritingLayout): 1 | 2 =>
  * which is a click the creator made on purpose.
  */
 export function canvasWritingNodeHeight(data: WritingLayout): number {
+  if (data.headOnly) return CANVAS_WRITING_NODE_HEADER_HEIGHT + 2;
   const columns = writingColumns(data);
   const sections = writingSections(data);
   // Two columns: each run is dealt first half / second half in reading
   // order and is as tall as its taller column; a folder header is a full
   // line of its own above its run.
-  const body = sections.reduce((sum, section) => sum + (section.folder ? CANVAS_WRITING_FOLDER_HEIGHT : 0) + dealtHeight(data, section.entries, columns), 0);
+  const body = sections.reduce((sum, section) => sum + (section.folder ? CANVAS_WRITING_FOLDER_HEIGHT : 0) + dealtHeight(data, section.entries, columns)
+    + (section.more ? CANVAS_WRITING_MORE_HEIGHT : 0) + (section.moreGroups ? CANVAS_WRITING_MORE_HEIGHT : 0), 0);
   return CANVAS_WRITING_NODE_HEADER_HEIGHT + 2 + (data.gateBar ? CANVAS_WRITING_GATE_HEIGHT : 0) +
     (sections.length ? body : rowBaseHeight(data)) +
-    ((data.hiddenCount ?? 0) > 0 ? CANVAS_WRITING_MORE_HEIGHT : 0);
+    ((data.hiddenCount ?? 0) > 0 || data.unfolded ? CANVAS_WRITING_MORE_HEIGHT : 0);
 }
 
 const stopEditorKeys = (event: KeyboardEvent) => {
@@ -310,6 +384,21 @@ const HANDLE_CLASS = "!h-3 !w-3 !border-2 !border-[#17161d] !z-10 !cursor-crossh
 const OBJECT_MIME = "application/yumina-object";
 /** The name a new setting is given before anyone names it, in any language. */
 const NEW_ENTRY_NAME = /^(新建词条|新建詞條|新词条|新詞條|new entry|新しいエントリ|nueva entrada|entrada nueva)\s*\d*$/i;
+
+/** "… N more" under a folded list, or the line that folds it back. */
+function MoreLine({ label, onClick, kind }: { label: string; onClick: () => void; kind: "rows" | "group" | "groups" | "fold" }) {
+  return <button
+    type="button"
+    data-writing-more={kind}
+    onClick={event => { event.stopPropagation(); onClick(); }}
+    onDoubleClick={event => event.stopPropagation()}
+    className="nodrag flex w-full items-center gap-1.5 px-3 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+    style={{ height: CANVAS_WRITING_MORE_HEIGHT }}
+  >
+    {kind === "fold" ? <ChevronUp className="h-3.5 w-3.5" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
+    {label}
+  </button>;
+}
 
 function WritingSharedMark() {
   const { t } = useTranslation("editor");
@@ -468,7 +557,10 @@ function CanvasWritingRow({ data, entry }: { data: CanvasWritingNodeData; entry?
   // imported card is full of it.
   const charName = useEditorStore((s) => s.worldDraft.entries.find((e) => e.role === "character" && e.enabled !== false)?.name?.trim() || "");
   const delivery = entry && !opening ? getEntryDeliverySummary(entry, { worldbooks, loreUiBindings }) : null;
-  const warning = entry?.enabled === false ? "blueprint.writing.disabled" : delivery && delivery.mode !== "always" ? "blueprint.writing.configuredDelivery" : null;
+  // Not the chat: the game or the card's own code picks this entry up, so
+  // "every turn" or "not set" would describe a chat that never runs.
+  const readBy = useEditorStore((s) => (entry && !opening ? entryReadBy(s.worldDraft, entry.worldbookId) : null));
+  const warning = entry?.enabled === false ? "blueprint.writing.disabled" : readBy ? null : delivery && delivery.mode !== "always" ? "blueprint.writing.configuredDelivery" : null;
   // When the AI is ever told this, in the fewest words that are still true.
   // Keywords name themselves: "关键词：城门, 守卫" is the fact a creator is
   // actually checking for, and it is what "详细" has to be worth opening.
@@ -476,10 +568,13 @@ function CanvasWritingRow({ data, entry }: { data: CanvasWritingNodeData; entry?
   // "Every turn" is what a settings entry normally does, so it stays quiet;
   // anything conditional is the thing worth spotting down a column of twenty,
   // and gets the one accent this line is allowed.
-  const deliveryPlain = entry?.enabled !== false && delivery?.mode === "always";
+  const deliveryPlain = entry?.enabled !== false && (delivery?.mode === "always" || !!readBy);
   const deliveryLine = !entry || !delivery ? null
-    : delivery.mode === "unplaced" ? t("blueprint.writing.deliveryUnplaced")
     : entry.enabled === false ? t("blueprint.writing.deliveryOff")
+    // The PvZ server does match Dave's scene entries on their keywords.
+    : readBy === "game" && !((delivery.mode === "keywords" || delivery.mode === "keywords-and-conditions") && keywordList) ? t("blueprint.frame.readByGame")
+    : readBy === "interface" ? t("blueprint.row.readByInterface")
+    : delivery.mode === "unplaced" ? t("blueprint.writing.deliveryUnplaced")
     : (delivery.mode === "keywords" || delivery.mode === "keywords-and-conditions") && keywordList
       ? t("blueprint.writing.deliveryKeywords", { keywords: keywordList })
     : delivery.mode === "conditions" ? t("blueprint.writing.deliveryConditions", { count: delivery.conditionCount })
@@ -698,7 +793,7 @@ function CanvasWritingRow({ data, entry }: { data: CanvasWritingNodeData; entry?
               // rather than leaving a hole under the last button; `nowheel` so
               // a long one scrolls instead of zooming the board.
               className="nowheel flex flex-col overflow-y-auto overscroll-contain border-t border-white/[0.07] px-3 py-3"
-              style={{ height: openEditorHeight(data.kind) }}
+              style={{ height: openEntryEditorHeight(data.kind, entry?.content) }}
               onWheel={event => event.stopPropagation()}
             >
               {data.renderEditor?.(objectId)}
@@ -776,6 +871,11 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
   } : {};
   const columns = writingColumns(data);
   const sections = writingSections(data);
+  const charName = useEditorStore((s) => s.worldDraft.entries.find((e) => e.role === "character" && e.enabled !== false)?.name?.trim() || "");
+  const head = data.headOnly ? data.entries[0] : undefined;
+  const headRow = head ? rowFor(data, head) : undefined;
+  const headId = head ? objectIdFor(data.kind, head) : undefined;
+  const headTaste = head?.content ? resolveDisplayMacros(head.content, t("studio.preview.you"), charName || t("studio.preview.character")).replace(/\s+/g, " ").trim() : "";
   const keyBase = data.documentKey ?? "canvas";
   const dealt = (entries: WorldEntry[]) => <div
     className={cn(columns === 2 && "grid grid-cols-2 [&>*:nth-child(2)]:border-l [&>*:nth-child(2)]:border-white/[0.06]")}
@@ -816,9 +916,16 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
         canDragPiece && "nodrag", inSelection && "ring-1 ring-inset ring-amber-400/70")}
       style={{ height: CANVAS_WRITING_NODE_HEADER_HEIGHT }}
     >
-      <GripVertical aria-hidden className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+      {!headId && <GripVertical aria-hidden className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
       <Icon className={cn("h-4 w-4 shrink-0", opening ? "text-emerald-300" : "text-violet-300")} />
-      <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold" title={title}>{title}</span>{data.loose && <span data-loose-banner className="block truncate text-[10px] leading-4 text-zinc-400" title={`${t("blueprint.loose.badge")} · ${t("blueprint.loose.hint")}`}>{t("blueprint.loose.badge")}</span>}</span>
+      {headId ? <button type="button" data-canvas-writing-head-open={headId} className="nodrag nokey flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+        onClick={event => { event.stopPropagation(); data.onOpen(headId); }}>
+        <span className="shrink-0 text-sm font-semibold">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-zinc-400">{headTaste || t("blueprint.writing.emptyOpening")}</span>
+      </button>
+      : <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold" title={title}>{title}</span>{data.loose && <span data-loose-banner className="block truncate text-[10px] leading-4 text-zinc-400" title={`${t("blueprint.loose.badge")} · ${t("blueprint.loose.hint")}`}>{t("blueprint.loose.badge")}</span>}</span>}
+      {headRow?.hasIn && <Handle id={rowHandleId(headRow.g.id, "in")} type="target" position={Position.Left} isConnectable={false} className={cn(HANDLE_CLASS, "!bg-zinc-400")} />}
+      {headRow?.hasOut && <Handle id={rowHandleId(headRow.g.id, "out")} type="source" position={Position.Right} isConnectable={false} className={cn(HANDLE_CLASS, "!bg-emerald-400")} />}
       {(data.openings?.length ?? 0) > 1 && (
         <div className="nodrag flex shrink-0 items-center gap-0.5 rounded-md bg-black/30 p-0.5" role="tablist" aria-label={t("blueprint.starter.openingTitle")}>
           {data.openings!.map((o, i) => (
@@ -850,6 +957,7 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
         no end and React Flow dropped them without a word. */}
     <Handle id="block-in" type="target" position={Position.Left} isConnectable={false} style={{ top: CANVAS_WRITING_NODE_HEADER_HEIGHT / 2 }} className={cn(HANDLE_CLASS, "!pointer-events-none !opacity-0")} />
     <Handle id="block-out" type="source" position={Position.Right} isConnectable={false} style={{ top: CANVAS_WRITING_NODE_HEADER_HEIGHT / 2 }} className={cn(HANDLE_CLASS, "!pointer-events-none !opacity-0")} />
+    {!data.headOnly && <>
     {data.gateBar && <WritingGateStrip bar={data.gateBar} />}
     {/* A module with nothing of its own here says what it counts instead of
         inviting a first entry with the card's own template title. */}
@@ -857,20 +965,14 @@ export const CanvasWritingNode = memo(function CanvasWritingNode({ data, selecte
       ? ((data.shared ?? 0) > 0
         ? <div data-canvas-writing-shared-only className="flex items-center gap-2 px-3 text-[12px] text-zinc-400" style={{ height: CANVAS_WRITING_COMPACT_ROW_HEIGHT }}><Link2 className="h-3 w-3 shrink-0 text-zinc-500" /><span className="truncate">{t("blueprint.writing.sharedOnly", { count: data.shared })}</span></div>
         : <CanvasWritingRow key={`${keyBase}:first`} data={data} entry={undefined} />)
-      : sections.map((section, index) => <div key={section.folder ? `${keyBase}:folder:${section.folder.id}` : `${keyBase}:run:${index}`}>
+      : sections.map((section, index) => <div key={section.folder ? `${keyBase}:folder:${section.folder.id}` : section.moreGroups ? `${keyBase}:more-groups` : `${keyBase}:run:${index}`}>
           {section.folder && <CanvasWritingFolder data={data} folder={section.folder} entries={section.members ?? section.entries} />}
           {dealt(section.entries)}
+          {section.more ? <MoreLine kind="group" label={t("blueprint.block.more", { count: section.more })} onClick={() => section.folder && data.onOpenGroup?.(section.folder.id)} /> : null}
+          {section.moreGroups ? <MoreLine kind="groups" label={t("blueprint.block.moreGroups", { count: section.moreGroups })} onClick={() => data.onOpenGroup?.(OPEN_ALL_GROUPS)} /> : null}
         </div>)}
-    {(data.hiddenCount ?? 0) > 0 && (
-      <button
-        type="button"
-        onClick={event => { event.stopPropagation(); data.onMore?.(); }}
-        className="nodrag flex w-full items-center gap-1.5 px-3 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-        style={{ height: CANVAS_WRITING_MORE_HEIGHT }}
-      >
-        <MoreHorizontal className="h-3.5 w-3.5" />
-        {t("blueprint.block.more", { count: data.hiddenCount })}
-      </button>
-    )}
+    {(data.hiddenCount ?? 0) > 0 && <MoreLine kind="rows" label={t("blueprint.block.more", { count: data.hiddenCount })} onClick={() => data.onMore?.()} />}
+    {!(data.hiddenCount ?? 0) && data.unfolded && <MoreLine kind="fold" label={t("blueprint.block.fold")} onClick={() => data.onFold?.()} />}
+    </>}
   </article>;
 });

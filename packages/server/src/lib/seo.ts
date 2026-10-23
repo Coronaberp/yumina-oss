@@ -616,10 +616,14 @@ export async function generateSitemap(): Promise<string> {
     xml += `  <url>\n    <loc>${SITE_URL}${page.url}</loc>\n    <changefreq>${page.changefreq}</changefreq>\n    <priority>${page.priority}</priority>\n  </url>\n`;
   }
 
-  // Blog: the index and every post, with the post's last change as lastmod.
+  // Blog: the index, one page per category that has posts, and every post
+  // with the post's last change as lastmod.
   const posts = listBlogPosts();
   if (posts.length) {
     xml += `  <url>\n    <loc>${SITE_URL}/blog</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>\n`;
+    for (const category of new Set(posts.map((p) => p.category))) {
+      xml += `  <url>\n    <loc>${SITE_URL}/blog/${category}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.5</priority>\n  </url>\n`;
+    }
     for (const post of posts) {
       xml += `  <url>\n    <loc>${SITE_URL}/blog/${post.slug}</loc>\n    <lastmod>${post.updated ?? post.date}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
     }

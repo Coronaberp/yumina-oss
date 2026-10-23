@@ -26,7 +26,7 @@ import { registerSessionMemoryExtension } from "../extensions/session-memory/hoo
 import { regenerateStorySummaryForSession } from "./session-compaction.js";
 import { branchSession } from "../routes/sessions.js";
 
-const model = "google/gemini-2.5-flash-lite";
+const model = "google/gemini-3.1-flash-lite";
 const output = "Core facts:\n- OldTimelineMarker: the player left a red umbrella in the cafe.\nActive goals and open threads:\n- Return for the umbrella tomorrow.";
 
 test("persona and memory lifecycle regressions", async (t) => {

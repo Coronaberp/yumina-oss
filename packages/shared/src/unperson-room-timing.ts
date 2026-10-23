@@ -5,6 +5,7 @@ export const UNPERSON_ROOM_TIMING = Object.freeze({
   attendanceGrace: 15,
   overdueGrace: 30,
   attendanceCooldown: 30,
+  observationReaction: 12,
   overdueNotices: 2,
   concession: 45,
   legacyConcession: 12,

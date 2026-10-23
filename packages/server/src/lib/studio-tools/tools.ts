@@ -888,6 +888,22 @@ export const WRITE_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "write_note",
+      description:
+        "A sticky note on the canvas, stuck to one thing: the creator's and your shared notes about the card. Notes never reach the play prompt. `on` is what it is stuck to, as the canvas names it: an AI row 'ai:<key>' ('ai:code:<file>:<line>' for an AI call in the interface code, 'ai:voice:<file>:<line>' for a live voice, 'ai:<worldbookId>', 'ai:narrator'), an entry 'entry:<id>', a variable 'var:<id>', a behavior 'reaction:<id>'. Replaces the text of the note stuck to exactly that, or makes one; text \"\" removes it. Use it when the creator asks you to explain or annotate something on the board, e.g. what an AI call in the code does. Write one or two plain sentences in the creator's language.",
+      parameters: {
+        type: "object",
+        properties: {
+          on: { type: "string", description: "What the note is stuck to, e.g. 'ai:code:index.tsx:5166' or 'var:hp'." },
+          text: { type: "string", description: "The note, one or two plain sentences. \"\" removes it." },
+        },
+        required: ["on", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "delete_entities",
       description:
         "Delete one or more entities by ID. Each ID is looked up across all entity types (entries, variables, behaviors, rules, customUI, audio, scene images, worldbooks, lore bindings). Always requires user approval.",

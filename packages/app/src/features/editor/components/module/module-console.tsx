@@ -94,32 +94,11 @@ export function StationModelFields({ book, onChange }: { book: Worldbook; onChan
   const numberClass = "w-20 rounded-md border border-border bg-background px-2 py-1 text-right text-xs tabular-nums text-foreground outline-none focus:border-primary/50";
   return (
     <div className="space-y-2" data-station-model-fields>
-      <input
-        list={`station-models-${book.id}`}
-        value={station.model ?? ""}
-        onChange={(e) => patch({ model: e.target.value.trim() || undefined })}
-        placeholder={t(narrator ? "blueprint.station.modelInherit" : "blueprint.station.modelDefault")}
-        className={INPUT}
-        spellCheck={false}
-      />
-      <datalist id={`station-models-${book.id}`}>
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name || m.id}
-          </option>
-        ))}
-      </datalist>
-      <p className={HINT}>{t(narrator ? "blueprint.station.modelHintNarrator" : "blueprint.station.modelHintBackground")}</p>
-      {warn && (
-        <p className="flex items-start gap-1 text-[10px] leading-relaxed text-amber-300" data-station-model-warn>
-          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
-          {warn}
-        </p>
-      )}
+      {/* Who sets them comes first (owner, 10/17), then the model. */}
       {narrator ? (
         <p className={HINT}>{t("blueprint.station.paramsNarrator")}</p>
       ) : (
-        <div className="space-y-1.5 border-t border-border/60 pt-2" data-station-params>
+        <div className="space-y-1.5 border-b border-border/60 pb-2" data-station-params>
           <div className="flex items-center justify-between gap-2">
             <span className={LABEL}>{t("blueprint.station.params")}</span>
             <div role="radiogroup" aria-label={t("blueprint.station.params")} className="inline-flex overflow-hidden rounded-md border border-border">
@@ -181,6 +160,28 @@ export function StationModelFields({ book, onChange }: { book: Worldbook; onChan
           )}
         </div>
       )}
+      <input
+        list={`station-models-${book.id}`}
+        value={station.model ?? ""}
+        onChange={(e) => patch({ model: e.target.value.trim() || undefined })}
+        placeholder={t(narrator ? "blueprint.station.modelInherit" : "blueprint.station.modelDefault")}
+        className={INPUT}
+        spellCheck={false}
+      />
+      <datalist id={`station-models-${book.id}`}>
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name || m.id}
+          </option>
+        ))}
+      </datalist>
+      <p className={HINT}>{t(narrator ? "blueprint.station.modelHintNarrator" : "blueprint.station.modelHintBackground")}</p>
+      {warn && (
+        <p className="flex items-start gap-1 text-[10px] leading-relaxed text-amber-300" data-station-model-warn>
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+          {warn}
+        </p>
+      )}
     </div>
   );
 }
@@ -191,6 +192,7 @@ export function ModuleConsole({
   onChange,
   summary = true,
   showMemory = true,
+  showModel = true,
   kindControl = true,
   triggerPicker = true,
   fold,
@@ -205,6 +207,9 @@ export function ModuleConsole({
   summary?: boolean;
   /** Studio gives memory its own canvas node and inspector. Other editors keep it inline. */
   showMemory?: boolean;
+  /** False when the host shows the model and its settings itself (the
+   *  canvas AI form puts them first). */
+  showModel?: boolean;
   /** The switch between a plain situation, one with its own AI and a
    *  background writer. Off where the AI itself is being edited: there the
    *  question is already answered. */
@@ -344,7 +349,7 @@ export function ModuleConsole({
 
       {station && (
         <>
-          {(fold ?? modelFold)({
+          {showModel && (fold ?? modelFold)({
             id: `model:${book.id}`,
             defaultOpen: Boolean(station.model) || (!answersWithPlayerSettings(station) && stationParamsCustom(station)),
             label: answersWithPlayerSettings(station)

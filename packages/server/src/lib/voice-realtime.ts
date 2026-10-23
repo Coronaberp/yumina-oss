@@ -19,6 +19,8 @@ const failures = {
   VOICE_PROVIDER_ERROR: { status: 502, message: "OpenAI could not establish the voice connection. Please try again." },
   VOICE_TIMEOUT: { status: 504, message: "The voice connection timed out. Please try again." },
   VOICE_CANCELLED: { status: 408, message: "The voice connection was cancelled." },
+  VOICE_CREDITS_REQUIRED: { status: 402, message: "You need more credits for live voice. Live voice costs about 60 credits a minute." },
+  VOICE_STOP_FAILED: { status: 503, message: "Live voice cleanup is still pending. Please try stopping again." },
   INVALID_VOICE_REQUEST: { status: 400, message: "Invalid voice connection request." },
   VOICE_REQUEST_TOO_LARGE: { status: 413, message: "Voice connection request is too large." },
 } as const;

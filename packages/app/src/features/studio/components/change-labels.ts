@@ -17,12 +17,12 @@ export type EntityNameLookup = (id: string, entityType?: string) => string | und
 
 const KINDS = new Set([
   "entry", "variable", "rule", "behavior", "customUI", "audio", "sceneImage", "settings",
-  "worldbook", "loreBinding", "uiKnobs", "uiKnobGroups", "uiDoc",
+  "worldbook", "loreBinding", "uiKnobs", "uiKnobGroups", "uiDoc", "note",
 ]);
 
 const TOOLS = new Set([
   "write_entry", "write_variable", "write_behavior", "write_custom_ui", "edit_custom_ui", "write_ui_knob_groups",
-  "set_ui_knobs", "write_audio", "write_scene_image", "write_worldbook", "write_lore_binding", "delete_entities",
+  "set_ui_knobs", "write_audio", "write_scene_image", "write_worldbook", "write_lore_binding", "write_note", "delete_entities",
   "apply_changes", "edit_ui_doc", "read_ui_doc", "read_entities", "read_entity", "grep_world", "validate_world",
   "update_settings", "load_skill", "list_assets", "browse_assets", "compile_tsx", "generate_image", "generate_images",
   "ask_user", "analyze_token_cost", "validate_ui_blueprint", "list_templates",

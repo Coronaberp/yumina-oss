@@ -157,6 +157,25 @@
       "connectError": "Error al conectar",
       "disconnectError": "Error al desconectar"
     },
+    "connectedApps": {
+      "title": "Apps conectadas",
+      "description": "Mods de juegos, apps e IA en las que entraste con tu cuenta de Yumina. Si desconectas una, pierde el acceso al instante.",
+      "loading": "Cargando…",
+      "loadError": "No se pudo cargar. Recarga e inténtalo de nuevo.",
+      "empty": "Aún no hay apps conectadas.",
+      "verified": "Oficial",
+      "connectedOn": "Conectada el {{date}}",
+      "disconnect": "Desconectar",
+      "disconnecting": "Desconectando…",
+      "disconnectError": "No se pudo desconectar. Inténtalo de nuevo.",
+      "scope": {
+        "aiChat": "Chatear con tus mushies",
+        "walletRead": "Saldo",
+        "quests": "Misiones",
+        "cards": "Tus cartas",
+        "profile": "Nombre"
+      }
+    },
     "validation": {
       "usernameMinLength": "El nombre de usuario debe tener al menos 3 caracteres",
       "usernameTaken": "El nombre de usuario ya está en uso",
@@ -179,7 +198,7 @@
     },
     "sensitive": {
       "label": "Sin límites",
-      "description": "Incluir contenido Sin límites"
+      "description": "Incluye contenido Sin límites. Si un modelo aún se contiene, instala un prompt Sin restricciones desde la Plaza de prompts."
     },
     "minorRestriction": "El modo Sin límites no está disponible para esta cuenta.",
     "audiencePreference": {

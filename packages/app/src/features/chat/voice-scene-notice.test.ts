@@ -1,12 +1,179 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hydrateVoiceSceneNotice } from "./voice-scene-notice";
+import * as sceneAuthority from "./voice-scene-notice";
 import { formatVoiceSceneReaction } from "../../../sandbox/voice-types";
 
 const speech = { id: "speech:1", attempt: "attempt-1", at: 2, kind: "speech", actor: "resident", visibility: "public", data: { role: "user", text: "I knew his name.", delivery: "received", source: "voice" } };
 const follow = { id: "follow:1", attempt: "attempt-1", at: 5, kind: "director", actor: "director", visibility: "internal", data: { action: "follow-up", args: { evidenceId: "speech:1", line: "Who told you that name?" }, phase: "conceal" } };
 const variables = (events: unknown[] = [speech, follow]) => ({ "unperson-room": { version: 1, attempt: "attempt-1", clock: 6, events }, "unperson-state": { phase: "conceal" } });
 const request = { id: "follow:1", kind: "follow-up" };
+
+test('a fresh photographed object produces one short host-owned cue without exposing private data', () => {
+  const photo = { id: 'photo:1', attempt: 'attempt-1', at: 5, kind: 'observation', actor: 'screen', visibility: 'public', data: { code: 'photo-exposed' } };
+  const reference = { id: photo.id, kind: 'bulletin' };
+  const current = { ...variables([photo]), 'unperson-private-life': { entries: ['PRIVATE_DIARY'], notebook: 'held' }, 'unperson-state': { phase: 'conceal', photo: 'vent' } };
+  const notice = hydrateVoiceSceneNotice(reference, current);
+  assert.deepEqual(notice, { ...reference, text: '6079. Show me that photograph.' });
+  assert.doesNotMatch(JSON.stringify(notice), /PRIVATE_DIARY|vent|held/);
+  for (const patch of [{ visibility: 'internal' }, { actor: 'resident' }, { data: { code: 'photo-exposed', text: 'PRIVATE_DIARY' } }, { at: 7 }, { at: -1 }]) assert.equal(hydrateVoiceSceneNotice(reference, variables([{ ...photo, ...patch }])), null);
+  assert.equal(hydrateVoiceSceneNotice({ ...reference, text: 'Invented demand.' }, current), null);
+});
+
+test('photo cues expire, defer to newer dialogue and police, and have a twelve-second sighting cooldown', () => {
+  const photo = { id: 'photo:1', attempt: 'attempt-1', at: 5, kind: 'observation', actor: 'screen', visibility: 'public', data: { code: 'photo-exposed' } };
+  const reference = { id: photo.id, kind: 'bulletin' };
+  let current = variables([photo]);
+  const notice = hydrateVoiceSceneNotice(reference, current, [], undefined, () => current); assert.ok(notice);
+  const authorized = sceneAuthority.voiceSceneAuthority(notice); assert.equal(authorized?.(), true);
+  current = variables([photo, { ...speech, id: 'own-caption', at: 6, actor: 'screen', data: { role: 'assistant', text: '6079. Show me that photograph.', source: 'voice', delivery: 'generated' } }]);
+  assert.equal(authorized?.(), false, 'Newer dialogue still supersedes a queued cue');
+  assert.equal(authorized?.(true), true, 'A cue already handed to the speaker cannot expire on its own output caption');
+  current = variables([photo]); current['unperson-room'].clock = 17; assert.equal(authorized?.(), false);
+  assert.equal(authorized?.(true), false, 'Performing authority still observes real deadlines');
+  for (const later of [{ ...speech, at: 6 }, { ...speech, at: 6, actor: 'screen', data: { role: 'assistant', text: 'Your explanation is received.', source: 'voice', delivery: 'generated' } }, { ...follow, at: 6, data: { action: 'dispatch-police', args: { evidenceId: photo.id }, phase: 'conceal' } }]) {
+    current = variables([photo, later]); assert.equal(authorized?.(), false);
+  }
+  const repeated = { ...photo, id: 'photo:2', at: 10 };
+  current = variables([photo, repeated]); current['unperson-room'].clock = 10;
+  assert.equal(hydrateVoiceSceneNotice({ id: repeated.id, kind: 'bulletin' }, current), null);
+  current = variables([photo, { ...repeated, at: 17 }]); current['unperson-room'].clock = 17;
+  assert.ok(hydrateVoiceSceneNotice({ id: repeated.id, kind: 'bulletin' }, current));
+});
+
+test("queued visitor dispatch loses authority when the door has been answered or the visitor has left", () => {
+  const dispatch = { ...follow, data: { action: "dispatch-visitor", args: {} } };
+  const reference = { id: dispatch.id, kind: "bulletin" };
+  for (const code of ["admitted", "entered", "left"]) {
+    let current = variables([dispatch]);
+    const notice = hydrateVoiceSceneNotice(reference, current, [], "76.0.0", () => current);
+    assert.ok(notice);
+    assert.equal(typeof sceneAuthority.voiceSceneAuthority, "function");
+    const authorized = sceneAuthority.voiceSceneAuthority(notice);
+    assert.equal(authorized?.(), true);
+    current = variables([dispatch, { ...speech, id: "visitor-update", at: 6, kind: "visitor", actor: "warden", data: { code } }]);
+    assert.equal(authorized?.(), false, `${code} must withdraw an upcoming-visitor instruction`);
+    assert.equal(hydrateVoiceSceneNotice(reference, current), null);
+  }
+});
+
+test("all hydrated scenes recheck attempt, phase, expiration and their public wording before delivery", () => {
+  let current = variables();
+  const notice = hydrateVoiceSceneNotice(request, current, [], "76.0.0", () => current);
+  assert.ok(notice);
+  assert.equal(typeof sceneAuthority.voiceSceneAuthority, "function");
+  const authorized = sceneAuthority.voiceSceneAuthority(notice);
+  assert.equal(authorized?.(), true);
+  current = { ...variables(), "unperson-state": { phase: "inspection" } };
+  assert.equal(authorized?.(), false);
+  current = variables(); current["unperson-room"].attempt = "attempt-2";
+  assert.equal(authorized?.(), false);
+  current = variables(); current["unperson-room"].clock = 50;
+  assert.equal(authorized?.(), false);
+  current = variables([speech, { ...follow, data: { ...follow.data, args: { ...follow.data.args, line: "A different question." } } }]);
+  assert.equal(authorized?.(), false);
+});
+
+const generatedReply = { ...speech, id: "answer:1", at: 4, actor: "screen", data: { role: "assistant", text: "The name is not in the current record.", source: "generated", delivery: "generated" } };
+test("typed reply speech comes only from the saved generated answer to the latest received statement", () => {
+  const reference = { id: generatedReply.id, kind: "reply" };
+  const state = { ...variables([speech, generatedReply]), "unperson-private-life": { entries: ["PRIVATE_SENTINEL"] } };
+  const notice = hydrateVoiceSceneNotice(reference, state);
+  assert.deepEqual(notice, { ...reference, text: generatedReply.data.text });
+  assert.doesNotMatch(JSON.stringify(notice), /PRIVATE_SENTINEL/);
+  assert.equal(hydrateVoiceSceneNotice({ ...reference, text: "Forged answer." }, state), null);
+  for (const patch of [{ actor: "resident" }, { visibility: "internal" }, { data: { ...generatedReply.data, source: "voice" } }, { data: { ...generatedReply.data, delivery: "completed" } }, { data: { ...generatedReply.data, secret: "PRIVATE_SENTINEL" } }]) {
+    assert.equal(hydrateVoiceSceneNotice(reference, variables([speech, { ...generatedReply, ...patch }])), null);
+  }
+  assert.equal(hydrateVoiceSceneNotice(reference, variables([generatedReply])), null);
+  assert.equal(hydrateVoiceSceneNotice(reference, variables([speech, generatedReply, { ...speech, id: "new-statement", at: 5 }])), null);
+});
+
+test("queued typed reply is withdrawn after superseding testimony, a new attempt or the end of play", () => {
+  let current = variables([speech, generatedReply]);
+  const notice = hydrateVoiceSceneNotice({ id: generatedReply.id, kind: "reply" }, current, [], "76.0.0", () => current);
+  assert.ok(notice);
+  assert.equal(typeof sceneAuthority.voiceSceneAuthority, "function");
+  const authorized = sceneAuthority.voiceSceneAuthority(notice);
+  assert.equal(authorized?.(), true);
+  current = variables([speech, generatedReply, { ...speech, id: "later-statement", at: 5 }]);
+  assert.equal(authorized?.(), false);
+  current = variables([speech, generatedReply]); current["unperson-room"].attempt = "attempt-2";
+  assert.equal(authorized?.(), false);
+  current = variables([speech, generatedReply]); current["unperson-state"].phase = "end";
+  assert.equal(authorized?.(), false);
+});
+
+test('a queued typed reply loses authority after new public evidence in the same phase, but not private edits or ticks', () => {
+  let current: Record<string, unknown> = variables([speech, generatedReply]);
+  const notice = hydrateVoiceSceneNotice({ id: generatedReply.id, kind: 'reply' }, current, [], '79.0.0', () => current); assert.ok(notice);
+  const authorized = sceneAuthority.voiceSceneAuthority(notice); assert.equal(authorized?.(), true);
+  current = { ...variables([speech, generatedReply, { id: 'draft', attempt: 'attempt-1', at: 5, kind: 'work', actor: 'resident', visibility: 'internal', data: { document: 'correction-14', action: 'redact', edition: 'corrected' } }]), 'unperson-private-life': { entries: ['PRIVATE_DIARY'] } };
+  (current['unperson-room'] as { clock: number }).clock = 12;
+  assert.equal(authorized?.(), true);
+  current = variables([speech, generatedReply, { id: 'seen-photo', attempt: 'attempt-1', at: 5, kind: 'observation', actor: 'screen', visibility: 'public', data: { code: 'photo-exposed' } }]);
+  assert.equal(authorized?.(), false, 'Same-phase witnessed evidence must invalidate an unsent earlier answer');
+});
+
+test('a saved answer already superseded before hydration cannot acquire fresh delivery authority', () => {
+  const reference = { id: generatedReply.id, kind: 'reply' };
+  const seen = { id: 'seen-photo', attempt: 'attempt-1', at: 5, kind: 'observation', actor: 'screen', visibility: 'public', data: { code: 'photo-exposed' } };
+  assert.equal(hydrateVoiceSceneNotice(reference, variables([speech, generatedReply, seen])), null);
+  const grant = { ...follow, at: 3, data: { action: 'grant-interval', args: { evidenceId: speech.id }, phase: 'conceal' } };
+  const current = variables([speech, grant, generatedReply]);
+  current['unperson-room'].clock = 47;
+  assert.ok(hydrateVoiceSceneNotice(reference, current, [], '79.0.0'));
+  current['unperson-room'].clock = 48;
+  assert.equal(hydrateVoiceSceneNotice(reference, current, [], '79.0.0'), null, 'An expired concession changes the public basis even without a newly saved event');
+});
+
+test('host-bound microphone results ignore private edits and ticks but expire at public state boundaries', () => {
+  const grant = { ...follow, at: 3, data: { action: 'grant-interval', args: { evidenceId: speech.id }, phase: 'conceal' } };
+  let current: Record<string, unknown> = variables([speech, grant]);
+  const result = sceneAuthority.bindVoiceReplyAuthority({ text: 'You have permission.' }, current, () => current, '79.0.0') as object;
+  const authorized = sceneAuthority.voiceReplyAuthority(result); assert.equal(authorized?.(), true);
+  current = { ...variables([speech, grant]), 'unperson-private-life': { entries: ['PRIVATE_DIARY'], notebook: 'held' } };
+  (current['unperson-room'] as { clock: number }).clock = 47;
+  assert.equal(authorized?.(), true);
+  (current['unperson-room'] as { clock: number }).clock = 48;
+  assert.equal(authorized?.(), false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_DIARY/);
+  assert.equal(sceneAuthority.voiceReplyAuthority({ ...result }), undefined, 'Copying the public text cannot copy host authority');
+  const forged = { text: 'Invented answer.', current: () => true };
+  assert.equal(sceneAuthority.voiceReplyAuthority(sceneAuthority.bindVoiceReplyAuthority(forged, current, () => current) as object), undefined);
+});
+
+test("expired power and superseded observation focus cannot be announced from old event references", () => {
+  const cut = { ...follow, data: { action: "power-cut", args: { seconds: 3 } } };
+  let current = variables([cut]);
+  const notice = hydrateVoiceSceneNotice({ id: cut.id, kind: "power-cut" }, current, [], "76.0.0", () => current);
+  assert.ok(notice);
+  const authorized = sceneAuthority.voiceSceneAuthority(notice);
+  assert.equal(authorized?.(), true);
+  current = variables([cut]); current["unperson-room"].clock = 8;
+  assert.equal(authorized?.(), false);
+
+  const search = { ...follow, data: { action: "search", args: { focus: "desk" } } };
+  const moved = { ...search, id: "scan:2", at: 6, data: { ...search.data, args: { focus: "bed" } } };
+  assert.equal(hydrateVoiceSceneNotice({ id: search.id, kind: "search" }, variables([search, moved])), null);
+});
+
+test("queued clearance loses authority when police intervene in the same game phase", () => {
+  const clearance = { ...follow, data: { action: "clearance", args: {} } };
+  let current = { ...variables([clearance]), "unperson-state": { phase: "retrieve" } };
+  const notice = hydrateVoiceSceneNotice({ id: clearance.id, kind: "clearance" }, current, [], "76.0.0", () => current);
+  assert.ok(notice);
+  const authorized = sceneAuthority.voiceSceneAuthority(notice);
+  assert.equal(authorized?.(), true);
+  const dispatch = { ...follow, id: "police-dispatch", at: 6, data: { action: "dispatch-police", args: { evidenceId: speech.id } } };
+  current = { ...current, "unperson-room": { ...current["unperson-room"], events: [speech, clearance, dispatch] } };
+  assert.equal(authorized?.(), false);
+});
+
+test("a queued follow-up cannot reopen testimony after its generated answer", () => {
+  const answered = { ...generatedReply, at: 6 };
+  assert.equal(hydrateVoiceSceneNotice(request, variables([speech, follow, answered])), null);
+});
 
 test("inspection focus-only records and legacy drafts hydrate without promoting claims to findings", () => {
   for (const args of [{ focus: "desk" }, { focus: "desk", line: "The photograph on the desk. Leave it where it is." }]) {
@@ -229,4 +396,26 @@ test("withdrawal timing uses trusted edition for current reference and legacy th
  assert.ok(hydrateVoiceSceneNotice({id:dispatch.id,kind:"bulletin"},policeVariables([...old,fresh,dispatch],25),[],"48.0.0"));
  const bad=[...released,policeStage("withdrawn",23.999),fresh,dispatch];
  assert.equal(hydrateVoiceSceneNotice({id:dispatch.id,kind:"bulletin"},policeVariables(bad,25),[],"48.0.0"),null);
+});
+
+test('live-agent cards speak only a line already saved in the current attempt of their run record', () => {
+  const line = { id: 'warn-k1-1', attempt: 'attempt-1', at: 10, kind: 'consequence', actor: 'engine', visibility: 'public', data: { text: 'The official gave a warning.', say: '6079. I am noting that.' } };
+  const run = (patch: Record<string, unknown> = {}) => ({ 'unperson-run': { version: 1, attempt: 'attempt-1', clock: 12, events: [line], ...patch }, 'unperson-state': { phase: 'conceal' } });
+  const reference = { id: line.id, kind: 'reply' };
+  const notice = hydrateVoiceSceneNotice(reference, run());
+  assert.deepEqual(notice, { ...reference, text: '6079. I am noting that.' });
+  // The iframe cannot supply wording, other kinds, unknown ids, stale lines or other attempts.
+  assert.equal(hydrateVoiceSceneNotice({ ...reference, text: 'Invented.' }, run()), null);
+  assert.equal(hydrateVoiceSceneNotice({ id: line.id, kind: 'bulletin' }, run()), null);
+  assert.equal(hydrateVoiceSceneNotice({ id: 'missing', kind: 'reply' }, run()), null);
+  assert.equal(hydrateVoiceSceneNotice(reference, run({ clock: 56 })), null);
+  assert.equal(hydrateVoiceSceneNotice(reference, run({ attempt: 'attempt-2' })), null);
+  assert.equal(hydrateVoiceSceneNotice(reference, run({ events: [{ ...line, data: { text: 'No line.' } }] })), null);
+  // Authority is rechecked against the newest confirmed record before delivery.
+  let current: Record<string, unknown> = run();
+  const bound = hydrateVoiceSceneNotice(reference, run(), [], '79.0.0', () => current)!;
+  const authority = sceneAuthority.voiceSceneAuthority(bound)!;
+  assert.equal(authority(), true);
+  current = run({ attempt: 'attempt-2', events: [] });
+  assert.equal(authority(), false);
 });

@@ -33,6 +33,7 @@ import { TurnImageState } from "./turn-image-state";
 import { TurnImageCard } from "./turn-image-card";
 import { PortraitViewer, usePortraitViewer } from "./portrait-viewer";
 import { splitTurnImages, splitTurnVideos } from "./turn-image-embeds";
+import { cleanDisplayText } from "@yumina/engine";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -40,33 +41,6 @@ function cn(...inputs: ClassValue[]) {
 
 function trimFixed(n: number, digits: number): string {
   return n.toFixed(digits).replace(/\.?0+$/, "");
-}
-
-// ── Strip directives (inlined from @/lib/strip-directives) ─────────
-// Strips state-change directives from streaming text so they never show.
-// Keep in step with src/lib/strip-directives.ts: ids may carry a middle dot
-// (艾丝·华伦斯坦) and spaces after a dot (relations.Riveria Ljos Alf), and a
-// bare-scalar merge ([relations.X: merge 20]) is hidden too.
-
-const DIR_STANDARD =
-  /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|add|subtract|multiply|toggle|append|merge|\+|-|\*)?\s*("(?:[^"\\]|\\.)*"|[\w\p{L}\p{N}.$-]+)?\]/gu;
-const DIR_AUDIO =
-  /\[audio:\s*([\w\p{L}\p{N}-]+)\s+(play|stop|crossfade|volume)(?:\s+([\d.]+))?(?:\s+chain:([\w\p{L}\p{N}-]+))?\]/gu;
-const DIR_JSON =
-  /\[([\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*):\s*(set|merge|push|delete)\s+(\{[\s\S]*?\}|\[[\s\S]*?\])\]/gu;
-const DIR_UPDATE_VAR = /<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi;
-const DIR_STRUCTURAL_XML =
-  /^\s*<\/?(maintext|option|sum|Analysis|UpdateVariable|JSONPatch|status_current_variable)\s*>\s*$/gim;
-const DIR_TRAILING = /\[[\w\p{L}\p{N}$·・-]+(?:\.[\w\p{L}\p{N}$·・-]+(?: [\w\p{L}\p{N}$·・-]+)*)*:[^\]]*$/u;
-
-function stripDirectives(text: string): string {
-  return text
-    .replace(DIR_UPDATE_VAR, "")
-    .replace(DIR_AUDIO, "")
-    .replace(DIR_JSON, "")
-    .replace(DIR_STANDARD, "")
-    .replace(DIR_STRUCTURAL_XML, "")
-    .replace(DIR_TRAILING, "");
 }
 
 // ── Props ──────────────────────────────────────────────────────────
@@ -165,13 +139,16 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   // While the tag itself is still arriving (`[spea`) show nothing yet: the
   // label would otherwise flash "Narrator" for a token before the face lands.
   const holdingSpeakerTag = isStreaming && isPartialLeadingSpeakerTag(rawContent);
-  // Stored content went through the engine parser, which already removed every
-  // directive it recognised; stripping it again only drops tags an older parser
-  // missed (e.g. [relations.艾丝·华伦斯坦: +20] stored before keys could hold
-  // a middle dot), so old chats stop showing them.
-  const displayContent = isStreaming
-    ? holdingSpeakerTag ? "" : stripDirectives(stripLeadingSpeakerTag(rawContent))
-    : stripDirectives(rawContent);
+  // The engine's display cleaner (the parser's own clean text), the same one
+  // the host uses. Stored content already went through the parser on the
+  // server; cleaning it again only drops what an older parser missed, so old
+  // chats stop showing it. The game-state keys are the world's variable ids.
+  const variableIdsKey = variables ? Object.keys(variables).join("\u0001") : "";
+  const displayContent = useMemo(() => {
+    const variableIds = variableIdsKey ? variableIdsKey.split("\u0001") : undefined;
+    if (!isStreaming) return cleanDisplayText(rawContent, { variableIds, replyRules: api.replyRules });
+    return holdingSpeakerTag ? "" : cleanDisplayText(stripLeadingSpeakerTag(rawContent), { variableIds, replyRules: api.replyRules, streaming: true });
+  }, [rawContent, isStreaming, holdingSpeakerTag, variableIdsKey, api.replyRules]);
   // A card's own renderer gets the reply without per-turn pictures; the host
   // draws them under its bubble (see turn-image-embeds.ts).
   const rendererText = useMemo(() => {

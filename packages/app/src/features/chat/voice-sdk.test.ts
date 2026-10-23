@@ -4,10 +4,24 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { transform } from "sucrase";
 import { createVoiceAPI, VOICE_EVENT } from "../../../sandbox/voice-api";
-import { formatVoiceSceneReaction, isVoiceSceneReaction, type VoiceSceneReaction, type VoiceSceneReference } from "../../../sandbox/voice-types";
+import { formatVoiceSceneReaction, isVoiceSceneReaction, isVoiceSceneReference, type VoiceSceneReaction, type VoiceSceneReference } from "../../../sandbox/voice-types";
 import { hydrateVoiceSceneNotice } from "./voice-scene-notice";
 import type { SandboxState } from "../../../sandbox/protocol";
 import type { buildAPI as BuildAPI } from "../../../sandbox/sandbox-context";
+
+test("a committed reply crosses the bridge by reference, never iframe-authored words", () => {
+  const calls: unknown[] = [];
+  const api = createVoiceAPI({ available: true, call: async () => { throw Error("No request"); }, post(method, args) { calls.push([method, args]); }, target: new EventTarget() });
+  assert.equal(isVoiceSceneReference({ id: "answer-1", kind: "reply" }), true);
+  assert.equal(isVoiceSceneReference({ id: "answer-1", kind: "reply", text: "Injected" }), false);
+  const notice = { id: "answer-1", kind: "reply", text: "The original entry is in the register. Your objection is recorded." } as const;
+  assert.equal(isVoiceSceneReaction(notice), true);
+  assert.equal(isVoiceSceneReaction({ ...notice, text: "x".repeat(1201) }), false);
+  assert.equal(isVoiceSceneReaction({ ...notice, action: "arrest" }), false);
+  api.reactToScene(notice);
+  assert.deepEqual(calls, [["realtimeVoice.reactToScene", [{ id: notice.id, kind: "reply" }]]]);
+  assert.match(formatVoiceSceneReaction(notice), /approved dialogue/i);
+});
 
 test("live interrupt crosses the SDK bridge once without arguments only when available", () => {
   const calls: unknown[] = [];
@@ -28,6 +42,17 @@ test("voice SDK forwards interruption mode unchanged and rejects invalid modes",
   }
   for (const interruptionMode of [null, "always", true, {}, []]) await assert.rejects(api.start({ instructions: "Official", interruptionMode } as never), /interruption/i);
   assert.equal(calls.length, 3);
+});
+
+test('voice SDK forwards explicit opening policy and rejects malformed policies before the bridge', async () => {
+  const calls: unknown[][] = [];
+  const api = createVoiceAPI({ available: true, call: async (_method, args) => { calls.push(args); return { status: 'connected' } as never; }, post() {}, target: new EventTarget() });
+  for (const opening of [undefined, 'character', 'silent'] as const) {
+    const params = { instructions: 'Official', reasoning: 'world' as const, ...(opening === undefined ? {} : { opening }) };
+    await api.start(params); assert.deepEqual(calls.at(-1), [params]);
+  }
+  for (const opening of [null, 'Silent', 'always', true, {}, []]) await assert.rejects(api.start({ instructions: 'Official', opening } as never), /opening/i);
+  assert.equal(calls.length, 3, 'invalid policies cannot cross the trusted bridge');
 });
 
 test("voice SDK forwards only a bounded known tool allowlist, preserving omission", async () => {
@@ -161,15 +186,16 @@ test("scene SDK preserves simple and complete rich callers while host owns their
     { id: "search:1", kind: "search", focus: "door" }, { id: "cut:1", kind: "power-cut", seconds: 12 },
   ] as const;
   const events = [sceneSpeech, sceneDecision("bulletin:1", "bulletin", { entryId: "broadcast:1" }), sceneDecision("inspect:1", "begin-inspection", { focus: "desk", line: "Remain visible." }), sceneFollow, sceneDecision("search:1", "search", { focus: "bed" }), sceneDecision("cut:1", "power-cut", { seconds: 6 })];
-  const bridge = sceneBridge(sceneVariables(events));
   for (const notice of rich) {
+    const currentEvents = events.slice(0, events.findIndex(event => event.id === notice.id) + 1);
+    const bridge = sceneBridge(sceneVariables(currentEvents));
     bridge.api.reactToScene(notice);
     const reference = { id: notice.id, kind: notice.kind };
     assert.deepEqual(bridge.posted.at(-1), [reference]);
-    assert.deepEqual(bridge.reactions.at(-1), hydrateVoiceSceneNotice(reference, sceneVariables(events), sceneEntries));
+    assert.deepEqual(bridge.reactions.at(-1), hydrateVoiceSceneNotice(reference, sceneVariables(currentEvents), sceneEntries));
+    assert.equal(bridge.reactions.length, 1);
+    assert.doesNotMatch(JSON.stringify(bridge.posted) + bridge.observations.join(), /IFRAME WORDING SENTINEL|PRIVATE PAGE SENTINEL/);
   }
-  assert.equal(bridge.reactions.length, rich.length);
-  assert.doesNotMatch(JSON.stringify(bridge.posted) + bridge.observations.join(), /IFRAME WORDING SENTINEL|PRIVATE PAGE SENTINEL/);
 });
 
 test("scene SDK rejects malformed, extra, private and incomplete rich payloads before posting", () => {
@@ -241,7 +267,7 @@ test("assembled SDK keeps transcription/TTS independent and awaits only confirme
   try {
     const api = module.exports.buildAPI({ sessionId: "session", mode: "session", readOnly: false, capabilities: { canUseSessionApis: true } } as SandboxState);
     assert.deepEqual(Object.keys(api.voice).sort(), ["cancel", "prepare", "record", "setPrefs", "stop"]);
-    assert.deepEqual(Object.keys(api.realtimeVoice).sort(), ["cancelSceneReaction", 'finish', 'getConfig', "interrupt", "onEvent", "prepare", "reactToScene", "resolveTool", "setMuted", "setSpatial", "start", "stop", "updateContext", "updateInstructions"]);
+    assert.deepEqual(Object.keys(api.realtimeVoice).sort(), ["cancelSceneReaction", 'finish', 'getConfig', "interrupt", "onEvent", "prepare", "reactToScene", "resolveDelegation", "resolveTool", "setMuted", "setSpatial", "start", "stop", "updateContext", "updateInstructions"]);
     assert.deepEqual(Object.keys(api.tts).sort(), ["onPlaybackFrame", "preview", "setPrefs", "speak", "stop"]);
     api.voice.stop(); api.voice.cancel(); api.voice.setPrefs({ enabled: false }); api.tts.stop(); api.realtimeVoice.stop();
     assert.deepEqual(calls.map(call => call.method), ["voice.stop", "voice.cancel", "voice.setPrefs", "tts.stop", "realtimeVoice.stop"]);

@@ -1,8 +1,8 @@
-import type { PlayModel } from "./models.js";
+import type { PlayModel, YuminaModel } from "./models.js";
 
 // ─── Model families ──────────────────────────────────────────────────
 // Versions of one series that cost the same show as a single row in the Play
-// pickers, with a version switch inside the row. Saved selections, pins, pools
+// and Studio pickers, with a version switch inside the row. Saved selections, pins, pools
 // and billing stay per model id; a family is only how the list is drawn.
 //
 // Members are listed newest first, each with the short label its chip shows.
@@ -24,31 +24,36 @@ export const PICKER_MODEL_FAMILIES: readonly PickerModelFamily[] = [
   { name: "Grok", members: [["x-ai/grok-4.7", "4.7"], ["x-ai/grok-4.6", "4.6"], ["x-ai/grok-4.5", "4.5"]] },
   { name: "Grok", members: [["x-ai/grok-4.3", "4.3"], ["x-ai/grok-4.20", "4.20"]] },
   { name: "Gemini Flash", members: [["google/gemini-3.7-flash", "3.7"], ["google/gemini-3.6-flash", "3.6"]] },
-  { name: "MiMo Pro", members: [["xiaomi/mimo-v2.6-pro", "V2.6"], ["xiaomi/mimo-v2.5-pro", "V2.5"]] },
 ];
 
-export interface PlayModelVariant {
-  model: PlayModel;
+/** What grouping reads: Studio-only models have no tier or plan, which compare equal. */
+export type GroupableModel = Pick<YuminaModel, "id" | "name" | "inputPrice" | "outputPrice" | "tier" | "minPlan">;
+
+export interface ModelVariant<M extends GroupableModel = PlayModel> {
+  model: M;
   label: string;
 }
 
-export interface PlayModelGroup {
+export interface ModelGroup<M extends GroupableModel = PlayModel> {
   /** Stable React key: `family:` + the lead version's id, or the model id for a lone model. */
   key: string;
   /** Family name, or the model's own name when it stands alone. */
   name: string;
   /** Newest first. A lone model is a group of one. */
-  variants: PlayModelVariant[];
+  variants: ModelVariant<M>[];
 }
 
-const sameOffer = (a: PlayModel, b: PlayModel) =>
+export type PlayModelVariant = ModelVariant<PlayModel>;
+export type PlayModelGroup = ModelGroup<PlayModel>;
+
+const sameOffer = (a: GroupableModel, b: GroupableModel) =>
   a.inputPrice === b.inputPrice && a.outputPrice === b.outputPrice && a.tier === b.tier && a.minPlan === b.minPlan;
 
 /** Folds same-price versions of a series into one group. Order follows the
  *  input: a family sits where its first listed member would have. */
-export function groupPlayModels(models: readonly PlayModel[]): PlayModelGroup[] {
+export function groupPlayModels<M extends GroupableModel>(models: readonly M[]): ModelGroup<M>[] {
   const byId = new Map(models.map((m) => [m.id, m]));
-  const familyOf = new Map<string, { family: PickerModelFamily; variants: PlayModelVariant[] }>();
+  const familyOf = new Map<string, { family: PickerModelFamily; variants: ModelVariant<M>[] }>();
   for (const family of PICKER_MODEL_FAMILIES) {
     const present = family.members.flatMap(([id, label]) => {
       const model = byId.get(id);
@@ -62,7 +67,7 @@ export function groupPlayModels(models: readonly PlayModel[]): PlayModelGroup[] 
     for (const v of variants) familyOf.set(v.model.id, entry);
   }
 
-  const groups: PlayModelGroup[] = [];
+  const groups: ModelGroup<M>[] = [];
   const placed = new Set<PickerModelFamily>();
   for (const model of models) {
     const entry = familyOf.get(model.id);
@@ -77,6 +82,6 @@ export function groupPlayModels(models: readonly PlayModel[]): PlayModelGroup[] 
 }
 
 /** The version a row stands for: the selected one if it belongs here, else the newest. */
-export function activeVariant(group: PlayModelGroup, selectedModel: string | null | undefined): PlayModelVariant {
+export function activeVariant<M extends GroupableModel>(group: ModelGroup<M>, selectedModel: string | null | undefined): ModelVariant<M> {
   return group.variants.find((v) => v.model.id === selectedModel) ?? group.variants[0]!;
 }

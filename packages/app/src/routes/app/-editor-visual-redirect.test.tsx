@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import ts from "typescript";
 import { resolveEditorMode } from "../../features/editor/editor-entry";
+import { coverSettingsSearch, type CoverSettingsTarget } from "../../features/editor/lib/cover-settings-target";
 
 /**
  * The simple editor's 画布 pill with unsaved edits.
@@ -37,16 +38,17 @@ test("the canvas redirect waits for the save and falls back to the editor when t
     { getState: () => store },
   );
   const navigations: string[] = [];
+  let search: { cover?: CoverSettingsTarget } = {};
   const router = { history: {}, navigate: (args: { to: string }) => { navigations.push(args.to); return new Promise(() => {}); } };
   let blocker = { status: "idle" };
   const blockerListeners = new Set<() => void>();
   const setBlocker = (status: string) => { blocker = { status }; blockerListeners.forEach(fn => fn()); };
   const mocks: Record<string, unknown> = {
-    "@tanstack/react-router": { createFileRoute: () => (config: object) => ({ ...config, useParams: () => ({ worldId: "saved-card" }) }), useRouter: () => router },
+    "@tanstack/react-router": { createFileRoute: () => (config: object) => ({ ...config, useParams: () => ({ worldId: "saved-card" }), useSearch: () => search }), useRouter: () => router, useRouterState: () => undefined },
     "lucide-react": new Proxy({}, { get: () => () => null }),
     "@/stores/editor": { useEditorStore },
     "@/lib/lazy-route-component": { lazyRouteComponent: (_loader: unknown, select: (module: unknown) => unknown) => select({
-      EditorShell: () => <div>LEGACY</div>,
+      EditorShell: ({ coverTarget }: { coverTarget?: string }) => <div data-cover-target={coverTarget}>LEGACY</div>,
       QuickCreateEditor: () => <div>SIMPLE</div>,
     }) },
     "@/features/editor/lib/editor-mode": { getGlobalEditorMode: () => null, getEditorMode: () => null },
@@ -55,9 +57,11 @@ test("the canvas redirect waits for the save and falls back to the editor when t
     },
     "@/features/editor/unsaved-changes-dialog": { UnsavedChangesDialog: ({ blocker: b }: { blocker: { status: string } }) => b.status === "blocked" ? <div>DIALOG</div> : null },
     "@/features/editor/editor-draft-recovery": { backupEditorDraft: () => false },
+    "@/features/editor/save-status": { useSaveWhenHidden: () => {} },
     "@/lib/safe-back": { navigateBackSafely: () => {} },
     "@/features/editor/editor-unavailable": { EditorUnavailable: () => <div>UNAVAILABLE</div>, useEditorOwnership: () => null },
     "@/features/editor/editor-entry": { resolveEditorMode },
+    "@/features/editor/lib/cover-settings-target": { coverSettingsSearch },
     "@/lib/blueprint-access": { fetchBlueprintAccess: async () => true },
     "@/lib/editor-surface": { getEditorSurface: () => null, isPhoneScreen: () => false, shouldOpenVisual: ({ mode }: { mode: string }) => mode === "advanced" },
     "@/lib/use-desktop-viewport": { useIsDesktopViewport: () => true },
@@ -96,6 +100,20 @@ test("the canvas redirect waits for the save and falls back to the editor when t
       assert.ok(text().includes("LEGACY"));
       assert.equal(navigations.length, 1, "it does not try again on its own");
     });
+
+    for (const mode of ["simple", "advanced"]) {
+      await suite.test(`the publish shortcut opens cover settings in ${mode} mode without changing unsaved content or preferences`, async () => {
+        store.worldDraft = { id: "saved", editorMode: mode, name: "Unsaved title", entries: [{ content: "Unsaved story" }] };
+        const draftBefore = structuredClone(store.worldDraft);
+        search = coverSettingsSearch({ cover: "landscape" });
+        navigations.length = 0;
+        await act(async () => { root.render(<EditPage key={mode} />); });
+        assert.equal(document.querySelector('[data-cover-target="landscape"]')?.textContent, "LEGACY");
+        assert.deepEqual(navigations, [], "the requested cover settings must not redirect to the canvas");
+        assert.deepEqual(store.worldDraft, draftBefore);
+        assert.equal(store.isDirty, true);
+      });
+    }
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

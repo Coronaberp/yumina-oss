@@ -77,7 +77,7 @@ export {
 // window and the prompt budget agree on Chinese token counts. (Was
 // x-ai/grok-4.1-fast, now deprecated → silently redirected to the ~20x-pricier
 // x-ai/grok-4.20; see DEPRECATED_MODEL_REDIRECTS in routes/messages.ts.)
-export const DEFAULT_STORY_SUMMARY_MODEL = "google/gemini-2.5-flash-lite";
+export const DEFAULT_STORY_SUMMARY_MODEL = "google/gemini-3.1-flash-lite";
 
 const STORY_SUMMARY_SOURCE_HASH_VERSION = 3;
 type StoryUsage = Parameters<typeof billBackgroundUsage>[0];
@@ -99,7 +99,36 @@ type StoryCompactionArgs = {
   /** The card switched the summary on (settings.storySummary), so the
    *  player's extension entitlement is not what gates this run. */
   authorRequired?: boolean;
+  /** Fold ahead of the overflow: compact once the raw history passes this
+   *  many tokens, keeping finalPromptRawTokenLimit as the tail. The shorter
+   *  history and the new summary then reach the same prompt, so the cached
+   *  conversation breaks once per fold instead of once at the cut and again
+   *  when the summary lands a turn later. */
+  foldAtTokens?: number | null;
+  /** A first summary recaps only the newest this-many tokens of history,
+   *  the part a prompt could still carry. Older rows leave the history
+   *  without a recap: no prompt has shown them for a while, and summarising
+   *  a long backlog at once charged one player 2,738 mushies in a single run. */
+  recapWithinTokens?: number | null;
 };
+
+/** How many of the oldest `compactable` rows lie beyond the newest
+ *  `withinTokens` of the transcript: they fold without being summarised.
+ *  The newest compactable row is always summarised. */
+function unseenBacklogCount<T extends StoryMessageRow>(
+  compactable: T[],
+  retained: T[],
+  withinTokens: number,
+  model: string,
+): number {
+  let seen = 0;
+  for (const message of retained) seen += estimateMessageTokens(message, model);
+  let i = compactable.length;
+  while (i > 0 && seen + estimateMessageTokens(compactable[i - 1]!, model) <= withinTokens) {
+    seen += estimateMessageTokens(compactable[--i]!, model);
+  }
+  return Math.min(i, compactable.length - 1);
+}
 
 /** The author's one line to the summariser, from the card's settings. */
 function storySummaryFocus(settings: unknown): string | null {
@@ -276,21 +305,26 @@ function enqueueStoryCompactionJob<T>(sessionId: string, job: () => Promise<T>):
 const STORY_SUMMARY_REFUSAL_FALLBACK_MODEL = "deepseek/deepseek-v3.2";
 
 /**
- * Set to true when any call in a compaction job fell back to the refusal
- * model. The job then persists the fallback as the session's summaryModel so
- * the NEXT compaction goes straight to the tolerant model instead of paying a
- * refused call per chunk forever.
+ * OpenRouter hosts that break summary calls for a model. GMICloud serves
+ * deepseek-v3.2 with reasoning on regardless of the request: in a sample of
+ * 60 compaction calls over 4,096 output tokens (max_tokens 2,048/4,096,
+ * reasoning off), all 60 were GMICloud with reasoning tokens, up to 49k
+ * tokens per call; it also caused the "DataInspectionFailed" 502s (238
+ * failed runs, 2026-10-12..18). The ~10 other hosts behaved.
  */
-type RefusalFallbackTracker = { refusalFallbackUsed: boolean };
+const SUMMARY_IGNORED_PROVIDERS: Record<string, string[]> = {
+  "deepseek/deepseek-v3.2": ["gmicloud"],
+};
 
 /**
- * Persist the refusal-fallback model as the session's summaryModel when it
- * produced this job's summary — otherwise the next compaction re-reads the
- * refusing model from the session row and pays a refused call per chunk.
+ * Set to true once a call in this run fell back to the refusal model; the
+ * run's later calls then start on the fallback instead of paying another
+ * refused call each. Deliberately run-scoped: it used to be persisted as the
+ * session's summaryModel, which silently replaced the player's choice for
+ * good after a single refusal (248 of the week's active summary sessions had
+ * deepseek-v3.2 saved, 2026-10-19).
  */
-function withEffectiveModel(job: PreparedStorySummaryJob, tracker: RefusalFallbackTracker): PreparedStorySummaryJob {
-  return tracker.refusalFallbackUsed ? { ...job, model: STORY_SUMMARY_REFUSAL_FALLBACK_MODEL } : job;
-}
+type RefusalFallbackTracker = { refusalFallbackUsed: boolean };
 
 // Exported for the run-scope summarizer (lib/run-summary.ts): one background
 // LLM call with the same billing, usage logging and refusal fallback as story
@@ -305,13 +339,15 @@ export async function generateStorySummaryText(args: {
   maxTokens: number;
   /** Background AIs may set their own; summaries stay at 0.2. */
   temperature?: number;
+  /** A UI AI that answers in JSON asks the model for it. */
+  responseFormat?: { type: "json_object" };
   fallbackTracker?: RefusalFallbackTracker;
   attemptBudget?: StoryCompactionAttemptBudget;
   deferUsage?: (usage: StoryUsage) => void;
 }): Promise<string> {
   const candidates: Array<{ model: string; text: string; usage?: StoryUsage }> = [];
   const result = await generateWithSummaryFallback({
-    model: args.model,
+    model: args.fallbackTracker?.refusalFallbackUsed ? STORY_SUMMARY_REFUSAL_FALLBACK_MODEL : args.model,
     fallbackModel: STORY_SUMMARY_REFUSAL_FALLBACK_MODEL,
     onFallback: (reason) => console.warn(
       `[StoryCompaction] ${args.model} cannot summarize (${reason}) — retrying on ${STORY_SUMMARY_REFUSAL_FALLBACK_MODEL}`,
@@ -343,6 +379,7 @@ async function generateStorySummaryTextOnce(args: {
   endpoint: string;
   maxTokens: number;
   temperature?: number;
+  responseFormat?: { type: "json_object" };
   disableModelFallback?: boolean;
   attemptBudget?: StoryCompactionAttemptBudget;
   deferUsage?: (usage: StoryUsage) => void;
@@ -381,10 +418,12 @@ async function generateStorySummaryTextOnce(args: {
       messages: moduleAccess?.prompt ?? args.prompt,
       maxTokens: args.maxTokens,
       temperature: args.temperature ?? 0.2,
+      ...(args.responseFormat ? { responseFormat: args.responseFormat } : {}),
       // Summaries need concise final text, not hidden deliberation. DeepSeek V4
       // enables thinking by default and can otherwise spend this entire small
       // output budget on reasoning, leaving the actual summary empty.
       disableReasoning: true,
+      ignoreProviders: SUMMARY_IGNORED_PROVIDERS[args.model],
       singleAttempt: !!args.attemptBudget,
       // Every possible retry must consume the shared job-local allowance. The
       // provider's internal fallback recursion is invisible to that counter, so
@@ -621,7 +660,7 @@ async function summarizeRowsWithMetadata(args: StorySummaryRunInput & {
       load: (text, recovery) => loadEpisodeCheckpoint(keyFor(text, recovery)),
       save: (text, result, recovery) => saveEpisodeCheckpoint(keyFor(text, recovery), result),
       generate: async (text, recovery) => {
-        const tracker: RefusalFallbackTracker = { refusalFallbackUsed: false };
+        const tracker: RefusalFallbackTracker = { refusalFallbackUsed: args.fallbackTracker?.refusalFallbackUsed ?? false };
         let usage: StoryUsage | undefined;
         const summary = await generateStorySummaryText({
           userId: args.userId, sessionId: args.sessionId, model: args.model,
@@ -992,6 +1031,7 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
           mode: "overflow",
           contextTokenLimit: finalPromptRawTokenLimit,
           recentTailTokens: Math.min(summaryRecentTailTokensOverride ?? finalPromptRawTokenLimit, finalPromptRawTokenLimit),
+          ...(args.foldAtTokens != null ? { triggerTokens: Math.max(1, Math.floor(args.foldAtTokens)) } : {}),
           modelId: model,
         })
     : selectCompactionWindow(transcriptRows, {
@@ -1066,7 +1106,7 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
         sessionId: args.sessionId,
         userId: args.userId,
         summary,
-        job: withEffectiveModel(job, fallbackTracker),
+        job,
         resetBudgetWindow: true,
       });
       if (!persisted) throw new Error("Session changed while compacting. Please try again.");
@@ -1084,12 +1124,18 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
     }
   }
 
+  // A first summary over a long backlog recaps only what a prompt could still
+  // carry; the older rows fold with it, unsummarised. Later runs continue an
+  // existing summary, so they never skip.
+  const unseen = !args.force && args.recapWithinTokens != null && !row.session.summary?.trim()
+    ? unseenBacklogCount(window.compactable, window.retained, args.recapWithinTokens, model)
+    : 0;
   // Bounded slice — the remainder compacts on subsequent runs.
-  const { slice: compactableSlice } = selectStoryCompactionRunSlice(window.compactable, {
+  const { slice: compactableSlice } = selectStoryCompactionRunSlice(window.compactable.slice(unseen), {
     maxMessages: STORY_COMPACTION_MAX_MESSAGES_PER_RUN,
     modelId: model,
   });
-  const compactedMessageIds = compactableSlice.map((message) => message.id);
+  const compactedMessageIds = [...window.compactable.slice(0, unseen), ...compactableSlice].map((message) => message.id);
   const coversUntilMessageId = compactableSlice.at(-1)?.id ?? null;
   if (!args.force && row.session.summary?.trim()) await assertPriorCoverage(args.sessionId, [row.session.summaryCoversUntilMessageId], compactableSlice[0]!.id);
   const boundaryState = await loadHistoricalState(args.sessionId, coversUntilMessageId!);
@@ -1222,7 +1268,7 @@ async function compactStorySummaryForSessionNow(args: StoryCompactionArgs): Prom
       sessionId: args.sessionId,
       userId: args.userId,
       summary,
-      job: withEffectiveModel(job, fallbackTracker),
+      job,
       resetBudgetWindow: args.force || budgetRecoveryProbe,
     });
     if (args.force && !persisted) throw new Error("Session changed while compacting. Please try again.");
@@ -1459,7 +1505,7 @@ export function compactStorySummaryForSessionManually(args: {
         sessionId: args.sessionId,
         userId: args.userId,
         summary: result.summary,
-        job: withEffectiveModel(job, fallbackTracker),
+        job,
         resetBudgetWindow: true,
       });
       if (!persisted) {

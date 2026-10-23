@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter, useRouterState } from "@tanstack/react-router";
 import { Suspense, useEffect, useReducer, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEditorStore } from "@/stores/editor";
@@ -7,11 +7,14 @@ import { getEditorMode, getGlobalEditorMode } from "@/features/editor/lib/editor
 import { useUnsavedChangesGuard } from "@/features/editor/use-unsaved-changes-guard";
 import { UnsavedChangesDialog } from "@/features/editor/unsaved-changes-dialog";
 import { backupEditorDraft } from "@/features/editor/editor-draft-recovery";
+import { useSaveWhenHidden } from "@/features/editor/save-status";
 import { navigateBackSafely } from "@/lib/safe-back";
 import { resolveEditorMode } from "@/features/editor/editor-entry";
 import { fetchBlueprintAccess } from "@/lib/blueprint-access";
-import { getEditorSurface, shouldOpenVisual } from "@/lib/editor-surface";
+import { getEditorSurface, isPhoneScreen, shouldOpenVisual } from "@/lib/editor-surface";
+import { requestHeldTour } from "@/lib/studio-entry";
 import { EditorUnavailable, useEditorOwnership } from "@/features/editor/editor-unavailable";
+import { coverSettingsSearch } from "@/features/editor/lib/cover-settings-target";
 
 const QuickCreateEditor = lazyRouteComponent(
   () => import("@/features/editor/quick-create-editor"),
@@ -22,7 +25,7 @@ const QuickCreateEditor = lazyRouteComponent(
  *
  *  The canvas is the one a card opens on now (see `shouldOpenVisual`), and
  *  this shell is what the 画布 pill (turned off) drops you back to. That makes this a
- *  real destination rather than a fallback: a phone always lands here, so does
+ *  real destination rather than a fallback: a phone that never chose lands here, so does
  *  anyone who turned the switch off, and the module page carries a module's
  *  AI, memory and context the same as it always did. */
 const EditorShell = lazyRouteComponent(
@@ -32,6 +35,9 @@ const EditorShell = lazyRouteComponent(
 
 function WorldEditPage() {
   const { worldId } = Route.useParams();
+  useSaveWhenHidden(worldId);
+  const { cover: coverTarget } = Route.useSearch();
+  const coverVisit = useRouterState({ select: state => state.location.state.coverSettingsVisit });
   const router = useRouter();
   const loadWorld = useEditorStore((s) => s.loadWorld);
   const loadingWorld = useEditorStore((s) => s.loadingWorld);
@@ -97,14 +103,21 @@ function WorldEditPage() {
   // Opening a card lands on the canvas unless the creator turned the 画布
   // switch off. `replace` so the way back out of Studio is not this route
   // bouncing them straight back in.
-  const toVisual = mode !== null && blueprintAllowed !== null && shouldOpenVisual({
+  const toVisual = !coverTarget && mode !== null && blueprintAllowed !== null && shouldOpenVisual({
     mode,
     last: getEditorSurface(),
     allowed: blueprintAllowed,
     guest: guestMode,
+    phone: isPhoneScreen(),
   });
 
   const redirecting = toVisual && !visualDeclined;
+  // Whether the card was already an advanced one when this page first knew:
+  // opening it is then just opening a card, and the canvas holds its welcome
+  // for a new one. A simple card switched to 画布 here is someone choosing
+  // the canvas, and is greeted.
+  const openedAs = useRef<{ worldId: string; advanced: boolean } | null>(null);
+  if (mode !== null && openedAs.current?.worldId !== worldId) openedAs.current = { worldId, advanced: mode === "advanced" };
 
   useEffect(() => {
     // A save in flight (the simple editor's 画布 pill saves on its way
@@ -113,6 +126,7 @@ function WorldEditPage() {
     // dialog owns the outcome after that.
     if (!redirecting || saving || redirectAttempted.current) return;
     redirectAttempted.current = true;
+    if (openedAs.current?.advanced) requestHeldTour();
     void router.navigate({ to: "/app/studio/$worldId", params: { worldId }, replace: true });
   }, [redirecting, saving, worldId, router]);
 
@@ -165,15 +179,21 @@ function WorldEditPage() {
   return (
     <>
       <Suspense fallback={<LoadingSpinner />}>
-        {mode === "simple" ? (
+        {mode === "simple" && !coverTarget ? (
           <QuickCreateEditor
             onOpenFullEditor={() => { useEditorStore.getState().setField("editorMode", "advanced"); rerender(); }}
             onBack={back}
           />
         ) : (
           <EditorShell
+            coverTarget={coverTarget}
+            coverVisit={coverVisit}
             onBack={back}
-            onSwitchToSimple={() => { useEditorStore.getState().setField("editorMode", "simple"); rerender(); }}
+            onSwitchToSimple={() => {
+              useEditorStore.getState().setField("editorMode", "simple");
+              if (coverTarget) void router.navigate({ to: "/app/worlds/$worldId/edit", params: { worldId }, search: {}, replace: true });
+              rerender();
+            }}
           />
         )}
       </Suspense>
@@ -183,6 +203,7 @@ function WorldEditPage() {
 }
 
 export const Route = createFileRoute("/app/worlds/$worldId/edit")({
+  validateSearch: coverSettingsSearch,
   component: WorldEditPage,
 });
 

@@ -87,6 +87,7 @@ export type {
   NotificationStyle,
   Directive,
   RuleRuntimeState,
+  WorldGame,
 } from "./types/index.js";
 
 // Component types
@@ -346,9 +347,13 @@ export {
 
 // Parser
 export { ResponseParser } from "./parser/response-parser.js";
+export { cleanDisplayText } from "./parser/display-text.js";
+export type { DisplayTextOptions } from "./parser/display-text.js";
+export { stripBookkeepingLines, classifyBracketSpan, findBracketLines } from "./parser/directive-lines.js";
+export type { BracketLineContext } from "./parser/directive-lines.js";
 export { applyReplyRules, readPairs, replyRouteOps } from "./parser/reply-rules.js";
 export type { ReplyRule, ReplyRuleRoute, ReplyRulesResult } from "./parser/reply-rules.js";
-export type { ParseResult } from "./parser/response-parser.js";
+export type { ParseResult, ParseOptions, UnappliedDirective } from "./parser/response-parser.js";
 export { StructuredResponseParser } from "./parser/structured-response-parser.js";
 export { IncrementalSegmentExtractor } from "./parser/incremental-segment-extractor.js";
 export type { ExtractedSegment, ExtractionResult } from "./parser/incremental-segment-extractor.js";
@@ -498,7 +503,7 @@ export {
 } from "./ai/sampling-policy.js";
 export type { SamplingKey, SamplingParams } from "./ai/sampling-policy.js";
 export type { FrontendAiCall, FrontendAiCallKind } from "./graph/ai-call-scan.js";
-export { frontendManifest, frontendFileFacts } from "./graph/frontend-manifest.js";
+export { frontendManifest, frontendFileFacts, interfaceSendsChat, firstMatchIn } from "./graph/frontend-manifest.js";
 export type { FrontendManifest, FrontendFileFacts, FrontendApiFamily } from "./graph/frontend-manifest.js";
 export { summarizeCustomization } from "./world/customization-summary.js";
 export type { CustomizationSummary } from "./world/customization-summary.js";

@@ -69,9 +69,23 @@ export async function voiceBillingReady(
     createHash("sha256").update(voiceBillingDDL()).digest("hex")
   )
     throw Error("VOICE_SCHEMA_MANIFEST_STALE");
+  // The snapshot query orders by text, and that order follows the database's
+  // collation (Neon vs a Debian en_US.utf8 Postgres differ), so compare each
+  // list as a set.
+  const unordered = (snapshot: unknown) =>
+    Object.fromEntries(
+      Object.entries((snapshot ?? {}) as Record<string, unknown>).map(
+        ([key, rows]) => [
+          key,
+          Array.isArray(rows)
+            ? rows.map((row) => canonical(row)).sort()
+            : rows,
+        ],
+      ),
+    );
   return (
-    canonical(await voiceSchemaSnapshot(database)) ===
-    canonical(expected.snapshot)
+    canonical(unordered(await voiceSchemaSnapshot(database))) ===
+    canonical(unordered(expected.snapshot))
   );
 }
 export async function requireVoiceBilling(

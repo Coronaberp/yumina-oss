@@ -1,4 +1,11 @@
 {
+  "motion": {
+    "uploadHint": "Imágenes: 20 MB. Portadas animadas: 64 MB, hasta 60 segundos. Admite MP4 y WebM.",
+    "processing": "Optimizando portada…",
+    "uploading": "Subiendo portada…",
+    "play": "Reproducir",
+    "pause": "Pausar"
+  },
   "voiceField": {
     "characterLabel": "Voz",
     "characterHint": "La voz con la que se leen las frases de este personaje cuando el jugador activa la lectura. Si no la eliges, la IA escoge una que le vaya.",
@@ -678,10 +685,10 @@
         "shared": "{{lore}} entradas compartidas · {{vars}} variables compartidas",
         "sharedHint": "Las entradas y variables de la propia carta llegan a todos los escenarios. La misma vida en cada mazmorra es una variable, no cuatro.",
         "trap": "{{source}} no llega hasta aquí (vía {{via}})",
-        "memoryCardAlone": "Recuerda toda la conversación",
-        "memoryCardHint": "Esta es la IA que juega salvo que un escenario tome el relevo, y recuerda todo lo dicho.",
+        "memoryCardAlone": "Recuerda todo el chat principal",
+        "memoryCardHint": "Esta IA juega mientras ningún escenario toma el control. Lee el chat principal de la tarjeta: ahí están los turnos de todos los escenarios, hasta donde deja ver el ajuste de historial. Las IA que llama la interfaz (cada contacto de un móvil, por ejemplo) tienen chats propios que ella no ve.",
         "connections": "Lee {{reads}} fuentes · lo leen {{gives}} escenarios",
-        "reviewConnections": "{{count}} referencias indirectas por revisar",
+        "reviewConnections": "{{count}} conexiones no llegan aquí",
         "continuityOn": "Seguimiento inteligente: activado",
         "continuityOff": "Seguimiento inteligente: desactivado"
       }
@@ -4616,8 +4623,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "Cambios sin guardar",
-    "description": "Tus cambios se perderán si sales sin guardar.",
+    "title": "Sin guardar",
+    "description": "Esta tarjeta aún no se ha guardado. Si sales ahora, se pierde lo que escribiste.",
     "stay": "Quedarme",
     "leave": "Salir sin guardar",
     "saveAndLeave": "Guardar y salir",
@@ -4625,7 +4632,11 @@
     "switchDescription": "Guarda tus cambios recientes antes de cambiar de editor; si no, se perderán.",
     "switchCancel": "Cancelar",
     "switchWithoutSaving": "Cambiar sin guardar",
-    "saveAndSwitch": "Guardar y cambiar"
+    "saveAndSwitch": "Guardar y cambiar",
+    "saving": "Guardando…",
+    "failedTitle": "No se pudo guardar",
+    "failedDescription": "Tus últimos cambios no llegaron al servidor. Vuelve a intentarlo o sal sin guardar.",
+    "retry": "Reintentar"
   },
   "review": {
     "submittedTitle": "Enviado a revisión",

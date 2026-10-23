@@ -14,6 +14,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { abortable } from "./cancellation.js";
 import type { WorldDefinition } from "@yumina/engine";
 import { env } from "../env.js";
 import { createProvider } from "../llm/provider-factory.js";
@@ -66,7 +67,9 @@ const FALLBACK_RENDER_TIMEOUT_MS = 90_000;
 // with the same people in them; grok-4.3 59/60 but p50 10s; deepseek only
 // 39/60 (empty or broken JSON). So gemini answers first, grok catches its
 // refusals (a refusal is quick, and a slow answer is hedged after HEDGE_MS).
-const DEFAULT_TAG_MODELS = ["google/gemini-2.5-flash", "x-ai/grok-4.3", "deepseek/deepseek-v4.1-flash"];
+// gemini-2.5-flash retires on OpenRouter 2026-10-20 and no newer Gemini has
+// been measured here (3.5-flash-lite blocked 9/32), so grok-4.3 leads.
+const DEFAULT_TAG_MODELS = ["x-ai/grok-4.3", "deepseek/deepseek-v4.1-flash"];
 
 // Exactly one character and no player in shot: otherwise the model likes to
 // invent a second figure (often the unseen player, drawn small). Which head
@@ -135,7 +138,7 @@ const SCHEMA_MODEL_RE = /^(google|x-ai|deepseek)\//;
 const schemaModel = (model: string) => SCHEMA_MODEL_RE.test(model);
 
 /** Why a turn got no picture. The first two are silent; the rest are shown. */
-export type TurnImageFailure = "off" | "nothing" | "busy" | "timeout" | "unavailable";
+export type TurnImageFailure = "off" | "nothing" | "busy" | "timeout" | "unavailable" | "cancelled";
 
 export type IllustrateResult = { ok: true; embed: string } | { ok: false; reason: TurnImageFailure };
 
@@ -154,7 +157,7 @@ function tagModels(): string[] {
 
 /** Who a tagging call is logged against (usage_logs, endpoint "turn-image-tagging"),
  *  and the player's own OpenRouter key when they play on one. */
-export interface UsageCtx { userId: string; sessionId: string; playerKey?: PlayerSideKey | null }
+export interface UsageCtx { userId: string; sessionId: string; playerKey?: PlayerSideKey | null; signal?: AbortSignal }
 
 /** The provider itself failed (auth, balance, upstream, network) — as opposed
  *  to the model answering badly. Only these move a call to Yumina's key. */
@@ -168,6 +171,7 @@ async function askOnce(
   maxTokens = 900,
   shape?: JsonShape,
 ): Promise<Record<string, unknown>> {
+  ctx.signal?.throwIfAborted();
   const provider = createProvider("openrouter", key.apiKey);
   const started = Date.now();
   let text = "";
@@ -184,7 +188,7 @@ async function askOnce(
     reasoningEffort: "none",
     singleAttempt: true,
     // Reading a whole card's cast (a long answer, once per card) takes longer than one turn's tags.
-    signal: AbortSignal.timeout(maxTokens > 2000 ? CAST_TIMEOUT_MS : TAG_TIMEOUT_MS),
+    signal: AbortSignal.any([AbortSignal.timeout(maxTokens > 2000 ? CAST_TIMEOUT_MS : TAG_TIMEOUT_MS), ...(ctx.signal ? [ctx.signal] : [])]),
   })) {
     if (chunk.type === "text") text += chunk.content;
     if (chunk.type === "done" && chunk.usage) usage = chunk.usage;
@@ -214,6 +218,7 @@ async function askModel(model: string, system: string, userText: MessageContent,
     try {
       return await askOnce(model, system, userText, ctx, { apiKey: player.apiKey, source: "byok" }, maxTokens, shape);
     } catch (error) {
+      ctx.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
       // A bad answer or a timeout isn't the key's fault: the next model, as before.
       if (!(error instanceof TagProviderError) || isTimeout(message)) throw error;
@@ -235,6 +240,14 @@ function askJson(system: string, userText: MessageContent, ctx: UsageCtx, maxTok
     let settled = false;
     let last: unknown;
     let hedge: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => { clearTimeout(hedge); ctx.signal?.removeEventListener("abort", abort); };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(ctx.signal?.reason ?? new Error("Cancelled"));
+    };
+    ctx.signal?.addEventListener("abort", abort, { once: true });
     const launch = () => {
       if (settled || next >= models.length) return;
       const model = models[next++]!;
@@ -244,7 +257,7 @@ function askJson(system: string, userText: MessageContent, ctx: UsageCtx, maxTok
       askModel(model, system, userText, ctx, maxTokens, shape).then((result) => {
         if (settled) return;
         settled = true;
-        clearTimeout(hedge);
+        cleanup();
         resolve(result);
       }, (error: unknown) => {
         running--;
@@ -254,11 +267,13 @@ function askJson(system: string, userText: MessageContent, ctx: UsageCtx, maxTok
         if (next < models.length) launch();
         else if (running === 0) {
           settled = true;
+          cleanup();
           reject(last instanceof Error ? last : new Error("tagging failed"));
         }
       });
     };
-    launch();
+    if (ctx.signal?.aborted) abort();
+    else launch();
   });
 }
 
@@ -404,7 +419,9 @@ function cardLooks(world: WorldDefinition, ctx: UsageCtx): Promise<CardCast> {
     looks = (async () => {
       const saved = await redis?.get(castKey(key)).catch(() => null);
       if (saved) return JSON.parse(saved) as CardCast;
-      const cast = await readCast(chars, text, ctx);
+      // This cache read may serve other draws too. Only the caller's own
+      // moment tagging and render carry its cancellation signal.
+      const cast = await readCast(chars, text, { ...ctx, signal: undefined });
       void redis?.set(castKey(key), JSON.stringify(cast), "EX", CAST_TTL_S).catch(() => { /* memory copy still holds it */ });
       return cast;
     })();
@@ -1066,29 +1083,39 @@ function classify(error: unknown): RenderError {
   return new RenderError(message, "unavailable");
 }
 
-async function renderOn(provider: GenerationProvider, workflow: Record<string, unknown>, timeoutMs: number, portraits: TurnPrompt["portraits"] = []): Promise<Buffer> {
+export async function renderOn(provider: GenerationProvider, workflow: Record<string, unknown>, timeoutMs: number, portraits: TurnPrompt["portraits"] = [], signal?: AbortSignal): Promise<Buffer> {
+  signal?.throwIfAborted();
   const graph = JSON.stringify(workflow);
   const used = portraits.filter((p) => graph.includes(p.name));
   const images = used.length ? used.map((p) => ({ name: p.name, imageBase64: p.jpeg.toString("base64") })) : undefined;
   const jobId = await provider.submit({ workflow, ...(images ? { images } : {}) }, null);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 500));
-    const status = await provider.getStatus(jobId);
-    if (status.status === "failed" || status.status === "cancelled") throw new Error(status.error ?? "render failed");
-    if (status.status !== "succeeded") continue;
-    const out = status.outputs[0];
-    if (out?.buffer) return out.buffer;
-    if (out?.base64) return Buffer.from(out.base64, "base64");
-    throw new Error("render returned no image");
-  }
-  await provider.cancel(jobId).catch(() => {});
-  throw new RenderError(`render timed out after ${timeoutMs / 1000}s`, "timeout");
+  let stopping: Promise<void> | undefined;
+  const stop = () => stopping ??= (provider.cancelIsolated ? provider.cancelIsolated(jobId) : provider.cancel(jobId)).catch(() => {});
+  const cancel = () => { void stop(); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal?.aborted) { cancel(); signal.throwIfAborted(); }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await abortable(new Promise((r) => setTimeout(r, 500)), signal);
+      signal?.throwIfAborted();
+      const status = await abortable(provider.getStatus(jobId), signal);
+      signal?.throwIfAborted();
+      if (status.status === "failed" || status.status === "cancelled") throw new Error(status.error ?? "render failed");
+      if (status.status !== "succeeded") continue;
+      const out = status.outputs[0];
+      if (out?.buffer) return out.buffer;
+      if (out?.base64) return Buffer.from(out.base64, "base64");
+      throw new Error("render returned no image");
+    }
+    await stop();
+    throw new RenderError(`render timed out after ${timeoutMs / 1000}s`, "timeout");
+  } finally { signal?.removeEventListener("abort", cancel); }
 }
 
 /** Our deployment first (dedicated GPUs, warm), then the shared Comfy Cloud
  *  pool, then RunPod: each takes over when the one before errors or times out. */
-async function render(prompt: TurnPrompt, negative: string): Promise<{ png: Buffer; route: string }> {
+async function render(prompt: TurnPrompt, negative: string, signal?: AbortSignal): Promise<{ png: Buffer; route: string }> {
   const seed = Math.floor(Math.random() * 2 ** 31);
   const routes: { provider: GenerationProvider; route: string; recipe?: Recipe; timeoutMs: number; style: boolean }[] = [];
   const deploy = getComfyDeployProvider();
@@ -1103,10 +1130,12 @@ async function render(prompt: TurnPrompt, negative: string): Promise<{ png: Buff
 
   const failures: RenderError[] = [];
   for (const [i, r] of routes.entries()) {
+    signal?.throwIfAborted();
     try {
       const workflow = buildTurnWorkflow(prompt, seed, negative, r.recipe);
-      return { png: await renderOn(r.provider, workflow, r.timeoutMs, r.style ? prompt.portraits : undefined), route: r.route };
+      return { png: await renderOn(r.provider, workflow, r.timeoutMs, r.style ? prompt.portraits : undefined, signal), route: r.route };
     } catch (error) {
+      signal?.throwIfAborted();
       const failure = classify(error);
       failures.push(failure);
       const next = routes[i + 1];
@@ -1137,6 +1166,7 @@ export function stripTurnImages(text: string): string {
 // ── Entry point ─────────────────────────────────────────────────────
 
 export interface IllustrateArgs {
+  signal?: AbortSignal;
   world: WorldDefinition;
   sessionId: string;
   playerText: string;
@@ -1180,6 +1210,7 @@ export async function planTurn(args: PlanArgs): Promise<TurnPlan> {
     return { looks: {}, player: "unknown" };
   });
   const known = card.looks;
+  ctx.signal?.throwIfAborted();
   const memory = await sessionMemory(args.sessionId);
   const remembered = memory.looks;
   const { before, final } = momentText(args.replyText);
@@ -1237,6 +1268,7 @@ export async function planTurn(args: PlanArgs): Promise<TurnPlan> {
       shown.push(name);
     }
   }
+  ctx.signal?.throwIfAborted();
   saveSessionMemory(args.sessionId, memory);
   // Explicit if the tagger says so OR its own tags are sexual: a tagger that
   // drops the flag but still writes "nude" is not trusted with the flag.
@@ -1312,12 +1344,14 @@ export async function illustrateTurn(args: IllustrateArgs): Promise<IllustrateRe
     const prefs = await turnImagePrefs(args.userId);
     if (!prefs.optedIn || (args.auto && !prefs.auto)) return { ok: false, reason: "off" };
     const ctx: UsageCtx = {
+      signal: args.signal,
       userId: args.userId, sessionId: args.sessionId,
       playerKey: args.playerKey ? { userId: args.userId, apiKey: args.playerKey } : null,
     };
-    const plan = await planTurn({
+    const plan = await abortable(planTurn({
       world: args.world, sessionId: args.sessionId, playerText: args.playerText, replyText: args.replyText, note: args.note, playerPersona: args.playerPersona, ctx,
-    });
+    }), args.signal);
+    args.signal?.throwIfAborted();
     if (!plan.draw) {
       console.log(`[PerTurnImage] not drawn (${plan.shown.join("/")})`);
       return { ok: false, reason: "nothing" };
@@ -1326,8 +1360,10 @@ export async function illustrateTurn(args: IllustrateArgs): Promise<IllustrateRe
 
     const tagged = Date.now();
     if (args.fine) prompt.fine = true;
-    const { png, route } = await render(prompt, negative);
+    const { png, route } = await render(prompt, negative, args.signal);
+    args.signal?.throwIfAborted();
     const jpeg = await sharp(png).jpeg({ quality: 86 }).toBuffer();
+    args.signal?.throwIfAborted();
     const key = `users/${args.userId}/turn-images/${randomUUID()}.jpg`;
     await putObject(key, jpeg, "image/jpeg");
     console.log(`[PerTurnImage] tags ${tagged - started}ms, render+store ${Date.now() - tagged}ms via ${route} ` +
@@ -1337,6 +1373,7 @@ export async function illustrateTurn(args: IllustrateArgs): Promise<IllustrateRe
     // Same-origin path: the embed parser refuses anything but https / @asset / /cdn.
     return { ok: true, embed: `[image:/cdn/key/${Buffer.from(key).toString("base64url")}|alt=${(shown[0] ?? "scene").replace(/[|\]]/g, "")}]` };
   } catch (error) {
+    if (args.signal?.aborted) return { ok: false, reason: args.signal.reason === "cancelled" ? "cancelled" : "unavailable" };
     const reason = error instanceof RenderError ? error.kind : "unavailable";
     console.warn(`[PerTurnImage] failed (${reason}) after ${Date.now() - started}ms:`, error instanceof Error ? error.message : error);
     return { ok: false, reason };

@@ -141,6 +141,12 @@ function nextCopyName(sourceName: string, entries: readonly { name: string }[], 
 
 const AUTOSAVE_DELAY = 2000;
 const SERVER_AUTOSAVE_INTERVAL = 60_000; // Auto-save to server every 60s when dirty
+/** Like a Google doc: saved a moment after the creator stops, so leaving
+ *  rarely finds anything unsaved. Each save sends the whole card (Paths of
+ *  Ascension is 6.6MB), so never more often than every SERVER_SAVE_MIN_GAP;
+ *  the 60s interval stays as the backstop. */
+const IDLE_SAVE_DELAY = 5_000;
+const SERVER_SAVE_MIN_GAP = 20_000;
 // Snapshots share structure (every mutation spreads, never deep-clones), so a
 // deep stack costs references, not copies. 20 was nothing on the canvas, where
 // a burst of node adds burns the whole stack in seconds.
@@ -979,6 +985,27 @@ function startServerAutosave() {
 
 function stopServerAutosave() {
   if (serverAutosaveTimer) { clearInterval(serverAutosaveTimer); serverAutosaveTimer = null; }
+  if (idleSaveTimer) { clearTimeout(idleSaveTimer); idleSaveTimer = null; }
+}
+
+let idleSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastServerSaveAt = 0;
+
+/** The save a few seconds after the last edit, held back to one per
+ *  SERVER_SAVE_MIN_GAP. Every edit pushes it further out. */
+function scheduleIdleServerSave() {
+  if (idleSaveTimer) clearTimeout(idleSaveTimer);
+  const wait = Math.max(IDLE_SAVE_DELAY, lastServerSaveAt + SERVER_SAVE_MIN_GAP - Date.now());
+  idleSaveTimer = setTimeout(() => {
+    idleSaveTimer = null;
+    const state = useEditorStore.getState();
+    if (!state.serverWorldId || !(state.isDirty || state.layoutDirty)) return;
+    if (state.saving) { scheduleIdleServerSave(); return; }
+    lastServerSaveAt = Date.now();
+    void state.saveDraft().then((ok) => {
+      if (ok) captureHubEvent("studio_blueprint_saved", { world_id: state.serverWorldId!, trigger: "autosave" });
+    });
+  }, wait);
 }
 
 let newWorldSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1326,6 +1353,7 @@ function scheduleEditPersistence(
   // For new worlds (no serverWorldId yet), the new-world save handles the
   // initial save itself and starts the timer on success.
   if (!s.isDirty && s.serverWorldId) startServerAutosave();
+  if (s.serverWorldId) scheduleIdleServerSave();
 }
 
 /** A metadata setter's update: dirty, and persisted like any other edit. */

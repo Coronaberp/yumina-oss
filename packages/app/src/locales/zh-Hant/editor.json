@@ -47,8 +47,11 @@
     "visualIntroBody": "左上角這個開關打開後，整張卡會鋪成一張畫布：開場白、設定、數值、行為和玩家介面都在同一張板上，點哪改哪，創作助手也直接在板上工作。隨時可以關掉切回完整編輯器。",
     "visualIntroTry": "打開畫布試試",
     "visualIntroLater": "先不用",
-    "desktopCanvasNote": "在電腦上打開這張卡，可以用畫布編輯（Beta）。",
-    "recoverDraftMerged": "這張卡之後在別處改過——已保留你恢復的版本"
+    "recoverDraftMerged": "這張卡之後在別處改過——已保留你恢復的版本",
+    "saving": "儲存中…",
+    "offline": "離線",
+    "offlineTitle": "改動先存在本機，連網後會自動儲存",
+    "autosaveTitle": "改動會自動儲存"
   },
   "sections": {
     "firstMessage": "開場白",
@@ -231,7 +234,7 @@
     "tagPlaceholder": "標籤名稱...",
     "rename": "重新命名",
     "depth": "深度（距末尾訊息數）",
-    "depthHint": "只在放進對話裡時有用：數字是離最新一條訊息有幾條。0 緊貼著最新訊息，AI 最在意；數字越大越靠前，越像背景。",
+    "depthHint": "放進對話裡時才有用，表示離最新訊息隔幾則。0 緊貼最新訊息，AI 最重視；數字越大越像背景。",
     "position": "位置",
     "positionHint": "在此部分中的排序。數字越小越靠前。拖拽可自動重新排序。",
     "keywords": "關鍵詞",
@@ -400,7 +403,7 @@
     "noMax": "無最大值",
     "behaviorRules": "行為規則",
     "behaviorRulesPlaceholder": "例如 0 = 死亡，1-20 = 危急，20-50 = 受傷...",
-    "behaviorRulesHint": "用自然語言描述變數何時該變、怎麼變就行——引擎會自動告訴 AI 用什麼指令更新。你不需要在這裡寫「set hp=...」這種具體命令。",
+    "behaviorRulesHint": "用大白話寫這個變數何時變、怎麼變。引擎會告訴 AI 該用什麼指令，不用寫 set hp=... 這種命令。",
     "aiAccessLabel": "AI 權限",
     "aiAccessOptions": {
       "write": "AI 可讀可寫",
@@ -474,7 +477,7 @@
       "json": "JSON（物件/陣列）"
     },
     "optionsLabel": "可選值",
-    "optionsHint": "可以在這裡固定 AI 的輸出哦：填了之後，這個變數就只會在這幾個固定的詞語裡變化。不填的話，AI 會根據情況自由變化，但穩定性可能會降低。",
+    "optionsHint": "填了之後，這個變數只會取這幾個值。不填就由 AI 自由改，但可能不穩定。",
     "optionsAdd": "新增一個值",
     "optionsPlaceholder": "輸入後按 Enter",
     "preciseLabel": "精準追蹤",
@@ -797,7 +800,7 @@
     "imageRemoveFailed": "無法移除該圖片",
     "importCoverFailed": "無法把卡片圖片用作封面",
     "continuity": "智慧追蹤",
-    "continuityDesc": "每回合 AI 寫完回覆後，會有一個專門的小助手再檢查一遍：變數該不該變、該放哪首歌、該發哪張場景圖。比讓寫故事的 AI 順手改準得多。關掉就只靠寫故事的 AI 自己改。",
+    "continuityDesc": "AI 每次回覆後，由一個小助手判斷變數、音樂和場景圖該不該變，比寫故事的 AI 自己改更準。關掉就只靠寫故事的 AI。",
     "background": "背景圖",
     "backgroundDesc": "鋪在聊天後面的一張圖。文字上會墊一層暗底，保證讀得清。",
     "worldTitle": "卡片標題",
@@ -846,7 +849,7 @@
   "versionHistory": {
     "menuItem": "版本",
     "title": "版本歷史",
-    "subtitle": "更新和發佈會為變更後的內容、封面和分級儲存一個版本，審核通過後將同一版本標為線上版本。最多保留 {{automaticCap}} 筆自動記錄和 {{cap}} 個命名版本。",
+    "subtitle": "編輯時每隔 15 分鐘自動留一個版本：最近 20 個全部保留，更早的每天留一個，保留 30 天。發佈和更新也會各存一版（最多 {{automaticCap}} 條），審核通過後同一版本標為線上版本。另可儲存 {{cap}} 個命名版本。",
     "formTitle": "儲存命名版本",
     "saveCurrent": "儲存命名版本",
     "saving": "儲存中...",
@@ -857,7 +860,7 @@
     "cleanHint": "記錄目前已儲存的內容、封面和分級。",
     "savedListTitle": "命名版本（{{count}}）",
     "emptyTitle": "還沒有任何版本",
-    "empty": "發佈或更新時會自動儲存版本，也可以在上方建立命名版本。",
+    "empty": "編輯時會自動儲存版本，也可以在上方建立命名版本。",
     "safetySnapshotName": "還原「{{name}}」前的快照",
     "restore": "還原到草稿",
     "delete": "刪除",
@@ -896,7 +899,8 @@
       "publish": "已儲存版本",
       "live": "已儲存版本",
       "backup": "還原前備份",
-      "incoming": "套用改動前的備份"
+      "incoming": "套用改動前的備份",
+      "autosave": "自動儲存的版本"
     },
     "previousPublished": "曾經上線",
     "notPublished": "尚未發佈",
@@ -909,7 +913,8 @@
     "needsReview": "此版本需要審核。請先還原至草稿，再正常發布。",
     "backupName": "還原前備份 · {{date}}",
     "restoredName": "已還原版本 · {{date}}",
-    "earlierName": "早期版本 · {{date}}"
+    "earlierName": "早期版本 · {{date}}",
+    "autosaveRun": "{{count}} 個自動儲存點"
   },
   "assetPicker": {
     "title": "資源",
@@ -1026,7 +1031,7 @@
     "stopWhen": "停止條件",
     "stopWhenHint": "可選",
     "stopConditionsLabel": "停止條件",
-    "stopWhenNote": "滿足任一停止條件時，此行為暫停觸發。若想在固定次數後停止，請使用「限制與優先級」中的「最大觸發次數」。",
+    "stopWhenNote": "滿足任一停止條件時，這條行為暫停。想觸發幾次後就停，用「限制和優先順序」裡的「最大觸發次數」。",
     "optional": "可選",
     "allMustBeTrue": "全部條件為真",
     "anyCanBeTrue": "任一條件為真",
@@ -1192,7 +1197,7 @@
       "rollEmpty": "（沒有候選）"
     },
     "chance": "發生機率（%）",
-    "chanceHint": "這條行為本該觸發時，只按這個百分比的機率真的發生。留空＝總是發生。",
+    "chanceHint": "觸發時只有這個百分比的機率真的發生。留空＝每次都發生。",
     "onlyIfEmptyHint": "可選——留空則無條件觸發",
     "customEvent": "自訂：{{event}}",
     "eventBadge": {
@@ -1417,7 +1422,6 @@
       "focusPane": "專注此區",
       "backToSplit": "返回分屏",
       "choosePanel": "選擇面板",
-      "quickActions": "常用",
       "testingGroup": "試玩",
       "singleWorkspaceAction": "單工作區",
       "splitWorkspaceAction": "分屏工作區",
@@ -1431,11 +1435,14 @@
       "resetSplit": "重置分屏",
       "resizeHandle": "調整工作區分屏",
       "desktopOnly": "需要更大的螢幕",
-      "tabAssistant": "助手",
-      "tabOpening": "開場白",
-      "tabLorebook": "設定",
-      "tabPlaytest": "試玩",
-      "tabMore": "更多"
+      "tabCanvas": "畫布",
+      "panels": "面板",
+      "sheetExpand": "展開對話",
+      "sheetCollapse": "收起對話",
+      "sheetDoing": "助手正在改：{{what}}",
+      "sheetWorking": "助手正在工作…",
+      "sheetReply": "助手回覆了，上拉看看",
+      "sheetHint": "上拉看對話"
     },
     "groups": {
       "story": "故事",
@@ -1889,7 +1896,8 @@
         "uiKnobs": "樣式旋鈕",
         "uiKnobGroups": "樣式旋鈕組",
         "uiDoc": "玩家介面",
-        "other": "內容"
+        "other": "內容",
+        "note": "便籤"
       },
       "tool": {
         "write_entry": "寫詞條",
@@ -1923,7 +1931,8 @@
         "analyze_token_cost": "估算用量",
         "validate_ui_blueprint": "檢查介面",
         "list_templates": "瀏覽範本",
-        "other": "其他步驟"
+        "other": "其他步驟",
+        "write_note": "寫便籤"
       },
       "field": {
         "name": "名稱",
@@ -2117,7 +2126,7 @@
         "value": "寫進變數的值",
         "valuePlaceholder": "不填就用標題",
         "after": "選了以後",
-        "afterHint": "想在文字裡寫出玩家選的那一項，就寫 {{選中的那一項}}。",
+        "afterHint": "想在文字裡寫出玩家選的那一項，就寫 {{token}}。",
         "stepsCount": "選了以後做 {{count}} 件事",
         "addOption": "加一個選項",
         "newOption": "新選項 {{n}}",
@@ -2151,7 +2160,7 @@
       },
       "popup": {
         "variable": "看哪個變數",
-        "variableHint": "這個變數一有內容就彈出來。讓 AI 或按鈕往裡寫東西就行。",
+        "variableHint": "這個變數一有內容就彈出。可以讓 AI 或按鈕往裡寫。",
         "newVariableName": "彈窗內容",
         "theValue": "這個變數的內容",
         "title": "標題",
@@ -3925,8 +3934,8 @@
     }
   },
   "unsavedDialog": {
-    "title": "未儲存的更改",
-    "description": "如果離開而不儲存，您的更改將丟失。",
+    "title": "還沒儲存",
+    "description": "這張卡還沒存過。現在離開，剛才寫的就沒了。",
     "stay": "留下",
     "leave": "不儲存離開",
     "saveAndLeave": "儲存並離開",
@@ -3934,7 +3943,11 @@
     "switchDescription": "切換編輯介面前，先把剛才的改動存上。不儲存的話，這些改動會遺失。",
     "switchCancel": "取消",
     "switchWithoutSaving": "不儲存直接切換",
-    "saveAndSwitch": "儲存並切換"
+    "saveAndSwitch": "儲存並切換",
+    "saving": "正在儲存…",
+    "failedTitle": "沒存上",
+    "failedDescription": "剛才的改動沒能存到伺服器。可以再試一次，或者不儲存離開。",
+    "retry": "再試一次"
   },
   "save": {
     "staleWorldToast": "儲存失敗，請稍後再試",
@@ -4182,8 +4195,8 @@
         "body": "做好之後點右上角這裡提交發佈，通過審核後就會出現在大廳，讓所有人都能遊玩！"
       },
       "save": {
-        "title": "記得儲存",
-        "body": "隨時點這裡儲存（Ctrl+S 也行）。有未儲存的修改時，按鈕上會有小圓點提醒你。"
+        "title": "會自動儲存",
+        "body": "改動停手幾秒就自動儲存，這裡顯示「已儲存」。想馬上存可以點它，Ctrl+S 也行。"
       },
       "studio": {
         "title": "換個樣子編輯",
@@ -4194,8 +4207,8 @@
         "body": "選單裡還有自訂 UI、音訊、素材這些進階玩法——給卡做獨立介面和配樂用的。等你熟練了再開發，創作者指南裡有完整教學～"
       },
       "saveM": {
-        "title": "記得儲存",
-        "body": "隨時點右上角這裡儲存。有未儲存的修改時，按鈕上會有小圓點提醒你。"
+        "title": "會自動儲存",
+        "body": "改動會自動儲存，右上角這裡顯示「已儲存」。"
       },
       "finish": {
         "title": "出發吧！",
@@ -4258,8 +4271,8 @@
         "body": "一兩句話，顯示在發現頁。這就是讓人點進來的那句話。"
       },
       "sSave": {
-        "title": "記得儲存",
-        "body": "隨時點這裡儲存（Ctrl+S 也行）。有未儲存的修改時，按鈕上會有小圓點提醒你。"
+        "title": "會自動儲存",
+        "body": "改動停手幾秒就自動儲存，這裡顯示「已儲存」。想馬上存可以點它，Ctrl+S 也行。"
       },
       "sPlay": {
         "title": "自己試玩",
@@ -4379,7 +4392,7 @@
     "emptySelect": "選擇一張圖片進行編輯",
     "modeTitle": "誰來放圖",
     "modeJudge": "回覆寫完再配圖",
-    "modeJudgeHelp": "每回合看完 AI 的回覆，逐張按「什麼時候展示」裡寫的條件判斷，滿足就放在這條回覆最後。條件寫「每次回覆都發」就每回合都發。玩家用什麼模型都一樣穩。",
+    "modeJudgeHelp": "每回合看完 AI 的回覆，按每張圖「什麼時候展示」的條件判斷，滿足就放在回覆末尾。用什麼模型都一樣穩。",
     "modeNarrator": "寫故事的 AI 自己插",
     "modeNarratorHelp": "圖能插在兩段話中間，但得看模型聽不聽話，有的模型基本不放。",
     "modeRecommended": "推薦",
@@ -4538,13 +4551,20 @@
       "addVariable": "＋ 一個變數",
       "sees": "它看得到",
       "title": "回答格式",
-      "piecesNeedVariable": "先建一個變數：片段要等變數滿足條件才加進去。"
+      "piecesNeedVariable": "先建一個變數：片段要等變數滿足條件才加進去。",
+      "answerKind": {
+        "text": "一段文字",
+        "json": "JSON"
+      },
+      "outputJson": "回一個 JSON 物件（形狀寫在它的任務裡），原樣交回介面。要固定欄位就點 + 加。"
     },
     "aiType": {
-      "code": "程式型",
       "ui": "介面型",
       "turn": "回合型",
-      "custom": "自訂"
+      "custom": "自訂",
+      "event": "事件型",
+      "script": "介面程式碼",
+      "game": "遊戲裡"
     },
     "placeAis": {
       "jobUi": "玩家介面叫它時",
@@ -4558,7 +4578,7 @@
       "narratorAway": "這裡由下面的 AI 說",
       "keepNarrator": "卡的 AI 也在",
       "dropNarrator": "卡的 AI 不在這裡",
-      "memAll": "記得整段對話",
+      "memAll": "記得主對話裡的每一句",
       "memRecent": "只看最近 {{n}} 則",
       "memPool": "和 {{names}} 共用記憶",
       "memOwn": "只記得在這裡說過的",
@@ -4582,7 +4602,15 @@
       "linkReadsModules": "限定讀 {{names}}",
       "linkPicksModule": "執行時在 {{names}} 裡挑一個",
       "jobImplemented": "由介面程式碼實作 · {{file}} 第 {{line}} 行",
-      "jobUnimplemented": "還沒有實作"
+      "jobUnimplemented": "還沒有實作",
+      "liveVoice": "即時語音 AI",
+      "liveVoiceJob": "玩家用麥克風和它對話，由介面程式碼接上",
+      "notCalled": "介面不發聊天訊息，這個 AI 不會被叫到",
+      "notCalledShort": "不會被叫到",
+      "jobGame": "遊戲需要它說話時",
+      "memGame": "遊戲每次把現場告訴它",
+      "notCalledGame": "這張卡打開就是遊戲，這個 AI 不會被叫到",
+      "removeAsk": "讓助手刪掉"
     },
     "gameData": {
       "readBy": "誰在讀",
@@ -4689,7 +4717,9 @@
       "when": "什麼時候用它",
       "self": "只有它知道",
       "makeOwn": "讓這裡有自己的 AI",
-      "toPlace": "不要這個 AI 了，變回普通情境"
+      "toPlace": "不要這個 AI 了，變回普通情境",
+      "addTyped": "在卡上加一個{{type}} AI",
+      "cardTypeHint": "卡自帶的 AI 負責回覆玩家，類型不能改；點別的類型會另加一個 AI。"
     },
     "aiTable": {
       "view": "AI 分工表",
@@ -4744,7 +4774,10 @@
       },
       "readiness": "就緒 {{done}}/{{total}}",
       "readinessNext": "下一步：{{label}}",
-      "showOpening": "在卡片上顯示這段開場"
+      "showOpening": "在卡片上顯示這段開場",
+      "rename": "改名",
+      "settings": "設定",
+      "readByGame": "遊戲讀取"
     },
     "scene": {
       "none": "沒有專屬介面",
@@ -4779,7 +4812,7 @@
       "followHint": "這張卡不指定，用玩家在設定裡選的",
       "preview": "試聽",
       "hasVoice": "指定了音色",
-      "hint": "玩家開朗讀時按說話人切換音色；沒指定的角色用旁白音色，旁白也沒指定就用玩家自己的。",
+      "hint": "玩家開朗讀時按說話人換音色。沒設音色的角色用旁白的，旁白也沒設就用玩家自己的。",
       "inputTitle": "玩家語音輸入",
       "inputHint": "玩家放開麥克風後。狼人殺、審訊這類卡適合直接送出",
       "inputConfirm": "先確認",
@@ -4801,7 +4834,7 @@
       "editInterface": "編輯介面",
       "custom": "自訂介面",
       "replaceTitle": "換成「{{name}}」？",
-      "replaceBody": "這會用「{{name}}」取代現在的整個介面——你擺好的部件、頁面都會換掉，還會加上這個版式要用的變數。換完不滿意，按 Ctrl+Z 就能復原。",
+      "replaceBody": "會用「{{name}}」取代整個介面，你擺好的部件和頁面都會換掉，並加上這個版式要的變數。按 Ctrl+Z 可復原。",
       "replaceConfirm": "取代介面",
       "title": "排版和主題",
       "button": "外觀"
@@ -4850,10 +4883,10 @@
       },
       "problemsTitle": "這樣接跑不起來",
       "triggerConditions": "滿足某個條件時",
-      "triggerConditionsHint": "這些條件決定寫手什麼時候跑：只在「不成立→成立」的那一刻跑一次，一直成立不會反覆跑。",
+      "triggerConditionsHint": "條件從不成立變成成立的那一刻，寫手跑一次。一直成立不會反覆跑。",
       "model": "模型",
       "modelInherit": "跟隨玩家選的",
-      "modelHint": "玩家用不了這個模型時會自動換：回覆玩家的 AI 改用玩家自己的模型，幕後的 AI 改用預設模型。",
+      "modelHint": "玩家用不了這個模型時，回覆玩家的 AI 改用玩家的模型，幕後 AI 改用預設模型。",
       "inputs": "從別處接進來的",
       "inputKind": {
         "memory": "某情境的經歷",
@@ -4867,7 +4900,7 @@
       "transcriptLimit": "最多幾條",
       "addInput": "＋ 接一條進來",
       "noOtherModules": "這張卡只有這一個情境，還沒有別的東西可以接。",
-      "inputsHint": "「親歷」＝主角自己經歷過的；「檔案」＝查到的記錄，不是親身經歷。原話很貴，能用經歷就別用原話。",
+      "inputsHint": "「親歷」是主角自己經歷的，「檔案」是查到的記錄。原話很貴，能用經歷就別用原話。",
       "inputsSummary": "卡本身 + {{count}} 條接入",
       "inputsNone": "只有卡本身；還沒有接入別的情境",
       "inputsEdit": "編輯",
@@ -4875,7 +4908,7 @@
       "onClose": "玩家離開這裡時",
       "onClose_archive": "封存並總結",
       "onClose_keep": "保留",
-      "onCloseHint_archive": "關閉時這一段離開 AI 的上下文，換成一條自動總結；玩家的記錄一個字不少。再啟用就是全新一輪。",
+      "onCloseHint_archive": "關閉時，這一段從 AI 的上下文撤下，換成一條總結，玩家的聊天紀錄不變。再次啟用從頭開始。",
       "onCloseHint_keep": "這一段留在上下文裡，跟普通歷史一樣。",
       "archivePromptPlaceholder": "總結時特別記住什麼？比如「記死因、拿到的線索、欠下的人情」",
       "trigger": "什麼時候跑",
@@ -4891,12 +4924,12 @@
       },
       "task": "讓它做什麼",
       "taskPlaceholder": "比如：把剛打完的這一輪壓成三行，只留因果和人情，寫給下一個副本的敘述者看。",
-      "taskHint": "這個情境自己的詞條＝它是誰；這裡寫的是它這次要幹的活。沒寫就不會跑。",
+      "taskHint": "情境的詞條決定它是誰，這裡寫它要做的事。不寫就不會執行。",
       "takeOver": "這個情境自己接管對話",
-      "takeOverHint": "打開後，這個情境啟用期間由它自己的 AI 跟玩家說話——自己的模型、自己的記憶。不打開，它就只是把詞條和變數交給正在敘述的那個 AI，絕大多數情境都是這樣。",
+      "takeOverHint": "打開後，啟用期間由它自己的 AI 回覆玩家，用自己的模型和記憶。多數情境不開，只把詞條和變數交給正在敘述的 AI。",
       "makeWorker": "或者讓它當幕後寫手，從不跟玩家說話",
       "isWorker": "這是一個幕後寫手",
-      "isWorkerHint": "從不跟玩家說話。觸發時跑一輪，寫出來的東西成為其它情境的上下文。",
+      "isWorkerHint": "從不跟玩家說話。觸發時跑一輪，寫的內容給其他情境當上下文。",
       "stopBeingWorker": "變回普通情境",
       "badge": {
         "narrator": "接管對話",
@@ -4908,13 +4941,13 @@
       },
       "history": "記憶",
       "historyHint_shared": "讀整段對話，和所有情境一直以來一樣。",
-      "historyHint_own": "在裡面時，AI 只看得到這個情境裡說過的話。這裡說的話照樣進共通紀錄，一離開，別的地方都記得。",
+      "historyHint_own": "在這裡，AI 只看得到這個情境裡說過的話。這些話也會進共通紀錄，離開後別處都記得。",
       "pool": {
         "card": "整卡共通",
         "own": "自己一池",
         "with": "和這些情境共用這一池",
         "none": "還沒有別的接管對話的情境。",
-        "hint": "同一池的情境互相記得對方的經歷，池外的一概不知。說過的話照樣留在記錄裡，卡本身的 AI 全都看得到。",
+        "hint": "同一池的情境互相記得對方的經歷，池外的不知道。對話都留在紀錄裡，卡本身的 AI 全看得到。",
         "selectAll": "全選",
         "selectNone": "全不選"
       },
@@ -4926,12 +4959,12 @@
       "triggerAfter": "某個 AI 回覆之後",
       "quietSeconds": "沒人說話",
       "quietSecondsUnit": "秒後",
-      "triggerQuietHint": "玩家開著遊戲、這個情境在生效、而且這麼久沒人說話時，它會判斷要不要插一句，可以改數值；沒什麼可說就不出聲。按調用計費。",
-      "isQuietHint": "沒人說話一陣子後被叫醒，自己判斷要不要插一句、改數值；沒什麼可說就不出聲。",
+      "triggerQuietHint": "遊戲開著、這個情境生效、且這麼久沒人說話時，它判斷要不要插一句或改數值，沒話就不出聲。按呼叫次數計費。",
+      "isQuietHint": "冷場一陣後被叫醒，自己判斷要不要插話或改數值，沒話可說就不出聲。",
       "modelAndParams": "模型和參數",
       "modelDefault": "跟隨預設",
       "modelHintNarrator": "玩家用不了這個模型時，改用玩家自己的聊天模型，卡不會因此玩不了。",
-      "modelHintBackground": "留空用預設後台模型。玩家用不了這裡填的模型時，也改用預設後台模型。",
+      "modelHintBackground": "留空就用預設後台模型。玩家用不了這裡的模型時，也會改用它。",
       "paramsNarrator": "它回覆玩家，參數和故事 AI 一樣。",
       "params": "參數",
       "paramsDefault": "預設：溫度 {{temperature}} · 最長 {{tokens}} tokens",
@@ -4967,7 +5000,7 @@
       "frontendReadsShort": "讀取 {{count}} 個變數",
       "ruleUnreadable": "已損壞",
       "ruleUnreadableTitle": "這條行為缺了一部分",
-      "ruleUnreadableBody": "它被寫成了目前版本讀不出的格式，所以既不會觸發，畫布也畫不出它的連線。打開「行為」重寫或刪掉它。"
+      "ruleUnreadableBody": "它的格式目前版本讀不出，所以不會觸發，畫布也畫不出連線。打開「行為」重寫或刪掉。"
     },
     "events": {
       "clockEvery": "每隔幾秒",
@@ -4998,7 +5031,7 @@
       "name": "名稱",
       "note": "便籤",
       "notePlaceholder": "這個情境是做什麼的——寫給你自己和 AI 的備註…",
-      "noteHint": "黑板工作臺：創作助手會讀這裡來理解這個情境，也能替你更新它。遊玩時的 AI 看不到這裡。",
+      "noteHint": "創作助手會讀這裡來了解這個情境，也能幫你更新。遊玩時的 AI 看不到。",
       "content": "內容",
       "openingText": "開場白正文",
       "openingPlaceholder": "玩家進入時看到的第一條訊息…",
@@ -5015,13 +5048,13 @@
       "effectCount": "{{count}} 個效果",
       "enabled": "啟用",
       "deleteModule": "刪除情境",
-      "deleteConfirm": "刪除情境「{{name}}」？它的成員會變回共通（內容本身不會被刪）。",
+      "deleteConfirm": "刪除情境「{{name}}」？裡面的東西會變回共通，不會被刪。",
       "readOnly": "唯讀視圖。",
-      "coreEntriesHint": "沒有連線、不屬於任何情境的詞條都在這裡，永遠在線。開啟知識庫可以瀏覽和編輯它們。",
+      "coreEntriesHint": "沒連線、不屬於任何情境的詞條都在這裡，一直生效。在知識庫裡可以瀏覽和編輯。",
       "frontendHint": "卡片前端（TSX 應用）。這個節點上的 LoreSlot 連接埠可以接收詞條的連線。",
-      "chainHint": "鏈式連線：上游行為發出的事件正好被這個行為監聽。要改動就去編輯這兩個行為本身，這條線不能直接刪。",
+      "chainHint": "上游行為發出的事件被這個行為監聽，所以連在一起。線不能直接刪，要改就編輯這兩個行為。",
       "logicLabel": "條件邏輯",
-      "moduleEntriesHint": "這些詞條屬於該情境、沒有任何連線，情境啟用時一起生效。開啟知識庫可以逐條查看和編輯。",
+      "moduleEntriesHint": "這些詞條屬於這個情境，沒有連線，情境啟用時一起生效。在知識庫裡可以逐條編輯。",
       "delete": "刪除",
       "deleteGreetingConfirm": "刪除開場白「{{name}}」？",
       "deleteEntryConfirm": "刪除詞條「{{name}}」？引用它的連線會一併消失。",
@@ -5037,7 +5070,7 @@
       "whenOpen": "什麼時候用",
       "whenOpenHint": {
         "always": "整局都開著。",
-        "conditions": "變數說了算。把一個變數連到這個情境上來設條件，點連線可以改。",
+        "conditions": "按變數條件開啟。把變數連到這個情境上設條件，點連線可修改。",
         "greeting": "只在從下面這些開局進來的對局裡開著。",
         "manual": "沒有自動規則——由下面那個「啟用」開關決定。",
         "keywords": "玩家說到就打開，一直開著，直到說到下面的離開詞。"
@@ -5052,21 +5085,21 @@
       "sharingModule": "打包中…",
       "sharedModule": "已存進你的資源包",
       "shareModuleEmpty": "先往裡放點東西——空情境沒什麼可給別人的。",
-      "conditionsWired": "已連了 {{count}} 個條件——把變數連到這條詞條上加一個，點連線改它。",
+      "conditionsWired": "已連 {{count}} 個條件。把變數連到這條詞條上可再加一個，點連線可修改。",
       "varWhenExposed": "什麼時候 AI 看得到",
       "varWhenExposedHint": "值一直都在；這裡決定它什麼時候進 prompt。",
       "varInternal": "只給引擎用",
       "varInternalHint": "對 AI 隱藏，也不出現在行為的選擇器裡。給卡自己留著的值。",
       "liveCanon": "Lore Shift",
       "allowLiveCanon": "允許會話內編輯",
-      "allowLiveCanonHint": "開啟後，裝了 Lore Shift 擴充套件的玩家，可以在自己那一局裡改你標了「允許」的設定和變數。隻影響他那一局，你的原卡不變。",
+      "allowLiveCanonHint": "開啟後，裝了 Lore Shift 的玩家能在自己那一局改你允許改的設定和變數。你的原卡不變。",
       "allowLiveCanonAdditions": "允許新增會話設定",
-      "allowLiveCanonAdditionsHint": "開啟後，這些玩家還能給自己那一局加新的設定，比如補一個新角色。他們加的設定比你寫的優先順序低。",
+      "allowLiveCanonAdditionsHint": "開啟後，這些玩家還能在自己那一局加新設定，比如新角色。優先順序低於你寫的設定。",
       "liveCanonSaveFailed": "沒能儲存 Lore Shift 設定，請重試。",
       "liveCanonEntryEditable": "允許玩家在會話中編輯這條設定",
-      "liveCanonEntryEditableHint": "允許裝了 Lore Shift 的玩家在自己那一局裡改這條設定的正文。傳送方式、觸發條件和你的原卡都不會被改。",
+      "liveCanonEntryEditableHint": "裝了 Lore Shift 的玩家能在自己那一局改這條設定的正文。傳送方式、觸發條件和原卡不變。",
       "liveCanonVariableEditable": "允許玩家在會話中修改這個值",
-      "liveCanonVariableEditableHint": "允許裝了 Lore Shift 的玩家在自己那一局裡改這個值，比如把金幣改成 999。隻影響他那一局，下一回合開始生效。",
+      "liveCanonVariableEditableHint": "裝了 Lore Shift 的玩家能在自己那一局改這個值，比如把金幣改成 999。下一回合生效。",
       "noVariables": "這張卡還沒有變數可以拿來停。",
       "reachesPrompt": "它什麼時候會被 AI 讀到",
       "belonging": "它歸誰",
@@ -5091,11 +5124,11 @@
       "historyWindow": "視窗",
       "historyLatestShort": "最新 N 則",
       "historySummaryShort": "摘要 + 最新 N 則",
-      "historySummaryHint": "離開視窗的回合不會丟：會壓成一段滾動摘要，放在歷史前面發給 AI。",
+      "historySummaryHint": "超出視窗的回合會壓成一段摘要，放在歷史前面發給 AI。",
       "summaryFocus": "摘要要點",
       "summaryFocusHint": "給寫摘要的 AI 一句話，說什麼不能丟：人物關係、承諾、欠的債、時間線。",
       "summaryFocusPlaceholder": "例如：記住每一個承諾，以及誰欠誰什麼。",
-      "summaryCost": "摘要在背景用便宜模型更新，玩家每次通常花不到 1 蘑菇幣；玩家可以在「遊玩記憶」面板裡看和改這段摘要。",
+      "summaryCost": "摘要在背景用便宜模型更新，每次通常花玩家不到 1 蘑菇幣。玩家能在「遊玩記憶」裡查看和修改。",
       "budget": "上下文預算",
       "budgetValue": "約 {{tokens}} token",
       "budgetAuthor": "按本卡設定",
@@ -5114,16 +5147,16 @@
       "recursionDepth": "級聯觸發深度",
       "recursionDepthHint": "進來的詞條還能再觸發別的詞條，最多連幾層。0 = 關。",
       "variablesToAi": "變數給 AI 的方式",
-      "variablesToAiHint": "全部：每回合給所有可讀變數的當前值。只給有變化的：只給離開預設值的。不給：不發當前值，但變數寫了的「行為規則」照樣發給 AI。想讓 AI 完全看不到某個變數，把它的 AI 權限設為「僅引擎」。",
+      "variablesToAiHint": "「全部」發所有變數的值；「只給有變化的」只發非預設值；「不給」只發「行為規則」。AI 權限設為「僅引擎」才完全隱藏。",
       "variablesAll": "全部",
       "variablesChanged": "只給有變化的",
       "variablesNone": "不給",
       "continuityOn": "開啟",
       "cardAiTitle": "這張卡的 AI",
       "openContext": "打開 Context 設定",
-      "historyLimitHint": "AI 每回合能看到多少條之前的對話。「預算內全部」：儘量都給，裝不下才丟最早的；「只看最新 N 條」：更省，但 AI 會忘掉更早的事。設定和記憶不受影響，聊天記錄本身也不會丟。",
+      "historyLimitHint": "AI 每回合看多少則舊對話。「預算內全部」裝不下才丟最早的；「只看最新 N 則」更省，但會忘掉早先的事。聊天紀錄不會丟。",
       "contextLock": "上下文預算鎖定為本卡設定",
-      "contextLockHint": "AI 每回合最多能讀多少內容（上下文預算），以你這張卡設的為準（現在約 {{tokens}} token），玩家在自己的設定裡改不了。關掉就由玩家自己定。玩家套餐和模型本身的上限仍然有效。",
+      "contextLockHint": "AI 每回合能讀多少由這張卡定（現約 {{tokens}} token），玩家改不了。關掉就由玩家定。套餐和模型的上限照樣有效。",
       "openSharedModule": "到資源包裡看看",
       "whatItIs": "是什麼",
       "range": "範圍",
@@ -5205,7 +5238,7 @@
       "seedValue": "初始值",
       "apply": "套用",
       "remove": "刪除",
-      "seedJsonFixed": "清單/物件類變數的開場初始值不能在這裡改：開場白只存數字、文字和開關。可以刪掉這根線，改在變數的預設值裡。"
+      "seedJsonFixed": "列表/表格變數不能在開場白裡設初始值，開場白只存數字、文字和開關。刪掉這條線，改在變數的預設值裡設。"
     },
     "ports": {
       "write": "寫入",
@@ -5251,7 +5284,7 @@
     },
     "addEntry": "設定",
     "deadRead": "永不變化",
-    "deadReadHint": "介面讀了這個變數，但沒有任何行為、開場白或 AI 能寫它 —— 玩家會盯著一個永遠不動的數字。",
+    "deadReadHint": "介面讀這個變數，但行為、開場白和 AI 都不會改它，玩家只會看到一個不變的數。",
     "readByUiHint": "被卡片前端讀取。",
     "turn": {
       "added": "新增",
@@ -5270,7 +5303,7 @@
       "out": "{{count}} 條出線"
     },
     "cost": {
-      "alwaysOnHint": "每回合都發 —— 這是常駐上下文成本",
+      "alwaysOnHint": "每回合都發，是固定的上下文成本",
       "keywordHint": "命中關鍵詞才發"
     },
     "wires": {
@@ -5294,7 +5327,7 @@
       "openingPlaceholder": "寫開場白 —— 玩家進門第一眼看到的就是這段",
       "firedByHint": "由「{{name}}」觸發",
       "sharedRow": "共通",
-      "sharedRowHint": "所有情境共通 —— 每個情境裡的這一條都是同一個物件，改一處處處變",
+      "sharedRowHint": "所有情境共用這一條，改一處，處處都變",
       "valueEditHint": "點擊修改初始值",
       "valueToggleHint": "點擊切換初始值",
       "settings": "設定",
@@ -5307,7 +5340,9 @@
       "faceBlurb": "這張卡的門面",
       "backgroundCount": "{{count}} 張",
       "backgroundOpen": "打開",
-      "listAll": "共 {{count}} 條"
+      "listAll": "共 {{count}} 條",
+      "fold": "收起",
+      "moreGroups": "還有 {{count}} 組"
     },
     "blocks": {
       "card": "封面與簡介",
@@ -5324,7 +5359,8 @@
         "always": "角色和世界",
         "keywords": "關鍵詞設定",
         "conditions": "條件設定",
-        "manual": "待命設定"
+        "manual": "待命設定",
+        "manualGame": "遊戲按需取用的設定"
       },
       "empty": {
         "image": "還沒有場景圖",
@@ -5368,7 +5404,8 @@
       "context": "Context",
       "contextHint": "這裡的 AI 每回合讀到的東西",
       "addPack": "用現成玩法",
-      "background": "聊天背景"
+      "background": "聊天背景",
+      "contextHintNoChat": "這裡的 AI 讀到的東西"
     },
     "gate": {
       "members": "{{count}} 個成員"
@@ -5437,12 +5474,12 @@
       "vars": "{{count}} 個變數",
       "behaviors": "{{count}} 條行為",
       "nothing": "還沒有內容",
-      "gated": "另有 {{count}} 個情境是條件開啟的——會不會跟這個同時開著，要看當時的狀態。",
+      "gated": "另有 {{count}} 個情境按條件開啟，會不會和這個同時開，看當時的狀態。",
       "history": "歷史",
       "ownRun": "它自己這一段",
       "ownRunArchive": "關閉時收進檔案，只留一份總結",
       "ownRunKeep": "關閉之後也留在上下文裡",
-      "handsOff": "它自己不接管對話，所以這些會併進正在敘述的那個情境的上下文。",
+      "handsOff": "它不接管對話，這些內容會併入正在敘述的情境。",
       "missingSource": "這個來源情境已經不在了，這一條不會生效。",
       "flowJoin": "、",
       "as": {
@@ -5457,37 +5494,48 @@
       },
       "readsHint": "這個情境讀 {{other}}：{{reads}}。",
       "readByHint": "{{other}} 正在讀這個情境：{{gives}}。",
-      "mutualHint": "和 {{other}} 互通——這個情境讀 {{reads}}；{{other}} 讀 {{gives}}。",
+      "mutualHint": "和 {{other}} 互通。這個情境讀 {{reads}}，{{other}} 讀 {{gives}}。",
       "joinsNarrator": "併入敘事",
       "readBy": "誰在讀它",
       "noReaders": "還沒有情境讀這個情境。",
-      "chainTrap": "{{via}} 自己讀了 {{source}}，但那一段傳不過來——一條線只走一跳。這個情境需要的話，得自己再連一條到 {{source}}。",
-      "stationNeeded": "打開上面的「這個情境自己跑對話」，它就有自己的記憶：自己的一段紀錄，以及連去讀別處的線。",
+      "chainTrap": "{{via}} 讀了 {{source}}，但不會傳到這裡，一條線只傳一跳。需要就從這裡再連一條到 {{source}}。",
+      "stationNeeded": "打開上方「這個情境自己接管對話」，它就有自己的記憶，也能連線去讀別處。",
       "row": {
         "usesCard": "用卡的 Context",
         "readBy": "{{names}} 在讀",
-        "memoryShared": "整段對話 · 和 {{names}} 共用",
+        "memoryShared": "主對話 · 和 {{names}} 共用",
         "memorySharedHint": "這個情境的 AI 讀整段對話，和所有情境一直以來一樣。",
-        "memoryPlainHint": "這個情境沒有自己的 AI。它的詞條和變數併入正在敘事的那個 AI，而那個 AI 什麼都記得。",
+        "memoryPlainHint": "這個情境沒有自己的 AI，詞條和變數交給正在敘述的 AI，它什麼都記得。",
         "memoryOwnKeep": "只記得在這裡說過的話",
         "memoryOwnArchive": "只記得在這裡說過的話 · 離開後寫成摘要",
-        "memoryOwnHint": "在裡面時，AI 只看得到這個情境裡說過的話——一進來就像失憶，別處的事一概不知。這裡說的話照樣進共通紀錄：一離開，別的地方都記得。",
+        "memoryOwnHint": "在這裡，AI 只看得到這個情境裡說過的話。這些話也會進共通紀錄，離開後別處都記得。",
         "memoryPool": "只和 {{names}} 共用的那段對話",
-        "memoryPoolHint": "這幾個情境共用一池記憶：在裡面時互相記得對方那裡發生的事，別的情境一概不知。卡本身的 AI 照樣全都看得到。",
+        "memoryPoolHint": "這幾個情境共用一池記憶，互相記得對方發生的事，其他情境不知道。卡本身的 AI 全都看得到。",
         "memoryWorker": "後台 · 只讀接進來的線",
-        "memoryWorkerHint": "從不回答玩家。按觸發條件執行，下面那幾條線就是它的全部世界。",
+        "memoryWorkerHint": "從不回答玩家。按觸發條件執行，只讀下面連著的線。",
         "theCard": "卡本身",
         "shared": "共通詞條 {{lore}} · 共通變數 {{vars}}",
-        "sharedHint": "卡本身的詞條和變數進每一個情境。每個副本裡都有的那個血量是同一個變數，不是四個。",
+        "sharedHint": "卡本身的詞條和變數會進每個情境。比如每個副本裡的血量都是同一個變數。",
         "trap": "{{source}} 傳不到這裡（經 {{via}}）",
         "connections": "讀取 {{reads}} 項 · 被 {{gives}} 個情境讀取",
-        "reviewConnections": "{{count}} 處間接引用待檢查",
-        "memoryCardAlone": "記得整段對話",
-        "memoryCardHint": "沒有情境接管時，跑的就是這個 AI；說過的話它全都記得。",
+        "reviewConnections": "{{count}} 條連線傳不到這裡",
+        "memoryCardAlone": "記得主對話裡的每一句",
+        "memoryCardHint": "沒有情境接管時由它回覆。它讀含所有情境的主對話，讀多遠看「歷史」。介面呼叫的 AI（如手機聯絡人）各有對話，它看不到。",
         "summaryOn": "更早的回合寫成摘要",
         "continuityOn": "智慧追蹤：開",
         "continuityOff": "智慧追蹤：關",
-        "codeContext": "介面程式碼自己拼 · {{count}} 處"
+        "codeContext": "介面程式碼自己給 AI 準備內容 · {{count}} 處",
+        "scene": "介面把現場告訴 AI",
+        "sceneEvents": "介面把現場告訴 AI · AI 可觸發 {{count}} 個事件",
+        "sceneHint": "卡的介面每回合把畫面上發生的事告訴 AI。",
+        "sceneEventsList": "AI 能觸發：",
+        "notCalled": "不走聊天：介面自己叫它的 AI",
+        "notCalledHint": "這張卡的介面自己叫 AI，下面列的就是它們。",
+        "notCalledGame": "不走聊天：打開就是遊戲，遊戲自己叫 AI",
+        "notCalledGameHint": "遊戲有自己的 AI，列在下面的 AI 塊裡。",
+        "byGame": "{{name}} 看到什麼由遊戲決定",
+        "byInterface": "介面程式碼讀這裡的設定，交給它自己的 AI",
+        "byInterfaceHint": "這張卡的介面不走聊天，聊天 AI 讀不到這裡。介面程式碼自己讀這些設定，交給它的 AI。改這裡的文字，它說話就跟著變。"
       }
     },
     "turnCtx": {
@@ -5498,14 +5546,14 @@
       "noNarrator": "由卡本身的 AI 在回 —— 沒有情境接管",
       "on": "開著的",
       "off": "現在關著（{{count}}）",
-      "standby": "還有 {{count}} 條詞條在等關鍵詞或條件 —— 進不進來只看說了什麼。",
+      "standby": "還有 {{count}} 條詞條在等關鍵詞或條件，進不進來看對話裡說了什麼。",
       "carried": "從「{{name}}」拿 {{what}}，當作{{as}}",
       "floorHint": "每輪至少",
       "contentCounts": "{{entries}} 條常駐設定 · {{variables}} 個變數",
       "estimateTitle": "AI 每回合讀多少",
       "currentEstimate": "當前狀態",
       "initialEstimate": "初始配置",
-      "estimateExplanation": "按配置與狀態估算，未包含本輪匹配、聊天曆史或記憶；不是實際傳送內容。",
+      "estimateExplanation": "按設定和狀態估算，不含本輪匹配、聊天歷史和記憶，不是實際傳送的內容。",
       "beforeOpening": "初始配置尚未應用具體開場。",
       "conditionalCount": "{{count}} 條設定由關鍵詞、條件或前端觸發，未計入此估計。",
       "baselineEstimate": "常駐內容估計",
@@ -5555,13 +5603,13 @@
       "deliveryKeywordsConditionsAny": "關鍵詞匹配，且 {{count}} 個變數條件中任意一個滿足時，提供給故事 AI。",
       "deliveryKeywordsConditionsAll": "關鍵詞匹配，且 {{count}} 個變數條件全部滿足時，提供給故事 AI。",
       "deliveryFrontend": "由前端中對應的元素控制是否提供給故事 AI。",
-      "deliveryUnconfigured": "尚未設定自動傳送方式。可開啟始終傳送，或設定關鍵詞、變數條件或前端連線。",
+      "deliveryUnconfigured": "還沒設定怎麼發給 AI。打開「始終傳送」，或加關鍵詞、變數條件、前端連線。",
       "deliveryModuleScope": "僅在所屬情境生效期間傳送。",
       "deliveryAiOnly": "只有 {{name}} 看得到，別的 AI 不知道。",
       "deliveryFrontendConditions": "還需對應前端元素啟用，並滿足連線上的條件。",
       "deliveryFrontendScope": "僅在對應前端元素啟用期間傳送。",
       "deliverySecondary": "同時遵循輔助關鍵詞與匹配設定。",
-      "deliveryUnplaced": "放在外面，沒生效：拖進卡片或某個情境後，才會提供給故事 AI。"
+      "deliveryUnplaced": "放在外面，還沒生效。拖進卡片或某個情境後才會發給故事 AI。"
     },
     "addSceneImage": "場景圖",
     "addPurpose": {
@@ -5676,7 +5724,7 @@
       "outgoing": "使用與影響",
       "members": "包含的內容",
       "empty": "暫未發現已配置的關聯。",
-      "configuredHint": "這裡展示配置中的關聯；試玩時是否生效，還取決於開場、條件和啟用狀態。",
+      "configuredHint": "這裡是設好的關聯。試玩時生不生效，還要看開場、條件和是否啟用。",
       "dynamicCodeHint": "自定義程式碼可能還有動態訪問，無法全部列出。",
       "operations": {
         "set": "設為",
@@ -5710,7 +5758,7 @@
     },
     "crash": {
       "title": "畫布畫不出這張卡",
-      "body": "卡本身沒事，內容一點都沒丟。裡面有東西的格式是目前版本讀不出來的——用上面工具列的「完整編輯器」找到並改掉，然後再回來。",
+      "body": "卡沒壞，內容也沒丟。有一處格式目前版本讀不了，用上方工具列的「完整編輯器」找到改掉再回來。",
       "retry": "重新繪製"
     },
     "workspace": {
@@ -5814,7 +5862,13 @@
       },
       "precise": "精準",
       "audioNoCue": "AI 不會自己放",
-      "imageManual": "AI 不會自己發"
+      "imageManual": "AI 不會自己發",
+      "byInterface": "介面寫入",
+      "byInterfaceHint": "卡的介面程式碼會改這個值。",
+      "readByInterface": "介面讀取",
+      "readByInterfaceHint": "卡的介面照這個值運行：改它，遊戲就跟著變。",
+      "firedByInterface": "介面回報",
+      "firedByInterfaceHint": "遊戲裡發生這件事時，介面程式碼會觸發它（{{action}}）。它做什麼，就是它下面寫的。"
     },
     "sentence": {
       "every": "每",
@@ -5852,36 +5906,36 @@
       "none": "沒有符合的內容"
     },
     "tips": {
-      "audioAi": "開啟後，AI 會按劇情自己決定什麼時候放這首（照著「什麼時候放」那句話）。關掉就只按播放列表和行為來放。",
-      "audioType": "BGM：背景音樂，一直迴圈。音效：一下就放完的聲音，比如開門聲。環境音：一直在後面的聲音，比如雨聲、人群聲。",
-      "cooldown": "觸發一次以後，要隔幾回合才能再觸發。比如填 3：觸發後接下來 3 回合都不會再觸發。0 就是不限。",
-      "maxFire": "這一局最多觸發幾次。填 1 就是隻發生一次，適合一次性的劇情事件。0 就是不限。",
-      "effects": "條件滿足後要發生的事，可以加好幾個：改變數、開啟或關掉一條設定、放音樂、提醒玩家、告訴 AI 一句話……",
-      "keywords": "對話裡出現這些詞時，這條設定才會發給 AI。比如寫「王城、國王」，玩家提到王城時 AI 才讀到它。多個詞用逗號分開。",
-      "liveCanon": "Lore Shift 是給玩家裝的擴充套件：裝了它的玩家，可以在自己這一局裡改你允許改的設定和變數，比如把「城主」換成另一個人。隻影響他自己那一局，你的原卡不會變。",
-      "range": "最小值和最大值。AI 怎麼改都不會超出這個範圍，比如好感 0 到 100。",
-      "reaches": "這條設定怎麼、什麼時候發給 AI：一直髮，還是等關鍵詞或條件；放在給 AI 的內容裡哪個位置。",
-      "varWhen": "預設 AI 一直看得到它。也可以只在某些開場白、某個情境裡才讓 AI 看到，別的時候不佔字數。",
-      "whenFires": "這條行為什麼時候檢查一次：預設每回合；也可以是玩家說了某句話、某個變數變了、某個按鈕被點了。",
-      "onlyIf": "這些條件滿足了，才會執行下面的效果。條件多的時候，可以選「全部滿足」或「滿足一個就行」。空著就是每次都執行。",
-      "alwaysSend": "開啟：每回合都發給 AI。關掉：只有出現觸發關鍵詞、或者滿足條件時才發，省字數，AI 也更專注。",
-      "alwaysSendGated": "接了變數條件，什麼時候發給 AI 由條件決定。去掉這些條件後，這個開關才會重新起作用。",
-      "excludeRecursion": "別的設定的正文裡碰巧有這裡的關鍵詞時，不會順帶把這一條也帶出來。只有玩家和 AI 的對話能觸發它。",
+      "audioAi": "開啟後，AI 按「什麼時候放」那句話自己決定何時放這首。關掉就只按播放列表和行為播放。",
+      "audioType": "BGM：循環的背景音樂。音效：一次性的短聲音，如開門聲。環境音：一直在背景裡的聲音，如雨聲。",
+      "cooldown": "觸發後要隔幾回合才能再觸發。填 3 就是接下來 3 回合不觸發。0 為不限。",
+      "maxFire": "一局最多觸發幾次。填 1 就只發生一次，適合一次性劇情。0 為不限。",
+      "effects": "條件滿足後要做的事，可以加多個，比如改變數、開關設定、放音樂、提醒玩家、給 AI 留一句話。",
+      "keywords": "對話裡出現這些詞時，這條設定才發給 AI，比如「王城,國王」。多個詞用逗號分開。",
+      "liveCanon": "Lore Shift 是玩家裝的擴充套件。裝了它，玩家能在自己那一局改你允許的設定和變數，比如換一個城主。你的原卡不變。",
+      "range": "AI 怎麼改都不會超出這個範圍，例：好感 0 到 100。",
+      "reaches": "這條設定何時發給 AI（每回合，或等關鍵詞、條件），以及放在 AI 讀的內容裡哪個位置。",
+      "varWhen": "預設 AI 一直能看到它。也可以只在某些開場白或情境裡給 AI 看，其他時候不佔字數。",
+      "whenFires": "這條行為何時檢查：預設每回合，也可以在玩家說了某句話、變數變化或按鈕被點時。",
+      "onlyIf": "滿足這些條件才執行下面的效果。條件多時可選「全部滿足」或「任一滿足」。留空就每次都執行。",
+      "alwaysSend": "開啟：每回合都發給 AI。關掉：出現關鍵詞或滿足條件時才發，更省字數，AI 也更專注。",
+      "alwaysSendGated": "已接了變數條件，由條件決定何時發給 AI。去掉條件後這個開關才起作用。",
+      "excludeRecursion": "別的設定正文裡出現這裡的關鍵詞時，不會帶出這一條。只有玩家和 AI 的對話能觸發它。",
       "preventRecursion": "這條設定發出去以後，它的正文不會再去觸發別的設定的關鍵詞。",
-      "secondary": "和觸發關鍵詞搭配用的第二組詞，用來加限制，比如「還必須同時出現」或「不能出現」。一般不用填。",
-      "secondaryLogic": "第二組詞怎麼判斷：出現其中一個就行、全部都要出現、一個都不能出現……",
-      "sendAs": "以什麼身份放進給 AI 的內容裡。系統：當成規則和設定，最常用。使用者：像玩家說的話。助手：像 AI 自己說過的話。",
+      "secondary": "配合觸發關鍵詞的第二組詞，用來加限制，比如必須同時出現或不能出現。一般不用填。",
+      "secondaryLogic": "第二組詞怎麼算數，比如出現一個就行、全都要出現、一個都不能有。",
+      "sendAs": "以什麼身份發給 AI。系統：規則和設定，最常用。使用者：像玩家說的。助手：像 AI 自己說過的。",
       "wholeWord": "勾上後只認完整的詞：寫 cat 不會被 category 觸發。中文基本用不到。",
       "imageScope": "只在從這些開場白開始的對話裡用這張圖。選「所有開場」就哪條都能用。",
       "imageUrl": "圖片從哪來：貼一個圖片網址，或者從素材庫裡選。",
-      "aiAccess": "AI 能不能改它。可以改：AI 按劇情改。只能看：AI 知道它，但只有行為和介面能改。看不到：AI 完全不知道它。",
-      "preciseStep": "精準追蹤開著時，每回合最多漲（降）這麼多，AI 按劇情在這中間挑一個數。",
-      "section": "這條設定放在給 AI 的內容裡的哪一段。放在前面的像背景資料；放進對話裡、離最新訊息越近，AI 越重視。",
-      "situationEnabled": "關掉後，這個情境整個不生效，不管條件滿不滿足。想暫時不用又不想刪的時候關掉它。"
+      "aiAccess": "AI 能不能改它。可以改：AI 按劇情改。只能看：AI 知道它，但只有行為和介面能改。看不到：AI 不知道它。",
+      "preciseStep": "開著精準追蹤時，每回合最多漲或降這麼多，具體多少由 AI 按劇情定。",
+      "section": "這條設定放在 AI 讀的內容的哪一段。靠前像背景資料；放進對話裡，離最新訊息越近，AI 越重視。",
+      "situationEnabled": "關掉後整個情境不生效，不管條件是否滿足。想暫時不用又不想刪時關掉。"
     },
     "addSituation": {
       "title": "加一個情境",
-      "what": "一個新的情境，像卡里的另一張卡：有自己的設定、變數、行為和記憶。把東西拖進去，它們就在這個情境裡生效。"
+      "what": "像卡裡的另一張卡，有自己的設定、變數、行為和記憶。拖進去的東西在這個情境裡生效。"
     },
     "addLoose": {
       "hint": "選中了某個情境或卡片，就直接加到裡面；什麼都沒選，就先放在外面（淡色，不生效），拖進去才生效："
@@ -5943,7 +5997,7 @@
       "addNumber": "先加一個數值",
       "event": "故事裡發生這件事時",
       "eventPlaceholder": "比如：他原諒了你",
-      "eventRule": "故事裡已經發生了「{{sentence}}」就是「是」，還沒發生就是「否」。發生過以後一直是「是」。"
+      "eventRule": "故事裡發生了「{{sentence}}」就是「是」，否則是「否」。一旦變成「是」就不再變回。"
     },
     "moments": {
       "screenWaiting": "寫了開場白就能在這裡看到玩家的畫面"
@@ -5979,14 +6033,14 @@
       "wakeAnyClosed": "任何情境結束時跑",
       "workerReads": "只讀 {{names}}",
       "workerReadsNothing": "什麼都沒接 · 只能自己編",
-      "workerReadsNothingHint": "它看不到玩家做了什麼，寫出來的東西是編的，還要花錢。連一條線到要記錄的情境。",
+      "workerReadsNothingHint": "它看不到玩家做了什麼，寫的都是編的，照樣花錢。連一條線到要記錄的情境。",
       "workerWritesFor": "寫給 {{names}} 看 · 不對玩家說話",
       "workerWritesForNobody": "寫的東西還沒有人讀",
       "wakeQuiet": "安靜 {{n}} 秒後 · 自己決定說不說",
       "wakeAfter": "「{{name}}」回覆之後跑",
       "doesInterject": "對玩家插一句 · 改數值",
       "seesScene": "現場 · 玩家界面會告訴它",
-      "seesSceneHint": "卡的界面用 setScene 告訴 AI 螢幕上現在是什麼，每次叫醒時一起發。",
+      "seesSceneHint": "卡的介面用 setScene 告訴 AI 螢幕上有什麼，每次呼叫都會帶上。",
       "line": {
         "lore": "設定 {{n}} 條",
         "vars": "數值 {{n}} 個",
@@ -6081,8 +6135,12 @@
       "answer": "回答格式",
       "answerJson": "JSON",
       "answerText": "純文字",
-      "model": "指定模型",
-      "openAt": "打開 {{file}} 第 {{line}} 行"
+      "model": "模型",
+      "openAt": "打開 {{file}} 第 {{line}} 行",
+      "lorePicked": "介面程式碼自己挑的設定",
+      "modelPlayer": "玩家選的模型",
+      "modelVariable": "由變數「{{name}}」決定",
+      "modelComputed": "介面程式碼執行時決定"
     },
     "files": {
       "summary": "介面程式碼 · {{files}} 個檔案 · {{lines}} 行",
@@ -6107,7 +6165,10 @@
       "use_audio": "音訊",
       "use_assets": "素材",
       "use_chat": "聊天操作",
-      "use_session": "存檔操作"
+      "use_session": "存檔操作",
+      "use_scene": "現場",
+      "use_liveVoice": "即時語音",
+      "use_timer": "定時執行"
     },
     "hints": {
       "title": "還能自己寫的",
@@ -6160,7 +6221,7 @@
       "implementedBy": "實作在 {{count}} 處",
       "implementedCode": "自己的程式碼 · {{count}} 行",
       "firedFrom": "介面程式碼觸發 · {{file}} 第 {{line}} 行",
-      "contextIntro": "AI 讀什麼，也可以由介面程式碼自己定：訊息自己寫，詞條和情境自己挑。下面是卡裡這樣做的 AI 呼叫。",
+      "contextIntro": "介面程式碼也能自己決定 AI 讀什麼，比如自己寫訊息、挑詞條和情境。下面是這類 AI 呼叫。",
       "codeAt": "{{file}} 第 {{line}} 行"
     },
     "gateGroups": {
@@ -6232,13 +6293,14 @@
       },
       "openAi": "去改",
       "openCode": "打開程式碼",
-      "footRules": "故事 AI 的模型永遠跟隨玩家，作者只能推薦。卡裡的 AI 指定了模型而玩家用不了時，會自動換回玩家能用的。",
+      "footRules": "故事 AI 用玩家選的模型，作者只能推薦。卡裡的 AI 指定的模型玩家用不了時，會自動換成能用的。",
       "footClamp": "作者設的數值會被限制在安全範圍內。",
-      "legendAuthor": "粉色：作者自訂"
+      "legendAuthor": "粉色：作者自訂",
+      "viewAll": "看全部 AI"
     },
     "storyAi": {
       "title": "故事 AI 的模型和參數",
-      "hint": "模型由玩家自己選、自己付。參數（溫度、Top P）預設也跟隨玩家；選「作者自訂」後用這張卡的。",
+      "hint": "模型由玩家自己選、自己付費。溫度和 Top P 預設也跟隨玩家，選「作者自訂」才用這張卡的。",
       "recommendedModel": "推薦模型",
       "recommendedModelHint": "玩家選模型時會看到「作者推薦」，不會強制。",
       "recommendedModelNone": "不推薦",
@@ -6250,6 +6312,98 @@
       "topP": "Top P",
       "topPHint": "{{min}}–{{max}}",
       "alwaysPlayer": "模型和回覆長度始終跟隨玩家，由玩家付費。"
+    },
+    "game": {
+      "spiretalk": "《殺戮尖塔 2》",
+      "in": "遊戲給",
+      "out": "交回遊戲",
+      "inHint": "{{game}}每回合寫入這個值。這裡的值只是試玩時的假資料，ID 別改。",
+      "outHint": "AI 寫這個值，{{game}}回合結束後讀走。ID 別改。",
+      "inNote": "{{game}}每回合寫入這個值，AI 只讀。這裡填的是試玩用的假資料。遊戲按 ID 找它，別改 ID，也別刪。",
+      "outNote": "AI 每回合寫這個值，{{game}}校驗後照著做。遊戲按 ID 找它，別改 ID，也別刪。",
+      "idLocked": "{{game}}按這個 ID 找它，所以 ID 不能改。",
+      "unnamed": "遊戲"
+    },
+    "gameScreen": {
+      "tag": "遊戲",
+      "pageLead": "這張卡打開就是這個遊戲：玩家直接進遊戲，不經過聊天介面。",
+      "play": "在這裡試玩",
+      "openWindow": "新視窗開啟",
+      "stop": "結束試玩",
+      "modTag": "{{game}} · 模組裡的角色",
+      "modLead": "這張卡不在網頁上玩。玩家在{{game}}裡遇到「{{npc}}」時，由這張卡說話。",
+      "inputs": "{{game}}每回合告訴 AI 的",
+      "role": "AI 扮演",
+      "outputs": "AI 每回合交回{{game}}的",
+      "more": "還有 {{count}} 項",
+      "lore": "共 {{count}} 條設定",
+      "range": "從 {{min}} 到 {{max}}",
+      "out": {
+        "choices": "三個讓玩家選的回覆",
+        "action": "給不給獎勵，只能從遊戲允許的裡選"
+      },
+      "modFoot": "獎勵和約定由{{game}}檢查。左邊是試玩用的假資料，點右上角「試玩」就能用它們聊。",
+      "noneIn": "還沒有。在變數上把「遊戲介面」選成「遊戲給」。",
+      "noneOut": "還沒有。在變數上把「遊戲介面」選成「交回遊戲」。"
+    },
+    "aiTypeHint": {
+      "turn": "每回合跑一次：回覆玩家，或在幕後做事。",
+      "ui": "玩家介面上的按鈕或程式碼叫它，它回一個結果給介面。",
+      "event": "卡裡發生某件事時自己跑：數值到了條件、某個情境結束、冷場太久。",
+      "custom": "你定好它的名字、輸入、回答和任務，由創作助手或外部 AI 寫程式碼實作。"
+    },
+    "aiContract": {
+      "title": "怎麼呼叫",
+      "titleHint": "介面程式碼用這一行呼叫它。改上面的標題就會改呼叫名。箭頭後是它的回答，在下方「回答格式」裡設定。",
+      "takes": "它收到什麼",
+      "takesHint": "介面叫它時傳進來的東西。會連同輸入一起告訴 AI，也告訴寫程式碼的人。",
+      "takesPlaceholder": "例：玩家剛發的那則私訊",
+      "does": "它要做什麼",
+      "doesHint": "寫清要做什麼、結果用在哪。創作助手和外部 AI 寫程式碼前會先讀這裡。",
+      "doesPlaceholder": "例：依好感度回一則私訊；好感低於 30 時語氣冷淡，回覆裡別透露主線秘密",
+      "returnsText": "一段文字",
+      "returnsJson": "一個 JSON 物件"
+    },
+    "gameIface": {
+      "title": "遊戲介面",
+      "hint": "卡是某個遊戲裡由 mod 執行的角色時打開。mod 每回合寫入「遊戲給」的變數，再讀走 AI 寫的「交回遊戲」變數。",
+      "builtin": "由{{game}}的 mod 執行，遊戲寫入 {{inputs}} 個變數，交回 {{outputs}} 個。由 mod 定好，這裡改不了。",
+      "on": "這張卡是遊戲裡的角色",
+      "name": "遊戲名稱",
+      "namePlaceholder": "例：殺戮尖塔 2",
+      "counts": "遊戲寫入 {{inputs}} 個變數，交回遊戲 {{outputs}} 個。在每個變數上選它屬於哪一邊。",
+      "side": "遊戲介面",
+      "sideHint": "遊戲給：{{game}}每回合寫入，AI 只讀。交回遊戲：AI 寫，{{game}}讀走後照著做。",
+      "sideNone": "不是"
+    },
+    "codeAi": {
+      "voiceWhat": "玩家用麥克風和它即時對話。它由介面程式碼接上，沒有自己的設定。",
+      "callWhat": "介面程式碼在需要時叫它一次。它沒有自己的設定，下面是從程式碼裡讀到的。",
+      "kind": "類型",
+      "kindVoice": "即時語音",
+      "scene": "現場",
+      "sceneYes": "介面會把現場告訴它",
+      "sceneNo": "程式碼裡沒看到",
+      "note": "它做什麼",
+      "noteHint": "寫一兩句給自己和協作的人看。會貼在這一行上，創作助手和外部 AI 也會讀。",
+      "notePlaceholder": "例：每輪判斷玩家說的話可不可疑，回懷疑度變化",
+      "ask": "讓創作助手解釋",
+      "askPrompt": "看一下介面程式碼 {{file}} 第 {{line}} 行的「{{name}}」：它做什麼、讀什麼、回什麼。用一兩句白話寫進貼在它上面的便籤（write_note，on 填 {{target}}）。不要改程式碼。",
+      "convert": "改成可設定的 AI",
+      "convertHint": "改成卡上的一個介面型 AI，之後在畫布上就能調它的模型和要做什麼。由創作助手改這一處程式碼，改完能撤回。",
+      "convertBundled": "這是打包後的程式碼，自動改不了；要改成可設定的 AI，得用作者的原始碼。",
+      "convertPrompt": "把介面程式碼 {{file}} 第 {{line}} 行的「{{name}}」這個 AI 呼叫改成卡上的一個介面型 AI，讓作者能在畫布上調它的模型和要做什麼：\n1. 用 write_worldbook 建一個情境，station 為 { kind: \"worker\", trigger: { on: \"ui\" } }，名字按它的用途起；task 寫清它現在的提示詞要它做的事；回答格式照程式碼現在怎麼用它的回答來定；它要讀的設定放進這個情境的條目。\n2. 用 edit_custom_ui 把這一處 api.ai.complete 改成 api.callAi(\"<名字>\", <原來交給它的內容>)，用回傳的 text 或 fields。\n3. 只改這一處，別動別的程式碼。改完用一兩句話告訴我改了什麼。",
+      "gameWhat": "這個 AI 由遊戲在 Yumina 的伺服器上執行，人設不在這張卡裡，改卡不會改它。下面是遊戲和它之間傳的東西。",
+      "kindGame": "遊戲裡的 AI",
+      "gets": "遊戲告訴它",
+      "returns": "它交回",
+      "where": "寫在",
+      "gameBook": "讀「{{name}}」裡的 {{count}} 條設定",
+      "gameWhatBook": "這個 AI 由遊戲在 Yumina 的伺服器上執行，人設寫在「{{name}}」情境裡，遊戲從卡裡讀。下面是遊戲和它之間傳的東西。",
+      "removePrompt": "把介面程式碼 {{file}} 第 {{line}} 行的「{{name}}」這個 AI 呼叫刪掉：\n1. 用 edit_custom_ui 去掉這一處呼叫，以及只為它存在的程式碼（拼給它的提示詞、處理它回答的地方）。\n2. 刪掉之後介面要照常能玩：原本等它回答的地方，改成不等它直接往下走。\n3. 只改這一處，別動別的程式碼。改完用一兩句話告訴我刪了什麼、介面現在會怎樣。"
+    },
+    "mobile": {
+      "untitled": "未命名"
     }
   },
   "modules": {

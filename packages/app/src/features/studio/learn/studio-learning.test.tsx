@@ -245,6 +245,16 @@ test("one tutorial: three required lessons stage the canvas a block at a time, t
     await act(async () => profile.setState({ profile: { id: "starter-learner" } as never }));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
     assert.equal(guided(), false, "a remount (简单 → 画布) does not bring it back over the same card");
+    sessionStorage.setItem("yumina-studio-hold-tour", "1");
+    await act(async () => profile.setState({ profile: { id: "returning-author" } as never }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+    assert.equal(guided(), false, "an existing card opened on the canvas is not where the first lesson runs");
+    assert.equal(readLearningProgress("returning-author").seenRelease, undefined, "…and the welcome is kept for a card they start");
+    await act(async () => profile.setState({ profile: { id: "someone-else-3" } as never }));
+    await act(async () => profile.setState({ profile: { id: "returning-author" } as never }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+    assert.equal(step(), "opening", "the next visit without the note is greeted");
+    await click("Pause the guide");
     await act(async () => profile.setState({ profile: { id: "fresh-learner" } as never }));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
     assert.equal(step(), "opening", "a first visit of one's own starts the first lesson");

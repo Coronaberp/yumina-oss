@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { AudioTrack, SceneImage, Variable } from "@yumina/engine";
 import { cardMemoryRows, noteSnippet, rowFacts, type RowFactsDraft } from "./row-facts";
+import { gameInterfaceOf } from "@/features/editor/lib/game-interface";
 
 const t = (key: string, options?: Record<string, unknown>) => (options?.count !== undefined ? `${key}:${options.count}` : key);
 const draft = (parts: Partial<{ variables: Variable[]; audio: AudioTrack[]; images: SceneImage[] }>): RowFactsDraft => ({
@@ -25,6 +26,19 @@ test("a variable row is its name and value: no kind, tracking or rules on the bo
   assert.deepEqual(rowFacts({ id: "var:hp", kind: "variable" }, d, t), {});
   assert.deepEqual(rowFacts({ id: "var:love", kind: "variable" }, d, t), {});
   assert.deepEqual(rowFacts({ id: "var:missing", kind: "variable" }, d, t), {});
+});
+
+test("on a game's card, the values the game owns say which side of the game they are on", () => {
+  const vars: Variable[] = [
+    { id: "hp", name: "HP", type: "number", defaultValue: 30, aiAccess: "read" },
+    { id: "affection_delta", name: "Affection delta", type: "number", defaultValue: 0, aiAccess: "write" },
+    { id: "mood", name: "Mood", type: "string", defaultValue: "", aiAccess: "read" },
+  ];
+  const d = { ...draft({ variables: vars }), game: gameInterfaceOf({ id: "sts2-neow", spiretalk: { npc: "NEOW" } } as never) };
+  assert.deepEqual(rowFacts({ id: "var:hp", kind: "variable" }, d, t), { tags: [{ text: "blueprint.game.in", accent: true, hint: "blueprint.game.inHint" }] });
+  assert.deepEqual(rowFacts({ id: "var:affection_delta", kind: "variable" }, d, t), { tags: [{ text: "blueprint.game.out", accent: true, hint: "blueprint.game.outHint" }] });
+  assert.deepEqual(rowFacts({ id: "var:mood", kind: "variable" }, d, t), {}, "the author's own variable is the author's");
+  assert.equal(gameInterfaceOf({ id: "plain" } as never), null, "an ordinary card is no game's");
 });
 
 test("an audio row wears its kind and the cue that lets the AI play it, or says the AI will not", () => {
@@ -63,4 +77,28 @@ test("card memory on its defaults folds to one line; anything changed shows its 
   assert.deepEqual(folded.map((row) => row.text), ["blueprint.ctx.row.memoryCardAlone"]);
   assert.equal(cardMemoryRows({ historyLimit: 20 }, t, { folded: true }).length, 2);
   assert.equal(cardMemoryRows({ historyLimit: 0, summary: true }, t, { folded: true }).length, 3);
+});
+
+test("a variable the interface code writes says so", () => {
+  const v = { id: "run", name: "Run", type: "json", defaultValue: {} } as unknown as Variable;
+  const draft = { variables: new Map([["run", v]]), audio: new Map(), images: new Map(), interfaceWrites: new Set(["run"]) };
+  assert.deepEqual(rowFacts({ id: "var:run", kind: "variable" } as never, draft, (k: string) => k).tags?.map((x) => x.text), ["blueprint.row.byInterface"]);
+  assert.deepEqual(rowFacts({ id: "var:run", kind: "variable" } as never, { ...draft, interfaceWrites: new Set() }, (k: string) => k), {});
+});
+
+test("a setting the interface runs by says so; a value the AI writes and the screen shows does not", () => {
+  const rule: Variable = { id: "rule-crouch-seconds", name: "Crouch seconds", type: "number", defaultValue: 4, aiAccess: "none" };
+  const shown: Variable = { id: "health", name: "Health", type: "number", defaultValue: 100 };
+  const d = { ...draft({ variables: [rule, shown] }), interfaceReads: new Set(["rule-crouch-seconds", "health"]) };
+  assert.deepEqual(rowFacts({ id: "var:rule-crouch-seconds", kind: "variable" }, d, t).tags?.map((x) => x.text), ["blueprint.row.readByInterface"]);
+  assert.deepEqual(rowFacts({ id: "var:health", kind: "variable" }, d, t), {});
+});
+
+test("a behaviour the interface sets off says the game reports it", () => {
+  const d = { ...draft({}), reactions: new Map([
+    ["seen-crouching", { when: { eventType: "action:fired", match: { actionId: { value: "witness-crouching" } } } }],
+    ["hunger", { when: { eventType: "turn:complete" } }],
+  ]) };
+  assert.deepEqual(rowFacts({ id: "reaction:seen-crouching", kind: "rule" }, d, t).tags?.map((x) => x.text), ["blueprint.row.firedByInterface"]);
+  assert.deepEqual(rowFacts({ id: "reaction:hunger", kind: "rule" }, d, t), {});
 });

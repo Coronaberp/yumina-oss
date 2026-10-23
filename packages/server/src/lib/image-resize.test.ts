@@ -30,7 +30,7 @@ function optimizer(read: (key: string, maxBytes: number) => Promise<Buffer>) {
   return { run: (key: string, mime: string) => module.exports.publishStoredImage(key, "processed", mime), writes };
 }
 
-// A valid one-bit grayscale PNG represents 42M pixels with only ~5 MiB of
+// A valid one-bit grayscale PNG represents 120M pixels with only ~15 MiB of
 // uncompressed scanlines, so the test itself avoids a huge decoded RGBA image.
 function largePixelPng() {
   const chunk = (type: string, data: Buffer) => {
@@ -47,15 +47,15 @@ function largePixelPng() {
     return result;
   };
   const header = Buffer.alloc(13);
-  header.writeUInt32BE(7000, 0);
-  header.writeUInt32BE(6000, 4);
+  header.writeUInt32BE(12000, 0);
+  header.writeUInt32BE(10000, 4);
   header[8] = 1;
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk("IHDR", header),
     // A legal ancillary chunk keeps the input above the optimization threshold.
     chunk("tEXt", Buffer.concat([Buffer.from("padding\0"), Buffer.alloc(512 * 1024, 32)])),
-    chunk("IDAT", deflateSync(Buffer.alloc((7000 / 8 + 1) * 6000))),
+    chunk("IDAT", deflateSync(Buffer.alloc((12000 / 8 + 1) * 10000))),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -75,12 +75,12 @@ test("image optimization rejects inputs above 20 MiB without reading or publishi
   assert.deepEqual(task.writes, []);
 });
 
-test("image optimization rejects more than 40M pixels without publishing", async () => {
+test("image optimization rejects stills above 100M pixels without publishing", async () => {
   const input = largePixelPng();
   const metadata = await sharp(input, { limitInputPixels: false }).metadata();
-  assert.equal(metadata.width! * metadata.height!, 42_000_000);
+  assert.equal(metadata.width! * metadata.height!, 120_000_000);
   const task = optimizer(async () => input);
-  await assert.rejects(task.run("large.png", "image/png"), (error: unknown) => (error as { status?: number }).status === 400);
+  await assert.rejects(task.run("large.png", "image/png"), (error: unknown) => (error as { status?: number }).status === 413);
   assert.deepEqual(task.writes, []);
 });
 

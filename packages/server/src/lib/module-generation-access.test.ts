@@ -24,13 +24,13 @@ before(async () => {
 });
 afterEach(() => mock.restoreAll());
 
-async function fixture(options: { protected?: boolean; creator?: boolean; balance?: number; suspended?: boolean; private?: boolean } = {}) {
+async function fixture(options: { protected?: boolean; creator?: boolean; balance?: number; suspended?: boolean; private?: boolean; plan?: string } = {}) {
   const userId = crypto.randomUUID(), creatorId = options.creator ? userId : crypto.randomUUID();
   await db.insert(user).values([
     { id: userId, name: "Player", email: `${userId}@test.invalid`, isSuspended: options.suspended ?? false, preferences: { preferredProvider: options.private ? "private" : "official" } },
     ...(creatorId !== userId ? [{ id: creatorId, name: "Creator", email: `${creatorId}@test.invalid` }] : []),
   ]);
-  await db.insert(creditWallets).values({ userId, plan: "free", balance: options.balance ?? 100, periodStart: new Date(), periodEnd: new Date(Date.now() + 30 * 86400000) });
+  await db.insert(creditWallets).values({ userId, plan: options.plan ?? "free", balance: options.balance ?? 100, periodStart: new Date(), periodEnd: new Date(Date.now() + 30 * 86400000) });
   const [world] = await db.insert(worlds).values({ creatorId, name: "Protected story", schema: {}, allowCustomApi: !options.protected }).returning();
   const [session] = await db.insert(playSessions).values({ userId, worldId: world!.id, state: {} }).returning();
   return { userId, sessionId: session!.id };
@@ -183,4 +183,35 @@ test("abort during inference releases the module slot", async () => {
       assert.ok(await acquireConcurrency(key, SIDE_CALL_MAX_CONCURRENT)); held++;
     }
   } finally { for (let i = 0; i < held; i++) await releaseConcurrency(key); }
+});
+
+test("a story summary model nothing can run any more runs this call on the default", async () => {
+  const session = await fixture();
+  const requests = providerMock();
+  assert.equal(await call(session, "test/retired-summary-model", "story-compaction"), "A usable answer.");
+  assert.deepEqual(requests.map((r) => r.model), [DEFAULT_STORY_SUMMARY_MODEL]);
+});
+
+test("a private-mode player's unresolvable summary model is never moved onto the official key", async () => {
+  const session = await fixture({ private: true });
+  const requests = providerMock();
+  await assert.rejects(call(session, "test/retired-summary-model", "story-compaction"), /No provider\/API key/);
+  assert.equal(requests.length, 0);
+});
+
+test("deepseek-v3.2 summaries never route to the host that ignores reasoning-off", async () => {
+  const session = await fixture({ plan: "pro" });
+  const requests = providerMock();
+  await call(session, "deepseek/deepseek-v3.2", "story-compaction");
+  assert.deepEqual(requests.map((r) => [r.model, r.ignoreProviders, r.disableReasoning]), [["deepseek/deepseek-v3.2", ["gmicloud"], true]]);
+});
+
+test("after one refusal a run's later summary calls start on the fallback model", async () => {
+  const session = await fixture({ plan: "pro" });
+  const requests = providerMock();
+  const fallbackTracker = { refusalFallbackUsed: true };
+  assert.equal(await generateStorySummaryText({ ...session, model: "test/free", endpoint: "story-compaction", maxTokens: 100,
+    prompt: [{ role: "user", content: "Summarize." }], fallbackTracker }), "A usable answer.");
+  assert.deepEqual(requests.map((r) => r.model), ["deepseek/deepseek-v3.2"], "no second refused call on the primary");
+  assert.equal(fallbackTracker.refusalFallbackUsed, true);
 });

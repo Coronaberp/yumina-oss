@@ -160,3 +160,13 @@ test("story summaries disable reasoning, probe custom endpoints, and never bill 
     "custom endpoints must succeed on one probe before concurrent fan-out",
   );
 });
+
+test("a refusal fallback is used for its run only, never saved as the session's summary model", () => {
+  const persistCalls = compactionSrc.match(/persistStorySummaryResult\(\{[\s\S]*?\}\);/g) ?? [];
+  assert.ok(persistCalls.length >= 3, `expected the three persist call sites, found ${persistCalls.length}`);
+  for (const call of persistCalls) assert.match(call, /\n\s*job,\n/, "persist must save the job's own (player-chosen) model");
+  const markUpdating = compactionSrc.slice(compactionSrc.indexOf("async function markStoryJobUpdating"));
+  assert.match(markUpdating.slice(0, 1200), /summaryModel: args\.job\.model/);
+  assert.ok(!/model: STORY_SUMMARY_REFUSAL_FALLBACK_MODEL \}/.test(compactionSrc), "no job may be rewritten onto the fallback model");
+});
+

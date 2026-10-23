@@ -3,7 +3,6 @@ import { useStoryNavigation } from "@/hooks/use-story-navigation";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Save,
   Loader2,
   Plus,
   Trash2,
@@ -38,12 +37,10 @@ import {
   FileCode,
   Lock,
   AlertCircle,
-  Check,
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
 import { FieldError } from "@/components/ui/field-error";
 import { MediaGuidelinesNote } from "@/components/media-guidelines-note";
-import { useTransientFlag } from "@/hooks/use-transient-flag";
 import { useRouter } from "@tanstack/react-router";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { cn } from "@/lib/utils";
@@ -70,6 +67,7 @@ import { BundleCreator, BundleImporter, BundlesSection, ImportBundleModal, World
 import { getEditionInfo, useEdition } from "@/edition/edition";
 import { ExportCardMenu } from "./export-card-menu";
 import { UpdateNotifyDialog } from "./update-notify-dialog";
+import { SaveStatus } from "./save-status";
 import { ReviewStateControl } from "./review-state-control";
 import { GuestEditorReadOnly } from "./components/guest-editor-readonly";
 import { DebouncedInput, DebouncedTextarea, flushPendingEditorFields } from "./components/debounced-field";
@@ -258,10 +256,6 @@ export function QuickCreateEditor({
   const worldName = useEditorStore((s) => s.worldDraft.name);
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
   const saving = useEditorStore((s) => s.saving);
-  const isDirty = useEditorStore((s) => s.isDirty);
-  // R3: the Save button says "Saved" for a moment instead of a toast.
-  const lastSavedAt = useEditorStore((s) => s.lastSavedAt);
-  const justSaved = useTransientFlag(lastSavedAt);
   const setField = useEditorStore((s) => s.setField);
   const saveDraft = useEditorStore((s) => s.saveDraft);
   const pendingEdit = useEditorStore((s) => s.pendingEdit);
@@ -549,19 +543,7 @@ export function QuickCreateEditor({
                 guestMode && "cursor-not-allowed opacity-60",
               )}
             />
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              title={t("shell.saveTitle")}
-              data-tour="qc-save"
-              className="relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-gold px-3 text-xs font-semibold text-black transition-opacity disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : justSaved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
-              {justSaved && !saving ? t("shell.saved") : t("shell.save")}
-              {isDirty && !saving && (
-                <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-500" />
-              )}
-            </button>
+            <SaveStatus onSave={handleSave} data-tour="qc-save" className="h-9" />
           </div>
           <div className="mt-2 flex items-center justify-end gap-2">
             {canPublishHere && (
@@ -744,19 +726,7 @@ export function QuickCreateEditor({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              title={t("shell.saveTitle")}
-              data-tour="qc-save"
-              className="relative flex items-center gap-2 rounded-lg bg-gold px-4 py-2 text-sm font-semibold text-black transition-opacity disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : justSaved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
-              {justSaved && !saving ? t("shell.saved") : t("shell.save")}
-              {isDirty && !saving && (
-                <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-500" />
-              )}
-            </button>
+            <SaveStatus onSave={handleSave} data-tour="qc-save" size="md" />
             {canPublishHere && (
               <span data-tour="publish-control" className="inline-flex">
                 <ReviewStateControl onPublish={handlePublishClick} size="md" disabled={saving} />

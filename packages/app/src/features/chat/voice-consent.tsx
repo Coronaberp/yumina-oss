@@ -5,15 +5,20 @@ import { useTranslation } from 'react-i18next';
 
 export interface VoiceConsentRequest { config: VoiceConfig; accept(): void; decline(): void }
 
-export function VoiceFundingNotice({ funding, reservationCredits }: { funding: VoiceConfig["funding"] | undefined; reservationCredits?: number }) {
+export function VoiceFundingNotice({ funding, reservationCredits, creditsPerMinute, maxDurationSeconds }: { funding: VoiceConfig["funding"] | undefined; reservationCredits?: number; creditsPerMinute?: number; maxDurationSeconds?: number }) {
   const { t } = useTranslation('chat');
   const amount = reservationCredits?.toLocaleString(undefined, { maximumFractionDigits: 1 }) ?? '—';
   if (funding === 'balance') return <p className="text-sm text-foreground">{t('nativeVoice.funding', { amount, defaultValue: `Paid from your Yumina balance. ${amount} Mushies is a temporary reservation; the charge is based on measured usage. Unused reserved balance is released after accounting completes.` })}</p>;
+  if (funding === 'credits-live') return <p className="text-sm text-foreground">
+    {`Paid from your Mushies: about ${creditsPerMinute ?? 60} a minute, up to ${Math.round((maxDurationSeconds ?? 900) / 60)} minutes. Each minute is charged as it starts.`}
+  </p>;
   return <p className="text-sm text-foreground">
     {funding === "private-pilot"
       ? "Private test call paid by Yumina · no API key or Yumina credits needed."
       : funding === "testing"
         ? "Testing call included · no API key or Yumina credits needed."
+        : funding === "first-morning"
+          ? "Your first morning is on the house · no API key or Mushies needed."
         : "Billed to your saved OpenAI API key. Yumina credits are not used."}
   </p>;
 }
@@ -33,10 +38,10 @@ export function VoiceConsent({ request }: { request: VoiceConsentRequest | null 
         {balance ? t('nativeVoice.privacy', {defaultValue:'OpenAI receives your microphone audio and the world’s conversation context. Transcripts may be saved in the story.'}) : 'OpenAI receives your microphone audio and the world’s conversation context. Transcripts may be saved in the story.'}
         {request?.config.avatarRequested && " Replies also go to LiveAvatar to animate the telescreen."}
       </p>
-      <VoiceFundingNotice funding={request?.config.funding} reservationCredits={request?.config.reservationCredits} />
+      <VoiceFundingNotice funding={request?.config.funding} reservationCredits={request?.config.reservationCredits} creditsPerMinute={request?.config.creditsPerMinute} maxDurationSeconds={request?.config.maxDurationSeconds} />
       <details className="text-sm text-muted-foreground">
         <summary className="cursor-pointer">{balance ? t('nativeVoice.disconnectTitle', {defaultValue:'When does the microphone disconnect?'}) : 'When does the microphone disconnect?'}</summary>
-        <p className="mt-2">{balance ? t('nativeVoice.disconnect', {defaultValue:'You can stop at any time. Leaving this session, hiding this tab, or reaching five minutes ends the call. Voice is optional.'}) : 'You can stop at any time. Leaving this session, hiding this tab, or reaching five minutes ends the call. Voice is optional.'}</p>
+        <p className="mt-2">{balance ? t('nativeVoice.disconnect', {defaultValue:'You can stop at any time. Leaving this session, hiding this tab, or reaching five minutes ends the call. Voice is optional.'}) : request?.config.funding === 'credits-live' ? `You can stop at any time; billing stops with the call. Leaving this session, hiding this tab, running out of Mushies, or reaching ${Math.round(request.config.maxDurationSeconds / 60)} minutes ends the call. Voice is optional.` : 'You can stop at any time. Leaving this session, hiding this tab, or reaching five minutes ends the call. Voice is optional.'}</p>
       </details>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" onClick={() => request?.decline()} className="rounded-md border border-border px-4 py-2 text-sm">{balance ? t('nativeVoice.decline', {defaultValue:'Not now'}) : 'Not now'}</button>

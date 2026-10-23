@@ -14,7 +14,16 @@ export function isKrewReturnTo(value: string): boolean {
   return value.startsWith("/krew?") && value.length <= 700 && !/[\n\r\\]/.test(value);
 }
 
+/** An outside app's "Sign in with Yumina" (OAuth, lib/oauth-authorize.ts): a
+ *  player who signs up, or verifies their email, mid-authorization goes back to
+ *  the authorize request, which the server re-checks and carries on to consent.
+ *  Same-origin path only, left by full navigation (it is a server endpoint). */
+export function isOAuthResumeReturnTo(value: string): boolean {
+  return value.startsWith("/api/auth/oauth2/authorize?") && value.length <= 2000 && !/[\s\\#]/.test(value);
+}
+
 export function isGameReturnTo(value: string): boolean {
+  if (isOAuthResumeReturnTo(value)) return true;
   // The experiment entry is a static game document, outside the SPA router.
   if (value === "/experiments/unperson/" || value === "/experiments/unperson/?voice=1"
     || value === "/experiments/unperson/?voice=1&new=1") return true;

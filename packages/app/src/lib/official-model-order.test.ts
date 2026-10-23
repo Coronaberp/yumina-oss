@@ -52,6 +52,16 @@ test("favorites intersect tier and search filters and tolerate pins missing from
   assert.deepEqual(ids({ pinned, favoritesOnly: false }), ids());
 });
 
+test("localized review search intersects favorites and tiers without replacing name search", () => {
+  const description = (entry: PlayModel) => entry.id === "vendor/gamma" ? "描写细腻 · detailed scenes" : "回复简短";
+  assert.deepEqual(ids({ query: "描写", description }), ["vendor/gamma"]);
+  assert.deepEqual(ids({ query: "  DETAILED  ", description }), ["vendor/gamma"]);
+  assert.deepEqual(ids({ query: "描写", description, tier: "budget" }), []);
+  assert.deepEqual(ids({ query: "描写", description, favoritesOnly: true, pinned: ["vendor/gamma"] }), ["vendor/gamma"]);
+  assert.deepEqual(ids({ query: "描写", description, favoritesOnly: true }), []);
+  assert.deepEqual(ids({ query: "MODEL 10", description }), ["vendor/beta"]);
+});
+
 test("models without optional ranking and date metadata remain visible after ranked and dated entries", () => {
   const entries = [model("legacy", { name: "A legacy" }), model("new", { name: "Z new", recommendationRank: 1, addedAt: "2026-09-18" })];
   assert.deepEqual(ids({}, entries), ["new", "legacy"]);

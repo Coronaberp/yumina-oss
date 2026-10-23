@@ -5,7 +5,7 @@ import { userAssetFilters } from "../lib/user-asset-filters.js";
 import { detachGenerationAsset } from "../lib/generation/asset-receipts.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import { eq, and, sql, isNull, ilike, desc } from "drizzle-orm";
+import { eq, and, sql, isNull, ilike, desc, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { userAssets, assetFolders, user, worldFolderBindings, worlds } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
@@ -738,6 +738,9 @@ userAssetRoutes.get("/", async (c) => {
   const conditions = userAssetFilters(currentUser.id, {
     type: isAssetType(typeFilter) ? typeFilter : undefined, folderId, search, recursive: c.req.query("recursive") === "true",
   });
+  // Cover pickers need both formats filtered before pagination, otherwise
+  // unrelated audio/text can fill the first page and hide all usable covers.
+  if (typeFilter === "media") conditions.push(inArray(userAssets.type, ["image", "video"]));
 
   const rows = await db
     .select()

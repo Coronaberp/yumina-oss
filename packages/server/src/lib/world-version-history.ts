@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { detectMaterialChange, migrateWorldDefinition } from "@yumina/engine";
 import { MAX_AUTO_VERSIONS_PER_WORLD } from "@yumina/shared";
 import type { db } from "../db/index.js";
@@ -105,13 +105,79 @@ export async function captureAutomaticVersion(
     .orderBy(desc(worldVersions.createdAt), desc(worldVersions.id)).limit(1);
   const protectedIds = new Set([...protectIds, inserted.id, ...(currentLive ? [currentLive.id] : [])]);
   const rows = await tx.select({ id: worldVersions.id }).from(worldVersions)
-    .where(and(eq(worldVersions.worldId, world.id), ne(worldVersions.source, "manual")))
+    .where(and(eq(worldVersions.worldId, world.id), notInArray(worldVersions.source, ["manual", EDIT_CHECKPOINT_SOURCE])))
     .orderBy(desc(worldVersions.createdAt), desc(worldVersions.id));
   const protectedCount = rows.filter((r) => protectedIds.has(r.id)).length;
   const overflow = rows.filter((r) => !protectedIds.has(r.id))
     .slice(Math.max(0, MAX_AUTO_VERSIONS_PER_WORLD - protectedCount));
   if (overflow.length) await tx.delete(worldVersions).where(inArray(worldVersions.id, overflow.map((r) => r.id)));
   return inserted.id;
+}
+
+/** Edit checkpoints keep their own budget: frequent autosaves must not push
+ *  publish history out of the automatic cap. */
+export const EDIT_CHECKPOINT_SOURCE = "autosave";
+export const EDIT_CHECKPOINT_INTERVAL_MS = 15 * 60 * 1000;
+/** The newest checkpoints, kept every one: about five hours of editing. */
+export const MAX_EDIT_CHECKPOINTS = 20;
+/** Past those, one a day (the day's last) for this many days. */
+export const EDIT_CHECKPOINT_DAYS = 30;
+
+/** Which checkpoints survive, newest first in: the newest few, then the
+ *  last of each UTC day within the window. Pure, so the rule is testable. */
+export function editCheckpointsToDrop(rows: { id: string; createdAt: Date }[], now: Date): string[] {
+  const horizon = now.getTime() - EDIT_CHECKPOINT_DAYS * 24 * 60 * 60 * 1000;
+  const seenDays = new Set<string>();
+  const drop: string[] = [];
+  rows.forEach((row, index) => {
+    const day = row.createdAt.toISOString().slice(0, 10);
+    const keep = index < MAX_EDIT_CHECKPOINTS || (row.createdAt.getTime() >= horizon && !seenDays.has(day));
+    seenDays.add(day);
+    if (!keep) drop.push(row.id);
+  });
+  return drop;
+}
+
+/**
+ * Version history for a card that saves itself, like Google Docs: before a
+ * save overwrites the working copy, keep the copy it replaces — at most once
+ * per interval (any version newer than that already marks the spot), and not
+ * when it is the newest checkpoint over again. Caller holds the world lock.
+ *
+ * Keeping what is REPLACED rather than what arrives is what makes the end of
+ * an editing session recoverable: the last state of yesterday's work is
+ * exactly what today's first save overwrites.
+ */
+export async function captureEditCheckpoint(
+  tx: VersionExecutor,
+  world: Pick<VersionWorld, "id" | "creatorId" | "name">,
+  material: VersionMaterial,
+  now = new Date(),
+): Promise<string | null> {
+  const [recent] = await tx.select({ id: worldVersions.id }).from(worldVersions)
+    .where(and(eq(worldVersions.worldId, world.id), gt(worldVersions.createdAt, new Date(now.getTime() - EDIT_CHECKPOINT_INTERVAL_MS))))
+    .limit(1);
+  if (recent) return null;
+  const schema = { ...material.schema, name: world.name };
+  const [same] = await tx.select({ id: worldVersions.id }).from(worldVersions).where(and(
+    eq(worldVersions.worldId, world.id), eq(worldVersions.source, EDIT_CHECKPOINT_SOURCE),
+    sql`${worldVersions.createdAt} = (SELECT max(created_at) FROM world_versions WHERE world_id = ${world.id} AND source = ${EDIT_CHECKPOINT_SOURCE})`,
+    sql`(${worldVersions.schema} - 'name') = (${JSON.stringify(schema)}::jsonb - 'name')`,
+    sql`${worldVersions.thumbnailUrl} IS NOT DISTINCT FROM ${material.thumbnailUrl}`,
+  )).limit(1);
+  if (same) return null;
+  const [inserted] = await tx.insert(worldVersions).values({
+    worldId: world.id, createdBy: world.creatorId,
+    name: `Saved version · ${now.toISOString().slice(0, 16).replace("T", " ")} UTC`,
+    source: EDIT_CHECKPOINT_SOURCE, schema, ...versionAssetRefs(schema),
+    thumbnailUrl: material.thumbnailUrl, ageRating: material.ageRating ?? "all", createdAt: now,
+  }).returning();
+  const rows = await tx.select({ id: worldVersions.id, createdAt: worldVersions.createdAt }).from(worldVersions)
+    .where(and(eq(worldVersions.worldId, world.id), eq(worldVersions.source, EDIT_CHECKPOINT_SOURCE)))
+    .orderBy(desc(worldVersions.createdAt), desc(worldVersions.id));
+  const drop = editCheckpointsToDrop(rows, now);
+  if (drop.length) await tx.delete(worldVersions).where(inArray(worldVersions.id, drop));
+  return inserted?.id ?? null;
 }
 
 export async function capturePublishVersion(tx: VersionExecutor, world: VersionWorld, draft: Pending | null) {

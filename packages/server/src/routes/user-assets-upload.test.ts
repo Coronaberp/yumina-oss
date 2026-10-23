@@ -107,6 +107,24 @@ after(async () => { await client.close(); });
 const post = (path: string, body: object) => routes.request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const data = async (response: Response) => (await response.json() as { data: { id: string; key: string; asset?: { id: string } } }).data;
 
+test("media picker filters images and videos before pagination and matching count", async () => {
+  owner = "media-picker-owner";
+  await client.exec(`INSERT INTO "user" VALUES ('media-picker-owner');
+    INSERT INTO user_assets(id,user_id,type,filename,url,size_bytes,created_at)
+      SELECT 'audio-'||n,'media-picker-owner','audio','track.mp3','audio/'||n,1,'2020-01-01'
+      FROM generate_series(1,55) AS n;
+    INSERT INTO user_assets(id,user_id,type,filename,url,size_bytes,created_at) VALUES
+      ('picker-image','media-picker-owner','image','cover.webp','cover.webp',1,'2021-01-01'),
+      ('picker-video','media-picker-owner','video','cover.mp4','cover.mp4',1,'2021-01-02');`);
+  const response = await routes.request("/?type=media&limit=50&offset=0");
+  assert.equal(response.status, 200, await response.clone().text());
+  const page = await response.json() as { data: { id: string }[]; total: number };
+  assert.deepEqual(page.data.map(asset => asset.id), ["picker-image", "picker-video"]);
+  assert.equal(page.total, 2);
+  // Keep this shared fixture's existing upload/quota tests independent.
+  await client.query("DELETE FROM user_assets WHERE user_id=$1", [owner]);
+});
+
 test("lost responses and concurrent retries produce one folder and asset, even near quota", async () => {
   owner = "alice";
   const folderRequest = { name: "clips", requestId: crypto.randomUUID() };

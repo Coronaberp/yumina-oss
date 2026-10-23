@@ -44,7 +44,7 @@
     "home": "Yumina",
     "discover": "Discover",
     "community": "Community",
-    "bundles": "Bundles",
+    "bundles": "Modules & Prompts",
     "create": "Create",
     "library": "Library",
     "quests": "Quests",
@@ -71,7 +71,7 @@
   "search": {
     "hub": "Search worlds, characters, stories...",
     "library": "Search library...",
-    "bundles": "Search resource bundles, creators, or features..."
+    "bundles": "Search card modules, creators, or features..."
   },
   "aria": {
     "showSidebar": "Show sidebar",

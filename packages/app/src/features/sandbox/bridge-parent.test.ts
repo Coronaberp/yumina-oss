@@ -304,3 +304,11 @@ test("hidden world callbacks cannot start or alter another view's audio", async 
   h.request("returned", "playAudio");
   assert.deepEqual(calls, ["playAudio", "storage.set", "playAudio"]);
 });
+
+test("sandbox API retains reply-rule protection after structured transport", (t) => {
+  harness(t, () => {});
+  const replyRules = [{ id: "visible-status", match: { pattern: "\\[mood \\|[^\\]]*\\]" }, enabled: true }];
+  const state = { variables: {}, globalVariables: {}, worldName: "Rules", worldId: "w1", sessionId: "s1", messages: [], mode: "session", replyRules };
+  const api = buildAPI(structuredClone(state) as unknown as Parameters<typeof buildAPI>[0]);
+  assert.deepEqual(api.replyRules, replyRules);
+});
