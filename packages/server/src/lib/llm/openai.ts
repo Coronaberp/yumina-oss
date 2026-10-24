@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
@@ -78,6 +79,7 @@ export class OpenAIProvider implements LLMProvider {
       buildOpenAIBody(model, params, { stream: true }),
       fetchSignal,
       !params.singleAttempt,
+      params,
     );
 
     clearTimeout(connTimer);
@@ -235,6 +237,7 @@ export class OpenAIProvider implements LLMProvider {
         buildOpenAIBody(model, params, { stream: false }),
         fetchSignal,
         !params.singleAttempt,
+        params,
       );
     } catch (err) {
       clearTimeout(connTimer);
@@ -417,11 +420,13 @@ async function postOpenAIWithRetry(
   initialBody: Record<string, unknown>,
   signal: AbortSignal,
   allowRetry: boolean,
+  params: GenerateParams,
 ): Promise<Response> {
   const url = `${OPENAI_BASE}/chat/completions`;
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
   let body = initialBody;
+  inspectWireRequest(params, "openai", body, [apiKey]);
   let response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
   if (response.ok || response.status !== 400 || !allowRetry) return response;
 
@@ -435,5 +440,6 @@ async function postOpenAIWithRetry(
 
   console.warn(`[OpenAI] Upstream rejected param '${offendingParam}'. Retrying once without it. Excerpt: ${errorText.slice(0, 200)}`);
   body = retryBody;
+  inspectWireRequest(params, "openai", body, [apiKey]);
   return fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
 }

@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { createHash } from "node:crypto";
 import type { OpenRouterProviderSelections } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
@@ -727,6 +728,7 @@ export class OpenRouterProvider implements LLMProvider {
         ...(isGeminiModel(params.model) && { safety_settings: GEMINI_SAFETY_SETTINGS }),
     };
 
+    inspectWireRequest(params, "openrouter", requestBody, [this.apiKey]);
     const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
       method: "POST",
       headers: {
@@ -1071,6 +1073,7 @@ export class OpenRouterProvider implements LLMProvider {
 
     let response: Response;
     try {
+      inspectWireRequest(params, "openrouter", requestBody, [this.apiKey]);
       response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
         headers: {

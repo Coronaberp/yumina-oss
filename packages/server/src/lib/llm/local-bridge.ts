@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 /**
  * Provider that runs a turn on the player's OWN computer.
  *
@@ -158,6 +159,7 @@ export class LocalBridgeProvider implements LLMProvider {
     let completionChars = 0;
 
     try {
+      inspectWireRequest(params, "local-bridge", payload as unknown as Record<string, unknown>);
       for await (const event of dispatchJob(this.userId, payload, params.signal)) {
         if (event.kind === "chunk") {
           completionChars += event.delta.length;

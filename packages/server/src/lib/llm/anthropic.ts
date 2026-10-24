@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
@@ -187,6 +188,7 @@ export class AnthropicProvider implements LLMProvider {
       ? AbortSignal.any([connAbort.signal, params.signal])
       : connAbort.signal;
 
+    inspectWireRequest(params, "anthropic", body, [this.apiKey]);
     const response = await fetch(`${ANTHROPIC_BASE}/messages`, {
       method: "POST",
       headers: {
@@ -453,6 +455,7 @@ export class AnthropicProvider implements LLMProvider {
 
     let response: Response;
     try {
+      inspectWireRequest(params, "anthropic", body, [this.apiKey]);
       response = await fetch(`${ANTHROPIC_BASE}/messages`, {
         method: "POST",
         headers: {

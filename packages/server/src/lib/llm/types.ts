@@ -53,6 +53,8 @@ export type ChatMessage =
 // ── Generate Params ──
 
 export interface GenerateParams {
+  /** Server-only observational hook at the final dispatch boundary. Never serialized. */
+  onRequest?: (request: import("../request-inspection.js").WireRequest) => void;
   /** Stable, namespaced conversation identity for upstream routing; never sent in the body. */
   conversationId?: string;
   /** Stable server run identity for native tool turns and scoped cancellation. */

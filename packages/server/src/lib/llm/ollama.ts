@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
@@ -113,32 +114,34 @@ export class OllamaProvider implements LLMProvider {
 
     let response: Response;
     try {
+      const requestBody = {
+        model,
+        messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
+        stream: true,
+        think: ollamaThinking(model, params),
+        options: {
+          // Ollama otherwise runs at ITS default window, not the one our
+          // prompt budget was computed against, and drops the overflow
+          // silently off the front of the prompt — persona and lorebook
+          // first. Ask for the same number getModelContextWindow() reports
+          // for `ollama/` so the two can never disagree.
+          num_ctx: DEFAULT_LOCAL_CONTEXT,
+          num_predict: params.maxTokens,
+          temperature: params.temperature,
+          ...(params.topP !== undefined && { top_p: params.topP }),
+          ...(params.topK !== undefined && params.topK > 0 && { top_k: params.topK }),
+          ...(params.minP !== undefined && params.minP > 0 && { min_p: params.minP }),
+          ...(params.frequencyPenalty !== undefined && { frequency_penalty: params.frequencyPenalty }),
+          ...(params.presencePenalty !== undefined && { presence_penalty: params.presencePenalty }),
+        },
+        ...(params.responseFormat && { format: "json" }),
+      };
+      inspectWireRequest(params, "ollama", requestBody);
       response = await fetch(`${this.baseUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: params.signal,
-        body: JSON.stringify({
-          model,
-          messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
-          stream: true,
-          think: ollamaThinking(model, params),
-          options: {
-            // Ollama otherwise runs at ITS default window, not the one our
-            // prompt budget was computed against, and drops the overflow
-            // silently off the front of the prompt — persona and lorebook
-            // first. Ask for the same number getModelContextWindow() reports
-            // for `ollama/` so the two can never disagree.
-            num_ctx: DEFAULT_LOCAL_CONTEXT,
-            num_predict: params.maxTokens,
-            temperature: params.temperature,
-            ...(params.topP !== undefined && { top_p: params.topP }),
-            ...(params.topK !== undefined && params.topK > 0 && { top_k: params.topK }),
-            ...(params.minP !== undefined && params.minP > 0 && { min_p: params.minP }),
-            ...(params.frequencyPenalty !== undefined && { frequency_penalty: params.frequencyPenalty }),
-            ...(params.presencePenalty !== undefined && { presence_penalty: params.presencePenalty }),
-          },
-          ...(params.responseFormat && { format: "json" }),
-        }),
+        body: JSON.stringify(requestBody),
       });
     } catch (err) {
       if (params.signal?.aborted) return;
@@ -221,32 +224,34 @@ export class OllamaProvider implements LLMProvider {
 
     let response: Response;
     try {
+      const requestBody = {
+        model,
+        messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
+        stream: false,
+        think: ollamaThinking(model, params),
+        options: {
+          // Ollama otherwise runs at ITS default window, not the one our
+          // prompt budget was computed against, and drops the overflow
+          // silently off the front of the prompt — persona and lorebook
+          // first. Ask for the same number getModelContextWindow() reports
+          // for `ollama/` so the two can never disagree.
+          num_ctx: DEFAULT_LOCAL_CONTEXT,
+          num_predict: params.maxTokens,
+          temperature: params.temperature,
+          ...(params.topP !== undefined && { top_p: params.topP }),
+          ...(params.topK !== undefined && params.topK > 0 && { top_k: params.topK }),
+          ...(params.minP !== undefined && params.minP > 0 && { min_p: params.minP }),
+          ...(params.frequencyPenalty !== undefined && { frequency_penalty: params.frequencyPenalty }),
+          ...(params.presencePenalty !== undefined && { presence_penalty: params.presencePenalty }),
+        },
+        ...(params.responseFormat && { format: "json" }),
+      };
+      inspectWireRequest(params, "ollama", requestBody);
       response = await fetch(`${this.baseUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: params.signal,
-        body: JSON.stringify({
-          model,
-          messages: params.messages.map((m) => toOllamaMessage(m.role, m.content)),
-          stream: false,
-          think: ollamaThinking(model, params),
-          options: {
-            // Ollama otherwise runs at ITS default window, not the one our
-            // prompt budget was computed against, and drops the overflow
-            // silently off the front of the prompt — persona and lorebook
-            // first. Ask for the same number getModelContextWindow() reports
-            // for `ollama/` so the two can never disagree.
-            num_ctx: DEFAULT_LOCAL_CONTEXT,
-            num_predict: params.maxTokens,
-            temperature: params.temperature,
-            ...(params.topP !== undefined && { top_p: params.topP }),
-            ...(params.topK !== undefined && params.topK > 0 && { top_k: params.topK }),
-            ...(params.minP !== undefined && params.minP > 0 && { min_p: params.minP }),
-            ...(params.frequencyPenalty !== undefined && { frequency_penalty: params.frequencyPenalty }),
-            ...(params.presencePenalty !== undefined && { presence_penalty: params.presencePenalty }),
-          },
-          ...(params.responseFormat && { format: "json" }),
-        }),
+        body: JSON.stringify(requestBody),
       });
     } catch (err) {
       if (params.signal?.aborted) return;

@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import { randomUUID } from "node:crypto";
@@ -79,11 +80,13 @@ export class GoogleProvider implements LLMProvider {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const action = streaming ? "streamGenerateContent?alt=sse" : "generateContent";
+      const requestBody = buildGoogleRequest(params);
+      inspectWireRequest(params, "google", requestBody, [this.apiKey], toGoogleModelId(params.model));
       const response = await fetch(`${GOOGLE_BASE}/models/${encodeURIComponent(toGoogleModelId(params.model))}:${action}`, {
         method: "POST",
         headers: { "x-goog-api-key": this.apiKey, "Content-Type": "application/json" },
         signal,
-        body: JSON.stringify(buildGoogleRequest(params)),
+        body: JSON.stringify(requestBody),
       });
       if (streaming) clearTimeout(timer);
       if (!response.ok) {

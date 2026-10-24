@@ -1,3 +1,4 @@
+import { inspectWireRequest } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { PUBLIC_ORIGIN } from "../env.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -715,6 +716,7 @@ export class CustomProvider implements LLMProvider {
     body = await fitCustomImageRequest(body, signal);
     const send = async () => {
       if (audit) { audit.trace.started = true; audit.trace.model = typeof body.model === "string" ? body.model : model; }
+      if (audit) inspectWireRequest(audit.params, "custom", body, [this.apiKey, ...Object.values(headers)]);
       const response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
       if (audit) {
         audit.trace.httpStatus = response.status;
