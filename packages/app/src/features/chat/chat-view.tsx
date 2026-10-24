@@ -1,3 +1,4 @@
+import { GenerationDebugContent } from "./generation-debug-content";
 import { StoryNavigation } from "./chapter-navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { StateGuardHost, StateGuardHostButton } from "./state-guard-host";
@@ -979,8 +980,7 @@ function AutoFullscreenAskDialog({
 // pointer devices. The affordance is on screen, so it needs no pill.
 
 /**
- * Shell-level dialog displaying the latest assistant message's pre-parse LLM
- * output. Controlled — mounted at ChatView root so it bypasses customUI iframes
+ * Shell-level dialog for saved raw replies and owner-only actual request receipts. Controlled — mounted at ChatView root so it bypasses customUI iframes
  * and remains reachable in every mode (fullscreen, theater, regular).
  *
  * Always renders when `open` so the keyboard shortcut never silently fails:
@@ -988,46 +988,21 @@ function AutoFullscreenAskDialog({
  * instead of returning null.
  */
 function RawOutputDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { t } = useTranslation("chat");
   const messages = useChatStore((s) => s.messages);
 
-  const latestAssistantRaw = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== "assistant") continue;
-      const swipeIdx = m.activeSwipeIndex ?? 0;
-      const raw = m.swipes?.[swipeIdx]?.rawContent;
-      if (raw && raw.length > 0) return { raw, content: m.content };
-      break;
-    }
-    return null;
-  }, [messages]);
+  const session = useChatStore(s => s.session);
+  const viewerId = session?.currentUser?.id;
+  const eligible = !!viewerId && session?.userId === viewerId && session.world?.creatorId === viewerId;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-3xl h-[80dvh] max-h-[48rem] min-h-0 overflow-hidden flex flex-col text-foreground">
         <DialogHeader>
-          <DialogTitle>原始 LLM 输出</DialogTitle>
+          <DialogTitle>{t("debug.details", { defaultValue: "Generation details" })}</DialogTitle>
+          <DialogDescription className="sr-only">Inspect saved generation details.</DialogDescription>
         </DialogHeader>
-        {latestAssistantRaw ? (
-          <>
-            <div className="flex-1 min-h-0 overflow-y-auto rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground/85 whitespace-pre-wrap break-all">
-              {latestAssistantRaw.raw}
-            </div>
-            {latestAssistantRaw.raw === latestAssistantRaw.content && (
-              <p className="text-xs text-muted-foreground/60">
-                原始输出与渲染内容相同 — 这条回复没有被解析吞掉任何东西。
-              </p>
-            )}
-          </>
-        ) : (
-          <div className="rounded-md border border-border bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-            最新一条 AI 回复没有原始输出记录。
-            <br />
-            <span className="text-xs text-muted-foreground/60">
-              该功能 2026-05-14 上线，之前生成的消息无法回溯。
-            </span>
-          </div>
-        )}
+        {open && session?.id && <GenerationDebugContent key={session.id} messages={messages} sessionId={session.id} eligible={eligible} apiBase={apiBase} />}
       </DialogContent>
     </Dialog>
   );

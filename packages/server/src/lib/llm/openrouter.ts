@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { createHash } from "node:crypto";
 import type { OpenRouterProviderSelections } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
@@ -959,6 +959,7 @@ export class OpenRouterProvider implements LLMProvider {
 
             // Usage info comes in the final chunk
             if (parsed.usage) {
+              inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens, reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens });
               // Log cache metrics when available (Anthropic prompt caching)
               const details = parsed.usage.prompt_tokens_details;
               if (details?.cached_tokens || details?.cache_write_tokens) {
@@ -1240,6 +1241,7 @@ export class OpenRouterProvider implements LLMProvider {
     }
 
     // Log cache metrics when available (Anthropic prompt caching)
+    if (parsed.usage) inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens, reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens });
     const usage = parsed.usage;
     if (usage) {
       const details = usage.prompt_tokens_details;

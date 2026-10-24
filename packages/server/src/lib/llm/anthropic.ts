@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
@@ -317,6 +317,7 @@ export class AnthropicProvider implements LLMProvider {
             }
 
             if (parsed.type === "message_start" && parsed.message?.usage) {
+              inspectWireUsage(params, { promptTokens: parsed.message.usage.input_tokens, cacheReadTokens: parsed.message.usage.cache_read_input_tokens, cacheWriteTokens: parsed.message.usage.cache_creation_input_tokens });
               inputTokens = parsed.message.usage.input_tokens ?? 0;
               // Log cache metrics when available
               const u = parsed.message.usage;
@@ -329,6 +330,7 @@ export class AnthropicProvider implements LLMProvider {
 
             if (parsed.type === "message_delta") {
               if (parsed.usage) {
+                inspectWireUsage(params, { completionTokens: parsed.usage.output_tokens });
                 outputTokens = parsed.usage.output_tokens ?? 0;
               }
               // Capture stop_reason: "end_turn" (normal), "max_tokens" (truncated), "stop_sequence", etc.
@@ -502,6 +504,7 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     // Log cache metrics
+    if (parsed.usage) inspectWireUsage(params, { promptTokens: parsed.usage.input_tokens, completionTokens: parsed.usage.output_tokens, cacheReadTokens: parsed.usage.cache_read_input_tokens, cacheWriteTokens: parsed.usage.cache_creation_input_tokens });
     const u = parsed.usage;
     if (u && (u.cache_read_input_tokens || u.cache_creation_input_tokens)) {
       console.log(

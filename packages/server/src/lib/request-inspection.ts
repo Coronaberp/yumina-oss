@@ -1,4 +1,4 @@
-import type { GenerateParams, StreamChunk } from "./llm/types.js";
+import type { GenerateParams } from "./llm/types.js";
 
 /** Server-only, process-local diagnostics. Never attach these to message JSON. */
 const ATTEMPT_BYTES = 32 * 1024;
@@ -20,23 +20,8 @@ export interface WireRequest {
   model?: string;
   secrets?: string[];
 }
-export interface RequestSnapshot {
-  provider: string;
-  model: string;
-  parameters: Record<string, unknown>;
-  sections: Array<{ name: string; text: string }>;
-  estimatedTextTokens: number;
-  truncated: boolean;
-}
-export interface RequestReceipt {
-  id: string;
-  kind: "send" | "regenerate" | "continue";
-  capturedAt: string;
-  attempts: RequestSnapshot[];
-  omittedAttempts: number;
-  /** Provider-reported usage for the final reply, never an estimate or retry total. */
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
-}
+export type { RequestSnapshot, RequestReceipt, ReportedRequestUsage } from "@yumina/shared";
+import type { RequestSnapshot, RequestReceipt, ReportedRequestUsage } from "@yumina/shared";
 
 export function snapshotRequest(provider: string, body: Record<string, unknown>, secrets: string[] = [], wireModel?: string): RequestSnapshot {
   let budget = 24000, nodes = 0, truncated = false, textChars = 0;
@@ -44,8 +29,12 @@ export function snapshotRequest(provider: string, body: Record<string, unknown>,
     // Redact before cutting so a credential crossing the cut cannot leave a prefix.
     for (const secret of secrets) if (secret) text = text.split(secret).join("[redacted]");
     text = text.replace(/\b(?:sk-|sk_|AIza)[a-zA-Z0-9_-]{16,}/g, "[redacted]")
-      .replace(/\bBearer\s+[\w.\-+/=]+/gi, "Bearer [redacted]")
-      .replace(/((?:api[_-]?key|password|secret|token|authorization)\s*[=:]\s*)[^\s,"'}]+/gi, "$1[redacted]")
+      .replace(/((?:authorization|proxy-authorization|x-api-key|cookie|set-cookie)\s*:\s*)[^\r\n]+/gi, "$1[redacted]")
+      .replace(/\b(?:Bearer|Basic)\s+[\w.\-+/=]+/gi, "[authentication redacted]")
+      .replace(/((?:api[_-]?key|password|secret|token|authorization)["']?\s*[=:]\s*)(["'])(?:\\[\s\S]|(?!\2)[^\\])*\2/gi, "$1$2[redacted]$2")
+      .replace(/((?:api[_-]?key|password|secret|token|authorization)["']?\s*[=:]\s*)([^\s"'\r\n][^\r\n]*)/gi, "$1[redacted]")
+      .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[private key redacted]")
+      .replace(/data:(?:image|audio)\/[^\s"']+/gi, "[media data omitted]")
       .replace(/https?:\/\/[^\s<>"')]+/gi, "[URL omitted]");
     const max = Math.max(0, Math.floor(budget / 6));
     if (text.length > max) { text = text.slice(0, max); truncated = true; }
@@ -68,13 +57,17 @@ export function snapshotRequest(provider: string, body: Record<string, unknown>,
     if (value && typeof value === "object") {
       const obj = value as Record<string, unknown>;
       if (obj.type === "image_url" || obj.type === "image" || obj.inlineData || obj.fileData) return "[image omitted]";
-      const result: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(obj)) {
+      const result: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      for (const key in obj) {
+        if (!Object.hasOwn(obj, key)) continue;
         if (budget <= 0 || nodes > 2048) { truncated = true; break; }
-        if (secretKey.test(key) || key === "images") { result[key] = "[redacted or image omitted]"; continue; }
-        const safeKey = redact(key.slice(0, 100));
-        result[safeKey] = clean(item, depth + 1);
+        nodes++;
         budget -= 8;
+        const redactedKey = redact(key);
+        if (redactedKey.length > 100) truncated = true;
+        const safeKey = redactedKey.slice(0, 100);
+        if (secretKey.test(key) || key === "images") result[safeKey] = "[redacted or image omitted]";
+        else result[safeKey] = clean(obj[key], depth + 1);
       }
       return result;
     }
@@ -109,21 +102,32 @@ export function inspectWireRequest(params: GenerateParams, provider: string, bod
   try { params.onRequest({ provider, body, secrets, ...(model && { model }) }); } catch { /* private diagnostics are best-effort */ }
 }
 
+export function inspectWireUsage(params: GenerateParams, usage: ReportedRequestUsage): void {
+  if (!params.onRequestUsage) return;
+  try { params.onRequestUsage(usage); } catch { /* diagnostics never change dispatch */ }
+}
+
 export function createRequestCapture() {
   const attempts: RequestSnapshot[] = [];
   let omittedAttempts = 0;
+  let reportedUsage: ReportedRequestUsage | undefined;
   return {
     onRequest(request: WireRequest) {
+      // This is a job sent to a browser; that browser still shapes the runtime
+      // HTTP body. It cannot truthfully stand in for the final model request.
+      if (request.provider === "local-bridge") return;
+      reportedUsage = undefined;
       attempts.push(snapshotRequest(request.provider, request.body, request.secrets, request.model));
       if (attempts.length > MAX_ATTEMPTS) { attempts.shift(); omittedAttempts++; }
     },
-    finish(kind: RequestReceipt["kind"], usage?: StreamChunk["usage"]): RequestReceipt {
-      const known = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-      // Local bridge usage includes runtime/character-estimate fallbacks. Never label those actual.
-      const actual = usage && attempts.at(-1)?.provider !== "local-bridge" ? {
-        promptTokens: known(usage.promptTokens), completionTokens: known(usage.completionTokens), totalTokens: known(usage.totalTokens),
-      } : undefined;
-      return { id: crypto.randomUUID(), kind, capturedAt: new Date().toISOString(), attempts: [...attempts], omittedAttempts, ...(actual && { usage: actual }) };
+    onUsage(usage: ReportedRequestUsage) {
+      for (const key of ["promptTokens", "completionTokens", "totalTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+        const value = usage[key];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) (reportedUsage ??= {})[key] = value;
+      }
+    },
+    finish(kind: RequestReceipt["kind"]): RequestReceipt {
+      return { id: crypto.randomUUID(), kind, capturedAt: new Date().toISOString(), attempts: [...attempts], omittedAttempts, ...(reportedUsage && { usage: { ...reportedUsage } }) };
     },
   };
 }
@@ -165,3 +169,12 @@ export class RequestReceiptCache {
   stats() { this.prune(); return { entries: this.entries.size, bytes: this.bytes }; }
 }
 export const requestReceipts = new RequestReceiptCache();
+
+export function createOwnedRequestCapture(viewerId: string, sessionOwnerId: string, cardOwnerId: string) {
+  return !!viewerId && viewerId === sessionOwnerId && viewerId === cardOwnerId ? createRequestCapture() : undefined;
+}
+
+export function retainRequestCapture(capture: ReturnType<typeof createRequestCapture> | undefined, scope: ReceiptScope, kind: RequestReceipt["kind"]): void {
+  if (!capture) return;
+  try { requestReceipts.put(scope, capture.finish(kind)); } catch { /* never fail a saved generation for diagnostics */ }
+}

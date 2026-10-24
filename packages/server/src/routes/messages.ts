@@ -1,4 +1,6 @@
 import { settleChapterEventTurn } from "../lib/chapter-event-turn.js";
+import { requestInspectionRoutes } from "./request-inspection.js";
+import { createOwnedRequestCapture, retainRequestCapture } from "../lib/request-inspection.js";
 import { canSelectSessionPersona, freezeSessionPersona } from "../lib/persona-selection.js";
 import { purgePlayerAgency } from "../lib/player-agency.js";
 import { withoutContentFlags } from "../lib/content-flag-history.js";
@@ -173,6 +175,7 @@ messageRoutes.use("/sessions/*", authMiddleware);
 messageRoutes.use("/messages/*", authMiddleware);
 messageRoutes.use("/models", authMiddleware);
 messageRoutes.use("/models/popularity", authMiddleware);
+messageRoutes.route("/", requestInspectionRoutes);
 
 /** Honor the user's explicit model choice. We used to swap any model
  *  not in `model_prices` to a fallback, but that broke BYOK users whose
@@ -1256,6 +1259,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   c.header("X-Accel-Buffering", "no");
 
   const resolvedForStream = resolved;
+  const requestCapture = createOwnedRequestCapture(currentUser.id, context.session.userId, context.worldCreatorId);
   return streamSSE(c, async (stream) => {
     // A dropped SSE connection (mobile tab suspend, flaky network) does NOT
     // abort generation: the turn finishes and persists server-side, and the
@@ -1340,6 +1344,8 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
       await assertTurnMemoryCurrent(turnMemory);
       if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
       for await (const chunk of provider.generateStream({
+        onRequest: requestCapture?.onRequest,
+        onRequestUsage: requestCapture?.onUsage,
         conversationId: `play:${sessionId}`,
         model,
         messages: providerMessages,
@@ -1814,6 +1820,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
             return { assistantMsg: assistantMsgResult[0]!, persistedState: turnState };
           });
           replyPersisted = true;
+          retainRequestCapture(requestCapture, { userId: currentUser.id, worldId: context.session.worldId, sessionId, messageId: assistantMsg.id, swipeIndex: 0 }, "send");
           outputAttempt.markCommitted();
           if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
 
@@ -2912,6 +2919,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
   c.header("X-Accel-Buffering", "no");
 
   const resolvedForStream = resolved;
+  const requestCapture = createOwnedRequestCapture(currentUser.id, context.session.userId, context.worldCreatorId);
   return streamSSE(c, async (stream) => {
     // Disconnects don't abort generation — see the send path. Explicit stops
     // arrive via the stop endpoint (USER_STOP_ABORT_REASON).
@@ -2968,6 +2976,8 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
       await assertTurnMemoryCurrent(regenTurnMemory);
       if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
       for await (const chunk of regenProvider.generateStream({
+        onRequest: requestCapture?.onRequest,
+        onRequestUsage: requestCapture?.onUsage,
         conversationId: `play:${msg.sessionId}`,
         model,
         messages: providerMessages,
@@ -3306,6 +3316,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             return preserveLiveState ? normalizeGameState(worldDef,liveState??gameState) : turnState;
           });
           replyPersisted = true;
+          retainRequestCapture(requestCapture, { userId: currentUser.id, worldId: context.session.worldId, sessionId: msg.sessionId, messageId, swipeIndex: updatedSwipes.length - 1 }, "regenerate");
           outputAttempt.markCommitted();
           if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
 
@@ -3912,6 +3923,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
   c.header("X-Accel-Buffering", "no");
 
   const resolvedForStream = resolved;
+  const requestCapture = createOwnedRequestCapture(currentUser.id, context.session.userId, context.worldCreatorId);
   return streamSSE(c, async (stream) => {
     // Disconnects don't abort generation — see the send path. Explicit stops
     // arrive via the stop endpoint (USER_STOP_ABORT_REASON).
@@ -3953,6 +3965,8 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
       await assertTurnMemoryCurrent(contTurnMemory);
       if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
       for await (const chunk of provider.generateStream({
+        onRequest: requestCapture?.onRequest,
+        onRequestUsage: requestCapture?.onUsage,
         conversationId: `play:${sessionId}`,
         model,
         messages: providerMessages,
@@ -4318,6 +4332,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
             return turnState;
           });
           replyPersisted = true;
+          retainRequestCapture(requestCapture, { userId: currentUser.id, worldId: context.session.worldId, sessionId, messageId: lastAssistantMsg.id, swipeIndex: activeSwipeIndex }, "continue");
           outputAttempt.markCommitted();
           if (outputAttempt.started) await sse({ event: "state-validation", data: JSON.stringify(outputAttempt.audit) });
 

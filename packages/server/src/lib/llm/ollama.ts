@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, MessageContent } from "./types.js";
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
@@ -192,6 +192,7 @@ export class OllamaProvider implements LLMProvider {
             }
 
             if (parsed.done) {
+              inspectWireUsage(params, { promptTokens: parsed.prompt_eval_count, completionTokens: parsed.eval_count });
               yield {
                 type: "done",
                 content: "",
@@ -283,6 +284,7 @@ export class OllamaProvider implements LLMProvider {
       yield { type: "text", content };
     }
 
+    inspectWireUsage(params, { promptTokens: parsed.prompt_eval_count, completionTokens: parsed.eval_count });
     const promptTokens = parsed.prompt_eval_count ?? 0;
     const completionTokens = parsed.eval_count ?? 0;
     yield {

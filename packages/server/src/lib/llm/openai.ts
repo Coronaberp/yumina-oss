@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
@@ -194,6 +194,7 @@ export class OpenAIProvider implements LLMProvider {
             }
 
             if (parsed.usage) {
+              inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens });
               yield* flushToolCalls(toolCallBuffers);
               yield {
                 type: "done",
@@ -306,6 +307,7 @@ export class OpenAIProvider implements LLMProvider {
       }
     }
 
+    if (parsed.usage) inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens });
     const usage = parsed.usage;
     yield {
       type: "done",

@@ -14,6 +14,9 @@ import { env } from "../lib/env.js";
 import { kevContentClassifier } from "../lib/kev-content-classifier.js";
 import { createPendingContentFlags } from "../lib/content-flag-policy.js";
 import type { AppEnv } from "../lib/types.js";
+import type { GenerateParams } from "../lib/llm/types.js";
+import { requestReceipts } from "../lib/request-inspection.js";
+import { exportSessionArchive } from "./session-archives.js";
 
 test("send, regenerate, swipe, and continue preserve independent reply outcomes through concurrent writes", async t => {
   // This fixture tests reply state, not the local classifier or delayed
@@ -37,7 +40,9 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   let attempt = 0;
   let duringStream: (() => Promise<void>) | undefined;
   const directives = ["[affection: add 3]", "[affection: add 1]", "[affection: subtract 2]", "[affection: add 8]", "", "[affection: add 5]", "[affection: add 13]"];
-  t.mock.method(OpenRouterProvider.prototype, "generateStream", async function* () {
+  t.mock.method(OpenRouterProvider.prototype, "generateStream", async function* (params: GenerateParams) {
+    params.onRequest?.({ provider: "openrouter", body: { model: "wire-model", messages: [...params.messages, { role: "system", content: `PRIVATE_REQUEST_MARKER_${attempt}` }] } });
+    params.onRequestUsage?.({ promptTokens: 17, completionTokens: 9 });
     yield { type: "text" as const, content: `A different outcome for this action. ${directives[attempt++]}` };
     await duringStream?.();
     yield { type: "done" as const, content: "", stopReason: "end_turn", usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 } };
@@ -61,6 +66,7 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   for (const pattern of ["/sessions/:sessionId/messages", "/sessions/:sessionId/continue", "/messages/:id/regenerate", "/messages/:id/swipe"]) {
     for (const route of messageRoutes.routes.filter(r => r.method === "POST" && r.path === pattern)) app.post(pattern, route.handler);
   }
+  for (const route of messageRoutes.routes.filter(r => r.method === "GET" && r.path === "/sessions/:sessionId/messages")) app.get(route.path, route.handler);
   const post = (path: string, body: unknown) => app.request(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
@@ -81,6 +87,16 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   duringStream = undefined;
   const reply = (await db.select().from(messages).where(eq(messages.sessionId, session!.id))).find(message => message.role === "assistant");
   assert.ok(reply, "the send route persists the original reply");
+  const receiptScope = { userId: uid, worldId, sessionId: session!.id, messageId: reply.id, swipeIndex: 0 };
+  assert.match(JSON.stringify(requestReceipts.get(receiptScope)), /PRIVATE_REQUEST_MARKER_0/);
+  assert.deepEqual(requestReceipts.get(receiptScope)?.[0]?.usage, { promptTokens: 17, completionTokens: 9 });
+  assert.doesNotMatch(JSON.stringify(reply), /PRIVATE_REQUEST_MARKER/, "request receipts never enter stored message/swipe JSON");
+  const ordinaryRead = await app.request(`/sessions/${session!.id}/messages`);
+  assert.equal(ordinaryRead.status, 200);
+  assert.doesNotMatch(await ordinaryRead.text(), /PRIVATE_REQUEST_MARKER/, "ordinary message APIs do not include receipts");
+  for (const mode of ["full-save", "transcript"] as const) {
+    assert.doesNotMatch(JSON.stringify(await exportSessionArchive(uid, session!.id, mode)), /PRIVATE_REQUEST_MARKER/, "session exports do not include request receipts");
+  }
   assert.deepEqual(reply.swipes![0]!.generationState!.variables, before.variables);
   const [sentSession] = await db.select().from(playSessions).where(eq(playSessions.id, session!.id));
   assert.equal((sentSession!.state.variables as Record<string, unknown>).affection, 13);
@@ -125,6 +141,8 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   assert.equal((continuedReply!.swipes![3]!.stateSnapshot!.variables as Record<string, unknown>).affection, 23);
   assert.deepEqual(continuedReply!.swipes![3]!.generationState!.variables, before.variables);
   assert.deepEqual(continuedReply!.swipes!.filter((_, index) => index !== 3), savedReply!.swipes!.filter((_, index) => index !== 3));
+  assert.deepEqual(requestReceipts.get({ ...receiptScope, swipeIndex: 3 })?.map(receipt => receipt.kind), ["regenerate", "continue"]);
+  assert.equal(requestReceipts.get(receiptScope)?.length, 1, "continuation cannot overwrite another swipe's generation");
 
   // The replacement also ends at 23. A concurrent patch must not win merely
   // because the final value equals the previously selected reply's value.
@@ -147,4 +165,5 @@ test("send, regenerate, swipe, and continue preserve independent reply outcomes 
   assert.deepEqual(finalReply!.swipes![5]!.generationState!.variables, before.variables);
   assert.equal(finalSession!.state.turnCount, 1);
   assert.equal(attempt, directives.length);
+  assert.equal(requestReceipts.get({ ...receiptScope, swipeIndex: 5 })?.[0]?.kind, "regenerate");
 });

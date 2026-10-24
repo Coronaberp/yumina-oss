@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { IMAGE_MODEL_CAPABILITIES } from "@yumina/shared";
 import { randomUUID } from "node:crypto";
@@ -112,7 +112,10 @@ export class GoogleProvider implements LLMProvider {
           throw new Error(`Response blocked or stopped by Google (${blocked ?? reason}). Try another prompt or model.`);
         }
         if (reason && reason !== "FINISH_REASON_UNSPECIFIED") finishReason = reason;
-        if (parsed.usageMetadata) usage = { ...usage, ...parsed.usageMetadata };
+        if (parsed.usageMetadata) {
+          inspectWireUsage(params, { promptTokens: parsed.usageMetadata.promptTokenCount, completionTokens: parsed.usageMetadata.candidatesTokenCount, reasoningTokens: parsed.usageMetadata.thoughtsTokenCount, totalTokens: parsed.usageMetadata.totalTokenCount });
+          usage = { ...usage, ...parsed.usageMetadata };
+        }
         for (const part of candidate?.content?.parts ?? []) {
           if (part.text) {
             if (!part.thought) hasOutput = true;

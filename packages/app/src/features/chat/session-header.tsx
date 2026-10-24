@@ -12,6 +12,7 @@ import {
   GitBranch,
   X,
   Download,
+  CodeXml,
 } from "lucide-react";
 import { PlayZoomControl } from "./play-zoom-control";
 import { TipButton } from "@/edition/slots";
@@ -219,6 +220,10 @@ export function SessionHeader({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => window.postMessage({ type: "yumina:view-raw-output" }, window.location.origin)}>
+                <CodeXml className="mr-2 h-3.5 w-3.5" />
+                {t("debug.details", { defaultValue: "Generation details" })}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => useUiStore.getState().openSessionExport()} disabled={isStreaming}>
                 <Download className="mr-2 h-4 w-4" />Export / import chat
               </DropdownMenuItem>

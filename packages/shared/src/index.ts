@@ -432,3 +432,5 @@ export { CODEX_STUDIO_CONTEXT_WINDOW, getStudioContextBudget } from "./studio-co
 export { normalizeStudioVisualAuditPage } from "./studio-visual-audit.js";
 
 export * from "./vn-text-style.js";
+
+export type { RequestSnapshot, RequestReceipt, ReportedRequestUsage } from "./types/request-inspection.js";

@@ -1,4 +1,4 @@
-import { inspectWireRequest } from "../request-inspection.js";
+import { inspectWireRequest, inspectWireUsage } from "../request-inspection.js";
 import { modelFallbackReason } from "./openrouter.js";
 import { PUBLIC_ORIGIN } from "../env.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -336,6 +336,7 @@ export class CustomProvider implements LLMProvider {
             }
 
             if (parsed.usage) {
+              inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens, reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens });
               yield* flushToolCalls(toolCallBuffers);
               yield {
                 type: "done",
@@ -473,6 +474,7 @@ export class CustomProvider implements LLMProvider {
       }
     }
 
+    if (parsed.usage) inspectWireUsage(params, { promptTokens: parsed.usage.prompt_tokens, completionTokens: parsed.usage.completion_tokens, totalTokens: parsed.usage.total_tokens, reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens });
     const usage = parsed.usage;
     yield {
       type: "done",

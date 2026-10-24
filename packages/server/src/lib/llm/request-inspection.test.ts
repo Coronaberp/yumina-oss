@@ -7,7 +7,7 @@ import { AnthropicProvider } from "./anthropic.js";
 import { GoogleProvider } from "./google.js";
 import { OllamaProvider } from "./ollama.js";
 import type { LLMProvider } from "./types.js";
-import type { WireRequest } from "../request-inspection.js";
+import { createRequestCapture, type WireRequest } from "../request-inspection.js";
 
 for (const stream of [true, false]) {
   for (const [name, factory, model] of [
@@ -46,3 +46,19 @@ test("OpenAI unsupported-parameter retry captures each changed wire body", async
   assert.deepEqual(captured.map(value => value.body), wire);
   assert.equal("temperature" in captured[1]!.body, false);
 });
+
+for (const [name, factory, response] of [
+  ["openai", () => new OpenAIProvider("synthetic"), { choices: [{ message: { content: "reply" } }], usage: { prompt_tokens: 12 } }],
+  ["custom", () => new CustomProvider("synthetic", "https://example.com/v1"), { choices: [{ message: { content: "reply" } }], usage: { prompt_tokens: 12 } }],
+  ["openrouter", () => new OpenRouterProvider("synthetic"), { choices: [{ message: { content: "reply" } }], usage: { prompt_tokens: 12 } }],
+  ["anthropic", () => new AnthropicProvider("synthetic"), { content: [{ type: "text", text: "reply" }], usage: { input_tokens: 12 } }],
+  ["google", () => new GoogleProvider("synthetic"), { candidates: [{ content: { parts: [{ text: "reply" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 12 } }],
+  ["ollama", () => new OllamaProvider(), { message: { content: "reply" }, prompt_eval_count: 12 }],
+] as Array<[string, () => LLMProvider, unknown]>) {
+  test(`${name} exposes original provider usage without manufacturing missing counts`, async t => {
+    t.mock.method(globalThis, "fetch", async () => Response.json(response));
+    const capture = createRequestCapture();
+    for await (const _chunk of factory().generateStream({ model: "test", messages: [{ role: "user", content: "hi" }], stream: false, singleAttempt: true, onRequest: capture.onRequest, onRequestUsage: capture.onUsage })) { }
+    assert.deepEqual(capture.finish("send").usage, { promptTokens: 12 });
+  });
+}
