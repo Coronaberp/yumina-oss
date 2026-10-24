@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { GameStateManager, ResponseParser, preloadTokenizer, estimateTokens, type WorldDefinition } from "@yumina/engine";
 import type { TurnOutputContext } from "../../lib/extension-hooks.js";
 import type { GenerateParams, StreamChunk } from "../../lib/llm/types.js";
+import { createByokProvider } from "../../lib/llm/provider-factory.js";
 import { guardTurnOutput, StateGuardError, boundedCorrectionInputTokens, estimateCorrectionUsageTokens } from "./validate.js";
 
 const none = '<yumina-state version="1" status="none" />';
@@ -33,6 +34,99 @@ function fixture(raw = "The stranger waits.", chunks: StreamChunk[] = [{ type: "
   return { ctx, requests, usages, progress, controller };
 }
 const errorCode = (code: string) => (error: unknown) => error instanceof StateGuardError && error.code === code;
+
+function deepSeekFixture(endpoint: string, stream: boolean, model = "custom/deepseek-v4.1-flash-1017") {
+  const f = fixture("[SCENE:classroom]\nThe teacher waits at the classroom door.");
+  f.ctx.world.variables.push({ id: "background-id", name: "currentBg", type: "string", defaultValue: "courtyard" });
+  f.ctx.state = new GameStateManager(f.ctx.world).getSnapshot();
+  f.ctx.model = model;
+  f.ctx.stream = stream;
+  f.ctx.provider = createByokProvider("custom", "fixture-only", endpoint, {
+    reasoningEffort: "high", excludeBody: ["reasoning_effort"],
+    includeBody: { reasoning_effort: "max", thinking: { type: "enabled" } },
+  });
+  return f;
+}
+
+function correctionResponse(output: string, stream: boolean): Response {
+  const usage = { prompt_tokens: 100, completion_tokens: 40, total_tokens: 140 };
+  return stream
+    ? new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: output }, finish_reason: "stop" }], usage })}\n\ndata: [DONE]\n\n`)
+    : Response.json({ choices: [{ message: { content: output }, finish_reason: "stop" }], usage });
+}
+
+for (const endpoint of ["https://api.deepseek.com/v1", "https://api.cheaperinference.com/v1"]) {
+  for (const stream of [true, false]) {
+    test(`DeepSeek V4 state repair disables native thinking and accepts a frozen scene batch (${new URL(endpoint).hostname}, ${stream ? "streamed" : "buffered"})`, async t => {
+      const bodies: Record<string, any>[] = [];
+      const output = JSON.stringify({ narrative: "", status: "updated", stateChanges: [{ variableId: "background-id", operation: "set", value: "classroom" }] });
+      t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return correctionResponse(output, stream);
+      });
+      const f = deepSeekFixture(endpoint, stream);
+      const before = structuredClone(f.ctx.state);
+      const result = await guardTurnOutput(f.ctx);
+      assert.equal(bodies.length, 1);
+      assert.deepEqual(bodies[0]!.thinking, { type: "disabled" });
+      assert.equal("reasoning_effort" in bodies[0]!, false);
+      assert.equal(bodies[0]!.max_tokens, 4096);
+      assert.deepEqual(bodies[0]!.response_format, { type: "json_object" });
+      assert.equal(bodies[0]!.stream, stream);
+      assert.equal(result.parsed.cleanText, f.ctx.raw, "repair keeps the frozen scene and narration");
+      assert.deepEqual(result.parsed.effects, [{ variableId: "background-id", operation: "set", value: "classroom" }]);
+      assert.equal(result.audit?.outcome, "valid-updates");
+      assert.equal(result.audit?.correctionCount, 1);
+      assert.deepEqual(f.ctx.state, before, "validation leaves the pre-turn state untouched");
+      const committed = new GameStateManager(f.ctx.world, structuredClone(before));
+      committed.applyEffects(result.parsed.effects);
+      assert.equal(committed.get("background-id"), "classroom");
+    });
+  }
+}
+
+test("vendor-prefixed custom DeepSeek V4 repairs use the supported native opt-out", async t => {
+  let body: Record<string, any> | undefined;
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body));
+    return correctionResponse(JSON.stringify({ narrative: "", status: "updated", stateChanges: [{ variableId: "background-id", operation: "set", value: "classroom" }] }), true);
+  });
+  const result = await guardTurnOutput(deepSeekFixture("https://api.cheaperinference.com/v1", true, "custom/deepseek/deepseek-v4.1-flash-1017").ctx);
+  assert.deepEqual(body?.thinking, { type: "disabled" });
+  assert.equal(body?.model, "deepseek/deepseek-v4.1-flash-1017");
+  assert.equal(result.audit?.outcome, "valid-updates");
+});
+
+for (const [label, output, diagnostic] of [
+  ["unknown state target", '{"narrative":"","status":"updated","stateChanges":[{"variableId":"missing","operation":"set","value":"classroom"}]}', "unknown_variable"],
+  ["missing state acknowledgement", "Still only prose.", "missing_receipt"],
+  ["no-op without variable review", '{"narrative":"","status":"none","stateChanges":[]}', "missing_no_update_review"],
+]) {
+  test(`DeepSeek native opt-out still rejects ${label}`, async t => {
+    let body: Record<string, any> | undefined;
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return correctionResponse(output!, true);
+    });
+    const f = deepSeekFixture("https://api.cheaperinference.com/v1", true);
+    const before = structuredClone(f.ctx.state);
+    await assert.rejects(guardTurnOutput(f.ctx), errorCode("invalid_correction"));
+    assert.deepEqual(body?.thinking, { type: "disabled" });
+    assert.ok(f.ctx.audit.diagnostics.includes(diagnostic!));
+    assert.deepEqual(f.ctx.state, before);
+    assert.equal(f.usages.length, 1);
+  });
+}
+
+for (const model of ["codex/gpt-5.1", "openai/gpt-5.1", "custom/glm-5.3-flash", "custom/deepseek-v3.2", "custom/deepseek-v40"]) {
+  test(`state repair retains low thinking for ${model}`, async () => {
+    const f = fixture();
+    f.ctx.model = model;
+    await guardTurnOutput(f.ctx);
+    assert.equal(f.requests[0]?.reasoningEffortOverride, "low");
+    assert.notEqual(f.requests[0]?.disableReasoning, true);
+  });
+}
 
 test("a valid slower correction survives the old 20-second cutoff", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -881,3 +975,64 @@ for (const path of ["send", "regenerate", "continue"] as const) {
     assert.deepEqual(f.ctx.state, before);
   });
 }
+
+
+test("state correction keeps player consent when trailing system instructions fill the prompt tail", async () => {
+  const f = fixture("The technician finishes fitting the accepted protective device and returns it.");
+  const consent = "Install it. I consent to the protective device.";
+  f.ctx.world.variables[1]!.behaviorRules = "Change energy only after actual exertion or recovery.";
+  const conversation = [
+    { role: "assistant" as const, content: "The technician offers a protective device." },
+    { role: "user" as const, content: consent },
+  ];
+  f.ctx.history = [...conversation,
+    ...Array.from({ length: 4 }, (_, index) => ({ role: "system" as const, content: `Format instruction ${index + 1}.` })),
+  ];
+  const before = structuredClone(f.ctx.state);
+  await guardTurnOutput(f.ctx);
+  const packet = JSON.parse(f.requests[0]!.messages[1]!.content as string);
+  assert.deepEqual(packet.history, conversation, "State correction needs the actual consent, not the final formatting blocks");
+  assert.equal(packet.draft, f.ctx.raw, "The complete frozen draft stays unchanged");
+  assert.deepEqual(packet.variables, f.ctx.world.variables, "Dedicated variable definitions and behavior rules stay complete");
+  assert.deepEqual(packet.writableVariableIds, ["kills-id", "energy-id"]);
+  assert.deepEqual(f.ctx.state, before, "Building correction context never mutates saved state");
+});
+
+
+test("state correction bounds the latest four conversational messages after excluding system blocks", async () => {
+  const f = fixture();
+  const conversation = [
+    { role: "user" as const, content: "An old question." },
+    { role: "assistant" as const, content: "An old answer." },
+    { role: "user" as const, content: "What is the device?" },
+    { role: "assistant" as const, content: "A protective device." },
+    { role: "user" as const, content: "What are its limits?" },
+    { role: "assistant" as const, content: "It cannot control people." },
+  ];
+  f.ctx.history = conversation.flatMap(message => [message, { role: "system" as const, content: "Formatting context." }]);
+  await guardTurnOutput(f.ctx);
+  const packet = JSON.parse(f.requests[0]!.messages[1]!.content as string);
+  assert.deepEqual(packet.history, conversation.slice(-4));
+});
+
+test("retaining a question in correction history never forces consent or installation updates", async () => {
+  const output = JSON.stringify({ narrative: "", status: "none", stateChanges: [], review: [
+    { variableId: "device-choice", reason: "The player asks about protection but has not accepted." },
+    { variableId: "device-installed", reason: "The technician only offers the device." },
+  ] });
+  const f = fixture("The technician explains the protective device and waits for consent.", [{ type: "text", content: output }, { type: "done", content: "", stopReason: "stop" }]);
+  f.ctx.world.variables = [
+    { id: "device-choice", name: "Device choice", type: "string", defaultValue: "undecided", behaviorRules: "Record accepted only on explicit player consent." },
+    { id: "device-installed", name: "Device installed", type: "boolean", defaultValue: false, behaviorRules: "Set true only after acceptance and completed installation." },
+  ];
+  f.ctx.state = new GameStateManager(f.ctx.world).getSnapshot();
+  const question = { role: "user" as const, content: "What does the device protect against?" };
+  f.ctx.history = [question, ...Array.from({ length: 5 }, () => ({ role: "system" as const, content: "Formatting context." }))];
+  const result = await guardTurnOutput(f.ctx);
+  const packet = JSON.parse(f.requests[0]!.messages[1]!.content as string);
+  assert.deepEqual(packet.history, [question]);
+  assert.equal(result.audit?.outcome, "explicit-none");
+  assert.deepEqual(result.parsed.effects, []);
+  assert.equal(f.ctx.state.variables["device-choice"], "undecided");
+  assert.equal(f.ctx.state.variables["device-installed"], false);
+});

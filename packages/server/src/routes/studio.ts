@@ -1,15 +1,21 @@
 import { Hono } from "hono";
 import { eq, and, desc, asc, inArray } from "drizzle-orm";
-import { diffWorldSchemas, migrateWorldDefinition } from "@yumina/engine";
+import { migrateWorldDefinition } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
 import { db } from "../db/index.js";
 import { worlds, studioConversations, worldSnapshots, agentRuns } from "../db/schema.js";
-import { summarizeSnapshotTimeline } from "../lib/studio-tools/snapshot-summary.js";
+import { diffStudioSnapshotMaterials, summarizeSnapshotTimeline } from "../lib/studio-tools/snapshot-summary.js";
+import { decodeStudioSnapshotMaterial, encodeStudioSnapshotMaterial } from "../lib/studio-world-material.js";
+import { captureStudioCreditWorldRevision } from "../lib/studio-credit-checkpoint.js";
+import { isDeepStrictEqual } from "node:util";
 import { authMiddleware } from "../middleware/auth.js";
 import type { AppEnv } from "../lib/types.js";
 import { readTemplateContent, readTemplateMeta } from "../lib/studio-tools/index.js";
 import { getTemplateCatalogSummary } from "../lib/studio-skills/index.js";
-import { isS3Configured, generateUploadUrl } from "../lib/s3.js";
+import { isS3Configured, generateUploadUrl, getObjectBuffer } from "../lib/s3.js";
+import { imageMasters, ImageMasterError, isImageMasterKey, validSourceSha256 } from "../lib/image-masters.js";
+import { normalizeImportedImage, ImageImportPolicyError } from "../lib/image-import.js";
+import { validUploadRequestId } from "../lib/asset-upload-operation.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import {
   deleteStudioConversationForWorld,
@@ -17,7 +23,7 @@ import {
   updateStudioConversationForWorld,
 } from "../lib/studio-conversations.js";
 import { resolveWorkingSchema, writeStudioWorldSchema } from "../lib/pending-edit.js";
-import { assertOwnedVnImageRef } from "../lib/studio-tools/asset-catalog.js";
+import { inspectOwnedVnImageRefs } from "../lib/studio-tools/asset-catalog.js";
 import { getStructuralPreflight } from "../lib/studio-tools/project-intelligence.js";
 
 const studioRoutes = new Hono<AppEnv>();
@@ -31,6 +37,24 @@ const BEFORE_ROLLBACK_LABEL = "Before rollback";
 // POST /api/studio/upload-url — get presigned URL for studio chat file attachment
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+type StudioImageUpload = { filename: string; contentType: string; fileSize: number; sourceSha256?: string; requestId?: string };
+
+function validStudioImageUpload(value: unknown): value is StudioImageUpload {
+  if (!value || typeof value !== "object") return false;
+  const body = value as Record<string, unknown>;
+  return typeof body.filename === "string" && body.filename.trim().length > 0 && body.filename.length <= 1024 &&
+    typeof body.contentType === "string" && ALLOWED_IMAGE_TYPES.includes(body.contentType) &&
+    Number.isSafeInteger(body.fileSize) && Number(body.fileSize) > 0 && Number(body.fileSize) <= MAX_FILE_SIZE &&
+    validSourceSha256(body.sourceSha256) && validUploadRequestId(body.requestId);
+}
+function ownedStudioMaster(userId: string, key: unknown): key is string {
+  return typeof key === "string" && key.startsWith(`users/${userId}/image-masters/public/`) && isImageMasterKey(key);
+}
+function ownedLegacyStudioKey(userId: string, key: unknown): key is string {
+  const prefix = `studio-chat/${userId}/`;
+  return typeof key === "string" && key.startsWith(prefix) && key.length > prefix.length &&
+    !/[\\\x00-\x1f\x7f]/.test(key) && !key.split("/").some(part => part === "." || part === "..");
+}
 
 studioRoutes.post("/upload-url", async (c) => {
   if (!isS3Configured()) {
@@ -38,24 +62,19 @@ studioRoutes.post("/upload-url", async (c) => {
   }
 
   const currentUser = c.get("user");
-  const body = await c.req.json<{
-    filename: string;
-    contentType: string;
-    fileSize: number;
-  }>();
-
-  if (!ALLOWED_IMAGE_TYPES.includes(body.contentType)) {
-    return c.json({ error: `Unsupported file type. Allowed: ${ALLOWED_IMAGE_TYPES.join(", ")}` }, 400);
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!validStudioImageUpload(body)) return c.json({ error: "Upload a PNG, JPEG, WebP or GIF image of at most 10 MB with valid upload details." }, 400);
+  if (body.sourceSha256) {
+    const master = await imageMasters.find(currentUser.id, "public", body.sourceSha256);
+    if (master) {
+      if (master.originalSize !== body.fileSize || master.mimeType !== body.contentType) return c.json({ error: "Image details do not match the verified original." }, 409);
+      return c.json({ data: { key: master.key, reused: true } });
+    }
   }
+  const ext = body.contentType === "image/jpeg" ? "jpg" : body.contentType.slice(6);
+  const key = `studio-chat/${currentUser.id}/${body.requestId ?? crypto.randomUUID()}.${ext}`;
 
-  if (body.fileSize > MAX_FILE_SIZE) {
-    return c.json({ error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB` }, 400);
-  }
-
-  const ext = body.filename.split(".").pop() ?? "png";
-  const key = `studio-chat/${currentUser.id}/${crypto.randomUUID()}.${ext}`;
-
-  const uploadUrl = await generateUploadUrl(key, body.contentType);
+  const uploadUrl = await generateUploadUrl(key, body.contentType, { contentLength: body.fileSize, expiresIn: 600 });
 
   return c.json({
     data: {
@@ -65,6 +84,43 @@ studioRoutes.post("/upload-url", async (c) => {
   });
 });
 
+// A completed PUT is still untrusted. Confirm original bytes before attaching.
+studioRoutes.post("/upload-confirm", async (c) => {
+  if (!isS3Configured()) return c.json({ error: "File storage not configured" }, 503);
+  const userId = c.get("user").id;
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!validStudioImageUpload(body)) return c.json({ error: "Invalid image upload details." }, 400);
+  const key = (body as StudioImageUpload & { key?: unknown }).key;
+  if (typeof key !== "string") return c.json({ error: "Invalid asset key" }, 403);
+  const canonical = ownedStudioMaster(userId, key);
+  if (!canonical && !ownedLegacyStudioKey(userId, key)) return c.json({ error: "Invalid asset key" }, 403);
+  try {
+    const existing = canonical ? await imageMasters.findByKey(userId, "public", key)
+      : await imageMasters.findUpload(userId, "public", key);
+    if (canonical && !existing) return c.json({ error: "Invalid asset key" }, 403);
+    if (existing && (existing.originalSize !== body.fileSize || existing.mimeType !== body.contentType ||
+      body.sourceSha256 && existing.sourceSha256 !== body.sourceSha256.toLowerCase())) return c.json({ error: "Image details do not match the verified original." }, 409);
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(30_000)]);
+    const source = await getObjectBuffer(existing?.key ?? key, { maxBytes: MAX_FILE_SIZE, signal });
+    if (source.buffer.length !== body.fileSize) return c.json({ error: "Image size does not match the upload." }, 409);
+    let image;
+    try { image = await normalizeImportedImage(source.buffer); }
+    catch (error) {
+      if (error instanceof ImageImportPolicyError) return c.json({ error: "Animated PNG attachments are not supported in Studio. Use an animated GIF or WebP instead, and keep the original in your asset library." }, 400);
+      return c.json({ error: "The uploaded file is not a valid supported image." }, 400);
+    }
+    signal.throwIfAborted();
+    if (image.mimeType !== body.contentType || source.contentType !== body.contentType) return c.json({ error: "Image content type does not match the upload." }, 409);
+    const master = await imageMasters.store({ userId, access: "public", bytes: image.bytes, mimeType: image.mimeType,
+      sourceSha256: existing?.sourceSha256 ?? body.sourceSha256, signal });
+    if (!canonical) await imageMasters.rememberUpload(userId, "public", key, master.sourceSha256);
+    return c.json({ data: { key: master.key, url: resolveImageCdn(master.key) ?? master.key, mimeType: master.mimeType, name: body.filename } });
+  } catch (error) {
+    if (error instanceof ImageMasterError) return c.json({ error: error.message }, error.status);
+    return c.json({ error: "Image verification failed. Please try again." }, 503);
+  }
+});
+
 // POST /api/studio/download-url — get presigned download URL for a studio chat attachment
 studioRoutes.post("/download-url", async (c) => {
   if (!isS3Configured()) {
@@ -72,14 +128,15 @@ studioRoutes.post("/download-url", async (c) => {
   }
 
   const currentUser = c.get("user");
-  const body = await c.req.json<{ key: string }>();
+  const body = await c.req.json<{ key?: unknown }>();
 
-  // Validate ownership: only allow keys belonging to this user's studio-chat prefix
-  if (!body.key.startsWith(`studio-chat/${currentUser.id}/`)) {
+  // Legacy attachments remain readable. New masters require an exact owner row.
+  if (!ownedLegacyStudioKey(currentUser.id, body.key) &&
+    !(ownedStudioMaster(currentUser.id, body.key) && await imageMasters.findByKey(currentUser.id, "public", body.key))) {
     return c.json({ error: "Invalid asset key" }, 403);
   }
 
-  const url = resolveImageCdn(body.key) ?? body.key;
+  const url = resolveImageCdn(body.key as string) ?? body.key;
 
   return c.json({ data: { url } });
 });
@@ -95,17 +152,17 @@ studioRoutes.get("/:worldId/preflight", async (c) => {
   const workingSchema = await resolveWorkingSchema(worldId, row.status ?? (row.isPublished ? "published" : "draft"), row.schema as Record<string, unknown>);
   const world = migrateWorldDefinition(workingSchema as unknown as WorldDefinition);
   const report = getStructuralPreflight(world);
-  const assetResults = await Promise.all(report.assetRefs.map(async (ref) => {
-    try {
-      await assertOwnedVnImageRef(currentUser.id, worldId, ref);
-      return null;
-    } catch (error) {
-      return { severity: "error" as const, code: "missing-image-asset", entityId: ref, evidence: ref,
-        message: `Image reference ${ref} is unavailable: ${error instanceof Error ? error.message : "ownership could not be verified"}.`,
-        fix: "Use an owned image @asset reference from this card or your asset library." };
-    }
-  }));
-  const blockingErrors = [...report.blockingErrors, ...assetResults.filter((item): item is NonNullable<typeof item> => item !== null)];
+  let missingAssets: Awaited<ReturnType<typeof inspectOwnedVnImageRefs>>;
+  try {
+    missingAssets = await inspectOwnedVnImageRefs(currentUser.id, worldId, report.assetRefs);
+  } catch {
+    return c.json({ code: "ASSET_CHECK_UNAVAILABLE", error: "Image checks are temporarily unavailable. Please try again in a moment." }, 503);
+  }
+  const blockingErrors = [...report.blockingErrors, ...missingAssets.map(({ ref, reason }) => ({
+    severity: "error" as const, code: "missing-image-asset", entityId: ref, evidence: ref,
+    message: `Image reference ${ref} is unavailable: ${reason}`,
+    fix: "Use an owned image @asset reference from this card or your asset library.",
+  }))];
   return c.json({ data: { ...report, clean: blockingErrors.length === 0, blockingErrors, warnings: report.warnings } });
 });
 
@@ -302,16 +359,21 @@ studioRoutes.get("/:worldId/snapshots", async (c) => {
       .from(worldSnapshots)
       .where(and(eq(worldSnapshots.worldId, worldId), inArray(worldSnapshots.id, ids)))
       .orderBy(asc(worldSnapshots.createdAt), asc(worldSnapshots.id)); // oldest -> newest, id tiebreak
-    const cur = await db.select({ schema: worlds.schema }).from(worlds).where(eq(worlds.id, worldId));
+    const current = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
     const summaries = summarizeSnapshotTimeline(
       withSchema.map((s) => ({ id: s.id, schemaData: s.schemaData })),
-      cur[0]?.schema ?? {},
+      encodeStudioSnapshotMaterial(current.schema, current.thumbnailUrl),
     );
     const byId = new Map(summaries.map((s) => [s.id, s.summary]));
     return c.json({ data: snapshots.map((s) => ({ ...s, summary: byId.get(s.id) ?? [] })) });
   }
 
-  return c.json({ data: snapshots });
+  return c.json({ data: snapshots.map((snapshot) => {
+    if (!snapshot.schemaData) return snapshot;
+    const material = decodeStudioSnapshotMaterial(snapshot.schemaData);
+    return { ...snapshot, schemaData: material.schema,
+      ...(material.thumbnailUrl !== undefined ? { thumbnailUrl: material.thumbnailUrl } : {}) };
+  }) });
 });
 
 // POST /api/studio/:worldId/rollback/:snapshotId — restore a snapshot
@@ -341,15 +403,10 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
 
   // Capture the creator's CURRENT working state before rollback (including a
   // held published-world draft) so this restore remains reversible.
-  const currentWorld = await db
-    .select({ schema: worlds.schema, status: worlds.status, isPublished: worlds.isPublished })
-    .from(worlds)
-    .where(eq(worlds.id, worldId));
-  const workingSchema = currentWorld[0]
-    ? await resolveWorkingSchema(worldId, currentWorld[0].status ?? (currentWorld[0].isPublished ? "published" : "draft"), currentWorld[0].schema as Record<string, unknown>)
-    : null;
-  const targetSchema = snapRows[0]!.schemaData as Record<string, unknown>;
-  const rollbackChangesWorkingCopy = workingSchema !== null && JSON.stringify(workingSchema) !== JSON.stringify(targetSchema);
+  const current = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
+  const target = decodeStudioSnapshotMaterial(snapRows[0]!.schemaData);
+  const rollbackChangesWorkingCopy = !isDeepStrictEqual(current.schema, target.schema)
+    || (target.thumbnailUrl !== undefined && target.thumbnailUrl !== current.thumbnailUrl);
 
   // Apply the rollback through the SAME material-edit gate as a manual/Studio
   // save: on a PUBLISHED world a material rollback (entries/frontend) is parked
@@ -359,12 +416,15 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
   const { held, reasons } = await writeStudioWorldSchema({
     worldId,
     creatorId: currentUser.id,
-    schema: snapRows[0]!.schemaData as Record<string, unknown>,
+    schema: target.schema,
+    ...(target.thumbnailUrl !== undefined ? { thumbnailUrl: target.thumbnailUrl } : {}),
+    expectedSchema: current.schema,
+    expectedThumbnailUrl: current.thumbnailUrl,
   });
 
   // Replace the prior auto-backup only when the working copy changed. On a
   // published card, the backup is the held draft rather than the live schema.
-  if (rollbackChangesWorkingCopy && workingSchema) {
+  if (rollbackChangesWorkingCopy) {
     // Keep only the latest auto-backup: prune older ones before inserting the new.
     await db
       .delete(worldSnapshots)
@@ -372,7 +432,7 @@ studioRoutes.post("/:worldId/rollback/:snapshotId", async (c) => {
     await db.insert(worldSnapshots).values({
       worldId,
       userId: currentUser.id,
-      schemaData: workingSchema,
+      schemaData: encodeStudioSnapshotMaterial(current.schema, current.thumbnailUrl),
       label: BEFORE_ROLLBACK_LABEL,
     });
   }
@@ -399,10 +459,12 @@ studioRoutes.get("/:worldId/snapshots/:snapshotId/diff", async (c) => {
     .where(and(eq(worldSnapshots.id, snapshotId), eq(worldSnapshots.worldId, worldId)));
   if (snap.length === 0) return c.json({ error: "Snapshot not found" }, 404);
 
-  const prev = snap[0]!.schemaData as unknown as WorldDefinition;
-  let next: WorldDefinition;
+  const current = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
+  const currentMaterial = encodeStudioSnapshotMaterial(current.schema, current.thumbnailUrl);
+  const prev = snap[0]!.schemaData;
+  let next: Record<string, unknown>;
   if (against === "current") {
-    next = (worldRows[0]!.schema ?? {}) as unknown as WorldDefinition;
+    next = currentMaterial;
   } else {
     // "next newer state" — MUST match the list endpoint's summarizeSnapshotTimeline
     // pairing exactly, or the expanded diff disagrees with the row's chips. Use the
@@ -414,11 +476,10 @@ studioRoutes.get("/:worldId/snapshots/:snapshotId/diff", async (c) => {
       .where(eq(worldSnapshots.worldId, worldId))
       .orderBy(asc(worldSnapshots.createdAt), asc(worldSnapshots.id));
     const idx = ordered.findIndex((s) => s.id === snapshotId);
-    const nextState = idx >= 0 && idx + 1 < ordered.length ? ordered[idx + 1]!.schemaData : worldRows[0]!.schema;
-    next = (nextState ?? {}) as unknown as WorldDefinition;
+    next = idx >= 0 && idx + 1 < ordered.length ? ordered[idx + 1]!.schemaData : currentMaterial;
   }
 
-  return c.json({ data: diffWorldSchemas(prev, next, { detail: true }) });
+  return c.json({ data: diffStudioSnapshotMaterials(prev, next, { detail: true }) });
 });
 
 // DELETE /api/studio/:worldId/snapshots/:snapshotId — delete one restore point

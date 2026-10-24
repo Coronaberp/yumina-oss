@@ -22,5 +22,57 @@
         }
       }
     }
+  },
+  "spriteConfig": {
+    "types": {
+      "normal": "Normal",
+      "uniform": "Uniform",
+      "casual": "Casual",
+      "controlled-battle": "Controlled_Battle",
+      "battle-holder": "Battle_Holder",
+      "battle-cascade": "Battle_Cascade"
+    },
+    "emotions": {
+      "angry": "Angry",
+      "sad": "Sad",
+      "shy": "Shy",
+      "normal": "Normal",
+      "smug": "Smug",
+      "happy": "Happy",
+      "embarrassed": "Embarrassed"
+    }
+  },
+  "spriteWardrobeDescriptions": {
+    "Miveth": { "casual": "A cream cardigan over a pale blue dress." }
+  },
+  "spriteTypes": {
+    "casual": {
+      "miveth": {
+        "kind": "sprite",
+        "speakerName": "Miveth",
+        "expressions": {
+          "normal": {
+            "assetRef": "@asset:00000000-0000-4000-8000-000000000003",
+            "mimeType": "image/png",
+            "transparentBackground": true,
+            "framing": "half-body",
+            "anchor": {
+              "x": 0.5,
+              "y": 1
+            }
+          },
+          "embarrassed": {
+            "assetRef": "@asset:00000000-0000-4000-8000-000000000003",
+            "mimeType": "image/png",
+            "transparentBackground": true,
+            "framing": "half-body",
+            "anchor": {
+              "x": 0.5,
+              "y": 1
+            }
+          }
+        }
+      }
+    }
   }
 }

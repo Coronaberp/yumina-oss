@@ -128,6 +128,10 @@ const en: Dict = {
   showEarlier: "Show {{count}} earlier messages",
   hideEarlier: "Hide {{count}} earlier messages",
   loadEarlier: "Load earlier messages",
+  loadNewer: "Show newer messages",
+  loadedHistory: "Loaded message history",
+  oldestLoaded: "Oldest loaded",
+  newestLoaded: "Newest loaded",
   loadingEarlier: "Loading earlier messages...",
   loadEarlierFailed: "Couldn't load earlier messages. Retry",
   // bubble
@@ -147,6 +151,9 @@ const en: Dict = {
 };
 
 const zh: Dict = {
+  loadedHistory: "已加载的消息历史",
+  oldestLoaded: "已加载的最早消息",
+  newestLoaded: "已加载的最新消息",
   generating: "生成中...",
   choiceHint: "在上方选择一个选项，或输入你的操作...",
   placeholder: "输入你想在这个世界中做的任何事！",
@@ -208,6 +215,7 @@ const zh: Dict = {
   showEarlier: "显示 {{count}} 条早期消息",
   hideEarlier: "隐藏 {{count}} 条早期消息",
   loadEarlier: "加载更早的消息",
+  loadNewer: "查看较新消息",
   loadingEarlier: "正在加载更早的消息...",
   loadEarlierFailed: "无法加载更早的消息，点击重试",
   generationFailed: "AI 响应失败，请稍后重试。",
@@ -226,6 +234,9 @@ const zh: Dict = {
 };
 
 const ja: Dict = {
+  loadedHistory: "読み込み済みのメッセージ履歴",
+  oldestLoaded: "読み込み済みの最初",
+  newestLoaded: "読み込み済みの最新",
   generating: "生成中...",
   choiceHint: "上から選択肢を選ぶか、自分の行動を入力してください...",
   placeholder: "この世界でやりたいことを自由に入力!",
@@ -287,6 +298,7 @@ const ja: Dict = {
   showEarlier: "以前の {{count}} 件のメッセージを表示",
   hideEarlier: "以前の {{count}} 件のメッセージを隠す",
   loadEarlier: "さらに前のメッセージを読み込む",
+  loadNewer: "新しいメッセージを表示",
   loadingEarlier: "前のメッセージを読み込み中...",
   loadEarlierFailed: "以前のメッセージを読み込めませんでした。再試行",
   generationFailed: "AI の応答に失敗しました。しばらくしてからもう一度お試しください。",
@@ -305,6 +317,9 @@ const ja: Dict = {
 };
 
 const es: Dict = {
+  loadedHistory: "Historial de mensajes cargados",
+  oldestLoaded: "Más antiguo cargado",
+  newestLoaded: "Más reciente cargado",
   generating: "Generando...",
   choiceHint: "Elige una opción arriba o escribe tu propia acción...",
   placeholder: "¡Escribe lo que quieras hacer en este mundo!",
@@ -366,6 +381,7 @@ const es: Dict = {
   showEarlier: "Mostrar {{count}} mensajes anteriores",
   hideEarlier: "Ocultar {{count}} mensajes anteriores",
   loadEarlier: "Cargar mensajes anteriores",
+  loadNewer: "Mostrar mensajes más recientes",
   loadingEarlier: "Cargando mensajes anteriores...",
   loadEarlierFailed: "No se pudieron cargar los mensajes anteriores. Reintentar",
   generationFailed: "La respuesta de la IA falló. Inténtalo de nuevo más tarde.",

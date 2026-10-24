@@ -1,4 +1,4 @@
-import { chapterSchema, chapterIssues, type StoryChapter } from "@yumina/engine";
+import { chapterSchema, chapterIssues, variableSchema, isVnInterface, type StoryChapter } from "@yumina/engine";
 /**
  * Studio AI Executor
  *
@@ -32,6 +32,8 @@ import { validateTsx, formatTsxIssue } from "./tsx-validate.js";
 import { resolveUniqueMatch, nearestRegion } from "./fuzzy-match.js";
 import { analyzeRootUiReachability, rootUiConnectionNote } from "./root-ui-reachability.js";
 import { applyVnAssetOperation, parseVnAssetOperations } from "./vn-asset-tools.js";
+import { hasSceneInVariableUpdates, SCENE_IN_VARIABLE_UPDATES_FIX } from "./entry-directive-integrity.js";
+import { applyWorldMediaOperation, parseWorldMediaOperation, readWorldMedia } from "./world-media-tools.js";
 
 /** Find up to 3 IDs similar to the given ID (prefix or substring match) for error hints */
 function suggestSimilarIds(target: string, allIds: string[]): string {
@@ -155,6 +157,8 @@ function sliceTsxContent(
 }
 
 export interface ReadEntitiesParams {
+  /** Actual portrait from the current working material, including a held edit. */
+  thumbnailUrl?: string | null;
   offset_lines?: number;
   limit_lines?: number;
 }
@@ -174,6 +178,7 @@ export function executeReadEntities(
   const paginated = offset_lines !== undefined || limit_lines !== undefined;
 
   for (const id of ids) {
+    if (id === "world-media") { results[id] = readWorldMedia(world, params.thumbnailUrl); continue; }
     if (id === "chapters") { results[id] = world.chapters ?? []; continue; }
     const chapter = (world.chapters ?? []).find(item => item.id === id);
     if (chapter) { results[id] = { ...chapter, _type: "chapter" }; continue; }
@@ -587,6 +592,9 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
     if (!content) continue;
     const macros = extractMacros(content);
     for (const body of macros) {
+      // Request-time character recall replaces this placeholder in copied lore.
+      // Other roles and explicit {{var:...}} references still need variables.
+      if (e.role === "character" && /^sprite_wardrobe$/i.test(body.trim())) continue;
       const ref = macroToVariableRef(body);
       if (!ref) continue;
       if (!variableIds.has(ref)) {
@@ -806,8 +814,17 @@ export function executeValidateWorld(world: WorldDefinition, options?: { skipTsx
   // The automatic pass after every write only consumes structural errors.
   // Keep its skipTsx path cheap; UI writes already echo connection warnings in
   // their results, and an explicit validate_world performs the full graph scan.
-  const unreachableFiles = options?.skipTsx ? [] : analyzeRootUiReachability(world.rootComponent).unreachableFiles;
+  const reachability = options?.skipTsx ? undefined : analyzeRootUiReachability(world.rootComponent);
+  const unreachableFiles = reachability?.unreachableFiles ?? [];
+  const rootFiles = world.rootComponent?.files;
+  const hasReachableStatusLayout = reachability?.complete && rootFiles?.["status-layout.tsx"] !== undefined
+    && !unreachableFiles.includes("status-layout.tsx");
   for (const filename of unreachableFiles) {
+    // A self-contained status layout may intentionally replace the shipped renderer.
+    // Only exact recognized stock helpers are optional; authored files still warn.
+    if (hasReachableStatusLayout && rootFiles
+      && ["status-view.tsx", "status-gauge.tsx", "status-widgets.tsx"].includes(filename)
+      && isManagedStatusHelper(rootFiles, filename)) continue;
     issues.push({
       severity: "warning",
       code: "root-ui-unreachable-file",
@@ -1044,7 +1061,7 @@ function applySingleChange(
   try {
     switch (change.entityType) {
       case "entry":
-        return applyEntryChange(draft, change.action, id, data, index);
+        return applyEntryChange(draft, change.action, id, data, index, replayHistoricalChanges);
       case "variable":
         return applyVariableChange(draft, change.action, id, data, index);
       case "behavior":
@@ -1106,6 +1123,10 @@ function applySingleChange(
       case "loreBinding":
         return applyLoreBindingChange(draft, change.action, id, data, index);
       case "settings":
+        if (id === "world-media") {
+          applyWorldMediaOperation(draft, data.world_media_operation);
+          return { index, action: change.action, entityType: "settings", id, status: "success", note: "Updated only the supplied card media fields." };
+        }
         return applySettingsChange(draft, data, index);
       default:
         return { index, action: change.action, entityType: change.entityType, id, status: "error", error: `Unknown entity type: ${change.entityType}` };
@@ -1209,12 +1230,16 @@ function newEntryRole(data: Record<string, unknown>): WorldEntry["role"] | undef
     ?? (toStringArray(data.tags).some(tag => /^characters?$/i.test(tag.trim())) ? "character" : undefined);
 }
 
-function applyEntryChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
+function applyEntryChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number, replayHistoricalChanges = false): ChangeResult {
   const base = { index, action, entityType: "entry", id };
 
   // Validate before create/upsert/update so malformed model text cannot enter lore.
   if ((action === "create" || action === "update") && data.content !== undefined && typeof data.content !== "string") {
     return { ...base, status: "error", error: "Entry content must be a string. Send plain text in the content field." };
+  }
+  if (!replayHistoricalChanges && (action === "create" || action === "update") && typeof data.content === "string"
+    && data.content !== draft.entries.find(entry => entry.id === id)?.content && hasSceneInVariableUpdates(data.content)) {
+    return { ...base, status: "error", error: `Scene presentation cannot be conditional on variable updates. ${SCENE_IN_VARIABLE_UPDATES_FIX}` };
   }
 
   if (action === "create") {
@@ -1381,7 +1406,7 @@ function normalizeVariableType(raw: unknown): Variable["type"] | undefined {
   if (typeof raw !== "string") return undefined;
   const t = raw.trim().toLowerCase();
   if (t === "number" || t === "string" || t === "boolean" || t === "json") return t;
-  return TYPE_ALIASES[t];
+  return Object.hasOwn(TYPE_ALIASES, t) ? TYPE_ALIASES[t] : undefined;
 }
 
 /**
@@ -1495,13 +1520,73 @@ function normalizeVariableActivation(raw: unknown): VariableActivation | undefin
   return undefined;
 }
 
+/** Prepare VN authoring types without changing the legacy Chat coercion path. */
+function prepareVariableData(draft: WorldDefinition, data: Record<string, unknown>, current?: Variable): Record<string, unknown> {
+  const label = typeof data.type === "string" ? data.type.trim().toLowerCase() : undefined;
+  if (!isVnInterface(draft.rootComponent)) {
+    if (label === "group" || label === "choice" || data.enumValues !== undefined || data.clearOptions !== undefined) {
+      throw new Error("Groups and text-choice controls are available in VN mode only. Keep the Chat interface unchanged.");
+    }
+    return data;
+  }
+
+  if (data.clearOptions !== undefined && typeof data.clearOptions !== "boolean") {
+    throw new Error("clearOptions must be true or false.");
+  }
+  if (data.clearOptions === true && (data.enumValues !== undefined || label === "choice")) {
+    throw new Error("Use either clearOptions:true or text choices, not both in the same edit.");
+  }
+  const type = label === "group" ? "json" : label === "choice" ? "string" : normalizeVariableType(data.type)
+    ?? current?.type ?? (data.enumValues !== undefined ? "string" : inferVariableType(data.defaultValue));
+  if (data.type !== undefined && label !== "group" && label !== "choice" && !normalizeVariableType(data.type)) {
+    throw new Error("Unknown variable type. Use number, string, boolean, list, group, choice, or json.");
+  }
+  let options: string[] | undefined;
+  if (data.enumValues !== undefined) {
+    const parsed = variableSchema.shape.enumValues.safeParse(data.enumValues);
+    if (!parsed.success || !parsed.data || new Set(parsed.data).size !== parsed.data.length) {
+      throw new Error("enumValues must be a list of unique text options (up to 500 options, each at most 1,000 characters).");
+    }
+    if (type !== "string") throw new Error("Text options require type:string or type:choice; a List stores its entries instead.");
+    options = parsed.data;
+  }
+  const prepared = { ...data };
+  if (data.type !== undefined || !current) prepared.type = type;
+  if (options !== undefined) prepared.enumValues = options;
+  else if (label === "choice" && current?.enumValues === undefined) prepared.enumValues = [];
+
+  const hasDefault = data.defaultValue !== undefined;
+  let value = hasDefault ? data.defaultValue : current?.defaultValue;
+  if (!current && !hasDefault) value = type === "json" ? (label === "list" || label === "array" ? [] : {})
+    : type === "string" ? "" : type === "boolean" ? false : 0;
+  if (type === "json") {
+    if (typeof value === "string") {
+      try { value = JSON.parse(value); }
+      catch { throw new Error("Supply a List as a JSON array or a Group as a JSON object in defaultValue."); }
+    }
+    if (value === null || typeof value !== "object"
+      || ((label === "list" || label === "array") && !Array.isArray(value))
+      || ((label === "group" || label === "object") && Array.isArray(value))) {
+      throw new Error("The starting value does not match the requested List or Group. Supply an explicit compatible defaultValue; existing data was preserved.");
+    }
+  }
+  const choice = type === "string" && (label === "choice" || options !== undefined
+    || (data.clearOptions !== true && current?.enumValues !== undefined));
+  if (choice && typeof value !== "string") {
+    throw new Error("Text with valid options stores one text value. Supply an explicit string defaultValue when converting a List or Group.");
+  }
+  if (hasDefault || !current) prepared.defaultValue = value;
+  return prepared;
+}
+
 function applyVariableChange(draft: WorldDefinition, action: string, id: string, data: Record<string, unknown>, index: number): ChangeResult {
   const base = { index, action, entityType: "variable", id };
 
   if (action === "create") {
     const existing = draft.variables.find((v) => v.id === id);
+    data = prepareVariableData(draft, data, existing);
     if (existing) {
-      applyVariableUpdates(existing, data);
+      applyVariableUpdates(existing, data, isVnInterface(draft.rootComponent));
       return { ...base, status: "success" };
     }
 
@@ -1520,6 +1605,7 @@ function applyVariableChange(draft: WorldDefinition, action: string, id: string,
       aiAccess: normalizeAiAccess(data.aiAccess),
       activation: normalizeVariableActivation(data.activation),
       enabled: typeof data.enabled === "boolean" ? data.enabled : undefined,
+      ...(data.enumValues !== undefined ? { enumValues: data.enumValues as string[] } : {}),
     };
     draft.variables.push(newVar);
     return { ...base, status: "success" };
@@ -1528,7 +1614,8 @@ function applyVariableChange(draft: WorldDefinition, action: string, id: string,
   if (action === "update") {
     const variable = draft.variables.find((v) => v.id === id);
     if (!variable) return { ...base, status: "error", error: `Variable not found: "${id}".${suggestSimilarIds(id, draft.variables.map((v) => v.id))}` };
-    applyVariableUpdates(variable, data);
+    data = prepareVariableData(draft, data, variable);
+    applyVariableUpdates(variable, data, isVnInterface(draft.rootComponent));
     return { ...base, status: "success" };
   }
 
@@ -1542,8 +1629,9 @@ function applyVariableChange(draft: WorldDefinition, action: string, id: string,
   return { ...base, status: "error", error: `Unknown action: ${action}` };
 }
 
-function applyVariableUpdates(variable: Variable, data: Record<string, unknown>): void {
+function applyVariableUpdates(variable: Variable, data: Record<string, unknown>, vn = false): void {
   if (data.name !== undefined) variable.name = data.name as string;
+  const previousType = variable.type;
   // Type must land before the default so the default is coerced against the new
   // type; a type change with no new default re-coerces the existing one.
   if (data.type !== undefined) variable.type = normalizeVariableType(data.type) ?? variable.type;
@@ -1551,6 +1639,11 @@ function applyVariableUpdates(variable: Variable, data: Record<string, unknown>)
     variable.defaultValue = coerceDefaultValue(variable.type, data.defaultValue);
   } else if (data.type !== undefined) {
     variable.defaultValue = coerceDefaultValue(variable.type, variable.defaultValue);
+  }
+  if (vn) {
+    if (data.defaultValue !== undefined || variable.type !== previousType) delete variable.defaultValueText;
+    if (data.clearOptions === true || variable.type !== "string") delete variable.enumValues;
+    else if (data.enumValues !== undefined) variable.enumValues = data.enumValues as string[];
   }
   if (data.description !== undefined) variable.description = data.description as string;
   if (data.min !== undefined) variable.min = data.min as number;
@@ -2334,6 +2427,16 @@ export function toolCallsToSchemaChanges(
           toolName: name,
           change: { action: "delete", entityType: entityType ?? "entry", id },
         });
+      }
+      continue;
+    }
+
+    if (name === "write_world_media") {
+      try {
+        const operation = parseWorldMediaOperation(args);
+        results.push({ toolCallId: tc.id, toolName: name, change: { action: "update", entityType: "settings", id: "world-media", data: { world_media_operation: operation } } });
+      } catch (error) {
+        results.push({ toolCallId: tc.id, toolName: name, error: error instanceof Error ? error.message : "Invalid card media operation." });
       }
       continue;
     }

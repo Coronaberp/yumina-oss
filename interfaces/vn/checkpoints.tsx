@@ -13,6 +13,7 @@ export function SaveCheckpoint({ api, onClose }) {
   const input = React.useRef(null);
   const inFlight = React.useRef(false);
   const defaultName = React.useRef("");
+  const lifecycle = React.useRef(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -21,7 +22,7 @@ export function SaveCheckpoint({ api, onClose }) {
     }).catch(err => {
       if (!cancelled) { setError(err?.message || "Could not load checkpoints. Please reopen Save to try again."); setLoading(false); }
     });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; lifecycle.current++; };
   }, [api.sessionId]);
 
   React.useEffect(() => {
@@ -31,10 +32,16 @@ export function SaveCheckpoint({ api, onClose }) {
   async function save(event) {
     event.preventDefault();
     if (inFlight.current || loading || !name.trim() || api.readOnly || api.isStreaming) return;
+    const generation = lifecycle.current;
     inFlight.current = true; setSaving(true); setError("");
-    try { await api.saveCheckpoint(name.trim() === defaultName.current ? undefined : name.trim()); onClose(); }
-    catch (err) { setError(err?.message || "Could not save the checkpoint. Please try again."); }
-    finally { inFlight.current = false; setSaving(false); }
+    try {
+      await api.saveCheckpoint(name.trim() === defaultName.current ? undefined : name.trim());
+      if (generation !== lifecycle.current) return;
+      api.showToast?.("Checkpoint saved", "success");
+      onClose();
+    }
+    catch (err) { if (generation === lifecycle.current) setError(err?.message || "Could not save the checkpoint. Please try again."); }
+    finally { if (generation === lifecycle.current) { inFlight.current = false; setSaving(false); } }
   }
 
   const dismiss = () => { if (!inFlight.current) onClose(); };

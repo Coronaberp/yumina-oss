@@ -1,3 +1,6 @@
+import { useAutoReading } from "./auto-reading";
+import { ModelRoutingDetails } from "./model-routing-details";
+import { TurnDetails } from "./turn-details";
 import { VnTextSettings, VnTextStyle } from "./text-settings";
 import { portraitRef } from "./portrait-ref";
 import { usePersonaControl, PersonaControlSetting } from './persona-control';
@@ -25,6 +28,7 @@ import { ReplyMetrics } from "./reply-metrics-view";
 import { TurnPicker } from "./turn-picker";
 import { usePassageReading } from "./reading";
 import { useMetCharacters, visibleCharacterStatus } from "./character-visibility";
+import { npcSpeakerLabels } from "./npc-display-name";
 
 function Control({ name, onClick, active }) {
   const icon = name === "Route" ? <span className="vn-control-icon" aria-hidden="true"><Icons.Map strokeWidth={1.2} /></span> : <span className="vn-control-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: controls[name.toLowerCase()] }} />;
@@ -210,6 +214,7 @@ function DialogueLog({ api, onClose, currentTurnId, onCharacter, blocked }) {
     else if (node.scrollTop > previous && node.scrollHeight - node.scrollTop - node.clientHeight <= 80) { pagingArmed.current = false; live.current.revealLater(); }
   };
   const renderedRows = React.useMemo(() => visible.map(({ message, lines, sourceLines }) => {
+    const npcLabels = npcSpeakerLabels(api, message, sourceLines);
     const contextFor = line => ({ messageId: message.id, lines: sourceLines.slice(0, sourceLines.indexOf(line) + 1) });
     const swipe = message.swipes?.[message.activeSwipeIndex || 0];
     if (message.role === "user") return <div key={message.id} data-message-id={message.id} className="vn-log-row choice">
@@ -219,8 +224,9 @@ function DialogueLog({ api, onClose, currentTurnId, onCharacter, blocked }) {
     return <div key={message.id} data-message-id={message.id}>
       <div data-turn-id={message.id} aria-hidden="true" />
       {!characters.length && <Thinking api={api} key={`${message.id}:${message.activeSwipeIndex || 0}`} text={swipe?.reasoningContent} />}
+      {!characters.length && <TurnDetails key={`details:${message.id}:${message.activeSwipeIndex || 0}`} message={message} lines={sourceLines} />}
       {lines.map((line, index) => line.kind === "dialogue" ? <div key={index} className="vn-log-row">
-        <div className="vn-log-speaker"><Portrait api={api} assetRef={line.portrait} name={line.name} player={line.player} npcGender={line.npcGender} /><SpeakerName name={line.name || "NPC"} className="vn-speaker-name" /></div>
+        <div className="vn-log-speaker"><Portrait api={api} assetRef={line.portrait} name={line.name} player={line.player} npcGender={line.npcGender} /><SpeakerName name={npcLabels[sourceLines.indexOf(line)] || line.name || "NPC"} className="vn-speaker-name" /></div>
         <Copy api={api} text={line.text} className="vn-log-copy" context={contextFor(line)} onCharacter={openCharacter} />
       </div> : <Copy key={index} api={api} text={line.text} className="vn-narration" context={contextFor(line)} onCharacter={openCharacter} />)}
     </div>;
@@ -260,7 +266,7 @@ function DialogueLog({ api, onClose, currentTurnId, onCharacter, blocked }) {
   </section>;
 }
 
-function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
+function Menu({ api, currentMessage, onClose, setPanel, settings, onSetting, busy, run, onRestore }) {
   const personaAvailable = canSelectPersona(api);
   return <section className="vn-overlay vn-menu-overlay" role="dialog" aria-modal="true" aria-label="Story menu">
     <button className="vn-menu-shade" onClick={onClose} aria-label="Resume story from backdrop" />
@@ -300,7 +306,8 @@ function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
         <button className="vn-back" onClick={() => setPanel("menu")}><Icons.ArrowLeft size={20} />Back to menu</button>
         <div className="vn-subpanel">
           {settings.panel === "load" ? <>
-            {api.checkpoints?.length ? api.checkpoints.map(checkpoint => <button key={checkpoint.id} disabled={busy || api.readOnly} aria-label={checkpoint.name} onClick={() => run(async () => { await api.restoreCheckpoint(checkpoint.id); onClose(); })}>
+            <p>Loading returns to the first page of the saved reply.</p>
+            {api.checkpoints?.length ? api.checkpoints.map(checkpoint => <button key={checkpoint.id} disabled={busy || api.readOnly} aria-label={checkpoint.name} onClick={() => run(async () => { await api.restoreCheckpoint(checkpoint.id); onRestore(); onClose(); })}>
               {checkpoint.name}<small>{new Date(checkpoint.createdAt).toLocaleString()} · {checkpoint.messageCount} messages</small>
             </button>) : <p>No saved stories yet.</p>}
           </> : <>
@@ -311,6 +318,7 @@ function Menu({ api, onClose, setPanel, settings, onSetting, busy, run }) {
             <label className="vn-setting">Music<input type="range" min="0" max="1" step=".05" defaultValue={api.getAudioVolume("bgm")} onChange={e => api.setAudioVolume("bgm", Number(e.target.value))} /></label>
             <label className="vn-setting">Sound effects<input type="range" min="0" max="1" step=".05" defaultValue={api.getAudioVolume("sfx")} onChange={e => api.setAudioVolume("sfx", Number(e.target.value))} /></label>
             <div className="vn-setting"><button onClick={() => api.openModelPicker()}>Choose AI model</button></div>
+            <ModelRoutingDetails selectedModel={api.selectedModel} message={currentMessage} />
           </>}
         </div>
       </>}
@@ -356,6 +364,7 @@ export default function VN() {
   const [autoDelay, setAutoDelay] = React.useState(4500);
   const [showTokenStatistics, setShowTokenStatistics] = React.useState(true);
   const [cursor, setCursor] = React.useState({ turn: "", index: 0 });
+  const cursorRevision = React.useRef(0);
   const [hydrated, setHydrated] = React.useState(false);
   const [spriteLimit, setSpriteLimit] = React.useState(() => window.matchMedia?.("(max-width:600px) and (orientation:portrait)").matches ? 1 : 4);
   const view = React.useRef(null);
@@ -392,9 +401,11 @@ export default function VN() {
   const pendingPlayerLine = !!pendingPlayerLines.length;
   const replyLines = segments.length ? segments : currentMessage ? messagePassages(sceneApi, currentMessage) : passages(sceneApi.entries, api.greetingContent || "");
   const lines = pendingPlayerLine ? pendingPlayerLines : replyLines;
+  const npcLabels = npcSpeakerLabels(sceneApi, currentMessage, lines);
   const index = Math.max(0, Math.min(pendingPlayerLine ? pendingPlayerSprite.index || 0 : cursor.turn === turn ? cursor.index : 0, lines.length - 1));
   const line = lines[index];
   const end = index >= lines.length - 1;
+  const replyReady = pendingPlayerLine && end && !loading && !api.isStreaming && !error && lastMessage?.role === "assistant" && lastMessage.id !== playerSpriteRequest.current?.baseMessageId;
   const availableChoices = (lastMessage?.role === "assistant" ? (api.pendingChoices?.length ? api.pendingChoices : messageChoices(lastMessage)) : []).filter(choice => !/^(?:\.{3}|…)\s*$/.test(choice.trim()));
   const storyActive = !api.storyProgress || api.storyProgress.status === "playing";
   const choiceReady = storyActive && viewingLatest && end && !pendingPlayerLine && !loading && !error && !!line && lastMessage?.role !== "user";
@@ -407,7 +418,7 @@ export default function VN() {
   const spriteLines = pendingPlayerSprite ? [...readLines, {
     name: sceneApi.user?.name || "You", kind: "dialogue", player: true, emotion: pendingPlayerSprite.expression,
   }] : readLines;
-  const [cast, finishSpriteExit] = useSpritePresence(sceneSprites(sceneApi, spriteLines, spriteLimit), turn);
+  const [cast, finishSpriteExit] = useSpritePresence(sceneSprites(sceneApi, spriteLines, spriteLimit, currentMessage), turn);
   draftContext.current = `${api.sessionId}:${panel}:${personaControl.mode}`;
   React.useEffect(() => { ++draftRequest.current; setDraftingChoice(false); setDraftError(""); }, [api.sessionId, panel, personaControl.mode]);
 
@@ -428,10 +439,22 @@ export default function VN() {
       const bounds = node.getBoundingClientRect();
       const controls = node.querySelector(".vn-controls");
       const top = controls ? controls.getBoundingClientRect().bottom - bounds.top + 12 : 12;
+      const dialogue = node.querySelector(".vn-dialogue"), text = node.querySelector(".vn-text"), progress = node.querySelector(".vn-progress");
+      const errorBanner = node.querySelector(".vn-error");
+      if (errorBanner && dialogue && text) {
+        const passageBottom = Math.max(dialogue.getBoundingClientRect().bottom, progress?.getBoundingClientRect().bottom || 0);
+        const chrome = passageBottom - dialogue.getBoundingClientRect().top - text.getBoundingClientRect().height;
+        const lineHeight = parseFloat(window.getComputedStyle(text).lineHeight) || 44;
+        node.style.setProperty("--error-max-height", `${Math.max(44, bounds.height - top - chrome - lineHeight - 36)}px`);
+        const offset = parseFloat(node.style.getPropertyValue("--error-space")) || 0;
+        node.style.setProperty("--error-space", `${Math.max(0, offset + passageBottom - errorBanner.getBoundingClientRect().top + 16)}px`);
+      } else {
+        node.style.setProperty("--error-space", "0px");
+        node.style.removeProperty("--error-max-height");
+      }
       const reading = [...node.querySelectorAll(".vn-dialogue,.vn-choices")].filter(element => element.getClientRects().length);
       const edge = reading.length ? Math.min(...reading.map(element => element.getBoundingClientRect().top)) : bounds.bottom - bounds.height * .19;
       node.style.setProperty("--cast-top", `${top}px`);
-      const dialogue = node.querySelector(".vn-dialogue");
       if (dialogue) {
         const bottom = bounds.bottom - dialogue.getBoundingClientRect().top + 16;
         node.style.setProperty("--choices-bottom", `${bottom}px`);
@@ -440,19 +463,20 @@ export default function VN() {
       node.style.setProperty("--reading-shade-height", `${Math.min(bounds.height, Math.max(0, bounds.bottom - edge + 80))}px`);
     }
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(layout);
-    [node, ...node.querySelectorAll(".vn-dialogue,.vn-choices,.vn-controls")].forEach(element => observer?.observe(element));
+    [node, ...node.querySelectorAll(".vn-dialogue,.vn-progress,.vn-choices,.vn-controls,.vn-error")].forEach(element => observer?.observe(element));
     window.addEventListener("resize", layout);
     document.fonts?.ready.then(layout);
     layout();
     return () => { cancelled = true; observer?.disconnect(); window.removeEventListener("resize", layout); };
-  }, [turn, index, textSize, choices.length, hidden, spriteLimit, JSON.stringify(api.vnTextPreferences)]);
+  }, [turn, index, textSize, choices.length, hidden, spriteLimit, error, JSON.stringify(api.vnTextPreferences)]);
 
   React.useEffect(() => {
     let cancelled = false;
+    const revision = cursorRevision.current;
     setHydrated(false);
     Promise.all([api.storage.get(cursorKey).then(value => value || api.storage.get(`stay-gold-vn:${api.sessionId}:cursor`)), api.storage.get("vn:settings").then(value => value || api.storage.get("stay-gold-vn:settings"))]).then(([saved, prefs]) => {
       if (cancelled) return;
-      try { const value = JSON.parse(saved || "null"); if (value && typeof value.turn === "string" && Number.isInteger(value.index) && value.index >= 0) setCursor(value); } catch {}
+      try { const value = JSON.parse(saved || "null"); if (revision === cursorRevision.current && value && typeof value.turn === "string" && Number.isInteger(value.index) && value.index >= 0) setCursor(value); } catch {}
       try { const value = JSON.parse(prefs || "null"); if ([23,27,32].includes(value?.textSize)) setTextSize(value.textSize); if ([2500,4500,7000].includes(value?.autoDelay)) setAutoDelay(value.autoDelay); setShowTokenStatistics(value?.showTokenStatistics !== false); } catch {}
       setHydrated(true);
     }).catch(() => { if (!cancelled) setHydrated(true); });
@@ -513,9 +537,9 @@ export default function VN() {
     movePage(1);
   }
 
-  function movePage(direction) {
+  function movePage(direction, manual = true) {
     if (panel || viewerOpen || error || !line) return;
-    setAuto(false);
+    if (manual) setAuto(false);
     if (pendingPlayerLine) {
       if (direction > 0 && !end || direction < 0 && index > 0) {
         setPendingPlayerSprite(current => current ? { ...current, index: index + direction } : current);
@@ -539,6 +563,7 @@ export default function VN() {
     const node = view.current;
     function scroll(event) {
       if (panel || viewerOpen || hidden || event.target.closest(".vn-overlay,.vn-choices,.vn-control,.vn-error") || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      setAuto(false);
       const text = event.target.closest(".vn-text");
       if (text && text.scrollHeight > text.clientHeight + 1 && (event.deltaY > 0 ? text.scrollTop + text.clientHeight < text.scrollHeight - 1 : text.scrollTop > 0)) return;
       event.preventDefault();
@@ -630,11 +655,13 @@ export default function VN() {
     }
   }
 
-  React.useEffect(() => {
-    if (!auto || panel || viewerOpen || hidden || end || waiting || api.isStreaming) return;
-    const timer = setTimeout(() => setCursor({ turn, index: index + 1 }), Math.max(autoDelay, (line?.text.length || 0) * 35));
-    return () => clearTimeout(timer);
-  }, [auto, panel, viewerOpen, hidden, end, waiting, api.isStreaming, turn, index, autoDelay, line?.text]);
+  useAutoReading({
+    active: auto, paused: !!panel || viewerOpen || hidden || !hydrated,
+    halted: end || waiting || api.isStreaming || !!error || !line,
+    pageKey: `${api.sessionId}:${turn}:${index}:${pendingPlayerSprite?.id || ""}`,
+    text: line?.text || "", pace: autoDelay, view, scrollPassage,
+    onAdvance: () => movePage(1, false), onStop: () => setAuto(false),
+  });
 
   React.useEffect(() => {
     function keydown(event) {
@@ -685,18 +712,31 @@ export default function VN() {
         <Control name="Log" onClick={() => setPanel("log")} />
         {canPickRoute && !!routes.length && <Control name="Route" onClick={() => { setAuto(false); if (api.openStoryRoutes) api.openStoryRoutes(); else setPanel("routes"); }} />}
         <Control name="Hide" onClick={() => setHidden(true)} />
-        <Control name="Skip" onClick={() => { setAuto(false); if (pendingPlayerSprite) setPendingPlayerSprite(current => current ? { ...current, index: Math.max(0, lines.length - 1) } : current); else setCursor({ turn, index: Math.max(0, lines.length - 1) }); }} />
-        <Control name="Auto" active={auto} onClick={() => setAuto(!auto)} /><Control name="Menu" onClick={() => setPanel("menu")} />
+        <Control name="Skip" onClick={() => {
+          setAuto(false);
+          if (panel || viewerOpen || error) return;
+          if (pendingPlayerSprite && (loading || api.isStreaming || lastMessage?.role !== "assistant" || lastMessage.id === playerSpriteRequest.current?.baseMessageId)) {
+            setPendingPlayerSprite(current => current ? { ...current, index: Math.max(0, lines.length - 1) } : current);
+            return;
+          }
+          const latestSegments = segmentPassages(sceneApi);
+          const latestLines = latestSegments.length ? latestSegments : latest ? messagePassages(sceneApi, latest) : passages(sceneApi.entries, api.greetingContent || "");
+          playerSpriteRequest.current = null; setPendingPlayerSprite(null);
+          setCursor({ turn: latestTurn, index: Math.max(0, latestLines.length - 1) });
+        }} />
+        <Control name="Auto" active={auto} onClick={() => setAuto(current => !current)} /><Control name="Menu" onClick={() => setPanel("menu")} />
       </nav>
       <div className="vn-reading">
       {line && <section className="vn-dialogue" onClick={advance} aria-label="Current passage">
-        <SpeakerName name={line.name || (line.kind === "dialogue" ? "NPC" : "")} className="vn-name" truncate={false} /><Copy api={api} text={line.text} className={`vn-text${line.kind === "narration" ? " vn-action" : ""}`} context={{ messageId: currentMessage?.id || "greeting", lines: readLines }} onCharacter={characterViewer.open} />
+        <SpeakerName name={npcLabels[index] || line.name || (line.kind === "dialogue" ? "NPC" : "")} className="vn-name" truncate={false} /><Copy api={api} text={line.text} className={`vn-text${line.kind === "narration" ? " vn-action" : ""}`} context={{ messageId: currentMessage?.id || "greeting", lines: readLines }} onCharacter={characterViewer.open} />
+        <span className="vn-reply-announcement" role="status" aria-live="polite" aria-atomic="true">{replyReady ? "Reply ready" : ""}</span>
+        {replyReady && <div className="vn-reply-ready"><span aria-hidden="true">Reply ready</span><button onClick={event => { event.stopPropagation(); advance(); }}>Continue</button></div>}
         <div className="vn-progress" aria-label="Reading position"><div className="vn-progress-summary"><span>Turn {turnIndex + 1} | Page {index + 1} of {lines.length}</span>{showTokenStatistics && <ReplyMetrics message={currentMessage} />}</div>{(!end || !viewingLatest || pendingPlayerLine) && !loading && !error && <span className="vn-continue" aria-hidden="true"><svg viewBox="0 0 20 12" fill="none"><path d="m2 2 8 8 8-8" stroke="currentColor" strokeWidth="1.5" /></svg></span>}</div>
       </section>}
       {choiceReady && <div className="vn-choices" aria-label="Story choices">{choices.map((choice, i) => <div className="vn-choice-row" key={`${i}:${choice}`}><span className="vn-number" aria-hidden="true">{i + 1}</span><button className="vn-choice" aria-label={plainChoiceText(playerText(choice, api.user?.name))} disabled={api.readOnly || !personaControl.ready || personaControl.saving} onClick={() => choose(choice)}><span className="vn-choice-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: choiceIcon }} /><ChoiceText text={playerText(choice, api.user?.name)} /></button></div>)}
         {!choices.length && lastMessage?.role === "assistant" && !api.readOnly && <div className="vn-choice-row"><span className="vn-choice-spacer" aria-hidden="true" /><button className="vn-choice vn-generate-choices" disabled={generatingChoices} aria-busy={generatingChoices} onClick={generateChoices}>{generatingChoices ? <span className="vn-choice-spinner" aria-hidden="true" /> : <span className="vn-choice-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: choiceIcon }} />}<span aria-live="polite">{generatingChoices ? "Generating choices…" : "Generate choices"}</span></button></div>}
         {choiceError && <div className="vn-choice-error" role="alert">{choiceError}</div>}
-        <div className="vn-choice-row"><span className="vn-number" aria-hidden="true">{choices.length + 1}</span><button className="vn-choice vn-custom-choice" aria-label="Write your own choice" disabled={api.readOnly || generatingChoices || !personaControl.ready || personaControl.saving} onClick={() => setPanel("composer")}><span className="vn-choice-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: choiceIcon }} /><span>...</span></button></div>
+        <div className="vn-choice-row"><span className="vn-number" aria-hidden="true">{choices.length + 1}</span><button className="vn-choice vn-custom-choice" aria-label="Write your own choice" disabled={api.readOnly || generatingChoices || !personaControl.ready || personaControl.saving} onClick={() => setPanel("composer")}><span className="vn-choice-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: choiceIcon }} /><ChoiceText text="Write your own" /></button></div>
       </div>}
       {recoveryReady && <div className="vn-choices vn-pending-response" aria-label="Unanswered choice">
         <p className="vn-pending-notice">Your last choice has no reply yet.</p>
@@ -709,7 +749,7 @@ export default function VN() {
     {panel === "log" && <DialogueLog api={sceneApi} blocked={viewerOpen} onCharacter={characterViewer.open} currentTurnId={currentMessage?.id || "greeting"} onClose={() => setPanel("")} />}
     {viewerOpen && <CharacterViewer controller={characterViewer} />}
     {panel === "routes" && canPickRoute && <Routes api={api} routes={routes} activeIndex={opening.activeSwipeIndex || 0} onClose={() => setPanel("")} onSelect={index => { if (canPickRoute) api.switchGreeting(index); setPanel(""); }} />}
-    {["menu","load","settings"].includes(panel) && <Menu api={api} onClose={() => setPanel("")} setPanel={setPanel} settings={{ panel, textSize, autoDelay, showTokenStatistics, personaControl }} onSetting={onSetting} busy={busy} run={run} />}
+    {["menu","load","settings"].includes(panel) && <Menu api={api} currentMessage={currentMessage} onClose={() => setPanel("")} setPanel={setPanel} settings={{ panel, textSize, autoDelay, showTokenStatistics, personaControl }} onSetting={onSetting} busy={busy} run={run} onRestore={() => { cursorRevision.current++; setCursor({ turn: "", index: 0 }); setPendingPlayerSprite(null); playerSpriteRequest.current = null; setAuto(false); }} />}
     {panel === "status" && <StatusSheet api={sceneApi} filterCharacters={config => visibleCharacterStatus(config, sceneApi.entries, metCharacterIds)} onClose={() => setPanel("")} onBack={() => setPanel("menu")} />}
     {panel === "memory" && <SessionMemoryModal key={api.sessionId} open onClose={() => setPanel("menu")} initialTab="storyhaven" />}
     {panel === "save" && <SaveCheckpoint key={api.sessionId} api={api} onClose={() => setPanel("menu")} />}
@@ -729,7 +769,11 @@ export default function VN() {
     {error && <div className="vn-error" role="alert"><span>{error}</span>
       {canRetry && !api.readOnly && <button disabled={api.isStreaming} onClick={retryResponse}>Retry</button>}
       {canChangeChoice && <button disabled={busy} onClick={changePendingChoice}>Choose something else</button>}
-      <button onClick={() => api.openModelPicker()}>Choose model</button>
+      {/^(?:State update check failed \((?:correction_model_unavailable|correction_timeout|correction_context_limit|correction_output_limit|incomplete_correction|invalid_correction|provider_auth|provider_rate_limit|provider_context_limit|provider_unsupported_format|provider_model_unavailable|provider_unavailable|provider_error)\)\.|Not enough mushies for the state update correction(?:[.:]|$))/.test(error)
+        ? typeof api.openStateGuardSettings === "function"
+          ? <button disabled={api.readOnly || api.isStreaming} onClick={() => api.openStateGuardSettings()}>State Update Guard settings</button>
+          : <span>Open State Update Guard from the app menu to check its correction model settings.</span>
+        : <button onClick={() => api.openModelPicker()}>Choose model</button>}
       {operationError && <button onClick={() => setOperationError("")}>Dismiss</button>}
     </div>}
   </main>;

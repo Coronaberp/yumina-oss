@@ -11,18 +11,19 @@ const WorldPreview = lazyRouteComponent(
 
 function PreviewRoute() {
   const { worldId } = Route.useParams();
-  const returnContext = Route.useSearch();
+  const { adminPreview, ...returnContext } = Route.useSearch();
   return (
     <Suspense fallback={<Loading />}>
-      <WorldPreview worldId={worldId} returnContext={returnContext} />
+      <WorldPreview worldId={worldId} returnContext={returnContext} adminPreview={adminPreview} />
     </Suspense>
   );
 }
 
 export const Route = createFileRoute("/app/preview/$worldId")({
-  validateSearch: (search: Record<string, unknown>): { returnTo?: string; returnKey?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { returnTo?: string; returnKey?: string; adminPreview: boolean } => ({
     returnTo: parseSafeInternalReturnUrl(search.returnTo),
     returnKey: parseStoryReturnKey(search.returnKey),
+    adminPreview: search.adminPreview === true || search.adminPreview === "true",
   }),
   component: PreviewRoute,
 });

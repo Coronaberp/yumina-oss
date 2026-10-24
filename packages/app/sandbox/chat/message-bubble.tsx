@@ -2,7 +2,7 @@
  * Sandbox-side message bubble component.
  *
  * Ported from packages/app/src/features/chat/message-bubble.tsx with:
- * - useYumina() from sandbox context instead of Zustand stores
+ * - Private built-in chat reads instead of the full streaming SDK context
  * - renderMessage/renderMarkdown from local sandbox markdown module
  * - SandboxMessage type instead of store Message type
  * - No CustomComponentRenderer — accepts a pre-compiled rendererComponent prop
@@ -15,11 +15,12 @@ import React, { useState, useRef, useLayoutEffect, useMemo } from "react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { extractResponseChoices, stripAngleVariableDirectives, stripGameStateDump, stripStateReceipts, stripVariableUpdateTags } from "@yumina/engine";
-import { useYumina } from "../sandbox-context";
+import { useBuiltinChat } from "./builtin-chat-context";
 import { renderMessage, renderMarkdown } from "./markdown";
 import { displayPersonaText, updatePersonaDisplayText } from "../../src/lib/persona-profile";
 import { restoreChatMarkdownIndentation } from "../../src/lib/chat-markdown-indentation";
 import { MessageRendererBoundary } from "./message-renderer-boundary";
+import { ChatPortrait } from "./chat-portrait";
 import {
   isContentBlockedError,
   makeChatT,
@@ -117,7 +118,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
   onSaveEdit,
   onCancelEdit,
 }: MessageBubbleProps) {
-  const api = useYumina();
+  const api = useBuiltinChat();
   const t = useMemo(() => makeChatT(api.language), [api.language]);
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -277,10 +278,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
         {!useSpeakerSections && (speaker ? (
           <div className="play-message-speaker mb-1.5 flex items-center gap-2">
             {speaker.portrait && (
-              <img
+              <ChatPortrait
                 src={speaker.portrait}
-                alt=""
-                draggable={false}
                 className="h-8 w-8 shrink-0 rounded-full border border-border object-cover"
               />
             )}
@@ -479,10 +478,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
                   {section.speaker ? (
                     <div className="play-message-speaker mb-1.5 flex items-center gap-2">
                       {section.speaker.portrait && (
-                        <img
+                        <ChatPortrait
                           src={section.speaker.portrait}
-                          alt=""
-                          draggable={false}
                           className="h-8 w-8 shrink-0 rounded-full border border-border object-cover"
                         />
                       )}
@@ -623,21 +620,21 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = function MessageBubbleI
  */
 export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
   // Return true = skip re-render (props are equal)
-  if (prev.message.id !== next.message.id) return false;
-  if (prev.message.content !== next.message.content) return false;
+  if (prev.message !== next.message) return false;
   if (prev.isStreaming !== next.isStreaming) return false;
   if (prev.streamingContent !== next.streamingContent) return false;
   if (prev.streamingReasoning !== next.streamingReasoning) return false;
   if (prev.dimmed !== next.dimmed) return false;
   if (prev.showRoleLabel !== next.showRoleLabel) return false;
   if (prev.isEditing !== next.isEditing) return false;
+  if (prev.isSavingEdit !== next.isSavingEdit) return false;
+  if (prev.isLastMessage !== next.isLastMessage) return false;
+  if (prev.variables !== next.variables) return false;
   if (prev.editContent !== next.editContent) return false;
   if (prev.rendererComponent !== next.rendererComponent) return false;
   if (prev.messageIndex !== next.messageIndex) return false;
-  // Swipe: check by active swipe index (content changes on swipe)
-  if (prev.message.activeSwipeIndex !== next.message.activeSwipeIndex) return false;
-  if (prev.message.modelFallback !== next.message.modelFallback) return false;
-  if (prev.message.swipes !== next.message.swipes) return false;
+  if ((prev.isEditing || next.isEditing) && (prev.onEditContentChange !== next.onEditContentChange
+    || prev.onSaveEdit !== next.onSaveEdit || prev.onCancelEdit !== next.onCancelEdit)) return false;
   // Action-row dependencies (isLast flags, swipe count, status) live inside the
   // children/swipeControls elements, which this comparator can't diff.
   if (prev.actionsKey !== next.actionsKey) return false;

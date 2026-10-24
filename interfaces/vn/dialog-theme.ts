@@ -55,7 +55,7 @@ export const vnDialogTheme = `
 }
 :where([data-yumina-dialog-theme="vn"]) [data-vn-dialog-surface] :is(.text-xs, .text-sm):not([data-vn-dialog-title]) { font-size: 16px; line-height: 1.5; }
 :where([data-yumina-dialog-theme="vn"]) [data-vn-dialog-surface] :is([class~="text-[10px]"], [class~="text-[11px]"]) { font-size: 12px; line-height: 1.5; }
-:where([data-yumina-dialog-theme="vn"]) :is([data-vn-dialog-surface], .vn-composer-card, .vn-character-card) button {
+:where([data-yumina-dialog-theme="vn"]) :is([data-vn-dialog-surface], .vn-composer-card, .vn-character-card) button:not([role="checkbox"]):not([role="switch"]):not([role="radio"]) {
   min-height: 44px;
   padding: 10px 14px;
   border: 1px solid var(--vn-dialog-border);
@@ -69,7 +69,7 @@ export const vnDialogTheme = `
   white-space: normal;
   flex-shrink: 0;
 }
-:where([data-yumina-dialog-theme="vn"]) :is([data-vn-dialog-surface], .vn-composer-card, .vn-character-card) button:hover:not(:disabled) { background: #ccaa671c; color: #f6e6c3; }
+:where([data-yumina-dialog-theme="vn"]) :is([data-vn-dialog-surface], .vn-composer-card, .vn-character-card) button:not([role="checkbox"]):not([role="switch"]):not([role="radio"]):hover:not(:disabled) { background: #ccaa671c; color: #f6e6c3; }
 :where([data-yumina-dialog-theme="vn"]) :is([data-vn-dialog-surface], .vn-composer-card, .vn-character-card) button:is([aria-pressed="true"], [aria-selected="true"], [class~="bg-primary"]) { background: #ccaa6722; color: var(--vn-dialog-cream); }
 :where([data-yumina-dialog-theme="vn"]) [data-vn-dialog-surface] button:disabled { opacity: .5; cursor: default; }
 :where([data-yumina-dialog-theme="vn"]) [data-vn-dialog-surface] :is(button[class*="text-red-"], [class*="text-red-"]) { color: #efb8a6; }

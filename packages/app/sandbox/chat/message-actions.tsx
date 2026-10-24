@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
 import { createPortal } from "react-dom";
-import { useYumina } from "../sandbox-context";
+import { useBuiltinChat } from "./builtin-chat-context";
 import { makeChatT } from "./i18n";
 
 interface MessageActionsProps {
@@ -43,7 +43,7 @@ export function MessageActions({
   isLastMessage,
   onEditStart,
 }: MessageActionsProps) {
-  const api = useYumina();
+  const api = useBuiltinChat();
   const t = useMemo(() => makeChatT(api.language), [api.language]);
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);

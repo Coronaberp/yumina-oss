@@ -65,3 +65,12 @@ test("appendRegenSwipe clamps a server index that points past the local array", 
   // is exactly the bug this module exists to prevent.
   assert.equal(activeSwipeIndex, swipes.length - 1);
 });
+
+test("a pruned swipe never copies the live future state into the viewed message", async () => {
+  const { swipeStateSnapshot } = await import("./turn-swipes");
+  const future = { variables: { chapter: 9 }, metadata: { vnSpriteWardrobes: { after: { Mira: { type: "battle" } } } } };
+  assert.equal(swipeStateSnapshot({ state: future, stateRestored: false }), null);
+  assert.equal(swipeStateSnapshot({ state: future, stateRestored: true }), future);
+  assert.equal(swipeStateSnapshot({ state: future }), future);
+  assert.equal(swipeStateSnapshot({}), null);
+});

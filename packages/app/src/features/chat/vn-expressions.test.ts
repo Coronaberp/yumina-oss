@@ -58,9 +58,9 @@ test("VN maps dialogue, segments and sprite variables to the same six expression
     assert.deepEqual(output.normalized, ["normal", "happy", "sad", "angry", "shy", "smug", "angry", "angry", "angry", "happy", "sad", "shy", "smug", "smug", "smug", "smug", "normal", "normal", "normal", "normal", "normal", "normal", "normal", "normal", "normal"]);
     assert.ok(output.normalized.every((value: string) => expressions.includes(value)), "the mapper can return only the six art types");
     assert.deepEqual(output.sprites.slice(0, 22), output.normalized.slice(0, 22).map((emotion: string) => `@asset:diane-${emotion}`));
-    assert.deepEqual(output.lines.filter((line: { name: string }) => line.name).map((line: { name: string; emotion: string }) => [line.name, line.emotion]), [["Diane Bluerose", "angry"], ["Maeve", "shy"]]);
-    assert.deepEqual(output.castAfterNarration, [{ name: "Diane Bluerose", emotion: "angry", src: "@asset:diane-angry" }], "narration retains the last character expression");
-    assert.equal(output.segments[0].emotion, "smug");
+    assert.deepEqual(output.lines.filter((line: { name: string }) => line.name).map((line: { name: string; emotion: string }) => [line.name, line.emotion]), [["Diane Bluerose", "irritated"], ["Maeve", "blushing"]]);
+    assert.deepEqual(output.castAfterNarration, [{ name: "Diane Bluerose", emotion: "angry", spriteType: "normal", src: "@asset:diane-angry" }], "narration retains the last character expression");
+    assert.equal(output.segments[0].emotion, "condescending");
     assert.equal(output.variableSprite, "@asset:diane-angry");
     assert.equal(output.missingArt, "@asset:maeve-normal");
     assert.equal(api.raw, raw, "display normalization never rewrites saved dialogue");

@@ -1,4 +1,4 @@
-import { normalizeSpriteExpression as expression } from "./sprite-expressions.js";
+import { normalizeSpriteId as expression, normalizeSpriteSelectionId } from "./sprite-expressions.js";
 import { canonicalCharacterName } from "../prompts/speaker-tag.js";
 import { isPresentationLiteral, presentationLiteralRanges } from "./presentation-literals.js";
 
@@ -10,9 +10,13 @@ export function standardizeSpeakerMarkup(text: string, names: readonly string[] 
     const name = /(?:^|\s)(?:name|speaker)\s*=\s*["']([^"'\r\n]+)["']/i.exec(attrs)?.[1]?.trim();
     if (!name || /[:\]\r\n]/.test(name)) return source;
     const emotion = /(?:^|\s)(?:emotion|expression)\s*=\s*["']([^"'\r\n]+)["']/i.exec(attrs)?.[1];
+    const spriteType = /(?:^|\s)(?:spriteType|sprite-type|type)\s*=\s*["\']([^"\'\r\n]+)["\']/i.exec(attrs)?.[1];
+    const spriteVariant = /(?:^|\s)(?:spriteVariant|sprite-variant)\s*=\s*["']([^"'\r\n]+)["']/i.exec(attrs)?.[1];
+    const typeId = normalizeSpriteSelectionId(spriteType), variantId = spriteVariant ? normalizeSpriteSelectionId(spriteVariant) : "";
+    const wardrobe = typeId && (!spriteVariant || variantId) ? `:${typeId}${variantId ? `:${variantId}` : ""}` : "";
     const content = body.trim();
     const speech = tag.toLowerCase() === "dialogue" && !/^["'“‘«「『]/.test(content) ? `“${content}”` : content;
-    return `[SPEAKER:${name}:${expression(emotion)}]\n${speech}`;
+    return `[SPEAKER:${name}:${expression(emotion)}${wardrobe}]\n${speech}`;
   });
   literals = presentationLiteralRanges(text);
   text = text.replace(/<(narration|action)\s*>([\s\S]*?)<\/\1\s*>/gi, (source, _tag: string, body: string, index: number) => {
@@ -29,6 +33,9 @@ export function standardizeSpeakerMarkup(text: string, names: readonly string[] 
     const emotion = name === "Narrator" ? "normal" : expression(fields[0]);
     const gender = name === "NPC" && /^(male|female)$/i.test(fields[1] || "") ? fields[1]!.toLowerCase() : "";
     const id = gender ? fields.slice(2).join(":").trim() : "";
-    return `[SPEAKER:${name}:${emotion}${gender ? `:${gender}${id ? `:${id}` : ""}` : ""}]`;
+    const spriteType = name !== "Narrator" && name !== "NPC" && fields[1] ? normalizeSpriteSelectionId(fields[1]) : "";
+    const spriteVariant = spriteType && fields[2] ? normalizeSpriteSelectionId(fields[2]) : "";
+    const wardrobe = spriteType && (!fields[2] || spriteVariant) ? `:${spriteType}${spriteVariant ? `:${spriteVariant}` : ""}` : "";
+    return `[SPEAKER:${name}:${emotion}${wardrobe}${gender ? `:${gender}${id ? `:${id}` : ""}` : ""}]`;
   });
 }

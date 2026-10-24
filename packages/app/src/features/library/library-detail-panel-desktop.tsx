@@ -50,7 +50,7 @@ import { VariantForkPicker } from "@/components/variant-fork-picker";
 import { fetchVariantsForDownload } from "@/lib/download-world";
 import type { LanguageVariant } from "@/lib/languages";
 import { CroppedImage } from "@/lib/cover-crop";
-import { normalizeWorldCoverCrop } from "@/lib/world-cover-crop";
+import { useWorldDetailMedia } from "@/lib/world-detail-media";
 import { useActivityStats } from "@/lib/library-detail-stats";
 import { SessionExportModal } from "./session-export-modal";
 import { SharePlaythroughModal } from "@/features/chat/share-playthrough-modal";
@@ -346,7 +346,7 @@ export function LibraryDetailPanelDesktop({
 
   const tags = selectedItem.tags ?? (selectedItem.schema as Record<string, unknown>)?.tags as string[] | undefined;
   const lastActivityAt = !isProject ? libraryLastPlayedAt ?? selectedItem.updatedAt : selectedItem.updatedAt;
-  const selectedItemCrop = normalizeWorldCoverCrop(selectedItem);
+  const heroMedia = useWorldDetailMedia(selectedItem, "desktop");
 
   // Orphaned fork — source world was unpublished
   if (isOrphanedFork) {
@@ -356,8 +356,8 @@ export function LibraryDetailPanelDesktop({
         data-scroll-restoration-id="library-detail"
         className="library-detail-root relative flex h-full w-full min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-foreground"
       >
-        <div className="relative z-10 h-[38rem] w-full shrink-0">
-          <div className="absolute inset-x-0 top-0 h-[28rem] overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]">
+        <div className={heroMedia.hasBanner ? "relative z-10 w-full shrink-0 pb-[10rem]" : "relative z-10 h-[38rem] w-full shrink-0"}>
+          <div data-world-detail-media={heroMedia.hasBanner ? "banner" : "cover"} className={heroMedia.hasBanner ? "relative aspect-[16/5] w-full overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]" : "absolute inset-x-0 top-0 h-[28rem] overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]"}>
             <button
               onClick={onBack}
               className="group absolute left-6 top-6 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/40 text-white/80 shadow-lg backdrop-blur-md transition-all hover:bg-black/60 hover:text-white"
@@ -366,11 +366,13 @@ export function LibraryDetailPanelDesktop({
               <ArrowLeft size={18} className="group-hover:-translate-x-0.5 transition-transform" />
             </button>
 
-            {selectedItem.thumbnailUrl ? (
+            {heroMedia.src ? (
               <CroppedImage
-                src={selectedItem.thumbnailUrl}
+                key={heroMedia.src}
+                src={heroMedia.src}
                 alt={selectedItem.name}
-                crop={selectedItemCrop.gallery}
+                crop={heroMedia.crop}
+                onError={heroMedia.onError}
                 className="h-full w-full opacity-30 grayscale"
               />
             ) : (
@@ -452,7 +454,7 @@ export function LibraryDetailPanelDesktop({
 
       {/* Hero Banner */}
       <div className="library-detail-hero relative z-10 w-full shrink-0 pb-[10rem]">
-        <div className="library-detail-hero-media relative aspect-[16/5] min-h-[28rem] w-full overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]">
+        <div data-world-detail-media={heroMedia.hasBanner ? "banner" : "cover"} className={heroMedia.hasBanner ? "library-detail-hero-media relative aspect-[16/5] w-full overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]" : "library-detail-hero-media relative aspect-[16/5] min-h-[28rem] w-full overflow-hidden rounded-[2.15rem] border border-white/10 bg-[#202024]"}>
           <button
             onClick={onBack}
             className="library-detail-back-button group absolute left-6 top-6 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/40 text-white/80 shadow-lg backdrop-blur-md transition-all hover:bg-black/60 hover:text-white"
@@ -461,11 +463,13 @@ export function LibraryDetailPanelDesktop({
             <ArrowLeft size={18} className="group-hover:-translate-x-0.5 transition-transform" />
           </button>
 
-          {selectedItem.thumbnailUrl ? (
+          {heroMedia.src ? (
             <CroppedImage
-              src={selectedItem.thumbnailUrl}
+              key={heroMedia.src}
+              src={heroMedia.src}
               alt={selectedItem.name}
-              crop={selectedItemCrop.gallery}
+              crop={heroMedia.crop}
+              onError={heroMedia.onError}
               className="h-full w-full"
             />
           ) : (

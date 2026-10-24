@@ -1,4 +1,4 @@
-import { Play, Heart, Trash2, Download, Pencil, Check, Loader2, Lock } from "lucide-react";
+import { Play, Heart, Trash2, Download, Pencil, Check, Loader2, Lock, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { WorldItem } from "@/stores/worlds";
 import { CroppedImage } from "@/lib/cover-crop";
@@ -6,11 +6,14 @@ import { CroppedImage } from "@/lib/cover-crop";
 const CASTLE_ICON = "\u{1F3F0}";
 
 interface LibraryGameCardProps {
-  item: WorldItem;
+  item: Pick<WorldItem, "id" | "name" | "thumbnailUrl" | "coverCrop" | "editingLocked">;
   onClick: () => void;
   status?: "installed" | "draft" | "published" | "cloud" | "update" | "pending_review" | "rejected";
   hasUpdate?: boolean;
   onCopyToProject?: () => void;
+  onDuplicate?: () => void;
+  duplicatePending?: boolean;
+  duplicateDisabled?: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
   editingLocked?: boolean;
@@ -43,6 +46,9 @@ export function LibraryGameCard({
   deleteTitle,
   onDownload,
   onCopyToProject,
+  onDuplicate,
+  duplicatePending,
+  duplicateDisabled,
   onToggleFavorite,
   isFavorited,
   selectable,
@@ -196,6 +202,19 @@ export function LibraryGameCard({
         )}
 
         {!selectable && <div className="library-game-card-actions touch-reveal absolute bottom-1.5 right-1.5 z-20 flex items-center gap-1 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+          {onDuplicate && (
+            <button
+              type="button"
+              onClick={event => { event.stopPropagation(); onDuplicate(); }}
+              disabled={duplicateDisabled || duplicatePending}
+              aria-label={t("card.duplicate")}
+              title={t("card.duplicate")}
+              aria-busy={duplicatePending || undefined}
+              className="library-game-card-action-button library-overview-action-button flex h-8 w-8 items-center justify-center rounded-full text-white shadow-lg transition-transform hover:scale-110 disabled:opacity-60"
+            >
+              {duplicatePending ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+            </button>
+          )}
           {(onEdit || (!isEditingLocked && onCopyToProject)) && (
             <button
               onClick={(e) => {

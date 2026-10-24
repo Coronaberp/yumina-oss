@@ -40,6 +40,7 @@ export interface ImageProposal {
   referenceImages?: StudioImageReference[];
   target?: StudioImageTarget;
   styleInstructions?: string;
+  outfitInstructions?: string;
   unassignedReason?: string;
   /** Configured personal generator; absent keeps the platform flow. */
   source?: "comfyui" | "forgeneo" | "codex";
@@ -114,6 +115,7 @@ export function normalizeImageProposal(raw: unknown): ImageProposal | null {
       ...(workflowOptions ? { workflowOptions } : {}), seedMode, ...(seed !== undefined ? { seed } : {}), cfg, steps,
       ...(referenceImages?.length ? { referenceImages } : {}),
       ...(r.target && typeof r.target === "object" ? { target: r.target as StudioImageTarget } : {}),
+      ...(typeof r.outfitInstructions === "string" ? { outfitInstructions: r.outfitInstructions.slice(0, 3000) } : {}),
       ...(typeof r.styleInstructions === "string" ? { styleInstructions: r.styleInstructions.slice(0, 5000) } : {}),
       ...(typeof r.unassignedReason === "string" ? { unassignedReason: r.unassignedReason.slice(0, 300) } : {}),
       ...(typeof r.purpose === "string" ? { purpose: r.purpose.trim().slice(0, 200) } : {}), aspectRatio: "1:1", batchSize: 1 };
@@ -183,7 +185,7 @@ export async function waitForGeneratedImage(opts: {
         assets: assetIds.map((id) => ({ assetId: id, ref: `@asset:${id}` })),
         costMushies: job.costMushies,
         folderId,
-        note: "The creator has already seen the image in the chat. Reference it by its ref only. If it belongs in custom UI or an entry, place it there with edit_custom_ui / write_entry. No tool sets the card cover: for a cover, say the image is saved and the creator can pick it as the cover in the editor overview. One short sentence, then end your turn.",
+        note: "The creator has already seen the image in the chat. Reference it by its ref only. If it belongs in custom UI or an entry, place it there with edit_custom_ui / write_entry. For a requested card portrait cover or page banner, read world-media and assign its owned ref with write_world_media using portraitAssetRef or bannerAssetRef respectively. Preserve the other image and framing. One short sentence, then end your turn.",
       } });
     }
     if (job.status === "failed" || job.status === "cancelled") {

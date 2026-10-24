@@ -43,6 +43,9 @@ for (const filterType of [undefined, "image"] as const) {
       store.setState({ page: 4 });
       const assets = { assets: [], loading: false, uploading: false, uploadingCount: 0, uploadProgress: null, fetchAssets: async () => {}, uploadAsset: async () => null };
       const picker = load("./asset-picker.tsx", {
+        // Pagination does not open the independently tested image importer.
+        "@/components/image-import-dialog": { ImageImportDialog: () => null },
+        "@/lib/auth-client": { useSession: () => ({ data: { user: { id: "owner" } } }) },
         "@/lib/utils": { cn: (...args: string[]) => args.join(" ") },
         "react-i18next": { useTranslation: () => ({ t: (key: string) => key }) },
         "@/stores/assets": { useAssetStore: () => assets },

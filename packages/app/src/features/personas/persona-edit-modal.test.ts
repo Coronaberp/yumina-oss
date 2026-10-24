@@ -14,16 +14,20 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
   const require = createRequire(import.meta.url);
   const { createRoot } = require("react-dom/client") as typeof import("react-dom/client");
   let saved = { id: "persona", name: "Alex", backstory: "Keep this story", entries: [] as { title: string; content: string }[] };
-  let saves = 0;
+  let saves = 0, uploads = 0, deferUpload = false;
+  let finishUpload!: (asset: { url: string }) => void;
+  type PersonaImageImport = { onImport: (files: File[], context: { signal: AbortSignal; onProgress: () => void }) => Promise<void>; onClose: () => void; crop?: string; preserveOriginal?: boolean; maxBytes?: number };
+  let imageImport: PersonaImageImport | null = null;
   const shell = ({ children }: { children: ReactNode }) => createElement("div", null, children);
   const modules: Record<string, unknown> = {
     "react-i18next": { useTranslation: () => ({ t: (key: string) => key }) },
+    "@/components/image-import-dialog": { ImageImportDialog: (props: PersonaImageImport) => { imageImport = props; return createElement("button", { id: "confirm-import", onClick: () => props.onImport([new File(["image"], "normal.png", { type: "image/png" })], { signal: new AbortController().signal, onProgress() {} }) }, "Confirm image"); } },
     "@/components/ui/dialog": { Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => open ? createElement("div", null, children) : null, DialogContent: shell, DialogTitle: shell },
     "@/components/ui/input": { Input: (props: Record<string, unknown>) => createElement("input", props) },
-    "@/components/ui/button": { Button: ({ variant: _, ...props }: Record<string, unknown>) => createElement("button", props) },
+    "@/components/ui/button": { Button: (props: Record<string, unknown>) => { const native = { ...props }; delete native.variant; return createElement("button", native); } },
     "@/components/ui/field-error": { FieldError: ({ message }: { message?: string }) => message ? createElement("div", { role: "alert" }, message) : null },
     "@/stores/personas": { usePersonasStore: () => ({ updatePersona: async (_: string, input: Partial<typeof saved>) => { saves++; saved = { ...saved, ...input }; return saved; } }) },
-    "@/stores/user-assets": { useUserAssetStore: () => ({ uploadAsset: async () => ({ url: "https://cdn.example/normal.png" }) }) },
+    "@/stores/user-assets": { useUserAssetStore: () => ({ uploadAsset: async () => { uploads++; return deferUpload ? new Promise(resolve => { finishUpload = resolve; }) : { url: "https://cdn.example/normal.png" }; } }) },
     "@/lib/asset-url": { resolveImageUrl: () => null },
   };
   const module = { exports: {} as { PersonaEditModal: ComponentType<{ isOpen: boolean; onClose: () => void; persona: typeof saved }> } };
@@ -47,9 +51,13 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
       assert.ok(dom.window.document.querySelector(`button[aria-label="Upload ${expression} sprite"]`), `missing ${expression} sprite upload`);
     }
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Upload normal sprite"]')!.click());
-    const spriteInput = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="VN sprite image file"]')!;
-    Object.defineProperty(spriteInput, "files", { configurable: true, value: [new dom.window.File(["image"], "normal.png", { type: "image/png" })] });
-    await act(async () => { spriteInput.dispatchEvent(new dom.window.Event("change", { bubbles: true })); await Promise.resolve(); });
+    assert.ok(imageImport, "sprite upload must open the common image dialog before changing the persona");
+    assert.equal((imageImport as PersonaImageImport).crop, "none");
+    assert.equal((imageImport as PersonaImageImport).preserveOriginal, true);
+    assert.equal((imageImport as PersonaImageImport).maxBytes, Infinity);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("#confirm-import")!.click());
+    await act(async () => (imageImport as PersonaImageImport).onImport([new File(["image"], "normal.png", { type: "image/png" })], { signal: new AbortController().signal, onProgress() {} }));
+    assert.equal(uploads, 1, "a completed persona upload callback is retired");
     await act(async () => button("persona.modal.addEntry").click());
     await fill(dom.window.document.querySelector<HTMLInputElement>('input[placeholder="persona.modal.entryTitlePlaceholder"]')!, "Weapons");
     await act(async () => button("persona.modal.save").click());
@@ -67,6 +75,18 @@ test("existing persona editor adds, saves, reloads and removes custom entries wi
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="persona.modal.removeEntry"]')!.click());
     await act(async () => button("persona.modal.save").click());
     assert.deepEqual(saved.entries, []);
+    deferUpload = true;
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Upload normal sprite"]')!.click());
+    const oldImport = imageImport as PersonaImageImport;
+    let pending!: Promise<void>;
+    await act(async () => { pending = oldImport.onImport([new File(["image"], "late.png", { type: "image/png" })], { signal: new AbortController().signal, onProgress() {} }); });
+    await act(async () => render(false));
+    saved = { id: "other", name: "Morgan", backstory: "Other story", entries: [] };
+    await act(async () => render(true));
+    await act(async () => { finishUpload({ url: "/late-persona.png" }); await pending; });
+    await act(async () => button("persona.modal.save").click());
+    assert.deepEqual((saved as typeof saved & { sprites?: Record<string, string> }).sprites, {}, "a late upload cannot replace another persona's sprites");
+    assert.equal(saved.backstory, "Other story");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

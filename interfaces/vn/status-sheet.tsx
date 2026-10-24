@@ -3,8 +3,8 @@ import StatusLayout from "./status-layout";
 
 // Sheet sizing belongs here; authored layouts supply their own content styles.
 const sheetStyles = `
-.vn .vn-status-tabs{min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
-.vn .vn-status-tabs button{width:auto!important;flex:0 0 auto!important;min-width:0;white-space:nowrap;overflow-wrap:normal}
+.vn-status-drawer [role="tablist"][aria-label="Status categories"]{min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+.vn-status-drawer [role="tablist"][aria-label="Status categories"] [role="tab"]{width:auto!important;flex:0 0 auto!important;min-width:0;white-space:nowrap;overflow-wrap:normal}
 .vn-drawer.vn-status-drawer{overflow:hidden;padding-bottom:24px}
 .vn-status-drawer .vn-menu-title{margin-bottom:10px}
 .vn-status-drawer .vn-subpanel{position:relative;margin-top:18px;overscroll-behavior:contain}
@@ -28,7 +28,7 @@ export function StatusSheet({ api, onClose, onBack, preview = false, filterChara
     const observer = window.ResizeObserver ? new window.ResizeObserver(schedule) : null;
     function update() {
       frame = 0;
-      const tabs = panel.querySelector('.vn-status-tabs');
+      const tabs = panel.querySelector('[role="tablist"][aria-label="Status categories"]');
       if (tabs !== observed) {
         if (observed) observer?.unobserve(observed);
         if (tabs) observer?.observe(tabs);

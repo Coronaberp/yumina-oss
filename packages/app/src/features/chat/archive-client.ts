@@ -1,14 +1,11 @@
 import { sessionArchiveSchema, archiveMediaReferences, ARCHIVE_MAX_MEDIA_BYTES, ARCHIVE_MAX_ASSET_BYTES, type ArchiveMode, type SessionArchive } from "@yumina/shared";
 import { resolveImageUrl } from "@/lib/asset-url";
-import { buildArchiveHtml } from "./archive-html";
+import { buildArchiveHtmlBlob } from "./archive-html";
 import { populateArchiveDialogue } from "./archive-dialogue";
+import { archiveRequestData } from "./archive-request";
+import { importArchivePayload, type ArchiveImportClientOptions } from "./archive-import-client";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
-async function responseData<T>(response: Response): Promise<T> {
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "The archive request failed. Try again.");
-  return body.data as T;
-}
 
 async function portraitThumbnail(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
@@ -21,8 +18,8 @@ async function portraitThumbnail(blob: Blob): Promise<Blob> {
   return new Promise(resolve => canvas.toBlob(result => resolve(result || blob), "image/webp", 0.88));
 }
 
-export function downloadArchiveFile(content: string, filename: string, type = "text/html") {
-  const url = URL.createObjectURL(new Blob([content], { type }));
+export function downloadArchiveFile(content: string | Blob, filename: string, type = "text/html") {
+  const url = URL.createObjectURL(typeof content === "string" ? new Blob([content], { type }) : content);
   const link = document.createElement("a"); link.href = url; link.download = filename;
   document.body.append(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
@@ -32,7 +29,7 @@ export function downloadArchiveFile(content: string, filename: string, type = "t
  * URLs with account cookies; credentialed reads are limited to this app. */
 export async function prepareSessionArchive(sessionId: string, mode: ArchiveMode, onProgress?: (text: string) => void): Promise<SessionArchive> {
   onProgress?.("Collecting the complete saved chat…");
-  const archive = populateArchiveDialogue(sessionArchiveSchema.parse(await responseData<unknown>(await fetch(`${apiBase}/api/session-archives/${encodeURIComponent(sessionId)}?mode=${mode}`, { credentials: "include" }))));
+  const archive = populateArchiveDialogue(sessionArchiveSchema.parse(await archiveRequestData<unknown>(`${apiBase}/api/session-archives/${encodeURIComponent(sessionId)}?mode=${mode}`, { credentials: "include" }, { timeoutMs: 60_000, timeoutMessage: "The saved chat could not be downloaded in time. Try exporting it again." })));
   const sources = new Set<string>();
   const portraits = new Set(archive.participants.flatMap(person => person.avatar ? [person.avatar] : []));
   for (const person of archive.participants) if (person.avatar) sources.add(person.avatar);
@@ -83,11 +80,10 @@ export async function prepareSessionArchive(sessionId: string, mode: ArchiveMode
 export async function downloadSessionArchive(sessionId: string, mode: ArchiveMode, onProgress?: (text: string) => void) {
   const archive = await prepareSessionArchive(sessionId, mode, onProgress);
   const filename = `${archive.world.name} - ${archive.session.name || "Chat"}`.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") + ` - ${mode}.html`;
-  const content = buildArchiveHtml(archive);
-  downloadArchiveFile(content, filename);
-  return { archive, filename, content };
+  downloadArchiveFile(buildArchiveHtmlBlob(archive), filename);
+  return { filename };
 }
 
-export async function importArchive(archive: SessionArchive | Blob) {
-  return responseData<{ sessionId: string; worldId: string }>(await fetch(`${apiBase}/api/session-archives/import`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: archive instanceof Blob ? archive : JSON.stringify(archive) }));
+export async function importArchive(archive: SessionArchive | Blob, options: ArchiveImportClientOptions = {}) {
+  return importArchivePayload(archive instanceof Blob ? archive : new Blob([JSON.stringify(archive)], { type: "application/json" }), options, apiBase);
 }

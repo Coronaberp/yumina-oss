@@ -55,3 +55,15 @@ test("ETag-only verification does not replace existing metadata", async () => {
   await copyAndVerifyObject(async (metadata) => { assert.equal(metadata, undefined); },
     async () => original, { etag: original.etag });
 });
+
+test("conditional copies preserve image encoding and verify both hashes and decoded size", async () => {
+  const envelope = { ...original, contentEncoding: "gzip", decodedLength: 1000, sourceSha256: "a".repeat(64), storedSha256: "b".repeat(64) };
+  await copyAndVerifyObject(async metadata => {
+    assert.deepEqual(metadata, { MetadataDirective: "REPLACE", ContentType: "image/png", ContentEncoding: "gzip", Metadata: {
+      "decoded-size": "1000", "source-sha256": envelope.sourceSha256, "stored-sha256": envelope.storedSha256,
+    } });
+  }, async () => envelope, envelope);
+  for (const change of [{ contentEncoding: undefined }, { decodedLength: 999 }, { sourceSha256: "c".repeat(64) }, { storedSha256: undefined }]) {
+    await assert.rejects(copyAndVerifyObject(async () => {}, async () => ({ ...envelope, ...change }), envelope), /changed during registration/);
+  }
+});

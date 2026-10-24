@@ -1,6 +1,6 @@
 import "../test/database-fixture.js";
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { migrateWorldDefinition, type WorldDefinition } from "@yumina/engine";
@@ -12,6 +12,8 @@ import { getSkillContent } from '../lib/studio-skills/index.js';
 import { STUDIO_TOOLS } from "../lib/studio-tools/tools.js";
 import { buildStudioSummaryPrompt } from "../lib/studio-context-compaction.js";
 import { streamAgentLoop } from "./agent.js";
+import { CORE_TOOL_NAMES } from "../lib/studio-tools/tool-catalog.js";
+after(async () => { if ("close" in db.$client && typeof db.$client.close === "function") await db.$client.close(); });
 
 async function captureRequest(configured: boolean, check: (request: GenerateParams) => void, options: { language?: unknown; messages?: ChatMessage[]; iteration?: number; prelude?: () => Promise<ChatMessage[]>; expectProvider?: boolean } = {}) {
   const uid = crypto.randomUUID(), wid = crypto.randomUUID(), rid = crypto.randomUUID();
@@ -72,10 +74,19 @@ test("the agent defaults to English despite other-language world names and assis
 test("disabled image generation disappears from the actual provider tools and skill instructions", async () => {
   await captureRequest(false, request => {
     const names = request.tools!.map(tool => tool.function.name);
+    assert.deepEqual(names.sort(),[...CORE_TOOL_NAMES].sort());
     assert.ok(!names.includes("generate_image")); assert.ok(!names.includes("generate_images"));
-    assert.ok(names.includes("list_assets") && names.includes("edit_vn_assets") && names.includes("get_image_sources"), "Owned art and source setup remain available");
+    assert.ok(!names.includes("list_assets") && !names.includes("edit_vn_assets") && !names.includes("get_image_sources"), "General questions defer unrelated image tools to discovery");
     assert.doesNotMatch(promptText(request), /\bgenerate_images?\b|character image bindings v1/);
   });
+});
+
+test("owned artwork inspection remains discoverable with generation disabled", async () => {
+  await captureRequest(false, request => {
+    const names = request.tools!.map(tool => tool.function.name);
+    assert.ok(names.includes("list_assets") && names.includes("edit_vn_assets") && names.includes("get_image_sources"));
+    assert.ok(!names.includes("generate_image") && !names.includes("generate_images"));
+  }, { messages: [{ role: "user", content: "Inspect the sprite with list_vn_assets and check get_image_sources." }] });
 });
 
 test("a configured personal generator keeps its single-image tool without advertising disabled platform batches", async () => {
@@ -83,10 +94,11 @@ test("a configured personal generator keeps its single-image tool without advert
     const names = request.tools!.map(tool => tool.function.name);
     assert.ok(names.includes("generate_image")); assert.ok(!names.includes("generate_images"));
     assert.match(promptText(request), /\bgenerate_image\b/); assert.doesNotMatch(promptText(request), /\bgenerate_images\b|character image bindings v1/);
-    assert.match(promptText(request), /If the request is NSFW, DO NOT USE IMAGE GENERATION/);
-    assert.match(promptText(request), /Tell the user plainly: "Image generation is disabled for NSFW requests\."/);
+    assert.match(promptText(request), /Never send NSFW prompts or references to Codex or Forge Neo/);
+    assert.match(promptText(request), /For explicit NSFW requests, set contentRating=nsfw and choose Krea or a verified NSFW-capable Anima checkpoint/);
+    assert.match(promptText(request), /NSFW generation is TEXT-TO-IMAGE ONLY/);
     assert.doesNotMatch(promptText(request), /Explicit adult character art is in-scope/);
-  });
+  }, { messages: [{ role: "user", content: "Generate an image for my card cover." }] });
 });
 
 test("Studio compaction also defaults to English and preserves explicit language requests as context", () => {

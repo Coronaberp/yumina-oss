@@ -274,6 +274,7 @@ export async function loadBoundedRawHistory(
     id: string;
     role: string;
     content: string;
+    rawContent: string;
     imageTokens: number;
     createdAt: Date | null;
   }>
@@ -294,6 +295,7 @@ export async function loadBoundedRawHistory(
       id: messages.id,
       role: messages.role,
       content: messages.content,
+      rawContent: sql<string>`COALESCE(${messages.swipes}->(COALESCE(${messages.activeSwipeIndex},0))->>'rawContent', ${messages.content})`,
       imageTokens: sql<number>`COALESCE(jsonb_array_length(${messages.attachments}), 0) * 1600`,
       createdAt: messages.createdAt,
     })

@@ -1,3 +1,4 @@
+import { hydrateStoryWardrobePage } from "../lib/story-sprite-page.js";
 import { registerChapterRoutes } from "./session-chapters.js";
 import { activeChapter } from "@yumina/engine";
 import { z } from 'zod';
@@ -543,6 +544,7 @@ sessionRoutes.get("/:id", async (c) => {
       )
     : { priority: [], deferred: [] };
 
+  const hydratedMessages = renderSchema ? await hydrateStoryWardrobePage({sessionId,world:migrateWorldDefinition(renderSchema),rows:sessionMessages,database:rd}) : sessionMessages;
   applyPersonaMetadataToState(normalizedState, sessionPersona.persona, currentUser);
   return c.json({
     data: {
@@ -560,7 +562,7 @@ sessionRoutes.get("/:id", async (c) => {
       readOnly: isReadOnly,
       state: normalizedState as unknown as Record<string, unknown>,
       world: worldData,
-      messages: sessionMessages,
+      messages: hydratedMessages,
       // Full history size — larger than messages.length when the inline window
       // was capped. The client uses it for turn counts and to decide whether a
       // "load earlier" affordance is needed.

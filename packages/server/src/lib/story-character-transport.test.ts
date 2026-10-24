@@ -38,3 +38,60 @@ test("guard transport uses destination fitting and preserves provider-reported u
   assert.deepEqual(logs[0].usage, usage);
   assert.equal(logs[0].completed, true);
 });
+
+
+test("guard review deadline is reported when the provider ends silently on abort", async () => {
+  const logs: any[] = [];
+  const provider = { listModels: async () => [], async *generateStream(params: any) {
+    await new Promise<void>(resolve => params.signal.addEventListener("abort", () => resolve(), { once: true }));
+  } };
+  const resolved = { provider, providerName: "custom" as const, isByok: true, apiKeyTier: "byok" as const };
+  const request = createCharacterGuardTransport({ userId: "unit", selected: { resolved, model: "custom/test" }, maxContext: 8000, signal: new AbortController().signal, startedAt: Date.now(), reviewTimeoutMs: 1,
+    route: async args => ({ ...args.selected, messages: args.messages, routingLabel: "sfw", rerouted: false, maxContext: 8000 }), recordUsage: async record => { logs.push(record); } });
+  await assert.rejects(request({ stage: "review", messages: [{ role: "user", content: "Check a draft." }], history: [], maxTokens: 8192 }), error => (error as any).code === "character_identity_deadline");
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].completed, false);
+});
+
+test("guard cancellation is reported when the provider ends silently on caller abort", async () => {
+  const controller = new AbortController();
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const logs: any[] = [];
+  const provider = { listModels: async () => [], async *generateStream(params: any) {
+    const stopped = new Promise<void>(resolve => params.signal.addEventListener("abort", () => resolve(), { once: true }));
+    entered();
+    await stopped;
+  } };
+  const resolved = { provider, providerName: "custom" as const, isByok: true, apiKeyTier: "byok" as const };
+  const request = createCharacterGuardTransport({ userId: "unit", selected: { resolved, model: "custom/test" }, maxContext: 8000, signal: controller.signal, startedAt: Date.now(),
+    route: async args => ({ ...args.selected, messages: args.messages, routingLabel: "sfw", rerouted: false, maxContext: 8000 }), recordUsage: async record => { logs.push(record); } });
+  const pending = request({ stage: "review", messages: [{ role: "user", content: "Check a draft." }], history: [], maxTokens: 8192 });
+  await started;
+  controller.abort();
+  await assert.rejects(pending, error => (error as any).code === "cancelled");
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].completed, false);
+});
+
+test("guard still rejects a provider that ends without a terminal result", async () => {
+  const provider = { listModels: async () => [], async *generateStream() { yield { type: "text" as const, content: '{"valid":true,"issues":[]}' }; } };
+  const resolved = { provider, providerName: "custom" as const, isByok: true, apiKeyTier: "byok" as const };
+  const request = createCharacterGuardTransport({ userId: "unit", selected: { resolved, model: "custom/test" }, maxContext: 8000, signal: new AbortController().signal, startedAt: Date.now(),
+    route: async args => ({ ...args.selected, messages: args.messages, routingLabel: "sfw", rerouted: false, maxContext: 8000 }), recordUsage: async () => {} });
+  await assert.rejects(request({ stage: "review", messages: [{ role: "user", content: "Check a draft." }], history: [], maxTokens: 8192 }), error => (error as any).code === "character_identity_provider_incomplete");
+});
+
+
+test("guard still rejects empty and reasoning-only terminal replies", async () => {
+  for (const reasoningOnly of [false, true]) {
+    const provider = { listModels: async () => [], async *generateStream() {
+      if (reasoningOnly) yield { type: "reasoning" as const, content: "Internal review reasoning." };
+      yield { type: "done" as const, content: "", stopReason: "stop" };
+    } };
+    const resolved = { provider, providerName: "custom" as const, isByok: true, apiKeyTier: "byok" as const };
+    const request = createCharacterGuardTransport({ userId: "unit", selected: { resolved, model: "custom/test" }, maxContext: 8000, signal: new AbortController().signal, startedAt: Date.now(),
+      route: async args => ({ ...args.selected, messages: args.messages, routingLabel: "sfw", rerouted: false, maxContext: 8000 }), recordUsage: async () => {} });
+    await assert.rejects(request({ stage: "review", messages: [{ role: "user", content: "Check a draft." }], history: [], maxTokens: 8192 }), error => (error as any).code === "character_identity_provider_incomplete");
+  }
+});

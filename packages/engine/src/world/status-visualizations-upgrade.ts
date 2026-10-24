@@ -5,6 +5,7 @@ import type { RootComponent, WorldDefinition } from '../types/index.js';
 import { legacyStatusTemplates } from './legacy-status-templates.js';
 import { statusTemplates } from './status-templates.generated.js';
 import { statusEncounterV0Templates } from './status-encounter-v0-templates.js';
+import { statusTabsV1Templates } from './status-tabs-v1-templates.js';
 
 /** Introduce the Visualizations-owned content without changing Back/Close or authored content. */
 export function installStatusLayoutFiles(files: Record<string, string>, templates: Record<string, string> = statusTemplates): Record<string, string> {
@@ -29,18 +30,24 @@ export function installStatusLayoutFiles(files: Record<string, string>, template
 export function upgradeStatusFiles(files: Record<string, string>, templates: Record<string, string> = statusTemplates): Record<string, string> {
   const standard = (name: string) => {
     const source = files[name];
-    return source === undefined || typeof source === "string" && [templates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates].some(version => source.trim() === version[name]?.trim());
+    return source === undefined || typeof source === "string" && [templates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates, statusTabsV1Templates].some(version => source.trim() === version[name]?.trim());
   };
   const names = ['status-data.ts', 'status-view.tsx', 'status-gauge.tsx', 'status-widgets.tsx'];
   // A styled renderer can still use the shared data/widget contract. Preserve
   // authored renderers while updating an entirely shipped helper contract.
-  if (!files['status-view.tsx'] || !names.filter(name => name !== 'status-view.tsx').every(standard)) return files;
+  const compatibleHelpers = !!files['status-view.tsx'] && names.filter(name => name !== 'status-view.tsx').every(standard);
   let updated = files;
-  for (const name of [...names, 'status-sheet.tsx']) {
+  for (const name of compatibleHelpers ? [...names, 'status-sheet.tsx'] : []) {
     if (!standard(name)) continue;
     if (!templates[name] || files[name] === templates[name]) continue;
     if (updated === files) updated = { ...files };
     updated[name] = templates[name];
+  }
+  // This shipped sheet changed only category selectors. Its layout/config
+  // contract is unchanged, so custom helper implementations do not block it.
+  if (!compatibleHelpers && files['status-sheet.tsx']?.trim() === statusTabsV1Templates['status-sheet.tsx']?.trim()
+    && templates['status-sheet.tsx'] && files['status-sheet.tsx'] !== templates['status-sheet.tsx']) {
+    updated = { ...files, 'status-sheet.tsx': templates['status-sheet.tsx'] };
   }
   for (const [name, source] of Object.entries(files)) {
     if (!name.endsWith('.tsx') || !source.includes('StatusSheet api={sceneApi}')) continue;
@@ -50,11 +57,11 @@ export function upgradeStatusFiles(files: Record<string, string>, templates: Rec
     if (updated === files) updated = { ...files };
     updated[name] = next;
   }
-  return installStatusLayoutFiles(updated, templates);
+  return compatibleHelpers ? installStatusLayoutFiles(updated, templates) : updated;
 }
 
 export function upgradeStatusRoot<T extends RootComponent | undefined>(root: T): T {
-  if (!root || !root.files || typeof root.files !== "object") return root;
+  if (!root || root.interfaceId === "classic" || !root.files || typeof root.files !== "object") return root;
   const files = upgradeStatusFiles(root.files);
   return (files === root.files ? root : { ...root, files, compiled: undefined }) as T;
 }
@@ -76,5 +83,5 @@ export function upgradeStatusWorld(world: WorldDefinition): WorldDefinition {
 export function isManagedStatusHelper(files: Record<string, string>, name: string): boolean {
   if (!['status-data.ts', 'status-gauge.tsx', 'status-widgets.tsx', 'status-view.tsx', 'status-sheet.tsx'].includes(name)) return false;
   const source = files[name];
-  return typeof source === "string" && [statusTemplates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates].some(version => source.trim() === version[name]?.trim());
+  return typeof source === "string" && [statusTemplates, legacyStatusTemplates, statusWidgetV1Templates, statusBuilderV1Templates, statusSplitPipTemplates, statusMagnitudeV1Templates, statusScrollV1Templates, statusEncounterV0Templates, statusTabsV1Templates].some(version => source.trim() === version[name]?.trim());
 }

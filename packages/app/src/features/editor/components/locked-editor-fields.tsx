@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Lock } from "lucide-react";
 
+const fieldControl = '[role="switch"],[role="checkbox"],[role="radio"],[data-editor-control]:not([data-editor-control="browse"])';
+
 /** Keep section/file navigation and text selection available on locked cards. */
 export function LockedEditorFields({ locked, children }: { locked: boolean; children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -14,6 +16,7 @@ export function LockedEditorFields({ locked, children }: { locked: boolean; chil
         else if (input.type !== "hidden") input.disabled = true;
       }
       for (const select of surface.querySelectorAll<HTMLSelectElement>("select")) select.disabled = true;
+      for (const control of surface.querySelectorAll<HTMLButtonElement>(`button:is(${fieldControl})`)) control.disabled = true;
       for (const node of surface.querySelectorAll<HTMLElement>('[contenteditable="true"]')) node.contentEditable = "false";
     };
     protect();
@@ -23,12 +26,17 @@ export function LockedEditorFields({ locked, children }: { locked: boolean; chil
   }, [locked]);
   return (
     <div ref={root} className="flex min-h-0 flex-1 flex-col" data-locked-editor={locked || undefined}
+      onPointerDownCapture={event => {
+        if (locked && (event.target as HTMLElement).closest(fieldControl)) {
+          event.preventDefault(); event.stopPropagation();
+        }
+      }}
       onClickCapture={event => {
-        if (locked && (event.target as HTMLElement).closest('[role="switch"],[role="checkbox"],[role="radio"]')) {
+        if (locked && (event.target as HTMLElement).closest(fieldControl)) {
           event.preventDefault(); event.stopPropagation();
         }
       }} onKeyDownCapture={event => {
-        if (locked && [" ", "Enter"].includes(event.key) && (event.target as HTMLElement).closest('[role="switch"],[role="checkbox"],[role="radio"]')) {
+        if (locked && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(event.key) && (event.target as HTMLElement).closest(fieldControl)) {
           event.preventDefault(); event.stopPropagation();
         }
       }}>

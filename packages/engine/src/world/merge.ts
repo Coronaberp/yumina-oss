@@ -236,6 +236,8 @@ const FIELD_KEYS = [
   "avatar",
   "coverCrop",
   "galleryCoverCrop",
+  "bannerImageUrl",
+  "bannerCrop",
   "characters",
   "components",
   "uiBlueprint",

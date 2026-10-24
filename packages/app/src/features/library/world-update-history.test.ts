@@ -69,6 +69,7 @@ const globalKeys = [
   "KeyboardEvent",
   "CustomEvent",
   "MutationObserver",
+  "ResizeObserver",
   "getComputedStyle",
   "requestAnimationFrame",
   "cancelAnimationFrame",
@@ -100,6 +101,7 @@ async function createHistoryHarness(fetcher: typeof fetch) {
   installGlobal("KeyboardEvent", dom.window.KeyboardEvent);
   installGlobal("CustomEvent", dom.window.CustomEvent);
   installGlobal("MutationObserver", dom.window.MutationObserver);
+  installGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   installGlobal("getComputedStyle", dom.window.getComputedStyle.bind(dom.window));
   installGlobal("requestAnimationFrame", dom.window.requestAnimationFrame.bind(dom.window));
   installGlobal("cancelAnimationFrame", dom.window.cancelAnimationFrame.bind(dom.window));
@@ -190,10 +192,10 @@ function inputLabelled(document: Document, label: string): HTMLInputElement | HT
   return input as HTMLInputElement | HTMLTextAreaElement;
 }
 
-function checkboxLabelled(document: Document, label: string): HTMLInputElement {
+function checkboxLabelled(document: Document, label: string): HTMLButtonElement {
   const labelElement = Array.from(document.querySelectorAll("label"))
     .find((candidate) => candidate.textContent?.trim() === label);
-  const checkbox = labelElement?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  const checkbox = labelElement?.querySelector<HTMLButtonElement>('[role="checkbox"]');
   assert.ok(checkbox, `Expected a checkbox labelled ${label}`);
   return checkbox;
 }
@@ -676,8 +678,8 @@ test("Overview creates a quiet record, refreshes history, and then edits the sam
     const dialog = document.querySelector('[role="dialog"]');
     assert.ok(dialog);
     assert.equal(document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent, "Add update record");
-    assert.equal(checkboxLabelled(document, "Mark as a major update").checked, false);
-    assert.equal(checkboxLabelled(document, "Notify players who favorited this world").checked, false);
+    assert.equal(checkboxLabelled(document, "Mark as a major update").getAttribute("aria-checked"), "false");
+    assert.equal(checkboxLabelled(document, "Notify players who favorited this world").getAttribute("aria-checked"), "false");
     await harness.enter(inputLabelled(document, "Title"), "New standalone record");
     await harness.enter(inputLabelled(document, "Update details (optional)"), "Standalone details");
     await harness.click(buttonNamed(dialog, "Add"));
@@ -696,7 +698,7 @@ test("Overview creates a quiet record, refreshes history, and then edits the sam
     const publishedAt = harness.container.querySelector("time")?.dateTime;
 
     await harness.click(buttonNamed(harness.container, "Edit"));
-    assert.equal(document.querySelectorAll('input[type="checkbox"]').length, 0, "Editing must not offer notification controls");
+    assert.equal(document.querySelectorAll('[role="checkbox"]').length, 0, "Editing must not offer notification controls");
     await harness.enter(inputLabelled(document, "Title"), "Corrected standalone record");
     await harness.click(buttonNamed(document, "Save"));
     assert.equal(writes.length, 2);
@@ -760,7 +762,7 @@ test("unpublished works can add records silently without notification controls",
     const document = harness.dom.window.document;
     const dialog = document.querySelector('[role="dialog"]');
     assert.ok(dialog);
-    assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 1);
+    assert.equal(dialog.querySelectorAll('[role="checkbox"]').length, 1);
     assert.ok(checkboxLabelled(document, "Mark as a major update"));
     assert.doesNotMatch(dialog.textContent ?? "", /Notify players who favorited/);
     assert.match(dialog.textContent ?? "", /Publish the world to notify players/);
@@ -880,7 +882,7 @@ test("cancelled or blank new records never send a creation request", async () =>
     assert.equal(document.querySelector('[role="dialog"]'), null);
     await harness.click(buttonNamed(harness.container, "Add record"));
     assert.equal(inputLabelled(document, "Title").value, "");
-    assert.equal(checkboxLabelled(document, "Notify players who favorited this world").checked, false);
+    assert.equal(checkboxLabelled(document, "Notify players who favorited this world").getAttribute("aria-checked"), "false");
     assert.equal(posts, 0);
   } finally {
     await harness.cleanup();

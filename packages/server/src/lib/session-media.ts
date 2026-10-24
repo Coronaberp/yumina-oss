@@ -1,13 +1,14 @@
 import { db } from "../db/index.js";
 import { createSessionMediaService } from "./session-media-service.js";
 import { generateUploadUrl, generatePrivateReadUrl, getObjectBufferLimited, putObject, deleteObject, storageKind } from "./s3.js";
+import { imageMasters } from "./image-masters.js";
 export const sessionMedia = createSessionMediaService(db, {
     signUpload: (key, mime, size, seconds) => generateUploadUrl(key, mime, { contentLength: size, expiresIn: seconds }),
     signRead: generatePrivateReadUrl,
     read: getObjectBufferLimited,
-    write: (key, bytes) => putObject(key, bytes, "image/webp", { signal: AbortSignal.timeout(30000) }),
+    write: (key, bytes, mime = "image/webp", options) => putObject(key, bytes, mime, { ...options, signal: AbortSignal.timeout(30000) }),
     remove: deleteObject,
-});
+}, imageMasters);
 /** Kill switch affects new writes only; existing media remains readable. */
 export function sessionMediaUploadsEnabled(userId: string, worldId: string) {
     if (storageKind() !== 's3') return false;

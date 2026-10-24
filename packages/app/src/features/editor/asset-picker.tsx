@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from "react";
 import {
   X,
   Upload,
@@ -10,6 +10,8 @@ import {
   Loader2,
   Search,
 } from "lucide-react";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { useAssetStore, type Asset } from "@/stores/assets";
@@ -36,6 +38,13 @@ const apiBase = import.meta.env.VITE_API_URL || "";
 
 export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPickerProps) {
   const { t } = useTranslation("editor");
+  const { data: session } = useSession();
+  const scope = JSON.stringify([session?.user.id, worldId]);
+  const currentScope = useRef(scope);
+  useLayoutEffect(() => { currentScope.current = scope; }, [scope]);
+  const alive = useRef(true);
+  const selection = useRef(0);
+  const lifecycle = useRef(new AbortController());
   const { assets, loading, uploading, uploadingCount, uploadProgress: progress, fetchAssets, uploadAsset } = useAssetStore();
   const {
     assets: globalAssets,
@@ -44,29 +53,49 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
   } = useUserAssetStore();
   const [search, setSearch] = useState("");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [imageSources, setImageSources] = useState<{ scope: string; files: File[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    alive.current = true;
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    return () => { alive.current = false; controller.abort(); };
+  }, [scope]);
+  const close = () => { selection.current++; lifecycle.current.abort(); onClose(); };
 
   useEffect(() => {
     fetchAssets(worldId);
     fetchGlobalAssets({ page: 1, ...(filterType ? { type: filterType } : {}) });
   }, [worldId, fetchAssets, fetchGlobalAssets, filterType]);
 
-  const uploadSingleFile = useCallback(async (file: File) => {
+  const uploadSingleFile = useCallback(async (file: File, context?: ImageImportContext) => {
+    const token = ++selection.current;
+    const signal = context ? AbortSignal.any([context.signal, lifecycle.current.signal]) : lifecycle.current.signal;
+    if (signal.aborted) { if (context) signal.throwIfAborted(); return null; }
     const { type } = getUploadMetadata(file, filterType);
-    const asset = await uploadAsset(worldId, file, type);
+    const asset = await uploadAsset(worldId, file, type, { signal, onProgress: context?.onProgress, silent: !!context });
+    if (signal.aborted) { if (context) signal.throwIfAborted(); return null; }
+    if (!alive.current || currentScope.current !== scope || token !== selection.current) {
+      if (context) throw new Error(t("imageImport.failed"));
+      return null;
+    }
     if (asset) {
+      selection.current++;
       onSelect(`@asset:${asset.id}`);
     }
-  }, [filterType, onSelect, uploadAsset, worldId]);
+    return asset;
+  }, [filterType, onSelect, uploadAsset, worldId, scope, t]);
 
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
-      await uploadSingleFile(file);
+      if (filterType === "image" || file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name)) setImageSources({ scope, files: [file] });
+      else await uploadSingleFile(file);
     },
-    [uploadSingleFile]
+    [filterType, uploadSingleFile, scope]
   );
 
   const handlePanelDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -92,9 +121,10 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
 
     const [file] = Array.from(e.dataTransfer.files ?? []);
     if (file) {
-      await uploadSingleFile(file);
+      if (filterType === "image" || file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name)) setImageSources({ scope, files: [file] });
+      else await uploadSingleFile(file);
     }
-  }, [uploadSingleFile]);
+  }, [filterType, uploadSingleFile, scope]);
 
   // Deduplicate by id, world assets take priority
   const allAssets = (() => {
@@ -119,6 +149,8 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
 
   const handleSelectAsset = useCallback(
     async (asset: Asset | UserAsset) => {
+      const token = ++selection.current;
+      const signal = lifecycle.current.signal;
       // If it's a global asset, auto-create reference for this world
       const isGlobal = !assets.some((a) => a.id === asset.id);
       if (isGlobal) {
@@ -128,14 +160,17 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
             headers: { "Content-Type": "application/json" },
             credentials: "include",
             body: JSON.stringify({ assetId: asset.id }),
+            signal,
           });
         } catch {
           // Best-effort
         }
       }
+      if (!alive.current || currentScope.current !== scope || signal.aborted || token !== selection.current) return;
+      selection.current++;
       onSelect(`@asset:${asset.id}`);
     },
-    [worldId, assets, onSelect]
+    [worldId, assets, onSelect, scope]
   );
 
   const isLoading = loading || globalLoading;
@@ -143,7 +178,7 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={close} />
 
       {/* Panel */}
       <div
@@ -156,7 +191,7 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h3 className="text-sm font-semibold text-foreground">{t("assetPicker.assetsTitle")}</h3>
           <button
-            onClick={onClose}
+            onClick={close}
             className="rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -176,7 +211,7 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
             />
           </div>
           <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => { if (!filterType || filterType === "image") setImageSources({ scope, files: [] }); else fileInputRef.current?.click(); }}
               disabled={uploading}
               className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"
             >
@@ -294,6 +329,7 @@ export function AssetPicker({ worldId, filterType, onSelect, onClose }: AssetPic
           </div>
         )}
       </div>
+      {imageSources?.scope === scope && <ImageImportDialog key={scope} initialFiles={imageSources.files} onClose={() => setImageSources(null)} onImport={async (files, context) => { if (!await uploadSingleFile(files[0]!, context)) throw Error(t("imageImport.failed")); }} />}
     </div>
   );
 }

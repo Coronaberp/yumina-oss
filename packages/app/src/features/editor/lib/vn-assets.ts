@@ -1,5 +1,12 @@
 // Shared data-only VN asset helpers used by the editor and creator agent.
 export {
+  readVnSpriteVariants, readVnSpriteVariantSets, readVnSpriteVariantWardrobeDescriptions, readVnSpriteChapterDefaults, readVnSpriteOutfit,
+  addVnSpriteVariant, renameVnSpriteVariant, removeVnSpriteVariant, writeVnSpriteChapterDefault,
+  type VnSpriteConfig, type VnSpriteRow,
+  VN_SPRITE_TYPE_LIMIT, VN_SPRITE_EMOTION_WARNING, VN_SPRITE_EMOTION_LIMIT, VN_SPRITE_DEFAULT_EMOTIONS,
+  readVnSpriteConfig, writeVnSpriteConfig, readVnSpriteSets, assignVnSprite, removeVnSprite, vnSpriteRows,
+  readVnSpriteInventory, readVnSpriteWardrobeDescriptions, writeVnSpriteWardrobeDescription, type VnSpriteWardrobeDescriptions,
+  addVnSpriteOption, renameVnSpriteOption, removeVnSpriteOption,
   type VnAssetKind,
   type VnAssetMap,
   type VnAssetRow,

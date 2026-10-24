@@ -2,12 +2,14 @@ import {
   getStoryValidationIssues,
   isVnInterface,
   readVnAssetMap,
+  readVnSpriteSets,
   readVnOpeningScenes,
   type WorldDefinition,
   type VnAssetMap,
 } from "@yumina/engine";
 import { executeValidateWorld } from "./tool-executor.js";
 import { normalizeStudioVisualAuditPage } from "@yumina/shared";
+import { hasSceneInVariableUpdates, SCENE_IN_VARIABLE_UPDATES_CODE, SCENE_IN_VARIABLE_UPDATES_FIX } from "./entry-directive-integrity.js";
 
 export const VN_PERIODS = ["day", "evening", "night"] as const;
 export type VnPeriod = (typeof VN_PERIODS)[number];
@@ -108,7 +110,17 @@ function readVnAssets(world: WorldDefinition): ParsedVnAssets {
     parsed.issues.push({ severity: "error", code: "vn-sprites-file-missing", message: "VN interface is missing sprites.ts.", fix: "Restore the managed VN sprite map or its file." });
   } else if (spritesSource) {
     try {
-      parsed.sprites = readVnAssetMap(spritesSource, "sprites");
+      const sets = readVnSpriteSets(spritesSource);
+      parsed.sprites = { ...sets.normal };
+      for (const [type, map] of Object.entries(sets)) {
+        if (type === "normal") continue;
+        for (const [name, value] of Object.entries(map)) {
+          const existing = parsed.sprites[name];
+          const combined: Record<string, string> = typeof existing === "string" ? { normal: existing } : { ...existing };
+          for (const [emotion, ref] of Object.entries(typeof value === "string" ? { normal: value } : value)) combined[`${type}:${emotion}`] = ref;
+          parsed.sprites[name] = combined;
+        }
+      }
       parsed.readable.sprites = true;
     } catch (error) {
       parsed.readable.sprites = false;
@@ -377,6 +389,10 @@ export function getStructuralPreflight(world: WorldDefinition) {
     fix: issue.fix,
   }));
   findings.push(...vn.issues);
+  for (const entry of world.entries) {
+    if (hasSceneInVariableUpdates(entry.content)) findings.push({ severity: "warning", code: SCENE_IN_VARIABLE_UPDATES_CODE, entityId: entry.id,
+      message: `Entry "${entry.name}" places [SCENE:...] presentation inside <variable-updates>, where a no-state-change rule can suppress scene changes.`, fix: SCENE_IN_VARIABLE_UPDATES_FIX });
+  }
   for (const variable of world.variables) {
     if (!variableIdPattern.test(variable.id)) findings.push({ severity: "error", code: "invalid-variable-id", entityId: variable.id, message: `Variable ID "${variable.id}" is not a valid identifier.`, fix: "Use a letter followed by letters, numbers, hyphens, or underscores." });
   }

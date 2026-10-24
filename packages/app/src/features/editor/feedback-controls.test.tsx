@@ -10,7 +10,7 @@ import { createServer } from "vite";
 
 const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost", pretendToBeVisual: true });
 const globals = {
-  window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+  window: dom.window, document: dom.window.document, navigator: dom.window.navigator, location: dom.window.location,
   localStorage: dom.window.localStorage, HTMLElement: dom.window.HTMLElement,
   HTMLInputElement: dom.window.HTMLInputElement, Element: dom.window.Element,
   Node: dom.window.Node, CustomEvent: dom.window.CustomEvent, MutationObserver: dom.window.MutationObserver,
@@ -62,13 +62,15 @@ test("audio editor copies the track ID, preserves it on rename, and persists the
     assert.ok(dom.window.document.body.textContent?.includes('api.playAudio("track-123")'));
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Copy ID"]')!.click());
     assert.equal(copied, "track-123");
-    const checkbox = dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    assert.equal(checkbox.checked, true, "old tracks allow AI by default");
+    const aiControlLabel = [...dom.window.document.querySelectorAll("label")].find(label => label.textContent?.includes(i18n.t("editor:audio.allowAiControl")));
+    const checkbox = aiControlLabel?.querySelector<HTMLButtonElement>('[role="checkbox"]');
+    assert.ok(checkbox, "The AI-control checkbox is available through its label");
+    assert.equal(checkbox.getAttribute("aria-checked"), "true", "old tracks allow AI by default");
     await act(async () => checkbox.click());
     assert.equal(useEditorStore.getState().worldDraft.audioTracks[0]?.allowAiControl, false);
     await act(async () => useEditorStore.getState().updateAudioTrack("track-123", { name: "Renamed" }));
     assert.equal(dom.window.document.querySelector<HTMLInputElement>("#audio-track-id")?.value, "track-123");
-    assert.equal(checkbox.checked, false);
+    assert.equal(checkbox.getAttribute("aria-checked"), "false");
     assert.equal(useEditorStore.getState().isDirty, true);
   });
 });

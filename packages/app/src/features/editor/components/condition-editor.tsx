@@ -98,6 +98,7 @@ export function ConditionEditor({
               >
                 <Select compact
                   aria-label={`${t("conditionEditor.variable", "Condition variable")} ${i + 1}`}
+                  contentClassName="min-w-[min(24rem,calc(100vw-24px))]"
                   value={cond.variableId}
                   onValueChange={(selectedValue) => {
                     const nextVar = variables.find((v) => v.id === selectedValue);
@@ -156,6 +157,7 @@ export function ConditionEditor({
                 {cond.valueRef !== undefined ? (
                   <Select compact
                     aria-label={`${t("conditionEditor.sourceVariable", "Condition source variable")} ${i + 1}`}
+                    contentClassName="min-w-[min(24rem,calc(100vw-24px))]"
                     value={cond.valueRef}
                     onValueChange={(selectedValue) => updateCondition(i, { valueRef: selectedValue })}
                     className="min-w-[6rem] rounded border border-border bg-background px-2 py-1 text-xs text-foreground"

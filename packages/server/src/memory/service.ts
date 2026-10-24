@@ -38,6 +38,8 @@ export interface MemoryServiceContext extends TurnMemoryContext {
   memoryBudgetTokens?: number;
   /** Present only when recall is being packed into a complete story request. */
   promptTokenCounter?: (text: string) => number;
+  /** Canonical authored entry ID -> current request clothing description. */
+  loreWardrobeValues?: Record<string, string>;
   loreMaxDist?: number;
   signal?: AbortSignal;
 }
@@ -378,13 +380,19 @@ export function createMemoryService(deps: MemoryServiceDependencies) {
         errorCode = "embedding_unavailable";
       }
     }
-    const lore = await loreFor(ctx).fetchCandidates(
+    const loreCandidates = await loreFor(ctx).fetchCandidates(
       ctx.loreEntries,
       queryVector,
       { lore_max_dist: ctx.loreMaxDist },
       turn,
       ctx.applyGlobalLore ?? false,
     );
+    // Source eligibility/index validation already ran. Transform copied candidate
+    // text only, before target-model token packing; never write it to the index.
+    const lore = loreCandidates.map(candidate => {
+      const key = Object.keys(ctx.loreWardrobeValues ?? {}).find(id => candidate.id === id || candidate.id.startsWith(id + "#"));
+      return key ? { ...candidate, text: candidate.text.replace(/\{\{\s*sprite_wardrobe\s*\}\}/gi, () => ctx.loreWardrobeValues![key]!) } : candidate;
+    });
     const base = {
       profileId: scope.profileId,
       epoch: ctx.epoch,

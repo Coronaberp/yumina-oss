@@ -59,6 +59,7 @@ export async function resumeScopedStudioApproval(scope: { worldId: string; userI
 export async function writeScopedStudioWorldSchema(args: {
   worldId: string; userId: string; runId: string;
   schema: Record<string, unknown>; expectedSchema: Record<string, unknown>;
+  thumbnailUrl?: string | null; expectedThumbnailUrl?: string | null;
 }) {
   return db.transaction(async tx => {
     const [world] = await tx.select({ id: worlds.id }).from(worlds)
@@ -68,6 +69,7 @@ export async function writeScopedStudioWorldSchema(args: {
       eq(agentRuns.id, args.runId), eq(agentRuns.worldId, args.worldId), eq(agentRuns.userId, args.userId),
     )).for("update");
     if (run?.status !== "running") throw new Error("STUDIO_RUN_NO_LONGER_ACTIVE");
-    return writeStudioWorldSchema({ worldId: args.worldId, creatorId: args.userId, schema: args.schema, expectedSchema: args.expectedSchema, database: tx });
+    return writeStudioWorldSchema({ worldId: args.worldId, creatorId: args.userId, schema: args.schema, expectedSchema: args.expectedSchema,
+      thumbnailUrl: args.thumbnailUrl, expectedThumbnailUrl: args.expectedThumbnailUrl, database: tx });
   });
 }

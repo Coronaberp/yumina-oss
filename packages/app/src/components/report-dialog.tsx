@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Flag, X, Loader2, ImagePlus, Upload, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { feedback } from "@/lib/feedback";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { getImageFilesFromTransfer } from "@/lib/clipboard-image";
 import { FieldError } from "@/components/ui/field-error";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
@@ -39,7 +41,20 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imageImport, setImageImport] = useState<{ token: number; files?: File[]; completed: Map<File, ScreenshotState>; committed: boolean } | null>(null);
+  const imageRequest = useRef(0);
+  const scope = useRef(`${open}:${worldId}`);
+  scope.current = `${open}:${worldId}`;
+  const screenshotsRef = useRef(screenshots);
+  screenshotsRef.current = screenshots;
+  useEffect(() => { imageRequest.current++; setImageImport(null); }, [open, worldId]);
+  useEffect(() => () => {
+    imageRequest.current++;
+    screenshotsRef.current.forEach(item => URL.revokeObjectURL(item.preview));
+  }, []);
+  useEffect(() => () => {
+    if (imageImport && !imageImport.committed) imageImport.completed.forEach(item => URL.revokeObjectURL(item.preview));
+  }, [imageImport]);
 
   // Check if user already reported this world
   useEffect(() => {
@@ -55,83 +70,59 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
       .catch(() => {});
   }, [open, worldId]);
 
-  // Cleanup preview URLs on unmount
-  useEffect(() => {
-    return () => {
-      screenshots.forEach((s) => URL.revokeObjectURL(s.preview));
-    };
-  }, [screenshots]);
-
-  const uploadScreenshot = useCallback(async (file: File): Promise<ScreenshotState> => {
-    const preview = URL.createObjectURL(file);
-    const state: ScreenshotState = { file, preview, key: null, uploading: true, error: false };
-
-    try {
-      // Get presigned URL
-      const urlRes = await fetch(`${apiBase}/api/reports/upload-screenshot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ filename: file.name, contentType: file.type }),
-      });
-
-      if (!urlRes.ok) throw new Error("Failed to get upload URL");
-      const { data } = await urlRes.json();
-
-      // Upload to S3
-      const uploadRes = await fetch(data.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-
-      if (!uploadRes.ok) throw new Error("Upload failed");
-      return { ...state, key: data.key, uploading: false };
-    } catch {
-      return { ...state, uploading: false, error: true };
-    }
+  const uploadScreenshot = useCallback(async (file: File, signal: AbortSignal): Promise<ScreenshotState> => {
+    signal.throwIfAborted();
+    const urlRes = await fetch(`${apiBase}/api/reports/upload-screenshot`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", signal,
+      body: JSON.stringify({ filename: file.name, contentType: file.type }),
+    });
+    if (!urlRes.ok) throw new Error("Failed to get upload URL");
+    const { data } = await urlRes.json();
+    signal.throwIfAborted();
+    const uploadRes = await fetch(data.uploadUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file, signal });
+    if (!uploadRes.ok) throw new Error("Upload failed");
+    signal.throwIfAborted();
+    return { file, preview: URL.createObjectURL(file), key: data.key, uploading: false, error: false };
   }, []);
 
-  const addFiles = useCallback(async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const remaining = 4 - screenshots.length;
+  const stageFiles = (files?: File[]) => {
+    if (screenshots.length >= 4 || submitting) return;
     setScreenshotError(null);
-    if (remaining <= 0) {
-      setScreenshotError(t("toasts:maxScreenshots", "Maximum 4 screenshots"));
-      return;
-    }
-
-    const validFiles = fileArray
-      .filter((f) => f.type.startsWith("image/") && f.size <= 10 * 1024 * 1024)
-      .slice(0, remaining);
-
-    if (validFiles.length < fileArray.length) {
-      setScreenshotError(t("toasts:filesSkipped", "Some files were skipped (must be images under 10MB)"));
-    }
-
-    // Add placeholders immediately
-    const placeholders: ScreenshotState[] = validFiles.map((f) => ({
-      file: f,
-      preview: URL.createObjectURL(f),
-      key: null,
-      uploading: true,
-      error: false,
-    }));
-    setScreenshots((prev) => [...prev, ...placeholders]);
-
-    // Upload in parallel
-    const results = await Promise.all(validFiles.map(uploadScreenshot));
-
-    // Replace placeholders with results
-    setScreenshots((prev) => {
-      const updated = [...prev];
-      for (const result of results) {
-        const idx = updated.findIndex((s) => s.file === result.file);
-        if (idx !== -1) updated[idx] = result;
+    setImageImport({ token: ++imageRequest.current, files, completed: new Map(), committed: false });
+  };
+  const importScreenshots = async (files: File[], context: ImageImportContext, target: NonNullable<typeof imageImport>) => {
+    const initialScope = `${open}:${worldId}`;
+    const current = () => imageRequest.current === target.token && scope.current === initialScope && !context.signal.aborted;
+    if (!current() || target.committed) return;
+    if (files.length > 4 - screenshotsRef.current.length) throw new Error(t("toasts:maxScreenshots", "Maximum 4 screenshots"));
+    const total = files.reduce((sum, item) => sum + item.size, 0);
+    let uploaded = 0;
+    try {
+      for (const file of files) {
+        if (!current()) return;
+        if (!file.type.startsWith("image/") || !file.size || file.size > 10 * 1024 * 1024) throw new Error(t("toasts:filesSkipped", "Use images under 10MB"));
+        // A retry keeps completed uploads from this batch instead of duplicating them.
+        if (!target.completed.has(file)) {
+          const uploaded = await uploadScreenshot(file, context.signal);
+          if (!current()) { URL.revokeObjectURL(uploaded.preview); return; }
+          target.completed.set(file, uploaded);
+        }
+        if (!current()) return;
+        uploaded += file.size;
+        context.onProgress({ fraction: total ? uploaded / total : 0, loaded: uploaded, total, bytesPerSecond: 0 });
       }
-      return updated;
-    });
-  }, [screenshots.length, uploadScreenshot, t]);
+      if (!current()) return;
+      for (const [file, result] of target.completed) {
+        if (!files.includes(file)) { URL.revokeObjectURL(result.preview); target.completed.delete(file); }
+      }
+      target.committed = true;
+      setScreenshots(value => [...value, ...files.map(file => target.completed.get(file)!)]);
+    } catch (failure) {
+      if (!current()) return;
+      setScreenshotError(failure instanceof Error ? failure.message : "Upload failed");
+      throw failure;
+    }
+  };
 
   const removeScreenshot = useCallback((index: number) => {
     setScreenshots((prev) => {
@@ -141,13 +132,11 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
     });
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    if (e.dataTransfer.files.length > 0) {
-      addFiles(e.dataTransfer.files);
-    }
-  }, [addFiles]);
+  const handleDrop = (event: React.DragEvent) => {
+    const files = getImageFilesFromTransfer(event.dataTransfer);
+    if (!files.length) return;
+    event.preventDefault(); setDragging(false); stageFiles(files);
+  };
 
   async function handleSubmit() {
     setFormError(null);
@@ -191,6 +180,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
       // the caller closes it when the user dismisses that step.
       setReason("");
       setDetails("");
+      screenshotsRef.current.forEach(item => URL.revokeObjectURL(item.preview));
       setScreenshots([]);
       setSubmitted(true);
     } catch (err) {
@@ -206,6 +196,7 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
   if (!open) return null;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -312,11 +303,12 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
 
                 {/* Drop zone */}
                 {screenshots.length < 4 && (
-                  <div
+                  <button
+                    type="button"
                     onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                     onDragLeave={() => setDragging(false)}
                     onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => stageFiles()}
                     className={`flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-4 cursor-pointer transition-all ${
                       dragging
                         ? "border-red-400/40 bg-red-500/5"
@@ -331,20 +323,9 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
                     <span className="text-xs text-muted-foreground/40">
                       {dragging ? t("report.dropHere") : t("report.dragHere")}
                     </span>
-                  </div>
+                  </button>
                 )}
 
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files) addFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
                 <FieldError id="report-screenshot-error" message={screenshotError} />
               </div>
             </>
@@ -383,5 +364,10 @@ export function ReportDialog({ worldId, targetName, open, onClose }: ReportDialo
         )}
       </div>
     </div>
+    {imageImport && <ImageImportDialog multiple maxFiles={Math.max(1, 4 - screenshots.length)} maxBytes={10 * 1024 * 1024} preserveOriginal crop="none"
+      title={t("report.screenshots")} initialFiles={imageImport.files}
+      onImport={(files, context) => importScreenshots(files, context, imageImport)}
+      onClose={() => { imageRequest.current++; setImageImport(null); }} />}
+    </>
   );
 }

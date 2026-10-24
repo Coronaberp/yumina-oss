@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Camera, Save, Loader2, User, Plus, Trash2 } from "lucide-react";
 import { personaEntriesSchema, personaSpriteExpressions, MAX_PERSONA_ENTRIES, MAX_PERSONA_ENTRY_TITLE, MAX_PERSONA_ENTRY_CONTENT, MAX_PERSONA_ENTRIES_TOTAL, type PersonaEntry, type PersonaSpriteExpression, type PersonaSprites } from "@yumina/shared";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
 import { FieldError } from "@/components/ui/field-error";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -37,11 +38,17 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
   const [entries, setEntries] = useState<(PersonaEntry & { key: string })[]>([]);
   const [uploadingSprite, setUploadingSprite] = useState<PersonaSpriteExpression | null>(null);
 
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const spriteInputRef = useRef<HTMLInputElement>(null);
-  const spriteTarget = useRef<PersonaSpriteExpression | null>(null);
+  const [imageImport, setImageImport] = useState<{ expression?: PersonaSpriteExpression; token: number; persona: Persona | null } | null>(null);
+  const imageRequest = useRef(0);
+  const personaScope = useRef(persona ?? null);
+  personaScope.current = persona ?? null;
+  const modalOpen = useRef(isOpen);
+  modalOpen.current = isOpen;
+  useEffect(() => () => { imageRequest.current++; }, []);
 
   useEffect(() => {
+    imageRequest.current++;
+    setImageImport(null);
     if (isOpen) {
       setName(persona?.name ?? "");
       setAvatarUrl(persona?.avatarUrl ?? null);
@@ -60,35 +67,25 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
     }
   }, [isOpen, persona]);
 
-  const handleAvatarUpload = async (file: File) => {
-    setUploadingAvatar(true);
-    setAvatarError(null);
+  const handleImageUpload = async (files: File[], context: ImageImportContext, target: NonNullable<typeof imageImport>) => {
+    const current = () => modalOpen.current && personaScope.current === target.persona && imageRequest.current === target.token && !context.signal.aborted;
+    if (!current() || !files[0]) return;
+    if (target.expression) { setUploadingSprite(target.expression); setSpriteError(null); }
+    else { setUploadingAvatar(true); setAvatarError(null); }
     try {
-      const asset = await uploadAsset(file, "image");
-      if (!asset) return;
-      // Use the CDN URL directly (matches edit-profile-modal pattern)
-      setAvatarUrl(asset.url);
-    } catch {
-      setAvatarError(t("persona.modal.avatarUploadFailed"));
+      const asset = await uploadAsset(files[0], "image", undefined, { signal: context.signal, onProgress: context.onProgress, silent: true });
+      if (!current()) return;
+      if (!asset) throw new Error(t(target.expression ? "persona.modal.spriteUploadFailed" : "persona.modal.avatarUploadFailed"));
+      if (target.expression) setSprites(value => ({ ...value, [target.expression!]: asset.url }));
+      else setAvatarUrl(asset.url);
+      setUploadingAvatar(false); setUploadingSprite(null); imageRequest.current++;
+    } catch (failure) {
+      if (!current()) return;
+      const message = failure instanceof Error ? failure.message : t("persona.modal.avatarUploadFailed");
+      if (target.expression) setSpriteError(message); else setAvatarError(message);
+      throw failure;
     } finally {
-      setUploadingAvatar(false);
-    }
-  };
-
-  const handleSpriteUpload = async (file: File) => {
-    const expression = spriteTarget.current;
-    if (!expression) return;
-    setUploadingSprite(expression);
-    setSpriteError(null);
-    try {
-      const asset = await uploadAsset(file, "image");
-      if (!asset) return;
-      setSprites(current => ({ ...current, [expression]: asset.url }));
-    } catch {
-      setSpriteError(t("persona.modal.spriteUploadFailed"));
-    } finally {
-      setUploadingSprite(null);
-      spriteTarget.current = null;
+      if (current()) { setUploadingAvatar(false); setUploadingSprite(null); }
     }
   };
 
@@ -140,6 +137,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
   const isEditing = !!persona;
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent data-vn-dialog-surface="structured" className="z-[120] flex max-h-[90dvh] max-w-2xl flex-col gap-0 overflow-hidden border-white/10 bg-[#1F1D21] p-0 text-main shadow-2xl shadow-gold/5 sm:rounded-3xl [&>button:last-child]:hidden">
         <DialogTitle className="sr-only">
@@ -204,7 +202,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
                   {/* Avatar */}
                   <div className="flex flex-col items-center gap-3">
                     <button
-                      onClick={() => avatarInputRef.current?.click()}
+                      onClick={() => setImageImport({ token: ++imageRequest.current, persona: persona ?? null })}
                       disabled={uploadingAvatar}
                       className="group/avatar relative cursor-pointer"
                     >
@@ -241,18 +239,6 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
                         </div>
                       </div>
                     </button>
-                    <input
-                      ref={avatarInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/gif,image/webp"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        e.target.value = "";
-                        handleAvatarUpload(file);
-                      }}
-                    />
                     <FieldError message={avatarError} />
                   </div>
 
@@ -352,7 +338,7 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
                           </div>
                           <div className="space-y-2 border-t border-white/5 p-2">
                             <p className="text-center text-xs font-semibold text-sub">{label}</p>
-                            <Button type="button" variant="outline" aria-label={`Upload ${expression} sprite`} disabled={uploadingSprite !== null} onClick={() => { spriteTarget.current = expression; spriteInputRef.current?.click(); }} className="h-9 w-full px-2 text-xs">
+                            <Button type="button" variant="outline" aria-label={`Upload ${expression} sprite`} disabled={uploadingSprite !== null} onClick={() => setImageImport({ expression, token: ++imageRequest.current, persona: persona ?? null })} className="h-9 w-full px-2 text-xs">
                               {uploadingSprite === expression ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Camera className="mr-1 h-3.5 w-3.5" />}
                               {preview ? t("persona.modal.spriteReplace") : t("persona.modal.spriteUpload")}
                             </Button>
@@ -361,7 +347,6 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
                         </article>;
                       })}
                     </div>
-                    <input ref={spriteInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" className="hidden" aria-label="VN sprite image file" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void handleSpriteUpload(file); }} />
                     <FieldError message={spriteError} />
                   </section>
                 </div>
@@ -428,5 +413,10 @@ export function PersonaEditModal({ isOpen, onClose, persona }: PersonaEditModalP
         </div>
       </DialogContent>
     </Dialog>
+    {isOpen && imageImport && <ImageImportDialog preserveOriginal crop="none" maxBytes={Infinity}
+      title={t(imageImport.expression ? "persona.modal.spriteUpload" : "persona.modal.avatarUpload")}
+      onClose={() => { imageRequest.current++; setImageImport(null); setUploadingAvatar(false); setUploadingSprite(null); }}
+      onImport={(files, context) => handleImageUpload(files, context, imageImport)} />}
+    </>
   );
 }

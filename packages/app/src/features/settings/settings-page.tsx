@@ -43,6 +43,7 @@ import {
   Search,
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
 import { FieldError } from "@/components/ui/field-error";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
 import { useCopyFeedback } from "@/hooks/use-copy-feedback";
@@ -58,6 +59,7 @@ import { useUiStore } from "@/stores/ui";
 import { useTouchDevice } from "@/hooks/use-touch-device";
 import { getAssetCdnUrl } from "@/lib/asset-url";
 import { DOCS_URLS } from "@/lib/docs-urls";
+import { SETTINGS_SOURCE_URL } from "@/lib/community-links";
 import {
   deviceLabel,
   formatSessionTime,
@@ -329,7 +331,7 @@ function ToggleSwitch({ checked, onChange, label }: { checked: boolean; onChange
         checked={checked}
         onCheckedChange={(checked) => onChange((checked === true))}
       />
-      <div className="h-6 w-11 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-checked:bg-gold peer-checked:after:translate-x-full peer-checked:after:border-transparent peer-focus-visible:ring-2 peer-focus-visible:ring-gold/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-card" />
+      <div className="h-6 w-11 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-data-[state=checked]:bg-gold peer-data-[state=checked]:after:translate-x-full peer-data-[state=checked]:after:border-transparent peer-focus-visible:ring-2 peer-focus-visible:ring-gold/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-card" />
     </label>
   );
 }
@@ -499,6 +501,9 @@ export function SettingsPage() {
   } = useUserAssetStore();
   const isMinor = profile?.birthYear ? getAgeFromBirthYear(profile.birthYear) < 18 : false;
   const wallpaperFolderIdRef = useRef<string | null>(null);
+  const wallpaperOwner = useRef(session?.user.id);
+  wallpaperOwner.current = session?.user.id;
+  useEffect(() => { wallpaperFolderIdRef.current = null; }, [session?.user.id]);
 
   const { features, auth } = useEdition();
   // Content level (Discover), privacy (profiles/DMs) and notifications are
@@ -604,7 +609,10 @@ export function SettingsPage() {
     return () => window.cancelAnimationFrame(frame);
   }, [activeSection, mobileShowNav, pendingTargetId]);
 
-  const ensureWallpaperFolder = useCallback(async (): Promise<string | null> => {
+  const ensureWallpaperFolder = useCallback(async (context?: ImageImportContext): Promise<string | null> => {
+    const owner = wallpaperOwner.current;
+    const current = () => wallpaperOwner.current === owner && !context?.signal.aborted;
+    if (!current()) return null;
     if (wallpaperFolderIdRef.current) {
       return wallpaperFolderIdRef.current;
     }
@@ -622,6 +630,7 @@ export function SettingsPage() {
     }
 
     await fetchFolders();
+    if (!current()) return null;
 
     const existingFolder = useUserAssetStore
       .getState()
@@ -635,7 +644,8 @@ export function SettingsPage() {
       return existingFolder.id;
     }
 
-    const createdFolder = await createFolder("wallpaper");
+    const createdFolder = await createFolder("wallpaper", undefined, context ? { signal: context.signal, silent: true } : undefined);
+    if (!current()) return null;
     if (createdFolder) {
       wallpaperFolderIdRef.current = createdFolder.id;
       return createdFolder.id;
@@ -751,13 +761,16 @@ export function SettingsPage() {
     return () => window.clearTimeout(timeout);
   }, [profile?.preferences?.cloudyGlassStrength, settings.cloudyGlassStrength, updateSetting]);
 
-  const handleWallpaperUpload = async (file: File) => {
-    const folderId = await ensureWallpaperFolder();
-    if (!folderId) return;
-
-    const asset = await uploadAsset(file, "image", folderId);
-    if (!asset) return;
-
+  const handleWallpaperUpload = async (file: File, context: ImageImportContext) => {
+    const owner = wallpaperOwner.current;
+    const current = () => wallpaperOwner.current === owner && !context.signal.aborted;
+    if (!current()) return;
+    const folderId = await ensureWallpaperFolder(context);
+    if (!current()) return;
+    if (!folderId) throw new Error(t("wallpaper.folderError"));
+    const asset = await uploadAsset(file, "image", folderId, { signal: context.signal, onProgress: context.onProgress, silent: true });
+    if (!current()) return;
+    if (!asset) throw new Error(t("wallpaper.upload.failed", { defaultValue: "Couldn't upload the wallpaper. Try again." }));
     await fetchAssets({ type: "image", folderId });
   };
 
@@ -2466,14 +2479,16 @@ function WallpaperSection({
   setWallpaperOpacity: (value: number) => void;
   setWallpaperGradientStrength: (value: number) => void;
   setCloudyGlassStrength: (value: number) => void;
-  onUploadWallpaper: (file: File) => Promise<void>;
+  onUploadWallpaper: (file: File, context: ImageImportContext) => Promise<void>;
   onSelectDiscoverWallpaper: (value: WallpaperChoice) => void;
   onSelectProfileWallpaper: (value: WallpaperChoice) => void;
   onSelectSettingsWallpaper: (value: WallpaperChoice) => void;
   onSelectLibraryWallpaper: (value: WallpaperChoice) => void;
 }) {
   const { t } = useTranslation("settings");
-  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [imageImport, setImageImport] = useState<number | null>(null);
+  const imageRequest = useRef(0);
+  useEffect(() => () => { imageRequest.current++; }, []);
   const wallpaperOptions = buildWallpaperOptions(wallpaperAssets, t);
   const wallpaperAssignments = [
     {
@@ -2576,7 +2591,7 @@ function WallpaperSection({
                 )}
                 <button
                   type="button"
-                  onClick={() => uploadInputRef.current?.click()}
+                  onClick={() => setImageImport(++imageRequest.current)}
                   disabled={wallpaperUploading}
                   className="inline-flex items-center gap-2 rounded-xl border border-gold/30 bg-gold/15 px-4 py-2 text-sm font-semibold text-gold transition-colors hover:bg-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -2587,18 +2602,12 @@ function WallpaperSection({
                   )}
                   {t("wallpaper.upload.button")}
                 </button>
-                <input
-                  ref={uploadInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    event.target.value = "";
-                    void onUploadWallpaper(file);
-                  }}
-                />
+                {imageImport && <ImageImportDialog preserveOriginal crop="none" maxBytes={Infinity} title={t("wallpaper.upload.title")}
+                  onImport={async (files, context) => {
+                    if (imageRequest.current !== imageImport || context.signal.aborted) return;
+                    await onUploadWallpaper(files[0]!, context);
+                    if (imageRequest.current === imageImport && !context.signal.aborted) imageRequest.current++;
+                  }} onClose={() => { imageRequest.current++; setImageImport(null); }} />}
               </div>
             </div>
           </div>
@@ -2897,7 +2906,7 @@ function AboutSection() {
           <ChevronRight className="h-4 w-4 text-sub/40" />
         </a>
 
-        <a href={DOCS_URLS.openSource} target="_blank" rel="noopener noreferrer"
+        <a href={SETTINGS_SOURCE_URL} target="_blank" rel="noopener noreferrer"
           className="profile-overview-glass profile-overview-glass--soft block rounded-xl p-4 transition-colors hover:border-white/15">
           <div className="font-semibold text-main">{t("about.licenses")}</div>
         </a>

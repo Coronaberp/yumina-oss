@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 process.env.YUMINA_EDITION = "local";
 await import(new URL("../../scripts/test-local-schema.mjs", import.meta.url).href);
 const { db } = await import("../db/index.js");
-const { apiKeys, user } = await import("../db/schema.js");
+const { apiKeys, user, providerAttempts } = await import("../db/schema.js");
 const { encryptApiKey } = await import("./crypto.js");
 const { resolveProviderForModel, getUserApiKey } = await import("./resolve-provider.js");
 const { CustomProvider } = await import("./llm/custom.js");
@@ -66,5 +66,9 @@ test("story provider fallback does not switch to a newer NSFW profile", async ()
     }) as typeof fetch;
     for await (const _chunk of resolved.provider.generateStream({ model: "custom/story-model", messages: [{ role: "user", content: "Fixture" }] })) { /* capture the real provider request */ }
     assert.equal(called, true);
+    const [receipt] = await db.select().from(providerAttempts).where(eq(providerAttempts.userId, "fallback-owner"));
+    assert.ok(receipt);
+    assert.equal(receipt.profileId, "sfw-older");
+    assert.equal(receipt.status, "complete");
   } finally { globalThis.fetch = original; }
 });

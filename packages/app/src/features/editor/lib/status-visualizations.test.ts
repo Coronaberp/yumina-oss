@@ -7,6 +7,60 @@ import { defaultStatusCategories, normalizeStatusConfig, statusItems, statusRang
 import * as statusEditor from "./status-visualizations";
 
 const variable = { id: "hp-id", name: "HP", type: "number", defaultValue: 84, min: 0, max: 100 } as Variable;
+test("preview controls address authored tabs by stable ID and only accept their parent", async () => {
+  const React = await import("react");
+  const { JSDOM } = await import("jsdom");
+  const { bundleAndCompile } = await import("../../studio/lib/tsx-bundler");
+  const dom = new JSDOM('<div id="root"></div>', { url: "https://yumina.test/sandbox?parentOrigin=https%3A%2F%2Fyumina.test" });
+  const globals = { window: dom.window, document: dom.window.document, React, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import("react-dom/client");
+  const folder = new URL("../../../../../../interfaces/vn/", import.meta.url);
+  const templates = Object.fromEntries(["status-data.ts", "status-view.tsx", "status-sheet.tsx", "status-layout.tsx", "status-gauge.tsx", "status-widgets.tsx"].map(name => [name, readFileSync(new URL(name, folder), "utf8")]));
+  const config = { ...initialStatusConfig([variable]), groups: [{ id: "one", label: "Same" }, { id: "two", label: "Same" }, { id: "empty", label: "Empty" }] };
+  const files = { ...templates, "styles.ts": 'export const styles = ".vn .vn-subpanel button{width:100%}";',
+    "status-layout.tsx": `export default function Layout({config,variables}){
+      const [active,setActive]=React.useState(config.groups[0].id);
+      const groups=variables.partial ? [config.groups[2],config.groups[0]] : config.groups;
+      return <><nav className="authored-tabs" role="tablist" aria-label="Status categories">{groups.map(group=><button key={group.id} role="tab" data-status-category={variables.partial && group.id==="one" ? group.id : undefined} aria-selected={active===group.id} onClick={()=>setActive(group.id)}>{group.label}<span>2</span></button>)}</nav><div role="tabpanel">{active}:{variables["hp-id"]}</div></>;
+    }` };
+  const original = { ...files };
+  const readyMessages: Array<{ data: unknown; targetOrigin: string }> = [];
+  dom.window.postMessage = ((data: unknown, targetOrigin: string) => { readyMessages.push({ data, targetOrigin }); }) as typeof dom.window.postMessage;
+  const api = { worldName: "Preview", variables: { "hp-id": 84 } as Record<string, unknown>, resolveAssetUrl: (ref: string) => ref };
+  const result = bundleAndCompile(statusEditor.buildStatusPreviewFiles({ id: "preview", name: "Preview", updatedAt: "saved", files, entryFile: "index.tsx" }, config, templates), () => api);
+  assert.equal(result.error, null, result.error ?? undefined);
+  const root = createRoot(document.getElementById("root")!);
+  const render = () => React.act(async () => root.render(React.createElement(result.Component!)));
+  const select = (categoryId: string, origin = "https://yumina.test", source: Window | null = dom.window as unknown as Window) => React.act(async () => {
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source, origin, data: { type: "yumina-status-preview-category", categoryId } }));
+  });
+  try {
+    await render();
+    assert.deepEqual(readyMessages, [{ data: { type: "yumina-status-preview-ready" }, targetOrigin: "https://yumina.test" }], "notify the parent only after the category receiver is installed");
+    const panel = () => document.querySelector('[role="tabpanel"]')!.textContent;
+    assert.equal(panel(), "one:84");
+    assert.equal(dom.window.getComputedStyle(document.querySelector('[role="tab"]')!).width, "auto", "custom tabs override the full-width menu button rule");
+    await select("two", "https://untrusted.test"); assert.equal(panel(), "one:84");
+    await select("two", "https://yumina.test", null); assert.equal(panel(), "one:84");
+    await select("two"); assert.equal(panel(), "two:84");
+    await select("empty"); assert.equal(panel(), "empty:84");
+    await select("missing"); assert.equal(panel(), "empty:84");
+    await React.act(async () => (document.querySelector('[role="tab"]') as HTMLButtonElement).click());
+    api.variables = { "hp-id": 37 }; await render();
+    assert.equal(panel(), "one:37", "value updates preserve direct preview navigation");
+    await select("empty"); assert.equal(panel(), "empty:37");
+    api.variables = { "hp-id": 37, partial: true }; await render();
+    await select("one"); assert.equal(panel(), "one:37", "stable IDs address reordered partial tabs with badges");
+    await select("empty"); assert.equal(panel(), "empty:37", "unique direct text ignores badge contents and tab order");
+    await select("two"); assert.equal(panel(), "empty:37", "an absent category cannot select a different tab sharing its label");
+    assert.deepEqual(files, original);
+  } finally {
+    await React.act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 test("new VN status sheets separate identity, vitals, resources and signed relationships", () => {
   const config = initialStatusConfig([variable,
     { ...variable, id: "day", name: "Academy Day" },
@@ -36,6 +90,35 @@ test("Visualizations preview bundles the saved custom layout instead of a differ
   assert.ok(result.code?.includes("Saved relationship compass"));
   assert.ok(!result.code?.includes("Main menu"));
   assert.equal(root.files["status-layout.tsx"], layout);
+});
+test("status preview resolves the saved font and leaves no unresolved font face when a font is absent", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { bundleAndCompile } = await import("../../studio/lib/tsx-bundler");
+  const folder = new URL("../../../../../../interfaces/vn/", import.meta.url);
+  const templates = Object.fromEntries(["status-data.ts", "status-view.tsx", "status-sheet.tsx", "status-layout.tsx", "status-gauge.tsx", "status-widgets.tsx"].map(name => [name, readFileSync(new URL(name, folder), "utf8")]));
+  for (const font of ["@asset:card-font", "", null]) {
+    const files: Record<string, string> = { ...templates,
+      "index.tsx": "export default function App(){return null}",
+      "styles.ts": 'export const styles = "@font-face{font-family:VN;src:url(\'__FONT_URL__\')} .vn{font-family:VN,sans-serif}";',
+      "status-layout.tsx": 'export default function Layout({variables}){return <p>Saved status: {variables["hp-id"]}</p>}',
+    };
+    if (font !== null) files["font.ts"] = `export const fontRef = ${JSON.stringify(font)};`;
+    const original = { ...files };
+    const root = { id: "root", name: "VN", updatedAt: "saved", entryFile: "index.tsx", files } as RootComponent;
+    const resolved: string[] = [];
+    const result = bundleAndCompile(statusEditor.buildStatusPreviewFiles(root, initialStatusConfig([variable]), templates), () => ({
+      variables: { "hp-id": 84 }, worldName: "Preview", resolveAssetUrl: (ref: string) => { resolved.push(ref); return "blob:https://yumina.test/card-font"; },
+    }));
+    assert.equal(result.error, null, result.error ?? undefined);
+    const markup = renderToStaticMarkup(createElement(result.Component!));
+    assert.ok(markup.includes("Saved status: 84"));
+    assert.ok(!markup.includes("__FONT_URL__"), "the scene must not wait for an unresolved placeholder font");
+    assert.deepEqual(resolved, font ? [font] : []);
+    if (font) assert.ok(markup.includes("blob:https://yumina.test/card-font"));
+    else assert.ok(!markup.includes("@font-face"), "an unset font must use the stylesheet's fallback families");
+    assert.deepEqual(root.files, original);
+  }
 });
 test("status configuration binds literal IDs and nested state, clamps bars and preserves negative scales", () => {
   const config = initialStatusConfig([variable]);

@@ -12,9 +12,12 @@ interface SpriteCropDialogProps {
   src: string;
   onCancel: () => void;
   onConfirm: (file: File) => void;
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
 }
 
-export function SpriteCropDialog({ file, src, onCancel, onConfirm }: SpriteCropDialogProps) {
+export function SpriteCropDialog({ file, src, onCancel, onConfirm, title, description, confirmLabel }: SpriteCropDialogProps) {
   const { t } = useTranslation("editor");
   const { t: common } = useTranslation("common");
   const [crop, setCrop] = useState<PercentCrop>(fullImage);
@@ -60,8 +63,8 @@ export function SpriteCropDialog({ file, src, onCancel, onConfirm }: SpriteCropD
   return <Dialog open onOpenChange={open => { if (!open) onCancel(); }}>
     <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-3xl flex-col overflow-y-auto p-4 sm:p-6">
       <DialogHeader className="shrink-0 pr-6 text-left">
-        <DialogTitle>{t("visualNovel.cropSprite")}</DialogTitle>
-        <DialogDescription>{t("visualNovel.cropSpriteHint")}</DialogDescription>
+        <DialogTitle>{title ?? t("visualNovel.cropSprite")}</DialogTitle>
+        <DialogDescription>{description ?? t("visualNovel.cropSpriteHint")}</DialogDescription>
       </DialogHeader>
       <div className="flex min-h-0 items-center justify-center rounded-lg border border-border bg-background p-3">
         <ReactCrop crop={crop} keepSelection ruleOfThirds minWidth={8} minHeight={8} disabled={!loaded || busy}
@@ -76,7 +79,7 @@ export function SpriteCropDialog({ file, src, onCancel, onConfirm }: SpriteCropD
         <button type="button" disabled={!loaded || busy} onClick={() => setCrop(fullImage)} className="rounded-lg border border-border px-3 py-2 text-sm text-foreground disabled:opacity-40 sm:mr-auto">{t("visualNovel.useWholeImage")}</button>
         <button type="button" onClick={onCancel} className="rounded-lg border border-border px-3 py-2 text-sm text-foreground">{common("action.cancel")}</button>
         <button type="button" disabled={!loaded || busy || crop.width <= 0 || crop.height <= 0} onClick={() => void confirm()} className="flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40">
-          {busy && <Loader2 className="h-4 w-4 animate-spin" />}{t("visualNovel.cropAndUpload")}
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />}{confirmLabel ?? t("visualNovel.cropAndUpload")}
         </button>
       </DialogFooter>
     </DialogContent>

@@ -62,6 +62,9 @@ import { resolveStoryProviderForModel, failedOnBackupProfile } from "../lib/stor
 import { resolveAdminContentProvider } from "../lib/admin-content-defaults.js";
 import { prepareContentRoutedRequest, includedStorySourceOverrides, ContentRoutingError } from "../lib/story-content-routing.js";
 import { fillTurnRecallRequest } from "../lib/story-recall-context.js";
+import { hydrateStoryWardrobePage } from "../lib/story-sprite-page.js";
+import { loadSessionWorldDef } from "../lib/world-def-cache.js";
+import { loadStoryWardrobeBranch, snapshotStoryWardrobes } from "../lib/story-sprite-wardrobe.js";
 import { isForkOrphaned } from "../lib/fork-orphan.js";
 import {
   GameStateManager,
@@ -192,6 +195,7 @@ async function resolveModel(requestedModel: string | undefined): Promise<string>
 
 type SwipeWithUsage = {
   modelFallback?: import("@yumina/shared").ModelFallbackRecord;
+  modelRouting?: import("@yumina/shared").ModelRoutingRecord;
   stateValidation?: StateValidationAudit;
   contentFlags?: import("@yumina/shared").ContentFlagAudit;
   content: string;
@@ -621,7 +625,9 @@ messageRoutes.get("/sessions/:sessionId/messages", async (c) => {
     .limit(limit + 1);
 
   const hasMore = pageDesc.length > limit;
-  const result = (hasMore ? pageDesc.slice(0, limit) : pageDesc).reverse();
+  const page = (hasMore ? pageDesc.slice(0, limit) : pageDesc).reverse();
+  const pageWorld = await loadSessionWorldDef(sessionRows[0]!.worldId, currentUser.id);
+  const result = pageWorld ? await hydrateStoryWardrobePage({sessionId,world:pageWorld,rows:page,database:rd}) : page;
 
   // A dead process cannot leave a permanent validation spinner on reload.
   for (const message of result) {
@@ -792,7 +798,8 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   const effectiveGameState =
     characterCreation?.seededState ?? gameState;
 
-  let model = await resolveModel(body.model);
+  const requestedModel = await resolveModel(body.model);
+  let model = requestedModel;
   const [activeUserPrompts] = await Promise.all([
     loadUserPrompts(currentUser.id),
   ]);
@@ -995,6 +1002,11 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
   const historyRows = await loadBoundedRawHistory(sessionId, turnMemory);
   const currentRunHistory = limitHistoryToCurrentRun(historyRows);
 
+  const wardrobeBranch = await loadStoryWardrobeBranch({
+    sessionId, turn: turnMemory, world: worldDef, state: effectiveGameState,
+    throughMessageId: currentRunHistory.at(-1)?.id ?? userMsg?.id,
+  });
+
   // Populate macro context (lastMessage, lastUserMessage, etc.)
   populateMacroContext(stateManager, currentRunHistory, model);
 
@@ -1192,10 +1204,16 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
     userId: currentUser.id, protectedWorld: isProtectedWorld, selected: { resolved, model },
     messages: providerMessages, sourceOverrides: classificationOverrides,
     maxContext: maxContext, maxTokens: clamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: turnMemory, world: worldDef, state: snapshot, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: historyStart, pinnedSuffix: suffixCount + (outputContract.content ? 1 : 0), historyTokens: historyWindowBudget } }),
+    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: turnMemory, world: worldDef, state: snapshot, branchMessages: wardrobeBranch, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: historyStart, pinnedSuffix: suffixCount + (outputContract.content ? 1 : 0), historyTokens: historyWindowBudget } }),
     reasoningEffort: body.overrides?.reasoningEffort, modelInstruction: antiRepetitionInstruction,
     trim: { pinnedPrefix: historyStart, pinnedSuffix: suffixCount + (outputContract.content ? 1 : 0), historyTokens: historyWindowBudget },
   });
+  const modelRouting: import("@yumina/shared").ModelRoutingRecord = {
+    requestedModel,
+    routedModel: routed.model,
+    ...(routed.rerouted ? { reason: routed.routingLabel === "unknown" ? "content-check-uncertain" as const : "content-fallback" as const }
+      : routed.model !== requestedModel ? { reason: "profile-default" as const } : {}),
+  };
   model = routed.model;
   maxContext = routed.maxContext ?? maxContext;
   providerMessages = routed.messages;
@@ -1734,7 +1752,11 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
             );
             const liveState = (lockedSession.rows[0] as { state: Record<string, unknown> } | undefined)?.state;
             await outputAttempt.checkCommit(tx, liveState, finalState);
-            const turnState = reconcileTurnState(worldDef, liveState, effectiveGameState, finalState);
+            const turnState = snapshotStoryWardrobes({
+              world: worldDef, beforeState: effectiveGameState,
+              finalState: reconcileTurnState(worldDef, liveState, effectiveGameState, finalState),
+              branchMessages: wardrobeBranch, content: cleanText, rawContent: fullContent,
+            });
             const generationSnapshot = thinSnapshotForStorage(
               generationBaseline(worldDef, liveState, effectiveGameState, snapshot, finalState) as unknown as Record<string, unknown>,
             );
@@ -1772,6 +1794,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
                     generationState: generationSnapshot,
                     createdAt: new Date().toISOString(),
                     modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+                    modelRouting,
                     model: actualModel,
                     tokenCount: chunk.usage?.totalTokens,
                   },
@@ -1944,6 +1967,7 @@ messageRoutes.post("/sessions/:sessionId/messages", bodyLimit({ maxSize: 24 * 10
               state: persistedState,
               model: actualModel,
               modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+              modelRouting,
               tokenCount: chunk.usage?.totalTokens ?? null,
               generationTimeMs,
               choices,
@@ -2509,7 +2533,8 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
   if (!historicalRegeneration && (gameState.story?.status === "ending-ready" || gameState.story?.status === "completed")) {
     return c.json({ error: "This story ending must be completed before another turn can be generated.", code: "STORY_ENDED" }, 409);
   }
-  let model = await resolveModel(body.model);
+  const requestedModel = await resolveModel(body.model);
+  let model = requestedModel;
   const [activeUserPrompts] = await Promise.all([
     loadUserPrompts(currentUser.id),
   ]);
@@ -2612,6 +2637,20 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
     stateSnapshot: activeSwipe?.stateSnapshot ?? msg.stateSnapshot,
     stateChanges: activeSwipe?.stateChanges ?? msg.stateChanges,
   }, previousRows[0]?.stateSnapshot);
+  if (historicalRegeneration) {
+    // A historical replacement belongs to that reply's opening, not the live
+    // session's later chapter. Hydration also handles pruned legacy snapshots.
+    const [historicalReply] = await hydrateStoryWardrobePage({sessionId:msg.sessionId,world:worldDef,rows:[msg]});
+    const openingId = historicalReply?.spriteWardrobeSnapshot?.openingId;
+    if (typeof openingId === "string" || openingId === null) {
+      regenBase.activeGreetingId = openingId;
+      const savedStart = messageBaseline ?? activeSwipe?.stateSnapshot ?? msg.stateSnapshot;
+      const savedChapter = savedStart?.activeChapterId;
+      regenBase.activeChapterId = typeof savedChapter === "string" || savedChapter === null ? savedChapter
+        : worldDef.chapters?.filter(chapter=>chapter.enabled !== false && chapter.greetingIds.includes(openingId ?? "")).length === 1
+          ? worldDef.chapters.find(chapter=>chapter.enabled !== false && chapter.greetingIds.includes(openingId ?? ""))?.id : undefined;
+    }
+  }
   const promptStoryState = resolveStoryProgress(worldDef, regenBase, { selectEnding: false });
   const stateManager = new GameStateManager(worldDef, promptStoryState);
 
@@ -2632,6 +2671,11 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
   const priorMessages = limitHistoryToCurrentRun(
     msgIndex >= 0 ? historyRows.slice(0, msgIndex) : historyRows,
   );
+
+  const regenWardrobeBranch = await loadStoryWardrobeBranch({
+    sessionId: msg.sessionId, turn: regenTurnMemory, world: worldDef, state: stateManager.getSnapshot(),
+    before: { id: messageId, createdAt: msg.createdAt },
+  });
 
   // Populate macro context from prior messages
   populateMacroContext(stateManager, priorMessages, model);
@@ -2825,10 +2869,16 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
     userId: currentUser.id, protectedWorld: isProtectedWorld, selected: { resolved, model },
     messages: providerMessages, sourceOverrides: classificationOverrides,
     maxContext: regenMaxContext, maxTokens: regenClamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: regenTurnMemory, world: worldDef, state: snapshot, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: regenHistoryStart, pinnedSuffix: regenSuffixCount + (outputContract.content ? 1 : 0), historyTokens: regenHistoryWindowBudget } }),
+    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: regenTurnMemory, world: worldDef, state: snapshot, branchMessages: regenWardrobeBranch, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: regenHistoryStart, pinnedSuffix: regenSuffixCount + (outputContract.content ? 1 : 0), historyTokens: regenHistoryWindowBudget } }),
     reasoningEffort: body.overrides?.reasoningEffort, modelInstruction: regenAntiRepetitionInstruction,
     trim: { pinnedPrefix: regenHistoryStart, pinnedSuffix: regenSuffixCount + (outputContract.content ? 1 : 0), historyTokens: regenHistoryWindowBudget },
   });
+  const modelRouting: import("@yumina/shared").ModelRoutingRecord = {
+    requestedModel,
+    routedModel: routed.model,
+    ...(routed.rerouted ? { reason: routed.routingLabel === "unknown" ? "content-check-uncertain" as const : "content-fallback" as const }
+      : routed.model !== requestedModel ? { reason: "profile-default" as const } : {}),
+  };
   model = routed.model;
   regenMaxContext = routed.maxContext ?? regenMaxContext;
   providerMessages = routed.messages;
@@ -3173,6 +3223,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             stateSnapshot: thinSnapshotForStorage(finalState as unknown as Record<string, unknown>),
             createdAt: new Date().toISOString(),
             modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+            modelRouting,
             model: actualModel,
             tokenCount: chunk.usage?.totalTokens,
           } satisfies SwipeWithUsage;
@@ -3210,7 +3261,11 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
             await outputAttempt.checkCommit(tx, liveState, finalState);
             const futureRows = regenTurnMemory.storyhaven ? await tx.execute(sql`SELECT 1 FROM messages WHERE session_id=${msg.sessionId} AND (COALESCE(created_at,'1970-01-01'::timestamp),id)>(${msg.createdAt?.toISOString()??'1970-01-01'}::timestamp,${messageId}) LIMIT 1`) : {rows:[]};
             const preserveLiveState = historicalRegeneration || futureRows.rows.length>0;
-            const turnState = preserveLiveState ? finalState : reconcileRegenerationState(worldDef, liveState, gameState, finalState);
+            const turnState = snapshotStoryWardrobes({
+              world: worldDef, beforeState: snapshot,
+              finalState: preserveLiveState ? finalState : reconcileRegenerationState(worldDef, liveState, gameState, finalState),
+              branchMessages: regenWardrobeBranch, content: cleanText, rawContent: fullContent,
+            });
             // All alternatives retain the message's original starting state.
             const generationSnapshot = thinSnapshotForStorage(
               generationBaseline(worldDef, liveState, gameState, snapshot, finalState) as unknown as Record<string, unknown>,
@@ -3359,6 +3414,7 @@ messageRoutes.post("/messages/:id/regenerate", async (c) => {
               state: persistedState,
               model: actualModel,
               modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+              modelRouting,
               swipeIndex: updatedSwipes.length - 1,
               totalSwipes: updatedSwipes.length,
               tokenCount: chunk.usage?.totalTokens ?? null,
@@ -3492,7 +3548,8 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
     const status = new GameStateManager(worldDef, gameState).get("game-status");
     if (status === "dead" || status === "won") return c.json({ error: "本局已结束。可查看记录、回退或重新开局。", code: "GAME_ENDED" }, 409);
   }
-  let model = await resolveModel(body.model);
+  const requestedModel = await resolveModel(body.model);
+  let model = requestedModel;
   const [activeUserPrompts] = await Promise.all([
     loadUserPrompts(currentUser.id),
   ]);
@@ -3627,6 +3684,18 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
   // Bounded window — same rationale as the send path (see loadBoundedRawHistory).
   const historyRows = await loadBoundedRawHistory(sessionId, contTurnMemory);
   const currentRunHistory = limitHistoryToCurrentRun(historyRows);
+
+  const contWardrobeBranch = await loadStoryWardrobeBranch({
+    sessionId, turn: contTurnMemory, world: worldDef, state: gameState,
+    throughMessageId: currentRunHistory.at(-1)?.id ?? lastAssistantMsg.id,
+  });
+
+  // Persistence starts before the whole reply, including legacy replies whose
+  // earlier outfit markers are outside the UI and prompt history windows.
+  const contWardrobeBeforeBranch = await loadStoryWardrobeBranch({
+    sessionId, turn:contTurnMemory, world:worldDef, state:gameState,
+    before:{id:lastAssistantMsg.id,createdAt:lastAssistantMsg.createdAt},
+  });
 
   // Populate macro context
   populateMacroContext(stateManager, currentRunHistory, model);
@@ -3801,10 +3870,16 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
     userId: currentUser.id, protectedWorld: isProtectedWorld, selected: { resolved, model },
     messages: providerMessages, sourceOverrides: classificationOverrides,
     maxContext: maxContext, maxTokens: contClamp(body.overrides?.maxTokens ?? worldDef.settings?.maxTokens ?? 4096, 256, 32768),
-    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: contTurnMemory, world: worldDef, state: snapshot, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: contHistoryStart, pinnedSuffix: contSuffixCount + (outputContract.content ? 1 : 0), historyTokens: contHistoryWindowBudget } }),
+    fitContext: (messages, destinationModel, cap) => fillTurnRecallRequest({ turn: contTurnMemory, world: worldDef, state: snapshot, branchMessages: contWardrobeBranch, messages, model: destinationModel, maxContext: cap, trim: { pinnedPrefix: contHistoryStart, pinnedSuffix: contSuffixCount + (outputContract.content ? 1 : 0), historyTokens: contHistoryWindowBudget } }),
     reasoningEffort: body.overrides?.reasoningEffort, modelInstruction: contAntiRepetitionInstruction,
     trim: { pinnedPrefix: contHistoryStart, pinnedSuffix: contSuffixCount + (outputContract.content ? 1 : 0), historyTokens: contHistoryWindowBudget },
   });
+  const modelRouting: import("@yumina/shared").ModelRoutingRecord = {
+    requestedModel,
+    routedModel: routed.model,
+    ...(routed.rerouted ? { reason: routed.routingLabel === "unknown" ? "content-check-uncertain" as const : "content-fallback" as const }
+      : routed.model !== requestedModel ? { reason: "profile-default" as const } : {}),
+  };
   model = routed.model;
   maxContext = routed.maxContext ?? maxContext;
   providerMessages = routed.messages;
@@ -4135,6 +4210,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
                           (chunk.usage?.totalTokens ?? 0),
                         model: actualModel ?? swipe.model,
                         modelFallback: parseModelFallbackRecord(body.modelFallback, model) ?? swipe.modelFallback,
+                        modelRouting,
                       }
                     : swipe
                 )
@@ -4151,6 +4227,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
                     ),
                     createdAt: new Date().toISOString(),
                     modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+                    modelRouting,
                     model: actualModel,
                     tokenCount: chunk.usage?.totalTokens,
                   },
@@ -4199,7 +4276,13 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
             );
             const liveState = (lockedSession.rows[0] as { state: Record<string, unknown> } | undefined)?.state;
             await outputAttempt.checkCommit(tx, liveState, finalState);
-            const turnState = reconcileTurnState(worldDef, liveState, gameState, finalState);
+            const turnState = snapshotStoryWardrobes({
+              world: worldDef, beforeState: originalBaseline,
+              finalState: reconcileTurnState(worldDef, liveState, gameState, finalState),
+              branchMessages: contWardrobeBeforeBranch,
+              previousReply: { role: "assistant", content: originalSwipe?.content ?? lastAssistantMsg.content, rawContent: originalSwipe?.rawContent },
+              content: cleanContinuation, rawContent: continuationContent,
+            });
             const generationSnapshot = thinSnapshotForStorage(
               generationBaseline(worldDef, liveState, gameState, originalBaseline, finalState) as unknown as Record<string, unknown>,
             );
@@ -4340,6 +4423,7 @@ messageRoutes.post("/sessions/:sessionId/continue", async (c) => {
               state: persistedState,
               model: actualModel,
               modelFallback: parseModelFallbackRecord(body.modelFallback, model),
+              modelRouting,
               tokenCount: chunk.usage?.totalTokens ?? null,
               generationTimeMs,
               audioEffects: allAudioEffects.length > 0 ? allAudioEffects : undefined,

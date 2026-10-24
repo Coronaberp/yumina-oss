@@ -17,7 +17,7 @@ import { parseImportedFileFlexible } from "@/lib/import-world";
 import { useCreatePageStore } from "@/stores/create-page";
 import { lazyRouteComponent } from "@/lib/lazy-route-component";
 import i18n from "@/lib/i18n";
-import { getGlobalEditorMode, saveGlobalEditorMode } from "@/features/editor/quick-create-editor";
+import { getGlobalEditorMode, saveGlobalEditorMode } from "@/lib/editor-mode";
 import { useUnsavedChangesGuard } from "@/features/editor/use-unsaved-changes-guard";
 import { UnsavedChangesDialog } from "@/features/editor/unsaved-changes-dialog";
 import { navigateBackSafely } from "@/lib/safe-back";

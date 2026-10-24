@@ -3,12 +3,14 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { eq, asc, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { user, worlds, playSessions, messages, checkpoints, worldMemories } from "../db/schema.js";
+import { user, worlds, playSessions, messages, checkpoints, worldMemories, userPersonas } from "../db/schema.js";
 import { exportSessionArchive, importSessionArchive } from "./session-archives.js";
 import { replaceArchiveMediaReferences } from "@yumina/shared";
+import { resolvePersonaForSession } from "../lib/resolve-persona.js";
+import { canSelectSessionPersona } from "../lib/persona-selection.js";
 
 const owner = `archive-owner-${crypto.randomUUID()}`;
-after(async () => { await db.delete(user).where(eq(user.id, owner)); });
+after(async () => { await db.delete(user).where(eq(user.id, owner)); if ("close" in db.$client) await db.$client.close(); });
 test("full save round trip restores state, persona, memory, checkpoint and fresh message IDs", async () => {
   await db.insert(user).values({ id: owner, name: "Archive owner", email: `${owner}@test.invalid` });
   const [world] = await db.insert(worlds).values({ creatorId: owner, name: "Archive world", schema: { name: "Archive world", entries: [], variables: [{ id: "hp", name: "HP", type: "number", defaultValue: 10 }] } }).returning();
@@ -89,4 +91,60 @@ test("archive memory ownership uses the session owner rather than a nonexistent 
   await db.execute(sql`INSERT INTO storyhaven_memory_sessions(session_id,backend) VALUES (${session!.id},'legacy')`);
   const archive = await exportSessionArchive(owner, session!.id, "full-save");
   assert.deepEqual(archive.restore!.continuityNotes, []);
+});
+
+test("full-save import retains an owned selected account profile and frozen continuity with a fresh version", async () => {
+  const [profile] = await db.insert(userPersonas).values({ userId: owner, name: "Saved player", backstory: "Saved continuity", note: "PRIVATE NOTE", isActive: true }).returning();
+  const [world] = await db.insert(worlds).values({ creatorId: owner, name: "Persona archive", schema: { entries: [], variables: [] } }).returning();
+  const identity = { persona: { id: profile!.id, name: "Saved player", backstory: "Saved continuity" }, selection: { kind: "account" as const }, selectionVersion: "source-version", started: true };
+  const [source] = await db.insert(playSessions).values({ userId: owner, worldId: world!.id, state: { turnCount: 3 }, personaLocked: true, sessionPersona: identity }).returning();
+  const archive = await exportSessionArchive(owner, source!.id, "full-save");
+  await db.update(userPersonas).set({ name: "Edited account profile", backstory: "New profile text" }).where(eq(userPersonas.id, profile!.id));
+  const result = await importSessionArchive(owner, archive);
+  const [restored] = await db.select().from(playSessions).where(eq(playSessions.id, result.sessionId));
+  assert.deepEqual(restored!.sessionPersona!.persona, identity.persona);
+  assert.deepEqual(restored!.sessionPersona!.selection, { kind: "account" });
+  assert.notEqual(restored!.sessionPersona!.selectionVersion, identity.selectionVersion);
+  assert.ok(restored!.sessionPersona!.selectionVersion);
+  assert.deepEqual(await resolvePersonaForSession(restored!), identity.persona, "played saves keep their captured identity");
+  assert.equal(await canSelectSessionPersona(restored!), false);
+  assert.ok(!JSON.stringify(restored!.sessionPersona).includes("PRIVATE NOTE"));
+  const [unchanged] = await db.select().from(playSessions).where(eq(playSessions.id, source!.id));
+  assert.deepEqual(unchanged!.sessionPersona, identity);
+});
+
+test("imported greeting retains its owned player link so normal selected-profile edits still apply", async () => {
+  const [profile] = await db.insert(userPersonas).values({ userId: owner, name: "Greeting player", backstory: "Saved greeting identity" }).returning();
+  const [world] = await db.insert(worlds).values({ creatorId: owner, name: "Greeting persona", schema: { entries: [], variables: [] } }).returning();
+  const [source] = await db.insert(playSessions).values({ userId: owner, worldId: world!.id, state: { turnCount: 0 }, personaLocked: true,
+    sessionPersona: { persona: { id: profile!.id, name: "Greeting player", backstory: "Saved greeting identity" }, selection: { kind: "player", id: profile!.id }, started: false } }).returning();
+  const result = await importSessionArchive(owner, await exportSessionArchive(owner, source!.id, "full-save"));
+  const [restored] = await db.select().from(playSessions).where(eq(playSessions.id, result.sessionId));
+  assert.deepEqual(restored!.sessionPersona!.selection, { kind: "player", id: profile!.id });
+  assert.equal(await canSelectSessionPersona(restored!), true);
+  await db.update(userPersonas).set({ backstory: "Edited greeting identity" }).where(eq(userPersonas.id, profile!.id));
+  assert.equal((await resolvePersonaForSession(restored!))?.backstory, "Edited greeting identity");
+});
+
+test("full saves retain creator presets but never link another account's private player profile", async () => {
+  const stranger = crypto.randomUUID();
+  await db.insert(user).values({ id: stranger, name: "Other account", email: `${stranger}@test.invalid` });
+  const [foreign] = await db.insert(userPersonas).values({ userId: stranger, name: "Foreign profile", note: "PRIVATE", backstory: "Foreign current text" }).returning();
+  const [world] = await db.insert(worlds).values({ creatorId: owner, name: "Creator persona", schema: { entries: [], variables: [], personaPresets: [{ id: "creator-player", name: "Creator player", backstory: "Creator continuity" }] } }).returning();
+  const binding = { persona: { id: "creator-player", name: "Creator player", backstory: "Saved creator continuity" }, selection: { kind: "preset" as const, id: "creator-player" }, started: false };
+  const [source] = await db.insert(playSessions).values({ userId: owner, worldId: world!.id, state: { turnCount: 0 }, sessionPersona: binding, personaLocked: true }).returning();
+  const archive = await exportSessionArchive(owner, source!.id, "full-save");
+  const result = await importSessionArchive(owner, archive);
+  const [restored] = await db.select().from(playSessions).where(eq(playSessions.id, result.sessionId));
+  assert.deepEqual(restored!.sessionPersona!.selection, binding.selection);
+  assert.deepEqual(await resolvePersonaForSession(restored!), binding.persona);
+  const detached = await importSessionArchive(owner, { ...archive, restore: { ...archive.restore, persona: {
+    persona: { id: foreign!.id, name: "Portable saved player", backstory: "Portable captured continuity" }, selection: { kind: "player", id: foreign!.id }, started: true } } });
+  const [snapshot] = await db.select().from(playSessions).where(eq(playSessions.id, detached.sessionId));
+  assert.equal(snapshot!.sessionPersona!.persona!.id, undefined);
+  assert.equal(snapshot!.sessionPersona!.selection, undefined);
+  assert.equal((await resolvePersonaForSession(snapshot!))?.backstory, "Portable captured continuity");
+  assert.ok(!JSON.stringify(snapshot!.sessionPersona).includes("PRIVATE"));
+  assert.equal((await db.select().from(userPersonas).where(eq(userPersonas.userId, owner))).some(row => row.id === foreign!.id), false);
+  await db.delete(user).where(eq(user.id, stranger));
 });

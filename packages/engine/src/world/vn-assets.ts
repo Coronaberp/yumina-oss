@@ -100,16 +100,17 @@ function literalMap(source: string, kind: VnAssetKind, binding = kind === "sprit
 /** Transfer authored literal maps into refreshed helpers without evaluating code. */
 export function preserveVnAssetConfiguration(source: string, template: string, kind: VnAssetKind): string {
   const bindings = kind === 'sprites'
-    ? ['sprites', 'npcSprites', 'npcDefaultSpritesA', 'npcDefaultSpritesB']
+    ? ['sprites', 'spriteConfig', 'spriteTypes', 'spriteWardrobeDescriptions', 'spriteVariants', 'spriteVariantSprites', 'spriteVariantWardrobeDescriptions', 'spriteChapterDefaults', 'npcSprites', 'npcDefaultSpritesA', 'npcDefaultSpritesB']
     : ['scenes', 'openingScenes'];
   let result = template;
   for (const binding of bindings) {
     const declared = new RegExp(`^[ \\t]*export\\s+const\\s+${binding}\\s*=`, 'm').test(source);
     if (!declared && binding !== bindings[0]) continue;
-    const depth = binding === 'openingScenes' ? 2 : 1;
+    const depth = binding === 'spriteVariantSprites' ? 3 : ['openingScenes', 'spriteTypes', 'spriteVariantWardrobeDescriptions', 'spriteChapterDefaults'].includes(binding) ? 2 : 1;
     const saved = literalMap(source, kind, binding, depth);
+    if (!declaredSpriteBinding(result, binding)) { result += `\nexport const ${binding} = ${source.slice(saved.start, saved.end)};\n`; continue; }
     const target = literalMap(result, kind, binding, depth);
-    result = result.slice(0, target.start) + JSON.stringify(saved.map, null, 2) + result.slice(target.end);
+    result = result.slice(0, target.start) + source.slice(saved.start, saved.end) + result.slice(target.end);
   }
   if (kind === 'sprites' && /\bnpcDefaults\b/.test(source)) result = writeVnNpcDefaults(result, readVnNpcDefaults(source));
   return result;
@@ -294,4 +295,414 @@ export function vnAssetRows(map: VnAssetMap, kind: VnAssetKind): VnAssetRow[] {
   return Object.entries(map).filter(([name]) => kind !== "backgrounds" || name !== "default").flatMap(([name, value]) =>
     typeof value === "string" ? [{ name, variant: kind === "sprites" ? "normal" : "day", assetRef: value }]
       : Object.entries(value).map(([variant, assetRef]) => ({ name, variant, assetRef })));
+}
+
+export type VnSpriteConfig = { types: Record<string, string>; emotions: Record<string, string> };
+export type VnSpriteRow = VnAssetRow & { spriteType: string; spriteVariant?: string };
+export type VnSpriteWardrobeDescriptions = Record<string, Record<string, string>>;
+export type VnSpriteVariants = Record<string, Record<string, string>>;
+export type VnSpriteVariantSets = Record<string, Record<string, VnAssetMap>>;
+export type VnSpriteVariantWardrobeDescriptions = Record<string, Record<string, Record<string, string>>>;
+export type VnSpriteOutfitSelection = { type: string; variant?: string };
+export type VnSpriteChapterDefaults = Record<string, Record<string, VnSpriteOutfitSelection>>;
+/** Retained for source compatibility; outfit types have no arbitrary count cap. */
+export const VN_SPRITE_TYPE_LIMIT = Number.POSITIVE_INFINITY;
+export const VN_SPRITE_EMOTION_WARNING = 20;
+export const VN_SPRITE_EMOTION_LIMIT = 30;
+export const VN_SPRITE_DEFAULT_EMOTIONS: Readonly<Record<string, string>> = Object.freeze({
+  angry: "Angry", sad: "Sad", shy: "Shy", normal: "Normal", smug: "Smug", happy: "Happy",
+});
+const declaredSpriteBinding = (source: string, binding: string) => new RegExp(`^[ \\t]*export\\s+const\\s+${binding}\\s*=`, "m").test(source);
+const spriteLabel = (id: string) => id.replace(/[-_]+/g, " ").replace(/\b\w/g, char => char.toUpperCase());
+function inferredSpriteLabel(options: Record<string, string>, id: string) {
+  const base=spriteLabel(id), labels=new Set(Object.values(options).map(label=>label.toLocaleLowerCase()));
+  let label=base, suffix=0;
+  while(labels.has(label.toLocaleLowerCase())) label=`${base} (${id}${suffix++ ? ` ${suffix}` : ""})`;
+  return label;
+}
+const unsafeSpriteId = (id: string) => ["__proto__", "constructor", "prototype"].includes(id);
+const spriteId = (label: string) => label.trim().normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+function writeSpriteLiteral(source: string, binding: string, value: unknown, depth: number): string {
+  const serialized = JSON.stringify(value, null, 2);
+  literalMap(`export const ${binding} = ${serialized};`, "sprites", binding, depth);
+  if (!declaredSpriteBinding(source, binding)) return source + `\nexport const ${binding} = ${serialized};\n`;
+  const span = literalMap(source, "sprites", binding, depth);
+  return source.slice(0, span.start) + serialized + source.slice(span.end);
+}
+
+/** Clothing is authored separately from identity and image assignments. */
+export function readVnSpriteWardrobeDescriptions(source: string): VnSpriteWardrobeDescriptions {
+  if (!declaredSpriteBinding(source, "spriteWardrobeDescriptions")) return {};
+  const raw = literalMap(source, "sprites", "spriteWardrobeDescriptions", 1).map;
+  for (const [name, descriptions] of Object.entries(raw)) {
+    if (!name.trim() || typeof descriptions !== "object" || descriptions === null ||
+        Object.values(descriptions).some(value => typeof value !== "string")) throw invalid();
+  }
+  return raw as VnSpriteWardrobeDescriptions;
+}
+
+export function writeVnSpriteWardrobeDescription(source: string, name: string, type: string, description: string, spriteVariant = ""): string {
+  if (!Object.hasOwn(readVnSpriteConfig(source).types, type)) throw new Error("Choose a configured wardrobe.");
+  if (!name.trim() || unsafeSpriteId(name.trim()) || name.trim().length > 200 || description.length > 2000) throw new Error("Use a valid character name and an outfit description of at most 2,000 characters.");
+  if (spriteVariant) {
+    assertSpriteVariant(source, type, spriteVariant);
+    const descriptions = readVnSpriteVariantWardrobeDescriptions(source);
+    const key = characterKey(descriptions, name);
+    const variants = { ...descriptions[key]?.[type] };
+    if (description.trim()) variants[spriteVariant] = description.trim(); else delete variants[spriteVariant];
+    const wardrobe = { ...descriptions[key] };
+    if (Object.keys(variants).length) wardrobe[type] = variants; else delete wardrobe[type];
+    if (Object.keys(wardrobe).length) descriptions[key] = wardrobe; else delete descriptions[key];
+    return writeSpriteLiteral(source, "spriteVariantWardrobeDescriptions", descriptions, 2);
+  }
+  const descriptions = readVnSpriteWardrobeDescriptions(source);
+  const key = Object.keys(descriptions).find(key => key.toLowerCase() === name.trim().toLowerCase()) ?? name.trim();
+  const wardrobe = { ...descriptions[key] };
+  if (description.trim()) wardrobe[type] = description.trim();
+  else delete wardrobe[type];
+  if (Object.keys(wardrobe).length) descriptions[key] = wardrobe;
+  else delete descriptions[key];
+  return writeSpriteLiteral(source, "spriteWardrobeDescriptions", descriptions, 1);
+}
+
+/** Data-only catalogs. Legacy custom emotions remain visible without rewriting art. */
+export function readVnSpriteConfig(source: string): VnSpriteConfig {
+  const raw = declaredSpriteBinding(source, "spriteConfig") ? literalMap(source, "sprites", "spriteConfig", 1).map : {};
+  if (Object.keys(raw).some(key => key !== "types" && key !== "emotions")) throw invalid();
+  for (const values of Object.values(raw)) {
+    if (!values || typeof values !== "object" || Object.values(values).some(value => typeof value !== "string" || !value.trim())) throw invalid();
+  }
+  const config: VnSpriteConfig = { types: { normal: "Normal", ...(raw.types as Record<string,string> ?? {}) }, emotions: { ...VN_SPRITE_DEFAULT_EMOTIONS, ...(raw.emotions as Record<string,string> ?? {}) } };
+  for (const [type, map] of Object.entries(readVnSpriteSets(source))) {
+    if (!Object.hasOwn(config.types, type)) config.types[type] = inferredSpriteLabel(config.types,type);
+    for (const row of vnAssetRows(map, "sprites")) if (!Object.hasOwn(config.emotions, row.variant)) config.emotions[row.variant] = inferredSpriteLabel(config.emotions,row.variant);
+  }
+  const variantSets = readVnSpriteVariantSets(source);
+  for (const type of Object.keys(readVnSpriteVariants(source))) {
+    if (!Object.hasOwn(config.types, type)) config.types[type] = inferredSpriteLabel(config.types, type);
+    for (const map of Object.values(variantSets[type] ?? {})) {
+      for (const row of vnAssetRows(map, "sprites")) if (!Object.hasOwn(config.emotions, row.variant)) config.emotions[row.variant] = inferredSpriteLabel(config.emotions, row.variant);
+    }
+  }
+  return config;
+}
+
+export function readVnSpriteSets(source: string): Record<string, VnAssetMap> {
+  const extra = declaredSpriteBinding(source, "spriteTypes") ? literalMap(source, "sprites", "spriteTypes", 2).map : {};
+  if (Object.hasOwn(extra, "normal")) throw new Error("Normal sprites belong in the existing sprites map.");
+  for (const map of Object.values(extra)) {
+    if (!map || typeof map !== "object") throw invalid();
+    literalMap(`export const sprites = ${JSON.stringify(map)};`, "sprites");
+  }
+  return { normal: readVnAssetMap(source, "sprites"), ...extra as unknown as Record<string, VnAssetMap> };
+}
+
+const characterKey = (map: Record<string, unknown>, name: string) => Object.keys(map).find(key => key.toLowerCase() === name.trim().toLowerCase()) ?? name.trim();
+function assertSpriteKey(id: string): void {
+  if (!id || id.length > 200 || unsafeSpriteId(id) || /[:\[\]\r\n]/.test(id)) throw new Error("Choose a valid sprite ID.");
+}
+
+/** Optional variations are independent of base outfits and may have no art. */
+export function readVnSpriteVariantSets(source: string): VnSpriteVariantSets {
+  const raw = declaredSpriteBinding(source, "spriteVariantSprites") ? literalMap(source, "sprites", "spriteVariantSprites", 3).map : {};
+  for (const [type, variants] of Object.entries(raw)) {
+    assertSpriteKey(type);
+    if (!variants || typeof variants !== "object") throw invalid();
+    for (const [variant, map] of Object.entries(variants)) {
+      assertSpriteKey(variant);
+      if (!map || typeof map !== "object") throw invalid();
+      readVnAssetMap(`export const sprites = ${JSON.stringify(map)};`, "sprites");
+    }
+  }
+  return raw as unknown as VnSpriteVariantSets;
+}
+
+export function readVnSpriteVariantWardrobeDescriptions(source: string): VnSpriteVariantWardrobeDescriptions {
+  const raw = declaredSpriteBinding(source, "spriteVariantWardrobeDescriptions") ? literalMap(source, "sprites", "spriteVariantWardrobeDescriptions", 2).map : {};
+  for (const [name, wardrobe] of Object.entries(raw)) {
+    if (!name.trim() || !wardrobe || typeof wardrobe !== "object") throw invalid();
+    for (const [type, variants] of Object.entries(wardrobe)) {
+      assertSpriteKey(type);
+      if (!variants || typeof variants !== "object") throw invalid();
+      for (const [variant, description] of Object.entries(variants)) {
+        assertSpriteKey(variant);
+        if (typeof description !== "string") throw invalid();
+      }
+    }
+  }
+  return raw as unknown as VnSpriteVariantWardrobeDescriptions;
+}
+
+/** Opening IDs provide chapter presets without resetting an existing story. */
+export function readVnSpriteChapterDefaults(source: string): VnSpriteChapterDefaults {
+  const raw = (declaredSpriteBinding(source, "spriteChapterDefaults") ? literalMap(source, "sprites", "spriteChapterDefaults", 2).map : {}) as unknown as VnSpriteChapterDefaults;
+  for (const [opening, characters] of Object.entries(raw)) {
+    if (!opening.trim() || !characters || typeof characters !== "object") throw invalid();
+    for (const [name, selection] of Object.entries(characters)) {
+      if (!name.trim() || !selection || typeof selection !== "object" || Object.keys(selection).some(key => key !== "type" && key !== "variant")) throw invalid();
+      if (typeof selection.type !== "string") throw invalid();
+      assertSpriteKey(selection.type);
+      if (selection.variant !== undefined && selection.variant !== "") {
+        if (typeof selection.variant !== "string") throw invalid();
+        assertSpriteKey(selection.variant);
+      }
+    }
+  }
+  return raw as unknown as VnSpriteChapterDefaults;
+}
+
+export function readVnSpriteVariants(source: string): VnSpriteVariants {
+  const raw = declaredSpriteBinding(source, "spriteVariants") ? literalMap(source, "sprites", "spriteVariants", 1).map : {};
+  const variants: VnSpriteVariants = {};
+  for (const [type, options] of Object.entries(raw)) {
+    assertSpriteKey(type);
+    if (!options || typeof options !== "object") throw invalid();
+    const labels = new Set<string>();
+    for (const [id, label] of Object.entries(options)) {
+      assertSpriteKey(id);
+      if (typeof label !== "string" || !label.trim() || label.length > 100 || labels.has(label.trim().toLocaleLowerCase())) throw new Error("Variant names must be unique and at most 100 characters.");
+      labels.add(label.trim().toLocaleLowerCase());
+    }
+    variants[type] = { ...options };
+  }
+  const infer = (type: string, id?: string) => {
+    variants[type] ??= {};
+    if (id && !Object.hasOwn(variants[type], id)) variants[type][id] = inferredSpriteLabel(variants[type], id);
+  };
+  for (const [type, sets] of Object.entries(readVnSpriteVariantSets(source))) for (const id of Object.keys(sets)) infer(type, id);
+  for (const wardrobe of Object.values(readVnSpriteVariantWardrobeDescriptions(source))) for (const [type, options] of Object.entries(wardrobe)) for (const id of Object.keys(options)) infer(type, id);
+  for (const wardrobe of Object.values(readVnSpriteWardrobeDescriptions(source))) for (const type of Object.keys(wardrobe)) { assertSpriteKey(type); infer(type); }
+  for (const characters of Object.values(readVnSpriteChapterDefaults(source))) for (const selection of Object.values(characters)) infer(selection.type, selection.variant);
+  return variants;
+}
+
+function assertSpriteVariant(source: string, type: string, variant: string): void {
+  if (!Object.hasOwn(readVnSpriteVariants(source)[type] ?? {}, variant)) throw new Error("Choose a configured outfit variant.");
+}
+
+/** Available expressions and fallback are derived only from this exact outfit. */
+export function readVnSpriteOutfit(source: string, name: string, type = "normal", variant = "") {
+  const map = (variant ? readVnSpriteVariantSets(source)[type]?.[variant] : readVnSpriteSets(source)[type]) ?? {};
+  const images = map[characterKey(map, name)];
+  const expressions: Record<string, string> = Object.fromEntries(Object.entries(typeof images === "string" ? { normal: images } : images ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === "string" && !!entry[1].trim()));
+  const descriptions = variant ? readVnSpriteVariantWardrobeDescriptions(source) : readVnSpriteWardrobeDescriptions(source);
+  const wardrobe = descriptions[characterKey(descriptions, name)];
+  const description = variant ? (wardrobe as VnSpriteVariantWardrobeDescriptions[string] | undefined)?.[type]?.[variant] : (wardrobe as VnSpriteWardrobeDescriptions[string] | undefined)?.[type];
+  return { expressions, description: description?.trim() ?? "", defaultEmotion: Object.hasOwn(expressions, "normal") ? "normal" : Object.keys(expressions)[0] };
+}
+
+export function addVnSpriteVariant(source: string, type: string, label: string): string {
+  const id = spriteId(label);
+  assertSpriteKey(id);
+  if (!Object.hasOwn(readVnSpriteConfig(source).types, type)) throw new Error("Choose a configured wardrobe type.");
+  const variants = readVnSpriteVariants(source);
+  if (Object.hasOwn(variants[type] ?? {}, id)) throw new Error("Choose a unique outfit variant name.");
+  const next = { ...variants, [type]: { ...variants[type], [id]: label.trim() } };
+  const result = writeSpriteLiteral(source, "spriteVariants", next, 1);
+  readVnSpriteVariants(result);
+  return result;
+}
+
+export function renameVnSpriteVariant(source: string, type: string, id: string, label: string): string {
+  const variants = readVnSpriteVariants(source);
+  if (!Object.hasOwn(variants[type] ?? {}, id)) throw new Error("Outfit variant not found.");
+  variants[type]![id] = label.trim();
+  const result = writeSpriteLiteral(source, "spriteVariants", variants, 1);
+  readVnSpriteVariants(result);
+  return result;
+}
+
+export function writeVnSpriteChapterDefault(source: string, greetingIds: readonly string[], name: string, selection?: VnSpriteOutfitSelection): string {
+  if (!greetingIds.length) throw new Error("Link a chapter opening before choosing its outfit defaults.");
+  if (!name.trim() || name.length > 200 || unsafeSpriteId(name.trim())) throw new Error("Choose a valid character.");
+  if (selection) {
+    if (!Object.hasOwn(readVnSpriteConfig(source).types, selection.type)) throw new Error("Choose a configured wardrobe type.");
+    if (selection.variant) assertSpriteVariant(source, selection.type, selection.variant);
+  }
+  const defaults = readVnSpriteChapterDefaults(source);
+  for (const opening of greetingIds) {
+    if (!opening.trim() || unsafeSpriteId(opening)) throw new Error("Choose a valid opening.");
+    const characters = { ...defaults[opening] }, key = characterKey(characters, name);
+    if (selection) characters[key] = { type: selection.type, ...(selection.variant ? { variant: selection.variant } : {}) }; else delete characters[key];
+    if (Object.keys(characters).length) defaults[opening] = characters; else delete defaults[opening];
+  }
+  return writeSpriteLiteral(source, "spriteChapterDefaults", defaults, 2);
+}
+
+function removeSpriteChapterSelections(source: string, predicate: (selection: VnSpriteOutfitSelection) => boolean): string {
+  if (!declaredSpriteBinding(source, "spriteChapterDefaults")) return source;
+  const defaults = readVnSpriteChapterDefaults(source);
+  for (const [opening, characters] of Object.entries(defaults)) {
+    for (const [name, selection] of Object.entries(characters)) if (predicate(selection)) delete characters[name];
+    if (!Object.keys(characters).length) delete defaults[opening];
+  }
+  return writeSpriteLiteral(source, "spriteChapterDefaults", defaults, 2);
+}
+
+/** Detach variant assignments; underlying assets remain in the image library. */
+export function removeVnSpriteVariant(source: string, type: string, id: string): string {
+  const variants = readVnSpriteVariants(source);
+  if (!Object.hasOwn(variants[type] ?? {}, id)) return source;
+  const sets = readVnSpriteVariantSets(source);
+  if (sets[type]) { delete sets[type]![id]; if (!Object.keys(sets[type]!).length) delete sets[type]; }
+  const descriptions = readVnSpriteVariantWardrobeDescriptions(source);
+  for (const [name, wardrobe] of Object.entries(descriptions)) {
+    if (wardrobe[type]) { delete wardrobe[type]![id]; if (!Object.keys(wardrobe[type]!).length) delete wardrobe[type]; }
+    if (!Object.keys(wardrobe).length) delete descriptions[name];
+  }
+  source = removeSpriteChapterSelections(source, selection => selection.type === type && selection.variant === id);
+  if (declaredSpriteBinding(source, "spriteVariantSprites")) source = writeSpriteLiteral(source, "spriteVariantSprites", sets, 3);
+  if (declaredSpriteBinding(source, "spriteVariantWardrobeDescriptions")) source = writeSpriteLiteral(source, "spriteVariantWardrobeDescriptions", descriptions, 2);
+  delete variants[type]![id];
+  if (!Object.keys(variants[type]!).length) delete variants[type];
+  return writeSpriteLiteral(source, "spriteVariants", variants, 1);
+}
+
+export function writeVnSpriteConfig(source: string, config: VnSpriteConfig): string {
+  const before = readVnSpriteConfig(source);
+  if (!config || !config.types || !config.emotions) throw invalid();
+  for (const kind of ["types", "emotions"] as const) {
+    const limit = kind === "types" ? VN_SPRITE_TYPE_LIMIT : VN_SPRITE_EMOTION_LIMIT;
+    const entries = Object.entries(config[kind]);
+    if (entries.length > Math.max(limit, Object.keys(before[kind]).length)) throw new Error(`A card supports at most ${limit} ${kind}.`);
+    const labels = new Set<string>();
+    for (const [id,label] of entries) {
+      if (!id || unsafeSpriteId(id) || /[:\[\]\r\n]/.test(id) || typeof label !== "string" || !label.trim() || label.length > 100) throw new Error("Choose a valid sprite name (1–100 characters).");
+      const key=label.trim().toLocaleLowerCase();
+      if (labels.has(key)) throw new Error("Sprite names must be unique.");
+      labels.add(key);
+    }
+    const builtins = kind === "types" ? { normal: "Normal" } : VN_SPRITE_DEFAULT_EMOTIONS;
+    for (const [id, label] of Object.entries(builtins)) if (config[kind][id] !== label) throw new Error("Built-in sprite options cannot be renamed or removed.");
+  }
+  for (const [type,map] of Object.entries(readVnSpriteSets(source))) {
+    if (!Object.hasOwn(config.types,type)) throw new Error("Remove the wardrobe's images before removing its type.");
+    for(const row of vnAssetRows(map,"sprites")) if(!Object.hasOwn(config.emotions,row.variant))throw new Error("Remove the emotion's images before removing its option.");
+  }
+  for (const row of vnSpriteRows(source)) {
+    if (!Object.hasOwn(config.types, row.spriteType) || !Object.hasOwn(config.emotions, row.variant)) throw new Error("Remove the outfit's images before removing its catalog option.");
+  }
+  for (const type of Object.keys(readVnSpriteVariants(source))) if (!Object.hasOwn(config.types, type)) throw new Error("Remove the type's variants and clothing before removing its catalog option.");
+  return writeSpriteLiteral(source, "spriteConfig", config, 1);
+}
+
+export function assignVnSprite(source: string, name: string, type: string, emotion: string, assetRef: string, spriteVariant = ""): string {
+  const config = readVnSpriteConfig(source);
+  if (!Object.hasOwn(config.types,type) || !Object.hasOwn(config.emotions,emotion)) throw new Error("Choose a configured wardrobe and emotion.");
+  if (unsafeSpriteId(type) || unsafeSpriteId(emotion) || !name.trim() || unsafeSpriteId(name.trim()) || name.trim().length > 200 || !assetRef.trim()) throw new Error("Choose a valid character, wardrobe, emotion and image.");
+  const assign = (map: VnAssetMap): VnAssetMap => {
+    const key=Object.keys(map).find(key=>key.toLowerCase()===name.trim().toLowerCase())??name.trim();
+    const current=map[key], variants=typeof current === "string" ? {normal:current} : current;
+    return {...map,[key]:{...variants,[emotion]:assetRef}};
+  };
+  if (spriteVariant) {
+    assertSpriteVariant(source, type, spriteVariant);
+    const sets = readVnSpriteVariantSets(source);
+    return writeSpriteLiteral(source, "spriteVariantSprites", { ...sets, [type]: { ...sets[type], [spriteVariant]: assign(sets[type]?.[spriteVariant] ?? {}) } }, 3);
+  }
+  if (type === "normal") return writeVnAssetMap(source, "sprites", assign(readVnAssetMap(source,"sprites")));
+  const { normal: _normal, ...extra } = readVnSpriteSets(source);
+  return writeSpriteLiteral(source,"spriteTypes",{...extra,[type]:assign(extra[type]??{})},2);
+}
+
+export function removeVnSprite(source: string, name: string, type: string, emotion: string, spriteVariant = ""): string {
+  if (spriteVariant) {
+    const sets = readVnSpriteVariantSets(source), map = sets[type]?.[spriteVariant];
+    const key = map && Object.keys(map).find(key => key.toLowerCase() === name.trim().toLowerCase());
+    if (!key) return source;
+    sets[type]![spriteVariant] = removeVnAsset(map!, key, emotion);
+    return writeSpriteLiteral(source, "spriteVariantSprites", sets, 3);
+  }
+  const sets = readVnSpriteSets(source);
+  const map = sets[type];
+  const key = map && Object.keys(map).find(key => key.toLowerCase() === name.trim().toLowerCase());
+  if (!key) return source;
+  if (type === "normal") return writeVnAssetMap(source,"sprites",removeVnAsset(sets.normal!,key,emotion));
+  const {normal:_normal,...extra}=sets;
+  if (!extra[type]) return source;
+  extra[type]=removeVnAsset(extra[type],key,emotion);
+  return writeSpriteLiteral(source,"spriteTypes",extra,2);
+}
+
+export function vnSpriteRows(source: string): VnSpriteRow[] {
+  return [
+    ...Object.entries(readVnSpriteSets(source)).flatMap(([spriteType,map])=>vnAssetRows(map,"sprites").map(row=>({...row,spriteType}))),
+    ...Object.entries(readVnSpriteVariantSets(source)).flatMap(([spriteType, variants]) => Object.entries(variants).flatMap(([spriteVariant, map]) => vnAssetRows(map, "sprites").map(row => ({ ...row, spriteType, spriteVariant })))),
+  ];
+}
+
+/** Recompute from the current draft; no separate catalog cache or agent refresh. */
+export function readVnSpriteInventory(source: string, entries: ReadonlyArray<Pick<WorldEntry, "name" | "role" | "tags">> = []) {
+  const sets = readVnSpriteSets(source);
+  const wardrobeDescriptions = readVnSpriteWardrobeDescriptions(source);
+  const variants = readVnSpriteVariants(source), variantSets = readVnSpriteVariantSets(source);
+  const variantWardrobeDescriptions = readVnSpriteVariantWardrobeDescriptions(source), chapterDefaults = readVnSpriteChapterDefaults(source);
+  const names = [
+    ...vnCharacterNames(entries), ...Object.values(sets).flatMap(map => Object.keys(map)), ...Object.keys(wardrobeDescriptions),
+    ...Object.values(variantSets).flatMap(variations => Object.values(variations).flatMap(map => Object.keys(map))),
+    ...Object.keys(variantWardrobeDescriptions), ...Object.values(chapterDefaults).flatMap(map => Object.keys(map)),
+  ];
+  const characters = new Map<string, string>();
+  for (const name of names) if (name.trim() && !characters.has(name.toLowerCase())) characters.set(name.toLowerCase(), name);
+  return { config: readVnSpriteConfig(source), rows: vnSpriteRows(source), characters: [...characters.values()], wardrobeDescriptions, variants, variantSets, variantWardrobeDescriptions, chapterDefaults };
+}
+
+export function addVnSpriteOption(source: string, kind: keyof VnSpriteConfig, label: string): string {
+  const config=readVnSpriteConfig(source);
+  const id=spriteId(label);
+  if (!id || Object.hasOwn(config[kind],id)) throw new Error("Choose a unique sprite name.");
+  return writeVnSpriteConfig(source,{...config,[kind]:{...config[kind],[id]:label.trim()}});
+}
+
+export function renameVnSpriteOption(source: string, kind: keyof VnSpriteConfig, id: string, label: string): string {
+  const config=readVnSpriteConfig(source);
+  if (!Object.hasOwn(config[kind],id)) throw new Error("Sprite option not found.");
+  return writeVnSpriteConfig(source,{...config,[kind]:{...config[kind],[id]:label.trim()}});
+}
+
+/** Removing a custom option removes only its image assignments; assets stay in the library. */
+export function removeVnSpriteOption(source: string, kind: keyof VnSpriteConfig, id: string): string {
+  const config=readVnSpriteConfig(source);
+  if (id === "normal" || (kind === "emotions" && Object.hasOwn(VN_SPRITE_DEFAULT_EMOTIONS,id))) throw new Error("Built-in sprite options cannot be removed.");
+  if (!Object.hasOwn(config[kind],id)) return source;
+  if (kind === "types") {
+    for (const variant of Object.keys(readVnSpriteVariants(source)[id] ?? {})) source = removeVnSpriteVariant(source, id, variant);
+    source = removeSpriteChapterSelections(source, selection => selection.type === id);
+    const {normal:_normal,...extra}=readVnSpriteSets(source); delete extra[id];
+    source=writeSpriteLiteral(source,"spriteTypes",extra,2);
+    if (declaredSpriteBinding(source, "spriteWardrobeDescriptions")) {
+      const descriptions = readVnSpriteWardrobeDescriptions(source);
+      for (const [name, wardrobe] of Object.entries(descriptions)) {
+        delete wardrobe[id];
+        if (!Object.keys(wardrobe).length) delete descriptions[name];
+      }
+      source = writeSpriteLiteral(source, "spriteWardrobeDescriptions", descriptions, 1);
+    }
+    if (declaredSpriteBinding(source, "spriteVariants")) {
+      const variants = readVnSpriteVariants(source); delete variants[id];
+      source = writeSpriteLiteral(source, "spriteVariants", variants, 1);
+    }
+  } else {
+    for(const row of vnSpriteRows(source).filter(row=>row.variant===id))source=removeVnSprite(source,row.name,row.spriteType,row.variant,row.spriteVariant);
+  }
+  const values={...config[kind]};delete values[id];
+  return writeVnSpriteConfig(source,{...config,[kind]:values});
+}
+
+/** Save-boundary guard: unchanged custom/legacy files are left alone. */
+export function assertVnSpriteCatalogUpdate(beforeSource: string | undefined, afterSource: string | undefined): void {
+  if (!afterSource || beforeSource === afterSource) return;
+  readVnSpriteWardrobeDescriptions(afterSource);
+  readVnSpriteVariants(afterSource);
+  readVnSpriteChapterDefaults(afterSource);
+  let next: VnSpriteConfig;
+  try { next=readVnSpriteConfig(afterSource); }
+  catch (error) { if (["spriteConfig", "spriteTypes", "spriteVariants", "spriteVariantSprites", "spriteVariantWardrobeDescriptions", "spriteChapterDefaults"].some(binding => declaredSpriteBinding(afterSource, binding))) throw error; return; }
+  let previous: VnSpriteConfig | undefined;
+  if (beforeSource) { try { previous=readVnSpriteConfig(beforeSource); } catch { /* A custom old map is not evaluated. */ } }
+  for(const kind of ["types","emotions"] as const){
+    const limit=kind === "types" ? VN_SPRITE_TYPE_LIMIT : VN_SPRITE_EMOTION_LIMIT;
+    if(Object.keys(next[kind]).length>Math.max(limit,Object.keys(previous?.[kind]??{}).length))throw new Error(`A card supports at most ${limit} ${kind}.`);
+  }
+  writeVnSpriteConfig(afterSource,next);
 }

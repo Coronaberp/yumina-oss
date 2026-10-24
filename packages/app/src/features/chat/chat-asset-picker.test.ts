@@ -30,7 +30,12 @@ test("picker navigates nested folders, scopes uploads, and returns the selected 
     queries.push(url.searchParams);
     return Response.json({ data: url.searchParams.get("folderId") === "night" && uploaded ? [image] : [], total: uploaded ? 1 : 0 });
   }) as typeof fetch;
-  const vite = await createServer({ root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, appType: "custom", logLevel: "silent", resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } }, server: { middlewareMode: true } });
+  const imageFile = new File(["picture"], "moon.png", { type: "image/png" });
+  const testGlobals = globalThis as unknown as { imageImportProps?: { onImport: (files: File[], context: { signal: AbortSignal; onProgress: () => void }) => Promise<void>; onClose: () => void; maxBytes?: number; crop?: string; preserveOriginal?: boolean }; imageImportFile?: File; imageImportContext?: { signal: AbortSignal; onProgress: () => void } };
+  const controller = new AbortController();
+  testGlobals.imageImportFile = imageFile;
+  testGlobals.imageImportContext = { signal: controller.signal, onProgress() {} };
+  const vite = await createServer({ plugins: [{ name: "isolated-image-dialog", enforce: "pre", load(id) { if (id.endsWith("/components/image-import-dialog.tsx")) return `import React from "react"; export function ImageImportDialog(props) { globalThis.imageImportProps = props; return React.createElement("button", { id: "confirm-image", onClick: () => props.onImport([globalThis.imageImportFile], globalThis.imageImportContext) }, "Confirm image"); }`; } }], root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, appType: "custom", logLevel: "silent", resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } }, server: { middlewareMode: true } });
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root")!);
   const frame = dom.window.document.createElement("iframe");
@@ -57,13 +62,21 @@ test("picker navigates nested folders, scopes uploads, and returns the selected 
     assert.equal(queries.at(-1)?.get("folderId"), "night");
     assert.equal(queries.at(-1)?.get("offset"), "0");
     assert.deepEqual([...dom.window.document.querySelectorAll("nav button")].map(el => el.textContent), ["My Assets", "Scenes", "Night"]);
-    const fileInput = dom.window.document.querySelector<HTMLInputElement>('input[type="file"]')!;
-    const file = new File(["picture"], "moon.png", { type: "image/png" });
-    Object.defineProperty(fileInput, "files", { configurable: true, value: [file] });
-    await act(async () => { fileInput.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    await click("Upload image");
+    assert.ok(testGlobals.imageImportProps, "chat image upload must open the common image dialog first");
+    assert.equal(uploads.length, 0);
+    assert.equal(testGlobals.imageImportProps.maxBytes, 8 * 1024 * 1024);
+    assert.equal(testGlobals.imageImportProps.crop, "none");
+    assert.equal(testGlobals.imageImportProps.preserveOriginal, true);
+    await click("Confirm image");
     assert.equal(uploads[0]?.[2], "night");
-    assert.deepEqual(uploads[0]?.[3], { addToList: false });
+    const options = uploads[0]?.[3] as { addToList: boolean; signal: AbortSignal; onProgress: unknown };
+    assert.equal(options.addToList, false);
+    assert.equal(options.signal, controller.signal);
+    assert.equal(typeof options.onProgress, "function");
     assert.equal(dom.window.document.querySelector('[aria-pressed="true"]')?.textContent, "moon.png");
+    await act(async () => testGlobals.imageImportProps!.onImport([imageFile], testGlobals.imageImportContext!));
+    assert.equal(uploads.length, 1, "completed image import callbacks are retired before another upload");
     await click("Add to message");
     assert.deepEqual(selected, { type: "image", assetId: image.id, name: image.filename, mimeType: image.mimeType, url: image.url });
     await click("My Assets");
@@ -77,7 +90,7 @@ test("picker navigates nested folders, scopes uploads, and returns the selected 
     assert.equal(dom.window.document.activeElement, frame, "Return typing focus to the game iframe");
   } finally {
     await act(async () => root.unmount());
-    await vite.close(); globalThis.fetch = originalFetch; dom.window.close();
+    await vite.close(); delete testGlobals.imageImportProps; delete testGlobals.imageImportFile; delete testGlobals.imageImportContext; globalThis.fetch = originalFetch; dom.window.close();
     for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });

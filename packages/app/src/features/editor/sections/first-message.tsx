@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, MessageCircle, BookOpen } from "lucide-react";
+import { Plus, Trash2, MessageCircle, BookOpen, Eye } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -26,6 +26,8 @@ import { estimateTokens } from "@yumina/engine";
 import { DebouncedTextarea } from "../components/debounced-field";
 import { GreetingNameField } from "../components/greeting-name-field";
 import { ImageInsertButton, useImageInsert } from "../components/image-insert";
+import { GreetingPreviewModal, type GreetingPreviewSnapshot } from "../components/greeting-preview";
+import { isVnInterface } from "../lib/vn-assets";
 
 const EMPTY_WB: import("@yumina/engine").Worldbook[] = [];
 
@@ -46,6 +48,7 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [preview, setPreview] = useState<GreetingPreviewSnapshot | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -83,7 +86,7 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
   // Pictures land in the opening text at the caret: the toolbar button,
   // a dropped file or a pasted image all go through the asset library.
   const contentRef = useRef<HTMLDivElement>(null);
-  const imageInsert = useImageInsert(() => contentRef.current?.querySelector("textarea") ?? null);
+  const imageInsert = useImageInsert(() => contentRef.current?.querySelector("textarea") ?? null, activeGreeting?.id);
 
   function handleCreate() {
     addEntry("greeting", "system-presets");
@@ -207,6 +210,18 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-3">
                     <ImageInsertButton insert={imageInsert} />
+                    {!isVnInterface(worldDraft.rootComponent) && (
+                      <button
+                        type="button"
+                        onClick={() => setPreview({
+                          world: structuredClone(worldDraft),
+                          greeting: structuredClone({ ...activeGreeting, content: contentRef.current?.querySelector("textarea")?.value ?? activeGreeting.content }),
+                        })}
+                        className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <Eye aria-hidden="true" className="h-3 w-3" /> {t("firstMessage.preview")}
+                      </button>
+                    )}
                     <p className="text-xs text-muted-foreground/50">
                       {t("firstMessage.macros")} <code className="rounded bg-accent px-1 py-0.5 text-[11px]">{"{{user}}"}</code>{" "}
                       <code className="rounded bg-accent px-1 py-0.5 text-[11px]">{"{{char}}"}</code>
@@ -330,6 +345,7 @@ export function FirstMessageSection({ compact }: { compact?: boolean } = {}) {
           </div>
         )}
       </div>
+      {preview && <GreetingPreviewModal snapshot={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }

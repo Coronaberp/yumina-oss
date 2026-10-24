@@ -33,6 +33,7 @@ import {
   SlidersHorizontal,
   GitBranch,
   Flag,
+  Copy,
 } from "lucide-react";
 import { feedback } from "@/lib/feedback";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
@@ -47,7 +48,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useEditorStore, type EditorSection } from "@/stores/editor";
 import { useWorldsStore } from "@/stores/worlds";
-import { saveEditorMode, saveGlobalEditorMode } from "./quick-create-editor";
+import { saveEditorMode, saveGlobalEditorMode } from "@/lib/editor-mode";
 import { VariantTabBar } from "./variant-tab-bar";
 import { ReviewStateControl } from "./review-state-control";
 import { GuestEditorReadOnly } from "./components/guest-editor-readonly";
@@ -73,6 +74,7 @@ import { importWithChunkRecovery } from "@/lib/stale-chunk-reload";
 const EditorTour = lazy(() => importWithChunkRecovery(() => import("./tour/editor-tour")).then(m => ({ default: m.EditorTour })));
 const VersionHistoryDialog = lazy(() => importWithChunkRecovery(() => import("./version-history-dialog")).then(m => ({ default: m.VersionHistoryDialog })));
 import { useUiStore } from "@/stores/ui";
+import { useDuplicateCard } from "@/hooks/use-duplicate-card";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -179,6 +181,17 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
   const editingLocked = useEditorStore(s => s.editingLocked);
   const readOnlyInspect = useEditorStore(s => s.readOnlyInspect || s.editingLocked);
   const guestMode = useEditorStore(s => s.guestMode);
+  const inspecting = useEditorStore(s => s.readOnlyInspect && !s.editingLocked);
+  const { duplicateCard, duplicatingId } = useDuplicateCard();
+  const handleDuplicateCard = () => {
+    if (!serverWorldId || guestMode || inspecting) return;
+    void duplicateCard(serverWorldId, async () => {
+      const current = useEditorStore.getState();
+      if (current.serverWorldId !== serverWorldId || current.loadingWorld || current.guestMode || (current.readOnlyInspect && !current.editingLocked)) return false;
+      // A locked card is copied directly; editable cards include the latest edits.
+      return current.editingLocked || !current.isDirty || await current.saveDraft();
+    });
+  };
   // Edition gates: publishing/review, hub translations (variant bar), bundles.
   const { features } = useEdition();
   const { requireAuth } = useAuthGuard();
@@ -583,6 +596,13 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
+              {!guestMode && !inspecting && <DropdownMenuItem
+                onSelect={handleDuplicateCard}
+                disabled={!serverWorldId || saving || !!duplicatingId}
+              >
+                {duplicatingId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}
+                {t(duplicatingId ? "shell.duplicatingCard" : "shell.duplicateCard")}
+              </DropdownMenuItem>}
               {!readOnlyInspect && (
                 <DropdownMenuItem onClick={handlePlayWorld} disabled={saving || (!serverWorldId && !worldDraft.name)}>
                   <Play className="mr-2 h-4 w-4" />
@@ -722,6 +742,16 @@ export function EditorShell({ onBack, onSwitchToSimple }: EditorShellProps) {
           </div>
 
           <div className="editor-shell-header-actions editor-shell-header-actions--advanced flex items-center gap-2">
+            {!guestMode && !inspecting && <button
+              type="button"
+              onClick={handleDuplicateCard}
+              disabled={!serverWorldId || saving || !!duplicatingId}
+              title={!serverWorldId ? t("shell.saveWorldFirst") : undefined}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-card/70 px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+            >
+              {duplicatingId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+              {t(duplicatingId ? "shell.duplicatingCard" : "shell.duplicateCard")}
+            </button>}
             {/* More actions: mode switch, version history, import/export */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

@@ -1,3 +1,5 @@
+import { Checkbox } from "../../components/ui/checkbox";
+import { controlGlobals } from "../../test/themed-controls.test-helper";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -51,17 +53,18 @@ test("creator-post setting loads saved opt-out and toggles without changing othe
   const module = { exports: {} as { NotificationsSection: React.ComponentType<any>; loadNotificationPreferences: (raw: unknown) => Record<string, boolean> } };
   const require = createRequire(import.meta.url);
   const passthrough = ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children);
-  new Function("require", "module", "exports", "useTranslation", "Card", "CardIcon", "SectionHeader", "Bell", transform(
+  new Function("require", "module", "exports", "useTranslation", "Card", "CardIcon", "SectionHeader", "Bell", "Checkbox", transform(
     `${defaults}\n${loader}\n${toggle}\n${section}\nmodule.exports = { NotificationsSection, loadNotificationPreferences };`,
     { transforms: ["typescript", "jsx", "imports"], jsxRuntime: "automatic" },
-  ).code)(require, module, module.exports, () => ({ t: (key: string) => key }), passthrough, () => null, () => null, () => null);
+  ).code)(require, module, module.exports, () => ({ t: (key: string) => key }), passthrough, () => null, () => null, () => null, Checkbox);
   const { NotificationsSection: Section, loadNotificationPreferences: load } = module.exports;
   assert.equal(load(undefined).creatorPosts, true, "legacy recipients keep receiving opted-in broadcasts");
   let preferences = load({ engagement: false, social: true, library: false, community: true, creatorPosts: false });
   const dom = new JSDOM('<div id="root"></div>');
-  const keys = ["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const globals = controlGlobals(dom);
+  const keys = Object.keys(globals);
   const saved = keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true })) {
+  for (const [key, value] of Object.entries(globals)) {
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   }
   const root = createRoot(document.getElementById("root")!);
@@ -71,14 +74,17 @@ test("creator-post setting loads saved opt-out and toggles without changing othe
   } }));
   try {
     await act(async () => render());
-    const input = document.querySelector('[aria-label="notifications.groups.creatorPosts"]') as HTMLInputElement;
+    const input = document.querySelector('[aria-label="notifications.groups.creatorPosts"]') as HTMLButtonElement;
     assert.ok(input);
-    assert.equal(input.checked, false);
+    assert.equal(input.getAttribute("aria-checked"), "false");
     await act(async () => input.click());
     assert.deepEqual(preferences, { engagement: false, social: true, library: false, community: true, creatorPosts: true });
     await act(async () => render());
+    assert.equal(input.getAttribute("aria-checked"), "true");
     await act(async () => input.click());
     assert.equal(preferences.creatorPosts, false);
+    await act(async () => render());
+    assert.equal(input.getAttribute("aria-checked"), "false");
     assert.equal(load(preferences).creatorPosts, false, "a reload retains opt-out");
   } finally {
     await act(async () => root.unmount());

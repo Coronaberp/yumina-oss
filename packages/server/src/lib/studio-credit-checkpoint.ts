@@ -33,6 +33,8 @@ interface CheckpointBase {
   messages: ChatMessage[];
   iteration: number;
   worldRevision: string;
+  /** Raw working portrait captured before generation. Missing on legacy results. */
+  sourceThumbnailUrl?: string | null;
   requiredCredits: number;
   /** Durable diagnostic; public APIs map private errors to a safe category. */
   reason?: string;
@@ -87,7 +89,7 @@ function canonicalJson(value: unknown): string {
 /** Lock order is always world -> run. New-run creation must use the world lock too. */
 async function lockedWorld(tx: StudioCreditTransaction, scope: StudioCreditWorldScope) {
   const [world] = await tx.select({
-    id: worlds.id, status: worlds.status, schema: worlds.schema, updatedAt: worlds.updatedAt,
+    id: worlds.id, status: worlds.status, schema: worlds.schema, thumbnailUrl: worlds.thumbnailUrl, updatedAt: worlds.updatedAt,
   }).from(worlds).where(and(eq(worlds.id, scope.worldId), eq(worlds.creatorId, scope.userId))).for("update");
   if (!world) return null;
   return world;
@@ -95,10 +97,11 @@ async function lockedWorld(tx: StudioCreditTransaction, scope: StudioCreditWorld
 
 async function worldState(tx: StudioCreditTransaction, world: NonNullable<Awaited<ReturnType<typeof lockedWorld>>>) {
   const [pending] = world.status === "published"
-    ? await tx.select({ id: worldPendingEdits.id, schema: worldPendingEdits.schema, updatedAt: worldPendingEdits.updatedAt })
+    ? await tx.select({ id: worldPendingEdits.id, schema: worldPendingEdits.schema, thumbnailUrl: worldPendingEdits.thumbnailUrl, updatedAt: worldPendingEdits.updatedAt })
       .from(worldPendingEdits).where(eq(worldPendingEdits.worldId, world.id)).for("update")
     : [];
   const schema = (pending?.schema ?? world.schema) as Record<string, unknown>;
+  const thumbnailUrl = pending ? pending.thumbnailUrl : world.thumbnailUrl;
   const revision = createHash("sha256").update(canonicalJson({
     status: world.status,
     updatedAt: world.updatedAt?.toISOString() ?? null,
@@ -106,7 +109,12 @@ async function worldState(tx: StudioCreditTransaction, world: NonNullable<Awaite
     pendingUpdatedAt: pending?.updatedAt?.toISOString() ?? null,
     schema,
   })).digest("hex");
-  return { revision, schema };
+  return { revision, schema, thumbnailUrl };
+}
+
+function matchesWorldSource(checkpoint: StudioCreditCheckpoint, current: { revision: string; thumbnailUrl: string | null }) {
+  return current.revision === checkpoint.worldRevision
+    && (checkpoint.sourceThumbnailUrl === undefined || checkpoint.sourceThumbnailUrl === current.thumbnailUrl);
 }
 
 export async function captureStudioWorldRevisionInTransaction(tx: StudioCreditTransaction, scope: StudioCreditWorldScope) {
@@ -131,6 +139,7 @@ export function readStudioCreditCheckpoint(value: unknown): StudioCreditCheckpoi
     || typeof row.requiredCredits !== "number" || !Number.isFinite(row.requiredCredits) || row.requiredCredits < 0) return null;
   if (row.claim && (typeof row.claim.id !== "string" || !row.claim.id || typeof row.claim.claimedAt !== "string")) return null;
   if (row.reason !== undefined && typeof row.reason !== "string") return null;
+  if (row.sourceThumbnailUrl !== undefined && row.sourceThumbnailUrl !== null && typeof row.sourceThumbnailUrl !== "string") return null;
   if (row.phase === "preflight") return row.generated === undefined ? row as StudioCreditCheckpoint : null;
   if (row.phase !== "generated" || !row.generated) return null;
   const generated = row.generated;
@@ -154,13 +163,14 @@ export function readStudioCreditCheckpoint(value: unknown): StudioCreditCheckpoi
  * stale checkpoint was a dead end — 7 days of prod (2026-09-21): 15 runs, 9
  * creators, rage-clicking a Refresh button that could never change anything.
  */
-export function rebaseStudioCreditCheckpoint(checkpoint: StudioCreditCheckpoint, revision: string): StudioCreditCheckpoint | null {
+export function rebaseStudioCreditCheckpoint(checkpoint: StudioCreditCheckpoint, revision: string, sourceThumbnailUrl?: string | null): StudioCreditCheckpoint | null {
   if (!canRebaseStudioCreditCheckpoint(checkpoint)) return null;
   const { reason, ...rest } = checkpoint;
   const kept = reason !== undefined && reason !== "STALE_WORLD" ? { reason } : {};
-  if (checkpoint.phase === "preflight") return { ...rest, ...kept, worldRevision: revision };
+  const source = checkpoint.sourceThumbnailUrl !== undefined && sourceThumbnailUrl !== undefined ? { sourceThumbnailUrl } : {};
+  if (checkpoint.phase === "preflight") return { ...rest, ...kept, ...source, worldRevision: revision };
   const { generated: _dropped, ...base } = rest;
-  return { ...base, ...kept, phase: "preflight", worldRevision: revision };
+  return { ...base, ...kept, ...source, phase: "preflight", worldRevision: revision };
 }
 
 /** A stale checkpoint the creator can still continue from. The DB keeps the
@@ -210,8 +220,11 @@ export async function stageStudioCreditIteration(
      *  stale world and writes nothing, for a caller that restarts the step
      *  itself against the current world instead of stranding the run. */
     staleWorld?: "pause" | "reject";
+    /** Raw working portrait captured BEFORE generation, including an explicit clear. */
+    sourceThumbnailUrl?: string | null;
   },
 ) {
+  if (opts?.sourceThumbnailUrl !== undefined) checkpoint = { ...checkpoint, sourceThumbnailUrl: opts.sourceThumbnailUrl };
   if (!readStudioCreditCheckpoint(checkpoint)) {
     throw new StudioCreditCheckpointError("INVALID_CHECKPOINT");
   }
@@ -226,7 +239,7 @@ export async function stageStudioCreditIteration(
     }
     const current = await worldState(tx, world);
     const { claim: _claim, ...body } = checkpoint;
-    if (current.revision !== checkpoint.worldRevision) {
+    if (!matchesWorldSource(checkpoint, current)) {
       if (opts?.staleWorld === "reject") return { ok: false as const, code: "STALE_WORLD" as const };
       // Keep the generated work for inspection, but it may not overwrite a
       // newer editor save. Normal resume will continue to reject this revision.
@@ -245,7 +258,7 @@ export async function stageStudioCreditIteration(
       iteration: checkpoint.iteration, textContent: checkpoint.phase === "generated" ? checkpoint.generated.textContent : run.textContent,
       updatedAt: new Date(),
     }).where(scopedRun(scope));
-    return { ok: true as const, claimId, checkpoint: claimed, workingSchema: current.schema };
+    return { ok: true as const, claimId, checkpoint: claimed, workingSchema: current.schema, workingThumbnailUrl: current.thumbnailUrl };
   });
 }
 
@@ -265,11 +278,11 @@ export async function claimStudioCreditResume(scope: StudioCreditScope) {
     const current = await worldState(tx, world);
     let checkpoint = stored;
     let rebased = false;
-    if (current.revision !== stored.worldRevision) {
+    if (!matchesWorldSource(stored, current)) {
       // The creator kept editing while this was paused (that is the normal
       // case: a pause outlives a save). Continue against the world as it is
       // now; only a paid, unapplied result must still refuse.
-      const next = rebaseStudioCreditCheckpoint(stored, current.revision);
+      const next = rebaseStudioCreditCheckpoint(stored, current.revision, current.thumbnailUrl);
       if (!next) {
         await tx.update(agentRuns).set({ creditCheckpoint: { ...stored, reason: "STALE_WORLD" } }).where(scopedRun(scope));
         return { ok: false as const, code: "STALE_WORLD" as const };
@@ -282,7 +295,7 @@ export async function claimStudioCreditResume(scope: StudioCreditScope) {
     await tx.update(agentRuns).set({
       status: "running", creditCheckpoint: claimed as unknown as Record<string, unknown>, error: null, updatedAt: new Date(),
     }).where(scopedRun(scope));
-    return { ok: true as const, claimId, run, checkpoint: claimed, workingSchema: current.schema, rebased };
+    return { ok: true as const, claimId, run, checkpoint: claimed, workingSchema: current.schema, workingThumbnailUrl: current.thumbnailUrl, rebased };
   });
 }
 
@@ -333,7 +346,7 @@ export async function withStudioCreditClaimTransaction<T>(
     const checkpoint = readStudioCreditCheckpoint(run?.creditCheckpoint);
     if (!run || run.status !== "running" || checkpoint?.claim?.id !== claimId) throw new StudioCreditCheckpointError("CLAIM_LOST");
     const current = await worldState(tx, world);
-    if (!opts?.rebase && current.revision !== checkpoint.worldRevision) throw new StudioCreditCheckpointError("STALE_WORLD");
+    if (!opts?.rebase && !matchesWorldSource(checkpoint, current)) throw new StudioCreditCheckpointError("STALE_WORLD");
     const result = await work(tx, checkpoint, current.schema, run);
     const status = result.status ?? "running";
     if (status === "awaiting_credits" && !result.checkpoint) throw new StudioCreditCheckpointError("INVALID_CHECKPOINT");
@@ -345,6 +358,7 @@ export async function withStudioCreditClaimTransaction<T>(
       const next = await worldState(tx, nextWorld);
       const { claim: _claim, ...body } = result.checkpoint;
       nextCheckpoint = { ...body, worldRevision: next.revision,
+        ...(checkpoint.sourceThumbnailUrl !== undefined || result.checkpoint.sourceThumbnailUrl !== undefined ? { sourceThumbnailUrl: next.thumbnailUrl } : {}),
         ...(status === "running" ? { claim: checkpoint.claim } : {}),
       } as StudioCreditCheckpoint;
     }

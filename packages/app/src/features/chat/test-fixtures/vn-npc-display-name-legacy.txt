@@ -1,0 +1,48 @@
+import { messagePassages } from "./passages";
+
+const keyFor = line => line.kind === "dialogue" && line.name === "NPC" && !line.player
+  && /^(male|female)$/.test(line.npcGender || "") && typeof line.npcId === "string"
+  && line.npcId.trim() && line.npcId.toLowerCase() !== "unknown"
+  ? `${line.npcGender}:${line.npcId}` : null;
+
+const selectedContentMatches = message => !Array.isArray(message?.swipes) || !message.swipes.length
+  || typeof message.swipes[message.activeSwipeIndex || 0]?.content === "string"
+    && message.swipes[message.activeSwipeIndex || 0].content === message.content;
+
+function disclosedName(text) {
+  // Only a direct self-introduction at the start of this NPC's displayed
+  // dialogue. Quoted reports, questions, markers and profile text cannot name it.
+  const prefix = /^(?:my name is|call me)\s+/i.exec(text.trim());
+  if (!prefix) return null;
+  if ([...text.matchAll(/\b(?:my name is|call me)\s+/gi)].length !== 1) return "";
+  const name = /^([\p{Lu}\p{Lo}][\p{L}\p{M}'’-]*(?:[ \t]+[\p{Lu}\p{Lo}][\p{L}\p{M}'’-]*){0,3})(?=[.!,:;]|$)/u.exec(text.trim().slice(prefix[0].length));
+  return name?.[1] || null;
+}
+
+/** Read-only display aliases, earned after the introduction page. Recompute
+ * from the selected history/prefix so rewinds and branch changes forget them.
+ * Never replace canonical names, stable NPC IDs, sprite keys or stat ownership. */
+export function npcSpeakerLabels(api, message, lines) {
+  const defaults = lines.map(line => line.name || (line.kind === "dialogue" ? "NPC" : ""));
+  if (!lines.some(keyFor) || !selectedContentMatches(message)) return defaults;
+  const names = new Map();
+  const learn = line => {
+    const key = keyFor(line), name = key && disclosedName(line.text || "");
+    if (!key || name === null) return;
+    if (!names.has(key)) names.set(key, new Set());
+    names.get(key).add(name);
+  };
+  const messages = api.messages || [], at = message?.id ? messages.findIndex(item => item.id === message.id) : -1;
+  for (const prior of messages.slice(0, Math.max(0, at))) {
+    if (prior.role !== "assistant" || prior.status === "failed" || !selectedContentMatches(prior) || !/\b(?:my name is|call me)\s+/i.test(prior.content || "")) continue;
+    // The active displayed content is authoritative; raw/inactive swipes never
+    // supply an introduction, even if they contain additional speaker metadata.
+    for (const line of messagePassages(api, { content: prior.content })) learn(line);
+  }
+  return lines.map((line, index) => {
+    const known = names.get(keyFor(line));
+    const label = known?.size === 1 ? [...known][0] : "";
+    learn(line);
+    return label || defaults[index];
+  });
+}

@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { executeApplyChanges, executeReadEntities, executeGrepWorld, executeValidateWorld, executeAnalyzeTokenCost, classifyApproval, toolCallsToSchemaChanges, resolveEntityType, type SchemaChange } from "./tool-executor.js";
 import type { WorldDefinition } from "@yumina/engine";
-import { worldDefinitionSchema } from "@yumina/engine";
+import { worldDefinitionSchema, legacyStatusTemplates } from "@yumina/engine";
+import { statusTemplates } from "../../../../engine/src/world/status-templates.generated.js";
 
 /** Build OpenAI-style tool calls the way the agent loop hands them to toolCallsToSchemaChanges. */
 function toolCall(name: string, args: Record<string, unknown>) {
@@ -782,6 +783,36 @@ test("apply_changes handles duplicate create by updating existing", () => {
 // ── Cross-entity batch ──
 
 // ── executeValidateWorld ──
+
+test("validate_world treats unchanged stock status renderers as optional only behind a reachable replacement layout", () => {
+  const optional = ["status-view.tsx", "status-gauge.tsx", "status-widgets.tsx"];
+  const makeStatusWorld = (helpers: Record<string, string>, connected = true) => makeWorld({
+    rootComponent: {
+      id: "root", name: "Status", entryFile: "index.tsx", updatedAt: "test",
+      files: {
+        ...helpers,
+        "index.tsx": connected
+          ? 'import Layout from "./status-layout"; export default function App(){ return <Layout />; }'
+          : 'export default function App(){ return <div>Main UI</div>; }',
+        "status-layout.tsx": 'export default function Layout(){ return <div>Authored status layout</div>; }',
+        "custom-panel.tsx": 'export default function CustomPanel(){ return <div>Disconnected user code</div>; }',
+      },
+    },
+  });
+  const unreachable = (world: WorldDefinition) => executeValidateWorld(world).issues
+    .filter(issue => issue.code === "root-ui-unreachable-file").map(issue => issue.entity.id);
+  const current = Object.fromEntries(optional.map(name => [name, statusTemplates[name]!]));
+  // Legacy versions did not all ship every helper; retain current versions for absent ones.
+  const legacy = Object.fromEntries(optional.map(name => [name, legacyStatusTemplates[name] ?? current[name]!]));
+  for (const helpers of [current, legacy]) {
+    assert.deepEqual(unreachable(makeStatusWorld(helpers)), ["custom-panel.tsx"]);
+    const modified = { ...helpers, "status-view.tsx": helpers["status-view.tsx"] + "\n// Creator customization" };
+    assert.deepEqual(unreachable(makeStatusWorld(modified)).sort(), ["custom-panel.tsx", "status-view.tsx"]);
+    const disconnected = unreachable(makeStatusWorld(helpers, false));
+    for (const filename of optional) assert.ok(disconnected.includes(filename), filename);
+    assert.ok(disconnected.includes("status-layout.tsx"), "mere layout presence must not suppress warnings");
+  }
+});
 
 test("validate_world reports clean on a minimal valid world", () => {
   const world = makeWorld({

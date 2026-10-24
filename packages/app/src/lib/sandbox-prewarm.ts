@@ -21,13 +21,13 @@ let started = false;
 const PARSE = /<(?:script[^>]*\ssrc|link[^>]*\shref)=["']([^"']+)["']/g;
 
 export function prewarmSandbox(sandboxEntryUrl: string = SANDBOX_DOC_URL): void {
-  if (started) return;
+  if (started || typeof window === "undefined") return;
   started = true;
-  if (typeof window === "undefined") return;
 
   const schedule =
-    (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
-      .requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 400));
+    typeof window.requestIdleCallback === "function"
+      ? window.requestIdleCallback.bind(window)
+      : (cb: () => void, _options?: IdleRequestOptions) => window.setTimeout(cb, 400);
 
   schedule(async () => {
     try {
@@ -54,13 +54,8 @@ export function prewarmSandbox(sandboxEntryUrl: string = SANDBOX_DOC_URL): void 
         fetch(url, { credentials: "omit", cache: "force-cache" }).catch(() => {});
       }
 
-      // Also warm the parent-side TSX compiler chunk. WorldRenderer dynamic-imports
-      // it after the iframe handshake; on a cold cache that's a serial chunk fetch
-      // on the critical path (the one that used to cost ~956K of Sucrase, plus
-      // lucide-react via tsx-component-builder). Pulling it during idle removes
-      // that cost from the first chat entry.
-      import("@/features/studio/lib/tsx-compiler").catch(() => {});
-      import("@/features/studio/lib/tsx-bundler").catch(() => {});
+      // WorldRenderer loads only the compiler this card needs, in parallel
+      // with iframe boot. Valid precompiled cards need neither compiler.
     } catch {
       // Best-effort — if prewarm fails the sandbox still works, just slower.
     }

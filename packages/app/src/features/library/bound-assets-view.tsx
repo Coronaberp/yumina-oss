@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ImagePlus } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useFeature } from "@/edition/edition";
@@ -31,6 +31,8 @@ import { useFolderBindingStore } from "@/stores/folder-bindings";
 import { useUserAssetStore, type UserAsset } from "@/stores/user-assets";
 import { getAssetCdnUrl, cardImageUrl, fallbackToOriginalOnError } from "@/lib/asset-url";
 import { getUploadMetadata } from "@/lib/asset-upload";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { useEditorStore } from "@/stores/editor";
 import {
   Dialog,
   DialogContent,
@@ -69,6 +71,19 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
   // Platform image generation is hosted-only; without it the view is bindings + uploads.
   const imageGeneration = useFeature("imageGeneration");
   const generationScope = `${session?.user.id ?? "guest"}:${worldId}`;
+  const readOnly = useEditorStore(s => s.serverWorldId === worldId && (s.editingLocked || s.readOnlyInspect || s.guestMode));
+  const scope = JSON.stringify([session?.user.id, worldId, !!readOnly]);
+  const currentScope = useRef(scope);
+  useLayoutEffect(() => { currentScope.current = scope; }, [scope]);
+  const alive = useRef(true);
+  const uploadOperation = useRef<symbol | null>(null);
+  const [imageSources, setImageSources] = useState<{ folderId: string; scope: string; files?: File[]; others: File[]; completed: Set<File> } | null>(null);
+  useEffect(() => {
+    alive.current = true;
+    setImageSources(null); setUploadingFolderId(null); setUploadRemaining(0);
+    uploadOperation.current = null;
+    return () => { alive.current = false; };
+  }, [scope]);
 
   const bindings = useFolderBindingStore((s) => s.bindings);
   const bindingWorldId = useFolderBindingStore((s) => s.worldId);
@@ -146,29 +161,55 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
   );
 
   const uploadToFolder = useCallback(
-    async (folderId: string, files: File[]) => {
-      if (files.length === 0 || uploadingFolderId) return;
+    async (folderId: string, files: File[], context?: ImageImportContext, expectedScope = scope, completed?: Set<File>) => {
+      context?.signal.throwIfAborted();
+      if (!alive.current || currentScope.current !== expectedScope || (context && readOnly)) {
+        if (context) throw new Error("The upload destination changed.");
+        return;
+      }
+      if (uploadOperation.current) {
+        if (context) throw new Error("An upload is already in progress.");
+        return;
+      }
+      const remainingFiles = completed ? files.filter(file => !completed.has(file)) : files;
+      if (remainingFiles.length === 0) return;
+      const operation = Symbol(); uploadOperation.current = operation;
       setUploadingFolderId(folderId);
-      setUploadRemaining(files.length);
+      setUploadRemaining(remainingFiles.length);
       try {
-        for (const [index, file] of files.entries()) {
+        for (const [index, file] of remainingFiles.entries()) {
+          context?.signal.throwIfAborted();
+          if (!alive.current || currentScope.current !== expectedScope) {
+            if (context) throw new Error("The upload destination changed.");
+            break;
+          }
           const { type } = getUploadMetadata(file);
-          await uploadAsset(file, type, folderId);
-          setUploadRemaining(files.length - index - 1);
+          const asset = await uploadAsset(file, type, folderId, context ? { signal: context.signal, onProgress: context.onProgress, silent: true } : undefined);
+          if (asset) completed?.add(file);
+          context?.signal.throwIfAborted();
+          if (context && !asset) throw new Error("Could not upload the image. Please try again.");
+          if (!alive.current || currentScope.current !== expectedScope) break;
+          setUploadRemaining(remainingFiles.length - index - 1);
         }
       } finally {
-        setUploadingFolderId(null);
-        setUploadRemaining(0);
-        setExpandedId(folderId);
-        await Promise.all([
-          loadFolderAssets(folderId, true),
-          fetchBindings(worldId),
-          fetchFolders(),
-        ]);
+        if (uploadOperation.current === operation) uploadOperation.current = null;
+        if (alive.current && currentScope.current === expectedScope) {
+          setUploadingFolderId(null); setUploadRemaining(0);
+          if (!context?.signal.aborted) {
+            setExpandedId(folderId);
+            await Promise.all([loadFolderAssets(folderId, true), fetchBindings(worldId), fetchFolders()]);
+          }
+        }
       }
     },
-    [uploadingFolderId, uploadAsset, loadFolderAssets, fetchBindings, fetchFolders, worldId],
+    [uploadAsset, loadFolderAssets, fetchBindings, fetchFolders, worldId, scope, readOnly],
   );
+
+  const prepareFilesForFolder = (folderId: string, files: File[]) => {
+    const images = files.filter(file => getUploadMetadata(file).type === "image");
+    if (images.length && !readOnly) setImageSources({ folderId, scope, files: images, others: files.filter(file => !images.includes(file)), completed: new Set() });
+    else if (!images.length) void uploadToFolder(folderId, files);
+  };
 
   const pickFilesForFolder = useCallback((folderId: string) => {
     uploadTargetRef.current = folderId;
@@ -370,7 +411,7 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
                   if (!e.dataTransfer.types.includes("Files")) return;
                   e.preventDefault();
                   setDragOverFolderId(null);
-                  void uploadToFolder(folder.id, Array.from(e.dataTransfer.files));
+                  prepareFilesForFolder(folder.id, Array.from(e.dataTransfer.files));
                 }}
                 className={`library-overview-surface overflow-hidden rounded-xl transition-shadow ${
                   isDragOver ? "ring-2 ring-primary/60" : ""
@@ -414,8 +455,8 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
                   )}
 
                   <button
-                    onClick={() => pickFilesForFolder(folder.id)}
-                    disabled={uploadingFolderId !== null}
+                    onClick={() => setImageSources({ folderId: folder.id, scope, others: [], completed: new Set() })}
+                    disabled={readOnly || uploadingFolderId !== null}
                     title={t("bindings.uploadToFolder", { folder: folder.name })}
                     className="flex shrink-0 items-center gap-1.5 rounded-md p-1.5 text-muted-foreground/60 transition-colors hover:bg-white/5 hover:text-primary disabled:cursor-default disabled:opacity-60"
                   >
@@ -430,6 +471,10 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
                       <Upload size={15} />
                     )}
                   </button>
+
+                  <button type="button" onClick={() => pickFilesForFolder(folder.id)} disabled={uploadingFolderId !== null}
+                    title="Upload other files" aria-label={`Upload other files to ${folder.name}`}
+                    className="rounded-md p-1.5 text-muted-foreground/60 transition-colors hover:bg-white/5 hover:text-primary disabled:opacity-60"><FileIcon size={15} /></button>
 
                   <button
                     // R1: the folder leaves this list on unbind; the store's
@@ -581,9 +626,14 @@ export function BoundAssetsView({ worldId }: { worldId: string }) {
           const files = Array.from(e.target.files ?? []);
           const target = uploadTargetRef.current;
           e.target.value = "";
-          if (target) void uploadToFolder(target, files);
+          if (target) prepareFilesForFolder(target, files);
         }}
       />
+
+      {imageSources && imageSources.scope === scope && !readOnly && <ImageImportDialog multiple crop="none" preserveOriginal maxBytes={Infinity} accept="image/*" maxFiles={Infinity}
+        initialFiles={imageSources.files} onClose={() => setImageSources(null)} onImport={async (files, context) => {
+          await uploadToFolder(imageSources.folderId, [...files, ...imageSources.others], context, imageSources.scope, imageSources.completed);
+        }} />}
 
       {/* Bind-folder picker */}
       <Dialog open={showPicker} onOpenChange={setShowPicker}>

@@ -72,9 +72,10 @@ export function createConfiguredImageJobs(generate = generateStudioImage) {
     try {
       controller.signal.throwIfAborted();
       const referenceGuidance = params.proposal.contentRating === "nsfw"
-        ? (params.proposal.styleInstructions ? `\n\nProject visual style:\n${params.proposal.styleInstructions}` : "")
-        : params.proposal.referenceImages?.length || params.proposal.styleInstructions
-        ? `\n\n${studioImageReferenceGuidance(params.proposal.referenceImages ?? [], params.proposal.styleInstructions)}` : "";
+        ? [params.proposal.styleInstructions ? `\n\nProject visual style:\n${params.proposal.styleInstructions}` : "",
+          params.proposal.outfitInstructions ? `\n\nExact outfit clothing guidance:\n${params.proposal.outfitInstructions.slice(0, 3000)}` : ""].join("")
+        : params.proposal.referenceImages?.length || params.proposal.styleInstructions || params.proposal.outfitInstructions
+        ? `\n\n${studioImageReferenceGuidance(params.proposal.referenceImages ?? [], params.proposal.styleInstructions, params.proposal.outfitInstructions)}` : "";
       let lastProgressWrite = 0;
       const progress = (value: { phase: string; percent?: number }) => {
         const now = Date.now();

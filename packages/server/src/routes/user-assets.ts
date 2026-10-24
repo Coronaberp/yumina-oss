@@ -13,16 +13,17 @@ import {
   headObject,
   copyObject,
   storageKind,
-  getObjectBuffer,
-  putObject,
 } from "../lib/s3.js";
 import type { AppEnv } from "../lib/types.js";
 import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { env } from "../lib/env.js";
-import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
+import { losslessWebpKey } from "../lib/image-optimization.js";
+import { imageMasters, storeUploadedImage, isImageMasterKey, validSourceSha256, ImageMasterError } from "../lib/image-masters.js";
 import { uploadOperationId, validUploadRequestId } from "../lib/asset-upload-operation.js";
 import { sessionMedia } from "../lib/session-media.js";
 import { mediaRows, mediaPrefix } from "../lib/session-media-service.js";
+import { createImageImportRoutes } from "./image-import.js";
+import { checkRateLimit } from "../middleware/rate-limit.js";
 
 const userAssetRoutes = new Hono<AppEnv>();
 const OUTPUT_CHAT_FOLDER_NAME = "output chat";
@@ -89,6 +90,7 @@ userAssetRoutes.get("/hub", async (c) => {
 });
 
 userAssetRoutes.use("/*", authMiddleware);
+userAssetRoutes.route("/import-image", createImageImportRoutes({ rateLimit: userId => checkRateLimit(`image-import:${userId}`, 30) }));
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -426,10 +428,12 @@ userAssetRoutes.post("/upload-url", async (c) => {
     contentType?: string;
     type: string;
     requestId?: string;
+    sourceSha256?: string;
     sizeBytes?: number;
   }>();
 
   if (!validUploadRequestId(body.requestId)) return c.json({ error: "Invalid request ID" }, 400);
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
 
   if (!body.filename || !body.type) {
     return c.json({ error: "filename and type are required" }, 400);
@@ -459,7 +463,21 @@ userAssetRoutes.post("/upload-url", async (c) => {
   if (operationId) {
     const [existing] = await db.select().from(userAssets)
       .where(and(eq(userAssets.id, operationId), eq(userAssets.userId, currentUser.id))).limit(1);
-    if (existing) return c.json({ data: { asset: { ...existing, url: `${getCdnOrigin()}/cdn/${existing.id}`, key: existing.url } } });
+    if (existing) {
+      if (body.sourceSha256) {
+        const master = await imageMasters.findByKey(currentUser.id, "public", existing.url);
+        if (!master || master.sourceSha256 !== body.sourceSha256.toLowerCase()) return c.json({ error: "Upload request conflicts with an earlier image" }, 409);
+      }
+      return c.json({ data: { asset: { ...existing, url: `${getCdnOrigin()}/cdn/${existing.id}`, key: existing.url } } });
+    }
+  }
+
+  if (assetType === "image" && body.sourceSha256) {
+    const master = await imageMasters.find(currentUser.id, "public", body.sourceSha256);
+    if (master) {
+      if (body.sizeBytes !== undefined && body.sizeBytes !== master.originalSize) return c.json({ error: "Image metadata does not match this source hash" }, 409);
+      return c.json({ data: { key: master.key, reused: true } });
+    }
   }
 
   if (body.sizeBytes !== undefined && (!Number.isSafeInteger(body.sizeBytes) || body.sizeBytes < 0 || body.sizeBytes > 2_147_483_647)) {
@@ -475,7 +493,13 @@ userAssetRoutes.post("/upload-url", async (c) => {
       if (operationId) {
         const [asset] = await tx.select().from(userAssets)
           .where(and(eq(userAssets.id, operationId), eq(userAssets.userId, currentUser.id))).limit(1);
-        if (asset) return { asset };
+        if (asset) {
+          if (body.sourceSha256) {
+            const master = await imageMasters.findByKey(currentUser.id, "public", asset.url, tx);
+            if (!master || master.sourceSha256 !== body.sourceSha256.toLowerCase()) return { error: "Upload request conflicts with an earlier image", status: 409 as const };
+          }
+          return { asset };
+        }
         const [pending] = await mediaRows<{temp_key:string;filename:string;content_type:string;input_bytes:string;metadata:{type:string};expires_at:string}>(tx, sql`
           SELECT * FROM session_media_uploads WHERE user_id=${currentUser.id}
           AND metadata->>'purpose'='creative-asset' AND metadata->>'operationId'=${operationId}
@@ -531,9 +555,11 @@ userAssetRoutes.post("/", async (c) => {
     folderId?: string | null;
     folderName?: string;
     requestId?: string;
+    sourceSha256?: string;
   }>();
 
   if (!validUploadRequestId(body.requestId)) return c.json({ error: "Invalid request ID" }, 400);
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
 
   if (!body.key || !body.filename || !body.type) {
     return c.json({ error: "key, filename, and type are required" }, 400);
@@ -543,14 +569,18 @@ userAssetRoutes.post("/", async (c) => {
     return c.json({ error: "Invalid asset type" }, 400);
   }
 
-  const privatePipeline = storageKind() === "s3" && await sessionMedia.isReady();
-  if (!(privatePipeline ? body.key.startsWith(`${mediaPrefix(currentUser.id)}pending/`) : body.key.startsWith(`users/${currentUser.id}/`))) {
+  const canonical = body.type === "image" && isImageMasterKey(body.key);
+  const master = canonical ? await imageMasters.findByKey(currentUser.id, "public", body.key) : undefined;
+  if (canonical && !master) return c.json({ error: "Image master not found" }, 404);
+  const privatePipeline = !canonical && storageKind() === "s3" && await sessionMedia.isReady();
+  if (!canonical && !(privatePipeline ? body.key.startsWith(`${mediaPrefix(currentUser.id)}pending/`) : body.key.startsWith(`users/${currentUser.id}/`))) {
     return c.json({ error: "Invalid asset key" }, 400);
   }
 
-  const mimeType = normalizeAssetMimeType(body.filename, body.mimeType);
+  const requestedMime = normalizeAssetMimeType(body.filename, body.mimeType);
+  const mimeType = master && body.sourceSha256?.toLowerCase() === master.sourceSha256 ? master.mimeType : requestedMime;
   const allowed = ALLOWED_MIME_TYPES[body.type];
-  if (ACTIVE_CONTENT_TYPES.has(mimeType.toLowerCase()) || (allowed.length > 0 && !allowed.includes(mimeType))) {
+  if (ACTIVE_CONTENT_TYPES.has(requestedMime.toLowerCase()) || (allowed.length > 0 && (!allowed.includes(requestedMime) || !allowed.includes(mimeType)))) {
     return c.json({ error: "This file type cannot be uploaded" }, 400);
   }
   const requestedFolderName = body.folderName?.trim();
@@ -571,19 +601,23 @@ userAssetRoutes.post("/", async (c) => {
     return c.json({ error: "Failed to create asset folder" }, 500);
   }
 
-  const id = body.requestId ? uploadOperationId(currentUser.id, "file", body.requestId) : crypto.randomUUID();
-  if (!privatePipeline && body.requestId && body.key !== `users/${currentUser.id}/${body.type}/${id}-${sanitizeFilename(body.filename)}`) {
+  const id = body.requestId ? uploadOperationId(currentUser.id, "file", body.requestId) : body.type === "image" ? uploadOperationId(currentUser.id, "file", JSON.stringify([body.key, body.filename, folderId])) : crypto.randomUUID();
+  if (!canonical && !privatePipeline && body.requestId && body.key !== `users/${currentUser.id}/${body.type}/${id}-${sanitizeFilename(body.filename)}`) {
     return c.json({ error: "Invalid asset key for request" }, 400);
   }
   const registeredKey = privatePipeline ? `users/${currentUser.id}/registered/${createHash("sha256").update(body.key).digest("hex")}` : body.key;
-  const existingCondition = and(eq(userAssets.userId, currentUser.id), body.requestId ? eq(userAssets.id, id) : inArray(userAssets.url, [registeredKey, losslessWebpKey(registeredKey)]));
+  const existingCondition = and(eq(userAssets.userId, currentUser.id), body.requestId || body.type === "image" ? eq(userAssets.id, id) : inArray(userAssets.url, [registeredKey, losslessWebpKey(registeredKey)]));
   // A committed upload remains retryable after its temporary object is cleaned.
   const [reconciled] = await db.select().from(userAssets).where(existingCondition).limit(1);
   if (reconciled) {
+    if (body.sourceSha256) {
+      const previous = await imageMasters.findByKey(currentUser.id, "public", reconciled.url);
+      if (!previous || previous.sourceSha256 !== body.sourceSha256.toLowerCase()) return c.json({ error: "Upload request conflicts with an earlier image" }, 409);
+    }
     return c.json({ data: { ...reconciled, url: `${getCdnOrigin()}/cdn/${reconciled.id}`, key: reconciled.url } }, 201);
   }
 
-  const inspected = await headObject(body.key);
+  const inspected = master ? { contentType: master.mimeType, contentLength: master.originalSize, etag: master.storedSha256 } : await headObject(body.key);
   if ((privatePipeline && !inspected.etag) || inspected.contentLength < 1 || inspected.contentLength > 2_147_483_647) {
     return c.json({ error: "Invalid uploaded object" }, 400);
   }
@@ -593,7 +627,13 @@ userAssetRoutes.post("/", async (c) => {
   const settled = await db.transaction(async (tx) => {
     await sessionMedia.lockOwner(tx, currentUser.id);
     const [existing] = await tx.select().from(userAssets).where(existingCondition).limit(1);
-    if (existing) return { asset: existing, inserted: false };
+    if (existing) {
+      if (body.sourceSha256) {
+        const previous = await imageMasters.findByKey(currentUser.id, "public", existing.url, tx);
+        if (!previous || previous.sourceSha256 !== body.sourceSha256.toLowerCase()) return { error: "Upload request conflicts with an earlier image", status: 409 as const };
+      }
+      return { asset: existing, inserted: false };
+    }
     const [reservation] = privatePipeline ? await mediaRows<{id:string;input_bytes:string;metadata:{purpose?:string;type?:string;operationId?:string};status:string;content_type:string;filename:string}>(tx,sql`SELECT * FROM session_media_uploads WHERE user_id=${currentUser.id} AND temp_key=${body.key} AND expires_at>now() FOR UPDATE`) : [];
     if (privatePipeline && (!reservation || reservation.status !== 'pending' || reservation.metadata.purpose !== 'creative-asset' || reservation.metadata.type !== body.type || reservation.metadata.operationId !== (body.requestId ? id : undefined) || reservation.filename !== body.filename || reservation.content_type !== mimeType || Number(reservation.input_bytes) !== inspected.contentLength)) {
       return { error: "Upload reservation expired or does not match", status: 409 as const };
@@ -602,8 +642,8 @@ userAssetRoutes.post("/", async (c) => {
     if (privatePipeline) {
       await copyObject(body.key, registeredKey, inspected.etag!, inspected);
     }
-    const stored = body.type === "image"
-      ? await optimizeUploadedImage({ key: registeredKey, filename: body.filename, mimeType, sizeBytes: inspected.contentLength }, { read: getObjectBuffer, write: putObject })
+    const image = body.type === "image" ? await storeUploadedImage({ userId: currentUser.id, key: registeredKey, mimeType, sourceSha256: body.sourceSha256 }, tx) : undefined;
+    const stored = image ? { key: image.key, filename: body.filename, mimeType: image.mimeType, sizeBytes: image.originalSize }
       : { key: registeredKey, filename: body.filename, mimeType, sizeBytes: inspected.contentLength };
     const [inserted] = await tx.insert(userAssets).values({
       id, userId: currentUser.id, type: body.type as AssetType, filename: stored.filename,
@@ -611,13 +651,16 @@ userAssetRoutes.post("/", async (c) => {
     }).returning();
     if (reservation) await tx.execute(sql`UPDATE session_media_uploads SET status='complete',reserved_bytes=0 WHERE id=${reservation.id}`);
     return { asset: inserted!, inserted: true };
+  }).catch(error => {
+    if (error instanceof ImageMasterError) return { error: error.message, status: error.status };
+    throw error;
   });
   if ("error" in settled) return c.json({ error: settled.error }, settled.status);
   const result = settled.asset;
 
   // Converted metadata is already committed; a retry reconciles by ID/key even
   // if the original staging object has been removed.
-  if (settled.inserted && result.url !== registeredKey) await deleteObject(registeredKey).catch(() => {});
+  if (settled.inserted && result.url !== registeredKey && !isImageMasterKey(registeredKey)) await deleteObject(registeredKey).catch(() => {});
 
   const origin = getCdnOrigin();
 
@@ -814,7 +857,7 @@ userAssetRoutes.delete("/:id", async (c) => {
   }
 
   // Delete from S3
-  if (isS3Configured()) {
+  if (isS3Configured() && !isImageMasterKey(rows[0]!.url)) {
     try {
       await deleteObject(rows[0]!.url);
     } catch { /* S3 delete failed — still remove DB record */ }

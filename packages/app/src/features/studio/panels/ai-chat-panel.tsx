@@ -24,6 +24,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Select } from "@/components/ui/select";
 import { ImageLightbox, type PreviewImage } from "@/components/image-lightbox";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useComposerSubmit } from "@/lib/composer-submit";
 import { getImageFilesFromTransfer } from "@/lib/clipboard-image";
 import { useStudioStore, watchStudioImageNotifications } from "@/stores/studio";
@@ -335,6 +337,9 @@ export function AiChatPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageImportEpoch = useRef(0);
+  const imageImportAlive = useRef(true);
+  const [imageImport, setImageImport] = useState<{ files?: File[]; worldId: string | null; conversationId: string | null; token: number } | null>(null);
   const inputResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
   const chatMessages = useStudioStore(s => s.chatMessages);
@@ -419,6 +424,13 @@ export function AiChatPanel() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [convDropdownOpen, setConvDropdownOpen] = useState(false);
   const convDropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    imageImportEpoch.current++; setImageImport(null);
+  }, [serverWorldId, activeConversationId]);
+  useEffect(() => {
+    imageImportAlive.current = true;
+    return () => { imageImportAlive.current = false; };
+  }, []);
   const conversationLoadRef = useRef(0);
   const conversationLoadingRef = useRef(false);
   const sendPendingRef = useRef<number | null>(null);
@@ -927,30 +939,45 @@ export function AiChatPanel() {
   // and honors the user's Enter vs Ctrl/⌘+Enter preference.
   const composer = useComposerSubmit({ onSubmit: handleSend });
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    for (const file of files) {
-      if (chatAttachments.length >= 5) break;
-      addChatAttachment(file);
+  const stageImages = useCallback((files?: File[]) => {
+    const available = Math.max(0, 5 - useStudioStore.getState().chatAttachments.length);
+    if (!available) {
+      feedback.error(t("studio.aiChat.attachmentLimit", { defaultValue: "You can attach up to five files. Remove an attachment to add another image." }));
+      return;
     }
-    // Reset input so the same file can be re-selected
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }, [chatAttachments.length, addChatAttachment]);
-
+    if (files && files.length > available) feedback.error(t("studio.aiChat.attachmentLimit", { defaultValue: "You can attach up to five files. Remove an attachment to add another image." }));
+    setImageImport({ files: files?.slice(0, available), worldId: serverWorldId, conversationId: activeConversationId, token: ++imageImportEpoch.current });
+  }, [serverWorldId, activeConversationId, t]);
+  const confirmImages = (files: File[], context: ImageImportContext) => {
+    const target = imageImport, studio = useStudioStore.getState();
+    if (!imageImportAlive.current || !target || context.signal.aborted || target.token !== imageImportEpoch.current
+      || target.worldId !== useEditorStore.getState().serverWorldId || target.conversationId !== studio.chatConversationId) return;
+    imageImportEpoch.current++;
+    const available = Math.max(0, 5 - studio.chatAttachments.length);
+    files.slice(0, available).forEach((file, index) => {
+      const extension = PASTED_IMAGE_EXTENSIONS[file.type];
+      if (!extension) return;
+      const name = /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? file.name : `pasted-image-${Date.now()}-${index + 1}.${extension}`;
+      addChatAttachment(name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified }));
+    });
+  };
+  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []); event.target.value = "";
+    const images: File[] = [];
+    for (const file of files) {
+      if (PASTED_IMAGE_EXTENSIONS[file.type]) images.push(file);
+      else if (!useStudioStore.getState().isAgentWorking && useStudioStore.getState().chatAttachments.length < 5) addChatAttachment(file);
+    }
+    if (images.length) stageImages(images);
+  }, [addChatAttachment, stageImages]);
   const handleImagePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const images = getImageFilesFromTransfer(event.clipboardData);
     if (!images.length) return;
     event.preventDefault();
     const supported = images.filter(file => PASTED_IMAGE_EXTENSIONS[file.type]);
     if (supported.length !== images.length) feedback.error(t("studio.aiChat.pasteImageType", { defaultValue: "Paste a PNG, JPEG, WebP or GIF image." }));
-    const available = Math.max(0, 5 - useStudioStore.getState().chatAttachments.length);
-    supported.slice(0, available).forEach((file, index) => {
-      const name = /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? file.name
-        : `pasted-image-${Date.now()}-${index + 1}.${PASTED_IMAGE_EXTENSIONS[file.type]}`;
-      addChatAttachment(name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified }));
-    });
-    if (supported.length > available) feedback.error(t("studio.aiChat.attachmentLimit", { defaultValue: "You can attach up to five files. Remove an attachment to paste another image." }));
-  }, [addChatAttachment, t]);
+    if (supported.length) stageImages(supported);
+  }, [stageImages, t]);
 
   const handleInputResizeMove = useCallback((event: PointerEvent) => {
     const session = inputResizeRef.current;
@@ -1450,22 +1477,25 @@ export function AiChatPanel() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={isAgentWorking ? "image/png,image/jpeg,image/webp,image/gif" : "image/png,image/jpeg,image/webp,image/gif,.tsx,.jsx,.ts,.js,.json,.md,.txt,.html,.css"}
+            accept=".tsx,.jsx,.ts,.js,.json,.md,.txt,.html,.css"
             multiple
             className="hidden"
             onChange={handleFileSelect}
           />
-          {/* Paperclip button */}
-          {(
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={chatAttachments.length >= 5}
+          {imageImport && <ImageImportDialog multiple maxFiles={Math.max(1, 5 - chatAttachments.length)} maxBytes={Infinity} crop="none" preserveOriginal
+            initialFiles={imageImport.files} title={t("studio.aiChat.attachImages", { defaultValue: "Attach images" })}
+            description={t("studio.aiChat.attachImagesHint", { defaultValue: "Choose, drop or paste images to attach. Up to five files total; attaching does not send a message." })}
+            onImport={confirmImages} onClose={() => { imageImportEpoch.current++; setImageImport(null); }} />}
+          {/* Images share acquisition; source/code files retain their own chooser. */}
+          {isAgentWorking ? <button type="button" onClick={() => stageImages()} disabled={chatAttachments.length >= 5}
+            aria-label={t("studio.aiChat.attachImages", { defaultValue: "Attach images" })}
+            className="rounded-lg p-2 text-muted-foreground hover:text-foreground disabled:opacity-30"><Paperclip className="h-3.5 w-3.5" /></button> :
+            <DropdownMenu><DropdownMenuTrigger asChild><button type="button" disabled={chatAttachments.length >= 5}
               className="rounded-lg p-2 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
-              title={t("studio.aiChat.attachFile")}
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
-          )}
+              aria-label={t("studio.aiChat.attachFile")} title={t("studio.aiChat.attachFile")}><Paperclip className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => stageImages()}>{t("studio.aiChat.attachImages", { defaultValue: "Attach images" })}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>{t("studio.aiChat.attachDocuments", { defaultValue: "Attach code or documents" })}</DropdownMenuItem>
+              </DropdownMenuContent></DropdownMenu>}
           {isAgentWorking ? (
             <button
               onClick={stopAgent}

@@ -2,6 +2,7 @@ import { statusWidgetV1Templates } from "../world/status-widget-v1-templates.js"
 import { statusBuilderV1Templates } from "../world/status-builder-v1-templates.js";
 import { statusScrollV1Templates } from "../world/status-split-pip-templates.js";
 import { statusEncounterV0Templates } from "../world/status-encounter-v0-templates.js";
+import { statusTabsV1Templates } from "../world/status-tabs-v1-templates.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { migrateWorldDefinition } from "../migration/migrate-v1-to-v2.js";
@@ -19,6 +20,69 @@ function world(version = "21.0.0"): WorldDefinition {
 }
 
 describe("shipped VN status compatibility", () => {
+  it.each(['status-data.ts', 'status-gauge.tsx', 'status-widgets.tsx'])(
+    'updates the recognized tab sheet independently of authored %s', (customHelper) => {
+      const original = world();
+      original.rootComponent!.files = { ...statusTemplates, ...statusTabsV1Templates,
+        [customHelper]: statusTemplates[customHelper] + '\n// authored helper',
+        'status-layout.tsx': 'authored layout', 'status-config.ts': 'authored settings',
+        'index.tsx': 'StatusSheet api={sceneApi}\nview.current?.querySelector(".vn-back")?.focus();\nview.current?.querySelector(".vn-menu-status")?.focus();\nview.current?.querySelector("textarea")?.focus();',
+      };
+      original.interfaceDrafts = { vn: original.rootComponent! };
+      const updated = upgradeStatusWorld(original);
+      for (const root of [updated.rootComponent!, updated.interfaceDrafts!.vn]) {
+        expect(root.files['status-sheet.tsx']).toBe(statusTemplates['status-sheet.tsx']);
+        for (const name of ['status-data.ts', 'status-view.tsx', 'status-gauge.tsx', 'status-widgets.tsx', 'status-layout.tsx', 'status-config.ts']) {
+          expect(root.files[name]).toBe(original.rootComponent!.files[name]);
+        }
+        expect(root.files['index.tsx']).toContain('querySelector(".vn-back")?.focus({ preventScroll: true })');
+        expect(root.files['index.tsx']).toContain('querySelector(".vn-menu-status")?.focus({ preventScroll: true })');
+        expect(root.files['index.tsx']).toContain('querySelector("textarea")?.focus();');
+        expect(root.compiled).toBeUndefined();
+      }
+      expect(original.rootComponent!.files['status-sheet.tsx']).toBe(statusTabsV1Templates['status-sheet.tsx']);
+      expect(original.rootComponent!.compiled).toBeDefined();
+      expect(upgradeStatusWorld(updated)).toBe(updated);
+    },
+  );
+  it('preserves authored and older sheet contracts when helpers are customized', () => {
+    for (const sheet of [statusTabsV1Templates['status-sheet.tsx'] + '\n// authored sheet', statusBuilderV1Templates['status-sheet.tsx']]) {
+      const original = world();
+      original.rootComponent!.files = { ...statusTemplates,
+        'status-sheet.tsx': sheet, 'status-data.ts': 'authored normalizer',
+        'status-layout.tsx': 'authored layout', 'index.tsx': 'authored entry',
+      };
+      expect(upgradeStatusWorld(original)).toBe(original);
+    }
+  });
+  it('keeps explicit classic roots untouched while upgrading cached VN roots', () => {
+    const original = world();
+    const vn = { ...original.rootComponent!, interfaceId: 'vn' as const,
+      files: { ...statusTemplates, ...statusTabsV1Templates } };
+    const classic = { ...vn, interfaceId: 'classic' as const,
+      files: { ...vn.files, 'index.tsx': 'export default function Classic(){return <Chat />;}' } };
+    original.rootComponent = classic;
+    original.interfaceDrafts = { classic, vn };
+    const updated = upgradeStatusWorld(original);
+    expect(updated.rootComponent).toBe(classic);
+    expect(updated.interfaceDrafts!.classic).toBe(classic);
+    expect(updated.interfaceDrafts!.vn.files['status-sheet.tsx']).toBe(statusTemplates['status-sheet.tsx']);
+    expect(updated.interfaceDrafts!.vn.compiled).toBeUndefined();
+    expect(classic.compiled).toBeDefined();
+    expect(upgradeStatusWorld(updated)).toBe(updated);
+  });
+  it("upgrades class-specific category sizing without changing a saved custom design", () => {
+    const original = world();
+    original.rootComponent!.files = { ...statusTemplates, ...statusTabsV1Templates,
+      "status-layout.tsx": "authored custom tabs", "status-config.ts": "authored settings", "index.tsx": "authored entry" };
+    const updated = upgradeStatusWorld(original);
+    expect(updated.rootComponent!.files['status-sheet.tsx']).toContain('[role="tablist"][aria-label="Status categories"]');
+    for (const name of ['status-layout.tsx', 'status-config.ts', 'index.tsx']) expect(updated.rootComponent!.files[name]).toBe(original.rootComponent!.files[name]);
+    expect(updated.rootComponent!.compiled).toBeUndefined();
+    expect(upgradeStatusWorld(updated)).toBe(updated);
+    const authored = { ...original, rootComponent: { ...original.rootComponent!, files: { ...original.rootComponent!.files, 'status-sheet.tsx': statusTabsV1Templates['status-sheet.tsx'] + '\n// custom sheet' } } };
+    expect(upgradeStatusWorld(authored).rootComponent!.files['status-sheet.tsx']).toBe(authored.rootComponent.files['status-sheet.tsx']);
+  });
   it("upgrades pre-encounter sheets and data without replacing custom visualization source", () => {
     const original = world();
     original.rootComponent!.files = { ...statusTemplates, ...statusEncounterV0Templates, "status-layout.tsx": "custom social widgets" };

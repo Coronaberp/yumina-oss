@@ -2,6 +2,7 @@ import { getSmartImageCapabilities, SMART_IMAGE_MODEL, SMART_IMAGE_MODELS,
   SMART_IMAGE_ASPECTS, SMART_IMAGE_RESOLUTIONS, MAX_IMAGE_BATCH_ITEMS } from "@yumina/shared";
 import type { ToolDefinition } from "../llm/types.js";
 import { NAME_READ_TOOLS, NAME_PROFILES_TOOL_SCHEMA } from "./name-tools.js";
+import { REQUEST_TOOLS_TOOL } from "./tool-catalog.js";
 
 /** The assistant picks its own model, so the schema advertises the union across
  *  all of them and normalizeImageProposal narrows the pair down to what the
@@ -80,6 +81,7 @@ const CHAPTER_EVENTS_TOOL_SCHEMA = { type: "array", maxItems: 32,
 // ── Read Tools (auto-execute, no approval) ──
 
 export const READ_TOOLS: ToolDefinition[] = [
+  REQUEST_TOOLS_TOOL,
   ...NAME_READ_TOOLS,
   { type: "function", function: { name: "update_task_plan",
     description: "Save every requested requirement and its concrete checks. Existing requirements are retained; reuse a stable ID to correct a check. Verification is performed by the server against saved state. Empty checks remain pending; use ask_user for an essential ambiguity.",
@@ -115,11 +117,13 @@ export const READ_TOOLS: ToolDefinition[] = [
   {
     type: "function", function: {
       name: "list_vn_assets",
-      description: "Read Visual Novel sprite/background assignments, default images, NPC defaults, stable opening IDs, and sortable row IDs. Sprites are shared across openings. Omit openingId for Global backgrounds, or supply a greeting ID for an opening collection. Returns help, editability, and pagination; never executes custom source.",
+      description: "Read Visual Novel sprite/background assignments, character inventory including lore/description-only names, per-character/type wardrobe descriptions, this card’s spriteConfig type/emotion IDs and labels, caps and warnings, default images, NPC defaults, stable opening IDs, and sortable row IDs. Sprites are shared across openings. Omit openingId for Global backgrounds, or supply a greeting ID for an opening collection. Returns help, editability, pagination, nested outfit variant IDs and per-outfit availableExpressions containing only assigned images. Types have no fixed cap; emotions are capped at 30. Catalogs, descriptions and outfits have independent next offsets. Character inventory and wardrobe description records have independent totals/next offsets using the same offset/limit; name filters character fields and spriteType filters descriptions/assignments. Never executes custom source.",
       parameters: { type: "object", properties: {
         kind: { type: "string", enum: ["sprites", "backgrounds"] },
         openingId: { type: "string", description: "Stable greeting entry ID; backgrounds only. Omit for Global." },
         npcGender: { type: "string", enum: ["male", "female"], description: "Read an NPC sprite pool instead of character expressions." },
+        spriteType: { type: "string", description: "Character wardrobe ID from spriteConfig; omit to list all types." },
+        spriteVariant: { type: "string", description: "Nested outfit variant ID; empty selects Base, omit to list all outfits. Distinct from variant (emotion)." },
         name: { type: "string", description: "Exact character/scene name filter." },
         offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 },
       } },
@@ -183,7 +187,7 @@ export const READ_TOOLS: ToolDefinition[] = [
             type: "array",
             items: { type: "string" },
             description:
-              'Array of entity IDs to read. Can mix entity types (entries, variables, behaviors, rules, routes, endings, customUI, audio). Special IDs: "settings" returns world settings; "card-showcase" returns published-card HTML/CSS.',
+              'Array of entity IDs to read. Can mix entity types (entries, variables, behaviors, rules, routes, endings, customUI, audio). Special IDs: "settings" returns world settings; "card-showcase" returns published-card HTML/CSS; "world-media" returns the actual working portrait cover, optional page banner and independent framing.',
           },
           offset_lines: {
             type: "number",
@@ -330,6 +334,18 @@ export const READ_TOOLS: ToolDefinition[] = [
 // ── Write Tools (collected, validated atomically, approval classified) ──
 
 export const WRITE_TOOLS: ToolDefinition[] = [
+  {
+    type: "function", function: {
+      name: "write_world_media",
+      description: "Set independent card portrait cover and optional wide page banner from existing owned image @asset:UUID refs, or change their framing. Read world-media with read_entities first. Only supplied fields change; null clears that image or framing, and clearing the banner restores portrait fallback. Image changes preserve framing unless a crop field is supplied. This does not generate images, edit character portraits, modify gallery images, or rewrite custom source. Portraits appear in card grids; page banners use 16:5 and default to contain.",
+      parameters: { type: "object", minProperties: 1, additionalProperties: false, properties: {
+        portraitAssetRef: { type: ["string", "null"], pattern: "^@asset:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", description: "Owned image from list_assets; null clears the portrait cover. Omit to preserve it." },
+        bannerAssetRef: { type: ["string", "null"], pattern: "^@asset:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", description: "Owned image for the independent page banner; null clears it and restores portrait fallback. Omit to preserve it." },
+        coverCrop: { type: ["object", "null"], additionalProperties: false, properties: { x: { type: "number", minimum: -45, maximum: 45 }, y: { type: "number", minimum: -45, maximum: 45 }, zoom: { type: "number", minimum: 0.25, maximum: 3 }, fit: { type: "string", enum: ["cover", "contain"] } }, description: "Replace portrait grid framing. Missing coordinates default to 0, zoom to 1, fit to cover; read and preserve the other coordinates when changing one. null resets framing; omission preserves it." },
+        bannerCrop: { type: ["object", "null"], additionalProperties: false, properties: { x: { type: "number", minimum: -45, maximum: 45 }, y: { type: "number", minimum: -45, maximum: 45 }, zoom: { type: "number", minimum: 0.25, maximum: 3 }, fit: { type: "string", enum: ["cover", "contain"] } }, description: "Replace page banner framing. Supply fit=contain for full artwork in 16:5; missing coordinates default to 0, zoom to 1 and fit to cover. null restores the default contain framing; omission preserves it." },
+      } },
+    },
+  },
   { type: "function", function: { name: "write_chapter", description: "Create or partially update a native starting chapter. Stable ID; omitted fields are preserved. Chapters group greeting openings under Routes and are selectable ONLY before leaving the greeting. Link existing greetings with greetingIds and lorebooks with write_worldbook.chapterIds. Starting values come from each greeting's initialVariables. There is no in-play chapter navigation. Use timeline/date labels for eras and alternate histories. Read chapters first, preserve character roles and authored text, then validate_world.", parameters: { type: "object", properties: {
     id: { type: "string" }, name: { type: "string" }, enabled: { type: "boolean" }, description: { type: "string" }, timeline: { type: "string" }, date: { type: "string" },
     greetingIds: { type: "array", items: { type: "string" }, description: "Existing greeting entry IDs. One enabled chapter per greeting." },
@@ -417,21 +433,30 @@ export const WRITE_TOOLS: ToolDefinition[] = [
   {
     type: "function", function: {
       name: "edit_vn_assets",
-      description: "Assign/remove a sprite expression or background period, set/clear a collection's default background, reorder existing cards, or configure NPC defaults. Send operations as one validated batch when handling multiple independent assignments. Read list_vn_assets first. Use owned image @asset refs from list_assets or generated image jobs. Preserves authored runtime code and unrelated assignments; rejects custom executable maps. Global backgrounds omit openingId; opening collections use stable greeting IDs. Order accepts returned row IDs and preserves hidden slots when reordering a subset.",
+      description: "Assign/remove an emotion within spriteType and optional spriteVariant, add/rename/remove nested outfit variants, set/clear chapter outfit presets via chapterOpeningId, set/clear per-character/type clothing descriptions, add/rename/remove card-wide type/emotion catalog options, assign background periods, set/clear a collection's default background, reorder existing cards, or configure NPC defaults. Send operations as one validated batch when handling multiple independent assignments. Read list_vn_assets first. Use owned image @asset refs from list_assets or generated image jobs. Preserves authored runtime code and unrelated assignments; rejects custom executable maps. Global backgrounds omit openingId; opening collections use stable greeting IDs. Order accepts returned row IDs and preserves hidden slots when reordering a subset.",
       parameters: { type: "object", properties: {
         operations: { type: "array", minItems: 1, maxItems: 50, description: "Validated batch of operations; use this instead of the single-operation fields when assigning multiple assets.", items: { type: "object", properties: {
           kind: { type: "string", enum: ["sprites", "backgrounds"] },
-          action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults"] },
+          action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults", "add_option", "rename_option", "remove_option", "set_wardrobe_description", "add_variant", "rename_variant", "remove_variant", "set_chapter_outfit", "clear_chapter_outfit"] },
           openingId: { type: "string" }, npcGender: { type: "string", enum: ["male", "female"] }, name: { type: "string" },
+          spriteType: { type: "string" }, spriteVariant: { type: "string" }, chapterOpeningId: { type: "string" }, optionKind: { type: "string", enum: ["types", "emotions"] }, optionId: { type: "string" }, label: { type: "string" },
+          description: { type: "string", maxLength: 2000, description: "set_wardrobe_description requires kind sprites, name, spriteType and description; empty removes. Character outfits only, no NPC/opening scope." },
           variant: { type: "string" }, assetRef: { type: "string" }, order: { type: "array", items: { type: "string" } },
           disabled: { type: "boolean" }, mode: { type: "string", enum: ["a", "b"] },
         }, required: ["kind", "action"] } },
         kind: { type: "string", enum: ["sprites", "backgrounds"] },
-        action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults"] },
+        action: { type: "string", enum: ["assign", "remove", "set_default", "clear_default", "reorder", "configure_npc_defaults", "add_option", "rename_option", "remove_option", "set_wardrobe_description", "add_variant", "rename_variant", "remove_variant", "set_chapter_outfit", "clear_chapter_outfit"] },
         openingId: { type: "string", description: "Greeting entry ID for opening backgrounds; omit for Global." },
+        chapterOpeningId: { type: "string", description: "Greeting ID for set_chapter_outfit/clear_chapter_outfit; separate from shared assignment scope." },
+        spriteVariant: { type: "string", description: "Nested outfit ID under spriteType; omit or empty for Base. Used by assignment, removal, description and variant actions. Distinct from variant (emotion)." },
         npcGender: { type: "string", enum: ["male", "female"] },
         name: { type: "string", description: "Character name, scene ID, or NPC sprite name." },
-        variant: { type: "string", description: "Expression (default normal) or time of day (default day)." },
+        spriteType: { type: "string", description: "Character wardrobe ID from spriteConfig (default normal). Not used for NPCs/backgrounds." },
+        optionKind: { type: "string", enum: ["types", "emotions"], description: "Card-wide catalog edited by add_option, rename_option or remove_option." },
+        optionId: { type: "string", description: "Existing catalog ID for rename/remove. Rename changes its label and preserves stable assignments." },
+        label: { type: "string", description: "Display label for add/rename; add derives the stable ID. Defaults are protected; unlimited types, 30 emotions, warning at 20. Removal also removes assignments, retaining library assets." },
+        description: { type: "string", maxLength: 2000, description: "For set_wardrobe_description, supply kind sprites, character name, configured spriteType and clothing text; empty removes. No NPC/opening scope. Use {{sprite_wardrobe}} in character lore for this mutable outfit text." },
+        variant: { type: "string", description: "Emotion ID from spriteConfig (default normal) or time of day (default day)." },
         assetRef: { type: "string", description: "Owned image's @asset reference." },
         order: { type: "array", items: { type: "string" }, description: "Unique row IDs from list_vn_assets in the desired order." },
         disabled: { type: "boolean", description: "Whether fallback NPC sprites are disabled." },
@@ -489,11 +514,13 @@ export const WRITE_TOOLS: ToolDefinition[] = [
         properties: {
           id: { type: "string", description: "Kebab-case ID used in {{id}} macros and [id: op value] directives." },
           name: { type: "string" },
-          type: { type: "string", enum: ["number", "string", "boolean", "json"] },
+          type: { type: "string", enum: ["number", "string", "boolean", "json", "list", "group", "choice"], description: "The kind of stored data. In VN mode, list stores all entries (JSON array), group stores named fields (JSON object), and choice stores ONE text value with enumValues for its valid options. Chat retains number/string/boolean/json; do not change its interface to add VN controls." },
           defaultValue: {
             description:
-              "Default value, as a JSON value of the SAME type as `type` — never a quoted string wrapping it. number -> 0, boolean -> false, json -> [] or {}, string -> \"text\". Do NOT send \"0\", \"false\" or \"[]\".",
+              "Starting value of the SAME data type: number -> 0, boolean -> false, list -> [], group -> {}, string/choice -> \"text\". Send actual arrays/objects, not quoted JSON. Omitted fields preserve existing values. New lists/groups start as []/{}; a new choice with no default starts as empty text. Converting a collection to choices requires an explicit scalar string defaultValue.",
           },
+          enumValues: { type: "array", maxItems: 500, uniqueItems: true, items: { type: "string", maxLength: 1000 }, description: "VN only: valid text options for a string/choice variable, preserving exact spelling and order. This is dropdown metadata, not a stored List or runtime write restriction. Omit to preserve current options. [] keeps an empty editable options list; use clearOptions:true to return to plain Text. Options-only edits preserve the current starting value even if it is outside the new list." },
+          clearOptions: { type: "boolean", description: "VN only: true explicitly removes text options while preserving the starting text. Do not combine with enumValues or type:choice. Omit or false to retain current options." },
           min: { type: "number" },
           max: { type: "number" },
           category: { type: "string", enum: ["stat", "inventory", "resource", "flag", "relationship", "custom"] },
@@ -787,7 +814,7 @@ const CONTROL_TOOLS: ToolDefinition[] = [
             properties: {
               kind: { type: "string", enum: ["background", "sprite", "portrait", "cg", "library"] },
               sceneId: { type: "string" }, period: { type: "string" }, openingId: { type: "string" },
-              characterId: { type: "string" }, expression: { type: "string" },
+              characterId: { type: "string" }, expression: { type: "string", description: "Emotion ID from list_vn_assets spriteConfig." }, spriteType: { type: "string", description: "Wardrobe ID from the card catalog; defaults to normal." }, spriteVariant: { type: "string", description: "Exact nested outfit variant ID under spriteType; omit or empty for Base. No cross-outfit reference fallback." },
             },
           },
           prompt: {

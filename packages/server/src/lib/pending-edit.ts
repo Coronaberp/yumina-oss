@@ -340,6 +340,10 @@ export async function writeStudioWorldSchema(args: {
   schema: Record<string, unknown>;
   /** Fail instead of overwriting a creator edit made after this working copy was read. */
   expectedSchema?: Record<string, unknown>;
+  /** Omitted preserves the working portrait; null explicitly clears it. */
+  thumbnailUrl?: string | null;
+  /** Raw working portrait used when the proposed change was computed. */
+  expectedThumbnailUrl?: string | null;
   /** Share the caller's transaction when saving a recoverable agent step. */
   database?: LedgerDatabase;
 }): Promise<{ held: boolean; reasons: MaterialChangeReason[] }> {
@@ -348,19 +352,22 @@ export async function writeStudioWorldSchema(args: {
     const live = await lockVersionWorld(tx, worldId, creatorId);
     if (!live) return { held: false, reasons: [] };
     const existing = live.status === "published" ? await getPendingEdit(worldId, tx) : null;
-    if (args.expectedSchema && !isDeepStrictEqual(existing?.schema ?? live.schema, args.expectedSchema)) {
+    const workingThumbnailUrl = existing ? existing.thumbnailUrl : live.thumbnailUrl;
+    if ((args.expectedSchema && !isDeepStrictEqual(existing?.schema ?? live.schema, args.expectedSchema))
+      || (args.expectedThumbnailUrl !== undefined && workingThumbnailUrl !== args.expectedThumbnailUrl)) {
       throw new Error("STALE_STUDIO_WORLD_SCHEMA");
     }
+    const thumbnailSet = args.thumbnailUrl !== undefined ? { thumbnailUrl: args.thumbnailUrl } : {};
     const proposedName = typeof schema.name === "string" && schema.name.trim() ? schema.name : null;
     const nameSet = proposedName !== null && proposedName !== live.name ? { name: proposedName } : {};
     if (live.status !== "published") {
-      await tx.update(worlds).set({ schema, ...nameSet, updatedAt: new Date() }).where(eq(worlds.id, worldId));
+      await tx.update(worlds).set({ schema, ...thumbnailSet, ...nameSet, updatedAt: new Date() }).where(eq(worlds.id, worldId));
       return { held: false, reasons: [] };
     }
     const plan = planMaterialHold({
       worldId, creatorId, live: { ...live, ageRating: live.ageRating ?? "all" },
       proposedSchema: schema,
-      proposedThumbnailUrl: existing?.thumbnailUrl ?? live.thumbnailUrl,
+      proposedThumbnailUrl: args.thumbnailUrl !== undefined ? args.thumbnailUrl : workingThumbnailUrl,
       proposedAgeRating: existing?.ageRating ?? live.ageRating ?? "all",
       existing: existing ? { ...existing, status: "draft" } : null,
     });
@@ -370,7 +377,7 @@ export async function writeStudioWorldSchema(args: {
         .where(and(eq(worldReviewSubmissions.worldId, worldId), eq(worldReviewSubmissions.decision, "pending"), eq(worldReviewSubmissions.submissionType, "edit")));
     }
     await applyHoldPlan(plan, tx);
-    await tx.update(worlds).set({ ...(plan.upsert ? {} : { schema }), ...nameSet, updatedAt: new Date() }).where(eq(worlds.id, worldId));
+    await tx.update(worlds).set({ ...(plan.upsert ? {} : { schema, ...thumbnailSet }), ...nameSet, updatedAt: new Date() }).where(eq(worlds.id, worldId));
     return { held: !!plan.upsert, reasons: plan.reasons };
   });
 }

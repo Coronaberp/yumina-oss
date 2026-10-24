@@ -13,6 +13,8 @@ export interface WorldItem {
   schema: Record<string, unknown>;
   cardShowcase?: import("@yumina/engine").CardShowcase | null;
   thumbnailUrl: string | null;
+  bannerImageUrl?: string | null;
+  bannerCrop?: CoverCropSettings | null;
   coverCrop?: CoverCropSettings | null;
   galleryCoverCrop?: CoverCropSettings | null;
   isPublished: boolean | null;
@@ -67,8 +69,21 @@ export interface PendingEditSummary {
   updatedAt: string | null;
 }
 
+/** Read-only library preview metadata, deliberately separate from owned worlds. */
+export interface AdminLibraryItem {
+  id: string;
+  name: string;
+  thumbnailUrl: string | null;
+  coverCrop: CoverCropSettings | null;
+  creatorName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface WorldsState {
   worlds: WorldItem[];
+  adminLibraryItems: AdminLibraryItem[];
+  adminLibraryViewerId: string | null;
   loading: boolean;
   error: string | null;
   lastFetchedAt: number | null;
@@ -95,6 +110,8 @@ function loadWorldsFailed() {
 
 export const useWorldsStore = create<WorldsState>((set, get) => ({
   worlds: [],
+  adminLibraryItems: [],
+  adminLibraryViewerId: null,
   loading: false,
   error: null,
   lastFetchedAt: null,
@@ -120,14 +137,14 @@ export const useWorldsStore = create<WorldsState>((set, get) => ({
           if (!res.ok) {
             // Stay silent on 401 (guest user) — just set empty
             if (res.status !== 401) loadWorldsFailed();
-            set({ error: res.status === 401 ? null : "Failed to fetch worlds", worlds: [], loading: false });
+            set({ error: res.status === 401 ? null : "Failed to fetch worlds", worlds: [], adminLibraryItems: [], adminLibraryViewerId: null, loading: false });
             return;
           }
-          const { data } = await res.json();
-          set({ worlds: data, loading: false, lastFetchedAt: Date.now() });
+          const { data, adminLibraryItems = [], adminLibraryViewerId = null } = await res.json();
+          set({ worlds: data, adminLibraryItems, adminLibraryViewerId, loading: false, lastFetchedAt: Date.now() });
         } catch {
           loadWorldsFailed();
-          set({ error: "Network error", loading: false });
+          set({ error: "Network error", adminLibraryItems: [], adminLibraryViewerId: null, loading: false });
         }
       },
       (v) => set({ loading: v }),
@@ -175,7 +192,7 @@ export const useWorldsStore = create<WorldsState>((set, get) => ({
   },
 
   invalidate: () => {
-    set({ lastFetchedAt: null, worlds: [] });
+    set({ lastFetchedAt: null, worlds: [], adminLibraryItems: [], adminLibraryViewerId: null });
     get().fetchWorlds();
   },
 }));

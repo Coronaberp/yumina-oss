@@ -1,8 +1,7 @@
 import { characterIdentifiers, displayCharacterName } from "./speaker-tag";
 import { messagePassages } from "./passages";
 import { playerText } from "./player";
-import { sprites } from "./sprites";
-import { spriteExpressions } from "./expressions";
+import { spriteOutfitFor, spriteCatalogFor, spriteVariantCatalogFor } from "./sprites";
 import { statusConfig } from "./status-config";
 import { statusValue, statusText } from "./status-data";
 import { showcaseStylesFor } from "./character-showcase";
@@ -27,7 +26,17 @@ export function CharacterCopy({ api, text, className, context, onCharacter }) {
     const root = node.current;
     root.innerHTML = html;
     if (!onCharacter) return;
-    const candidates = identities(api).sort((a, b) => b.identifier.length - a.identifier.length);
+    // Prose mentions need a complete authored name or parenthetical alias.
+    // Speaker-tag shorthand also contains inferred words such as "Black" and
+    // "Garden" from "Black Garden", which are ordinary prose on their own.
+    const entries = (api.entries || []).filter(entry => entry.enabled !== false && (entry.role === "character" || entry.tags?.some(tag => /^characters?$/i.test(tag.trim()))));
+    const identifiers = entries.flatMap(entry => {
+      const name = displayCharacterName(entry.name), qualifier = /\s*\(([^()]+)\)\s*$/.exec(name);
+      const authored = [name, name.replace(/\s*\([^()]+\)\s*$/, "").trim(), qualifier?.[1].trim()];
+      return [...new Set(authored.filter(Boolean))].map(identifier => ({ name, identifier, entry }));
+    });
+    const candidates = identifiers.filter(item => new Set(identifiers.filter(other => other.identifier.toLowerCase() === item.identifier.toLowerCase()).map(other => other.entry)).size === 1)
+      .sort((a, b) => b.identifier.length - a.identifier.length);
     if (!candidates.length) return;
     const expression = new RegExp(candidates.map(item => escaped(item.identifier)).join("|"), "giu");
     const walker = document.createTreeWalker(root, 4), nodes = [];
@@ -81,13 +90,15 @@ function storyEvidence(api, context, target, currentOnly = false) {
 }
 
 export function expressionSprites(api, target) {
-  let map = api.variables?.["vn-sprites"] || sprites;
-  try { if (typeof map === "string") map = JSON.parse(map); } catch { map = {}; }
-  const key = Object.keys(map || {}).find(name => name.toLowerCase() === target.name.toLowerCase());
-  const pool = map?.[key];
-  if (typeof pool === "string" && pool) return [{ expression: "normal", src: api.resolveAssetUrl(pool) }];
-  const images = spriteExpressions.flatMap(expression => typeof pool?.[expression] === "string" && pool[expression] ? [{ expression, src: api.resolveAssetUrl(pool[expression]) }] : []);
-  return images.length ? images : target.portrait ? [{ expression: "portrait", src: api.resolveAssetUrl(target.portrait) }] : [];
+  const config = spriteCatalogFor(api), variants = spriteVariantCatalogFor(api);
+  return Object.entries(config.types).flatMap(([spriteType, typeLabel]) => {
+    const outfits = [["", "Base outfit"], ...Object.entries(variants[spriteType] || {})];
+    return outfits.flatMap(([spriteVariant, variantLabel]) => {
+      const outfit = spriteOutfitFor(api, target.name, spriteType, spriteVariant);
+      return Object.entries(outfit.expressions).map(([expression, ref]) => ({ expression, label: config.emotions[expression] || expression,
+        spriteType, typeLabel, spriteVariant, variantLabel, src: api.resolveAssetUrl(ref) }));
+    });
+  });
 }
 
 export function characterStats(api, target, variables) {
@@ -153,7 +164,7 @@ export function useCharacterViewer(api, onOpen) {
     if (selected.current) return;
     const evidence = storyEvidence(live.current, context, target, typeof live.current.getCharacterHistory === "function");
     const available = !!live.current.sessionId && !live.current.readOnly && live.current.capabilities?.canUseSessionApis !== false;
-    const value = { target, context, evidence, images: expressionSprites(live.current, target), stats: [], statsLoading: available, statsError: "", loading: available, bullets: [], error: "", available };
+    const value = { target, context, evidence, images: expressionSprites(live.current, target), spriteTypes: spriteCatalogFor(live.current).types, spriteVariants: spriteVariantCatalogFor(live.current), stats: [], statsLoading: available, statsError: "", loading: available, bullets: [], error: "", available };
     const token = ++sequence.current; selected.current = value; setViewer(value); onOpen();
     if (!available) return;
     summarize(value, token);
@@ -172,12 +183,12 @@ export function useCharacterViewer(api, onOpen) {
   }
   // The sandbox initially returns a transparent placeholder, then refreshes
   // the API when the parent supplies the real asset. Resolve again on render.
-  return { viewer: viewer ? { ...viewer, images: expressionSprites(api, viewer.target) } : null, open, close, retry };
+  return { viewer: viewer ? { ...viewer, images: expressionSprites(api, viewer.target), spriteTypes: spriteCatalogFor(api).types, spriteVariants: spriteVariantCatalogFor(api) } : null, open, close, retry };
 }
 
 export function CharacterViewer({ controller, preview = false }) {
   const { viewer, close, retry } = controller;
-  const [expression, setExpression] = React.useState(0), [imageFailed, setImageFailed] = React.useState(false);
+  const [spriteType, setSpriteType] = React.useState("normal"), [spriteVariant, setSpriteVariant] = React.useState(""), [expression, setExpression] = React.useState(0), [imageFailed, setImageFailed] = React.useState(false);
   const dialog = React.useRef(null);
   React.useLayoutEffect(() => { if (!preview) dialog.current.querySelector('[aria-label="Close character viewer"]').focus({ preventScroll: true }); }, [preview]);
   React.useEffect(() => {
@@ -194,7 +205,10 @@ export function CharacterViewer({ controller, preview = false }) {
     window.addEventListener("keydown", keydown, true);
     return () => window.removeEventListener("keydown", keydown, true);
   });
-  const image = viewer.images[expression];
+  const types = Object.entries(viewer.spriteTypes || Object.fromEntries(viewer.images.map(image => [image.spriteType, image.typeLabel])));
+  const variants = [["", "Base outfit"], ...Object.entries(viewer.spriteVariants?.[spriteType] || {})];
+  const images = viewer.images.filter(image => image.spriteType === spriteType && (image.spriteVariant || "") === spriteVariant);
+  const image = images[expression] || images[0];
   const stats = viewer.stats.filter(stat => !stat.relationship), relationships = viewer.stats.filter(stat => stat.relationship);
   return <section className="vn-overlay vn-character-overlay" role="dialog" aria-modal="true" aria-label="Character viewer" ref={dialog}>
     <button className="vn-character-backdrop" aria-label="Close character viewer from backdrop" tabIndex={-1} onClick={close} />
@@ -204,7 +218,9 @@ export function CharacterViewer({ controller, preview = false }) {
       <div className="vn-character-body">
         <div className="vn-character-art">
           <div className="vn-character-sprite">{image && !imageFailed ? <img src={image.src} alt={`${viewer.target.label} — ${image.expression}`} onError={() => setImageFailed(true)} /> : <span>{imageFailed ? "Sprite could not be loaded." : "No sprite uploaded."}</span>}</div>
-          {viewer.images.length > 1 && <div className="vn-character-expressions" role="group" aria-label="Sprite expressions">{viewer.images.map((image, index) => <button key={image.expression} aria-label={`View ${image.expression} sprite`} aria-pressed={expression === index} onClick={() => { setExpression(index); setImageFailed(false); }}>{image.expression}</button>)}</div>}
+          {types.length > 1 && <div className="vn-character-expressions" role="group" aria-label="Sprite types">{types.map(([type, label]) => <button key={type} aria-pressed={spriteType === type} onClick={() => { setSpriteType(type); setSpriteVariant(""); setExpression(0); setImageFailed(false); }}>{label}</button>)}</div>}
+          {variants.length > 1 && <div className="vn-character-expressions" role="group" aria-label="Outfit variants">{variants.map(([variant, label]) => <button key={variant || "base"} aria-pressed={spriteVariant === variant} onClick={() => { setSpriteVariant(variant); setExpression(0); setImageFailed(false); }}>{label}</button>)}</div>}
+          {images.length > 1 && <div className="vn-character-expressions" role="group" aria-label="Sprite expressions">{images.map((image, index) => <button key={image.expression} aria-label={`View ${image.expression} sprite`} aria-pressed={expression === index} onClick={() => { setExpression(index); setImageFailed(false); }}>{image.label || image.expression}</button>)}</div>}
         </div>
         <div className="vn-character-details">
           <h2>Relationship to you</h2>

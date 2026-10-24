@@ -375,6 +375,7 @@ export function PlaythroughReplayView({ playthroughId, returnContext }: { playth
     <div className="play-page-root flex h-full w-full flex-col overflow-hidden" style={playZoomStyle}>
       {header}
       <WorldRenderer
+        interfaceId={rootComponent.interfaceId}
         entryFile={rootComponent.entryFile}
         files={rootComponent.files}
         variables={variables}

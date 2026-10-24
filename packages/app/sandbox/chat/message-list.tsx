@@ -11,11 +11,12 @@ import {
   shouldAutoRequestEarlierHistory,
 } from "./message-history-pagination";
 import type { SandboxMessage } from "./types";
-import { anchorInitialTranscript, markTranscriptScroll } from "./initial-message-scroll";
+import { anchorInitialTranscript, markTranscriptScroll, isInitialTranscriptScroll } from "./initial-message-scroll";
 import { trackTranscriptPosition } from "./transcript-position";
 import { restoreTranscriptHistory } from "./restore-transcript-history";
+import { isScrollIntent } from "./scroll-intent";
 
-const warmedPortraits = new Map<string, HTMLImageElement>();
+import { chatHistoryRange, chatHistoryAround, selectChatHistory, shiftChatHistory, jumpChatHistory, MAX_CHAT_ROWS, type ChatHistoryWindow, type ChatHistoryEdge } from "./chat-history-window";
 
 // The sandbox scroll guard (component-host.tsx) patches Element.prototype's
 // scrollTop setter to NO-OP programmatic scrolls once the user has scrolled a
@@ -77,27 +78,12 @@ interface MessageListProps {
   rendererComponent: React.ComponentType<Record<string, unknown>> | null;
 }
 
-const INITIAL_MESSAGE_WINDOW = 50;
 const AT_BOTTOM_THRESHOLD_PX = 80;
 
 export function MessageList({ rendererComponent }: MessageListProps) {
   const api = useYumina();
   const t = useMemo(() => makeChatT(api.language), [api.language]);
   const messages = api.messages as unknown as SandboxMessage[];
-  // Warm the portraits: the speaker tag lands with the first token of a reply,
-  // and the face should land with it rather than a network round-trip later.
-  // The elements are kept in a module map so the decoded bitmaps stay live
-  // (a GC'd Image gives the cache nothing to share with the bubble's <img>).
-  useEffect(() => {
-    for (const e of api.entries) {
-      if (e.role !== "character" || typeof e.portrait !== "string" || !e.portrait) continue;
-      if (warmedPortraits.has(e.portrait)) continue;
-      const img = new Image();
-      img.decoding = "async";
-      img.src = e.portrait;
-      warmedPortraits.set(e.portrait, img);
-    }
-  }, [api.entries]);
   const isStreaming = api.isStreaming;
   const streamingContent = api.streamingContent;
   const streamingReasoning = api.streamingReasoning;
@@ -111,7 +97,14 @@ export function MessageList({ rendererComponent }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const historySentinelRef = useRef<HTMLDivElement>(null);
+  const laterSentinelRef = useRef<HTMLDivElement>(null);
+  const laterArmedRef = useRef(false);
+  const revealLaterRef = useRef<() => void>(() => {});
   const userScrolledUp = useRef(false);
+  const readerMovingUntil = useRef(0);
+  const freshReaderInput = useRef(false);
+  const viewportScrollRef = useRef<(viewport: HTMLElement) => void>(() => {});
+  const followLatestAlignRef = useRef<() => void>(() => {});
   const hasMountedRef = useRef(false);
   const releaseInitialAnchorRef = useRef<(() => void) | null>(null);
   const resumePositionRef = useRef<ReturnType<typeof trackTranscriptPosition> | null>(null);
@@ -125,18 +118,22 @@ export function MessageList({ rendererComponent }: MessageListProps) {
   ) => void>(() => {});
   const historyLoadInFlightRef = useRef(false);
   const historyLoadRequestTokenRef = useRef(0);
-  const expandAnchorRef = useRef<{ element: HTMLElement; height: number; top: number } | null>(null);
-  const earlierAnchorRef = useRef<{ element: HTMLElement; firstId: string; offsetTop: number } | null>(null);
+  const earlierAnchorRef = useRef<{ element: HTMLElement; firstId: string; offset: number } | null>(null);
+  const historyJumpRef = useRef<{ element: HTMLElement; edge: ChatHistoryEdge; sessionId: string } | null>(null);
+  const suppressHistoryAutoLoadRef = useRef(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [savingEditId, setSavingEditId] = useState<string | null>(null);
   const savingEditRef = useRef<string | null>(null);
-  const [showAllMessages, setShowAllMessages] = useState(false);
+  const [historyWindow, setHistoryWindow] = useState<ChatHistoryWindow | null>(null);
+  const range = useMemo(() => chatHistoryRange(messages, historyWindow), [messages, historyWindow]);
+  const activeMessages = useMemo(() => messages.slice(range.start, range.end), [messages, range.start, range.end]);
+  const pendingOlderWindowRef = useRef<{ sessionId: string; firstId: string } | null>(null);
   const [historyLoadRequested, setHistoryLoadRequested] = useState(false);
   const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
   const [errorDismissed, setErrorDismissed] = useState(false);
-  const currentPositionState = useRef({ api, showAllMessages });
-  currentPositionState.current = { api, showAllMessages };
+  const currentPositionState = useRef({ api, historyWindow });
+  currentPositionState.current = { api, historyWindow };
 
   // Reset dismiss when error changes
   useEffect(() => { setErrorDismissed(false); }, [error]);
@@ -155,13 +152,17 @@ export function MessageList({ rendererComponent }: MessageListProps) {
     historyLoadRequestTokenRef.current += 1;
     hasMountedRef.current = false;
     userScrolledUp.current = false;
+    readerMovingUntil.current = 0; freshReaderInput.current = false;
     historyAutoLoadArmedRef.current = false;
     historyIntersectionSeenAwayRef.current = false;
     historyAutoFillRequestKeyRef.current = null;
     historyLoadInFlightRef.current = false;
-    expandAnchorRef.current = null;
     earlierAnchorRef.current = null;
-    setShowAllMessages(false);
+    historyJumpRef.current = null; suppressHistoryAutoLoadRef.current = false;
+    setHistoryWindow(null);
+    pendingOlderWindowRef.current = null;
+    laterArmedRef.current = false;
+    setEditingMessageId(null); setEditContent("");
     setHistoryLoadRequested(false);
     setHistoryLoadFailed(false);
     const el = scrollContainerRef.current;
@@ -208,14 +209,22 @@ export function MessageList({ rendererComponent }: MessageListProps) {
       viewport: () => historySentinelRef.current
         ? findHistoryScrollContainer(historySentinelRef.current, list) ?? list : list,
       setTop: setScrollTopRaw,
-      expanded: () => currentPositionState.current.showAllMessages,
+      expanded: () => currentPositionState.current.historyWindow !== null,
       loadedCount: () => currentPositionState.current.api.messages.length,
-      reveal: (position, signal) => {
-        if (position.expanded || position.mode === "reading") setShowAllMessages(true);
-        if (position.mode !== "reading" || !position.anchorId) return;
+      reveal: async (position, signal) => {
+        if (position.mode !== "reading" || !position.anchorId) { setHistoryWindow(null); return; }
+        const revealAnchor = () => {
+          const current = currentPositionState.current.api;
+          if (!signal.aborted && current.sessionId === position.sessionId) {
+            const selected = chatHistoryAround(current.messages, position.anchorId!);
+            if (selected) setHistoryWindow(previous => previous?.firstId === selected.firstId && previous.lastId === selected.lastId
+              && previous.size === selected.size && previous.followLatest === selected.followLatest ? previous : selected);
+          }
+        };
+        revealAnchor();
         // Rehydrate at most the previously loaded range (+ one boundary page).
         // Each request remains server-bounded; never fetch the whole session.
-        return restoreTranscriptHistory(position, signal, {
+        await restoreTranscriptHistory(position, signal, {
           current: () => currentPositionState.current.api,
           load: () => currentPositionState.current.api.loadEarlierMessages(),
           // Observe the actual channel/React commit, not an assumed bridge delay.
@@ -238,6 +247,21 @@ export function MessageList({ rendererComponent }: MessageListProps) {
             check();
           }),
         });
+        revealAnchor();
+        // Finish restoration only after the selected bounded window commits.
+        // A parent API response can arrive before its React/message channel.
+        if (!signal.aborted && currentPositionState.current.api.messages.some(row => row.id === position.anchorId)) {
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = () => { window.clearTimeout(timeout); historyRenderWaiters.current.delete(check); signal.removeEventListener("abort", abort); };
+            const abort = () => { cleanup(); reject(new DOMException("Restoration canceled", "AbortError")); };
+            const check = () => {
+              if (signal.aborted || currentPositionState.current.api.sessionId !== position.sessionId) { abort(); return; }
+              if (list.querySelector(`[data-mid="${CSS.escape(position.anchorId!)}"]`)) { cleanup(); resolve(); }
+            };
+            const timeout = window.setTimeout(() => { cleanup(); reject(new Error("History window render timed out")); }, 10_000);
+            historyRenderWaiters.current.add(check); signal.addEventListener("abort", abort, { once: true }); check();
+          });
+        }
       },
       releaseInitial: () => {
         releaseInitialAnchorRef.current?.();
@@ -249,55 +273,41 @@ export function MessageList({ rendererComponent }: MessageListProps) {
   }, [api.sessionId, hasMessageHistory, isGuestPreview]);
 
   useLayoutEffect(() => { resumePositionRef.current?.changed(); }, [messages]);
-  useLayoutEffect(() => { resumePositionRef.current?.changed(false); }, [showAllMessages]);
-  useLayoutEffect(() => { historyRenderWaiters.current.forEach((check) => check()); }, [messages, api.isLoadingEarlier, api.hasEarlierMessages]);
+  useLayoutEffect(() => { resumePositionRef.current?.changed(false); }, [historyWindow]);
+  useLayoutEffect(() => { historyRenderWaiters.current.forEach((check) => check()); }, [messages, api.isLoadingEarlier, api.hasEarlierMessages, historyWindow]);
 
-  // ── Preserve scroll position when older messages are revealed ──
-  // Expanding the window (or compacted history) mounts messages ABOVE the
-  // current view. Without anchoring, the browser keeps scrollTop where it was
-  // (≈0, since the toggle sits at the top of the list), so the viewport jumps
-  // to the very top. Capture scrollHeight + scrollTop before the toggle, then
-  // once the new rows mount, shift scrollTop by exactly the height added above —
-  // so the messages the user was reading stay put and the older ones appear
-  // above to scroll into, like any chat app. The delta is whatever was inserted,
-  // so this stays correct even while content-visibility is still estimating
-  // off-screen row heights. Works for collapse too (delta is negative).
-  const captureExpandAnchor = useCallback((element: HTMLElement | null) => {
-    if (element) {
-      expandAnchorRef.current = {
-        element,
-        height: element.scrollHeight,
-        top: element.scrollTop,
-      };
-    }
+  // A stable row anchor handles both inserted older rows and trimmed tails.
+  const captureHistoryAnchor = useCallback((element: HTMLElement | null) => {
+    const list = scrollContainerRef.current;
+    if (!element || !list) return;
+    const top = element.getBoundingClientRect().top;
+    const row = Array.from(list.querySelectorAll<HTMLElement>("[data-mid]"))
+      .find(candidate => candidate.getBoundingClientRect().bottom > top);
+    if (!row?.dataset.mid) return;
+    const rect = element.getBoundingClientRect();
+    const scale = rect.height > 0 && element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1;
+    freshReaderInput.current = false;
+    earlierAnchorRef.current = { element, firstId: row.dataset.mid, offset: (row.getBoundingClientRect().top - top) / scale };
   }, []);
-  useLayoutEffect(() => {
-    const anchor = expandAnchorRef.current;
-    if (!anchor) return;
-    expandAnchorRef.current = null;
-    // Native setter: bypass the smart scroll guard, which no-ops scrollTop on a
-    // user-scrolled container and would otherwise swallow this anchor.
-    setScrollTopRaw(
-      anchor.element,
-      anchor.element.scrollHeight - anchor.height + anchor.top,
-    );
-  }, [showAllMessages]);
 
   // ── Server-side history pages ──
   // The host only holds a recent window of the transcript (mega sessions froze
   // the server serializing full histories); api.loadEarlierMessages() fetches
   // the previous page and PREPENDS it asynchronously. Anchoring differs from
   // the sync reveal above: rows arrive on a later render, so we remember the
-  // current first row's offsetTop at click time and, once it moves down (new
-  // rows mounted above it), shift scrollTop by exactly that delta.
+  // currently visible row and its viewport-relative offset before loading,
+  // then retain that anchor when rows arrive and the window changes.
   const handleLoadEarlier = useCallback(async (
-    historyScrollElement: HTMLElement | null = scrollContainerRef.current,
+    historyScrollElement: HTMLElement | null = null,
   ) => {
+    historyScrollElement ??= historySentinelRef.current
+      ? findHistoryScrollContainer(historySentinelRef.current, scrollContainerRef.current) : scrollContainerRef.current;
     const action = getEarlierHistoryAction(
-      showAllMessages ? 0 : Math.max(0, messages.length - INITIAL_MESSAGE_WINDOW),
+      range.start,
       api.hasEarlierMessages,
     );
-    if (action === "none" || historyLoadInFlightRef.current || api.isLoadingEarlier) return;
+    if (action === "none" || historyLoadInFlightRef.current || api.isLoadingEarlier || editingMessageId || savingEditRef.current) return;
+    suppressHistoryAutoLoadRef.current = false;
 
     releaseInitialAnchorRef.current?.();
     releaseInitialAnchorRef.current = null;
@@ -307,29 +317,19 @@ export function MessageList({ rendererComponent }: MessageListProps) {
     setHistoryLoadFailed(false);
 
     const shouldLoadServer = action === "load-server" || action === "reveal-and-load";
-    const listElement = scrollContainerRef.current;
-    const firstVisibleIndex = showAllMessages
-      ? 0
-      : Math.max(0, messages.length - INITIAL_MESSAGE_WINDOW);
-    const firstId = messages[firstVisibleIndex]?.id;
-    if (shouldLoadServer && historyScrollElement && listElement && firstId) {
-      const row = listElement.querySelector<HTMLElement>(`[data-mid="${CSS.escape(firstId)}"]`);
-      earlierAnchorRef.current = {
-        element: historyScrollElement,
-        firstId,
-        offsetTop: row?.offsetTop ?? 0,
-      };
+    captureHistoryAnchor(historyScrollElement);
+    if (shouldLoadServer && range.start === 0 && messages[0]) {
+      pendingOlderWindowRef.current = { sessionId: api.sessionId, firstId: messages[0].id };
     }
     try {
       const loaded = await executeEarlierHistoryAction(action, {
         revealLocal: () => {
-          captureExpandAnchor(historyScrollElement);
-          setShowAllMessages(true);
+          setHistoryWindow(shiftChatHistory(messages, range, -1));
         },
         loadServer: api.loadEarlierMessages,
       });
       if (!loaded && historyLoadRequestTokenRef.current === requestToken) {
-        earlierAnchorRef.current = null;
+        earlierAnchorRef.current = null; pendingOlderWindowRef.current = null;
         setHistoryLoadFailed(true);
       }
     } finally {
@@ -338,41 +338,118 @@ export function MessageList({ rendererComponent }: MessageListProps) {
         setHistoryLoadRequested(false);
       }
     }
-  }, [messages, api.hasEarlierMessages, api.isLoadingEarlier, api.loadEarlierMessages, captureExpandAnchor, showAllMessages]);
+  }, [messages, range, api.sessionId, api.hasEarlierMessages, api.isLoadingEarlier, api.loadEarlierMessages, captureHistoryAnchor, editingMessageId]);
   useLayoutEffect(() => {
-    const anchor = earlierAnchorRef.current;
-    if (!anchor) return;
-    const listElement = scrollContainerRef.current;
-    if (!listElement) return;
-    const row = listElement.querySelector<HTMLElement>(`[data-mid="${CSS.escape(anchor.firstId)}"]`);
-    if (!row) { earlierAnchorRef.current = null; return; }
-    const delta = row.offsetTop - anchor.offsetTop;
-    if (delta > 0) {
-      earlierAnchorRef.current = null;
-      setScrollTopRaw(anchor.element, anchor.element.scrollTop + delta);
+    const jump = historyJumpRef.current;
+    if (jump) {
+      historyJumpRef.current = null;
+      if (jump.sessionId === api.sessionId && jump.element.isConnected) {
+        setScrollTopRaw(jump.element,jump.edge === "oldest" ? 0 : Math.max(0,jump.element.scrollHeight-jump.element.clientHeight));
+      }
+      return;
     }
-  }, [messages.length]);
+    const pending = pendingOlderWindowRef.current;
+    if (pending && pending.sessionId === api.sessionId && messages[0]?.id !== pending.firstId) {
+      pendingOlderWindowRef.current = null;
+      setHistoryWindow(shiftChatHistory(messages, range, -1));
+      return;
+    }
+    const anchor = earlierAnchorRef.current, list = scrollContainerRef.current;
+    if (!anchor || !list) return;
+    const row = list.querySelector<HTMLElement>(`[data-mid="${CSS.escape(anchor.firstId)}"]`);
+    if (!row) { earlierAnchorRef.current = null; return; }
+    const rect = anchor.element.getBoundingClientRect();
+    const scale = rect.height > 0 && anchor.element.offsetHeight > 0 ? rect.height / anchor.element.offsetHeight : 1;
+    const delta = (row.getBoundingClientRect().top - rect.top) / scale - anchor.offset;
+    if (Math.abs(delta) > 0.5 || !pendingOlderWindowRef.current) {
+      earlierAnchorRef.current = null;
+      if (Math.abs(delta) > 0.5) setScrollTopRaw(anchor.element, anchor.element.scrollTop + delta);
+    }
+  }, [messages, historyWindow, api.sessionId, range]);
+
+  const handleShowNewer = useCallback(() => {
+    if (editingMessageId || savingEditRef.current || range.end >= messages.length) return;
+    suppressHistoryAutoLoadRef.current = false;
+    const viewport = historySentinelRef.current
+      ? findHistoryScrollContainer(historySentinelRef.current, scrollContainerRef.current) : scrollContainerRef.current;
+    captureHistoryAnchor(viewport);
+    const next = shiftChatHistory(messages, range, 1);
+    setHistoryWindow(next);
+    laterArmedRef.current = false;
+    userScrolledUp.current = !next?.followLatest;
+  }, [messages, range, editingMessageId, captureHistoryAnchor]);
+  revealLaterRef.current = handleShowNewer;
+
+  const handleHistoryJump = useCallback((edge: ChatHistoryEdge) => {
+    if (!messages.length || editingMessageId || savingEditRef.current || historyLoadInFlightRef.current || api.isLoadingEarlier) return;
+    const element = historySentinelRef.current
+      ? findHistoryScrollContainer(historySentinelRef.current,scrollContainerRef.current) : scrollContainerRef.current;
+    if (!element) return;
+    resumePositionRef.current?.userNavigated();
+    releaseInitialAnchorRef.current?.(); releaseInitialAnchorRef.current = null;
+    earlierAnchorRef.current = null; pendingOlderWindowRef.current = null;
+    readerMovingUntil.current = 0; freshReaderInput.current = false;
+    laterArmedRef.current = false; historyAutoLoadArmedRef.current = false;
+    historyIntersectionSeenAwayRef.current = false;
+    // "Loaded" is a scope promise, including when the first loaded page is
+    // shorter than its viewport. Only subsequent reader input may auto-page.
+    suppressHistoryAutoLoadRef.current = true;
+    historyJumpRef.current = {element,edge,sessionId:api.sessionId};
+    userScrolledUp.current = edge !== "newest";
+    setHistoryWindow(jumpChatHistory(messages,edge));
+  },[messages,editingMessageId,api.isLoadingEarlier,api.sessionId]);
+
+  // Explicit Newest / physical-bottom intent may resume built-in following
+  // without clearing the sandbox's broader custom-interface scroll guard.
+  useLayoutEffect(() => {
+    const list = scrollContainerRef.current, view = list?.ownerDocument.defaultView;
+    if (!list || !view || !historyWindow?.followLatest || editingMessageId || savingEditId) return;
+    let frame: number | null = null, stopped = false;
+    const align = () => {
+      frame = null;
+      const current = currentPositionState.current;
+      if (stopped || list.ownerDocument.hidden || current.api.sessionId !== api.sessionId ||
+          !current.historyWindow?.followLatest || resumePositionRef.current?.updating()) return;
+      const viewport = historySentinelRef.current
+        ? findHistoryScrollContainer(historySentinelRef.current, list) : list;
+      if (viewport) setScrollTopRaw(viewport, Math.max(0, viewport.scrollHeight - viewport.clientHeight));
+    };
+    const schedule = () => { if (frame === null) frame = view.requestAnimationFrame(align); };
+    followLatestAlignRef.current = align;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(list);
+    if (list.firstElementChild) observer?.observe(list.firstElementChild);
+    const viewport = historySentinelRef.current ? findHistoryScrollContainer(historySentinelRef.current, list) : list;
+    if (viewport && viewport !== list) observer?.observe(viewport);
+    align();
+    return () => {
+      stopped = true;
+      if (frame !== null) view.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      followLatestAlignRef.current = () => {};
+    };
+  }, [api.sessionId, historyWindow?.followLatest, editingMessageId, savingEditId]);
+  useLayoutEffect(() => { followLatestAlignRef.current(); }, [messages, streamingContent, streamingReasoning, isStreaming, historyWindow]);
 
   const maybeRequestEarlierHistory = useCallback((
     historyScrollElement: HTMLElement | null,
     scrollTop: number,
   ) => {
+    if (suppressHistoryAutoLoadRef.current) return;
     if (scrollTop > EARLIER_HISTORY_TOP_PX) {
       historyAutoLoadArmedRef.current = true;
     }
 
-    const hiddenLocalCount = showAllMessages
-      ? 0
-      : Math.max(0, messages.length - INITIAL_MESSAGE_WINDOW);
+    const hiddenLocalCount = range.start;
     const action = getEarlierHistoryAction(hiddenLocalCount, api.hasEarlierMessages);
     const loading = historyLoadRequested || api.isLoadingEarlier || historyLoadInFlightRef.current;
-    const autoFillKey = `${api.sessionId}:${messages[0]?.id ?? "empty"}:${messages.length}:${showAllMessages ? 1 : 0}:${api.hasEarlierMessages ? 1 : 0}`;
+    const autoFillKey = `${api.sessionId}:${messages[0]?.id ?? "empty"}:${messages.length}:${range.start}:${range.end}:${api.hasEarlierMessages ? 1 : 0}`;
     const viewportUnderfilled = isHistoryViewportUnderfilled(
       historyScrollElement,
       scrollContainerRef.current,
     );
     const canAutoFillViewport =
-      viewportUnderfilled && historyAutoFillRequestKeyRef.current !== autoFillKey;
+      viewportUnderfilled && activeMessages.length < MAX_CHAT_ROWS && historyAutoFillRequestKeyRef.current !== autoFillKey;
     if (shouldAutoRequestEarlierHistory({
       action,
       armed: historyAutoLoadArmedRef.current,
@@ -385,15 +462,52 @@ export function MessageList({ rendererComponent }: MessageListProps) {
       historyAutoLoadArmedRef.current = false;
       void handleLoadEarlier(historyScrollElement);
     }
-  }, [api.hasEarlierMessages, api.isLoadingEarlier, api.sessionId, handleLoadEarlier, historyLoadFailed, historyLoadRequested, messages, showAllMessages]);
+  }, [api.hasEarlierMessages, api.isLoadingEarlier, api.sessionId, handleLoadEarlier, historyLoadFailed, historyLoadRequested, messages, range.start, range.end, activeMessages.length]);
   requestEarlierFromViewportRef.current = maybeRequestEarlierHistory;
 
-  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    const el = event.currentTarget;
+  const handleViewportScroll = useCallback((el: HTMLElement) => {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD_PX;
     userScrolledUp.current = !atBottom;
+    const manual = readerMovingUntil.current >= Date.now() && (freshReaderInput.current || !isInitialTranscriptScroll(el));
+    if (manual) {
+      freshReaderInput.current = false;
+      readerMovingUntil.current = Date.now() + 1500;
+      if (!atBottom && (!historyWindow || historyWindow.followLatest)) setHistoryWindow(selectChatHistory(messages, range));
+      else if (atBottom && range.end === messages.length && !editingMessageId && !savingEditRef.current) {
+        setHistoryWindow(selectChatHistory(messages, range, true));
+      }
+    }
     maybeRequestEarlierHistory(el, el.scrollTop);
-  }, [maybeRequestEarlierHistory]);
+    if (manual && atBottom) handleShowNewer();
+  }, [maybeRequestEarlierHistory, handleShowNewer, messages, range, historyWindow, editingMessageId]);
+  viewportScrollRef.current = handleViewportScroll;
+  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => handleViewportScroll(event.currentTarget), [handleViewportScroll]);
+
+  useEffect(() => {
+    if (!hasMessageHistory) return;
+    const doc = scrollContainerRef.current?.ownerDocument;
+    if (!doc) return;
+    const viewport = () => historySentinelRef.current
+      ? findHistoryScrollContainer(historySentinelRef.current, scrollContainerRef.current) : scrollContainerRef.current;
+    const input = (event: Event) => {
+      const el = viewport(), target = event.target;
+      if (el && target instanceof doc.defaultView!.Node && el.contains(target) && isScrollIntent(event)) {
+        suppressHistoryAutoLoadRef.current = false;
+        readerMovingUntil.current = Date.now() + 1500; freshReaderInput.current = true;
+        releaseInitialAnchorRef.current?.(); releaseInitialAnchorRef.current = null;
+      }
+    };
+    const scroll = (event: Event) => {
+      const el = viewport();
+      if (el && el !== scrollContainerRef.current && event.target === el) viewportScrollRef.current(el);
+    };
+    for (const type of ["wheel", "touchmove", "keydown", "pointerdown"]) doc.addEventListener(type, input, { capture: true, passive: true });
+    doc.addEventListener("scroll", scroll, { capture: true, passive: true });
+    return () => {
+      for (const type of ["wheel", "touchmove", "keydown", "pointerdown"]) doc.removeEventListener(type, input, true);
+      doc.removeEventListener("scroll", scroll, true);
+    };
+  }, [hasMessageHistory]);
 
   // If the current page is too short to create a scrollbar, there is no user
   // scroll event and the marker never leaves the viewport. Re-check after each
@@ -411,7 +525,7 @@ export function MessageList({ rendererComponent }: MessageListProps) {
       historyScrollElement,
       historyScrollElement?.scrollTop ?? 0,
     );
-  }, [api.hasEarlierMessages, api.isLoadingEarlier, hasMessageHistory, historyLoadFailed, historyLoadRequested, messages.length, showAllMessages]);
+  }, [api.hasEarlierMessages, api.isLoadingEarlier, hasMessageHistory, historyLoadFailed, historyLoadRequested, messages.length, historyWindow]);
 
   // Observe the history marker itself instead of assuming the injected list is
   // the element being scrolled. IntersectionObserver accounts for every nested
@@ -423,6 +537,9 @@ export function MessageList({ rendererComponent }: MessageListProps) {
     if (!marker || typeof IntersectionObserver === "undefined") return;
 
     const observer = new IntersectionObserver((entries) => {
+      const later = entries.find(candidate => candidate.target === laterSentinelRef.current);
+      if (later && !later.isIntersecting) laterArmedRef.current = true;
+      else if (later?.isIntersecting && laterArmedRef.current) revealLaterRef.current();
       const entry = entries.find((candidate) => candidate.target === marker);
       if (!entry) return;
       if (!entry.isIntersecting) {
@@ -440,15 +557,22 @@ export function MessageList({ rendererComponent }: MessageListProps) {
       ) return;
       requestEarlierFromViewportRef.current(historyScrollElement, 0);
     });
+    if (laterSentinelRef.current) observer.observe(laterSentinelRef.current);
     observer.observe(marker);
     return () => observer.disconnect();
   }, [hasMessageHistory]);
 
   // ── Edit handlers ──
   const handleStartEdit = useCallback((messageId: string, content: string) => {
+    setHistoryWindow(selectChatHistory(messages, range));
     setEditingMessageId(messageId);
     setEditContent(content);
-  }, []);
+  }, [messages, range]);
+  useEffect(() => {
+    if (editingMessageId && !messages.some(message => message.id === editingMessageId)) {
+      setEditingMessageId(null); setEditContent("");
+    }
+  }, [messages, editingMessageId]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
@@ -476,24 +600,11 @@ export function MessageList({ rendererComponent }: MessageListProps) {
   }, [api, editContent, t]);
 
   // ── Messages ──
-  // Render the FULL transcript inline, compacted rows included. Compaction is a
-  // PROMPT-level optimization (compacted messages are swapped for the summary in
-  // the LLM context only); it must not change what the player sees or can do.
-  // The old behavior hid compacted rows behind a dimmed, non-interactive "earlier
-  // messages" collapser, which made them look greyed-out and blocked revert/fork
-  // to any summarized turn. They now render identically to the rest of the
-  // conversation. The windowing below still caps mounted rows for perf.
-  const allActiveMessages = messages;
-
-  // Only mount the most recent messages in the React tree to reduce memory.
-  // Avoid content-visibility here: its intrinsic fallback can reserve too
-  // little height for rich/custom bubbles and make adjacent sent messages
-  // visually overlap.
-  const needsWindow = allActiveMessages.length > INITIAL_MESSAGE_WINDOW && !showAllMessages;
-  const hiddenCount = needsWindow ? allActiveMessages.length - INITIAL_MESSAGE_WINDOW : 0;
-  const activeMessages = needsWindow
-    ? allActiveMessages.slice(-INITIAL_MESSAGE_WINDOW)
-    : allActiveMessages;
+  // Compaction changes only prompt context. Every loaded row remains reachable
+  // with its original edit, swipe and branch commands through bounded windows.
+  // A bounded, overlapping history window keeps custom rich rows mounted
+  // only while needed; message data and edit/branch commands remain untouched.
+  const hiddenCount = range.start;
   const earlierHistoryAction = getEarlierHistoryAction(hiddenCount, api.hasEarlierMessages);
   const isEarlierHistoryLoading = historyLoadRequested || api.isLoadingEarlier;
 
@@ -540,6 +651,15 @@ export function MessageList({ rendererComponent }: MessageListProps) {
       className="play-message-scroll flex-1 min-h-0 overflow-y-auto"
     >
       <div className="play-message-stack">
+        {hasMessageHistory && <div role="group" aria-label={t("loadedHistory")}
+          className="play-history-jumps sticky top-0 z-10 flex flex-wrap justify-end gap-1 bg-background/95 px-2 py-1">
+          {(["oldest","newest"] as const).map(edge => <button key={edge} type="button" data-history-jump={edge}
+            disabled={!!editingMessageId || !!savingEditId || isEarlierHistoryLoading}
+            onClick={() => handleHistoryJump(edge)}
+            className="min-h-10 rounded px-3 py-2 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
+            {t(edge === "oldest" ? "oldestLoaded" : "newestLoaded")}
+          </button>)}
+        </div>}
         <div
           ref={historySentinelRef}
           data-history-sentinel="true"
@@ -560,7 +680,7 @@ export function MessageList({ rendererComponent }: MessageListProps) {
           </div>
         ) : earlierHistoryAction !== "none" ? (
           <button
-            type="button"
+            type="button" data-history-direction="older" disabled={!!editingMessageId || !!savingEditId}
             onClick={() => { void handleLoadEarlier(); }}
             className={`mt-2 min-h-11 w-full cursor-pointer px-4 py-3 text-center text-sm font-medium transition-colors active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
               historyLoadFailed
@@ -579,7 +699,7 @@ export function MessageList({ rendererComponent }: MessageListProps) {
           const prevRole = idx > 0 ? activeMessages[idx - 1]!.role : null;
           const showRoleLabel = message.role !== prevRole;
           const isEditingThis = editingMessageId === message.id;
-          const isLastMessage = idx === activeMessages.length - 1;
+          const isLastMessage = range.start + idx === messages.length - 1;
           const isLastAssistant = isLastMessage && message.role === "assistant";
 
           return (
@@ -615,11 +735,18 @@ export function MessageList({ rendererComponent }: MessageListProps) {
           );
         })}
 
+        {range.end < messages.length && <button type="button" data-history-direction="newer"
+          disabled={!!editingMessageId || !!savingEditId} onClick={handleShowNewer}
+          className="mt-2 min-h-11 w-full px-4 py-3 text-center text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          {t("loadNewer")}
+        </button>}
+        <div ref={laterSentinelRef} aria-hidden="true" style={{ height: 1 }} />
+
         {/* Platform-owned consent renders here, including creator-skinned chats. */}
         <div data-yumina-model-fallback-slot="true" />
 
         {/* Streaming message */}
-        {isStreaming && (streamingContent || streamingReasoning) && (
+        {range.end === messages.length && isStreaming && (streamingContent || streamingReasoning) && (
           <MessageBubble
             message={{
               id: "__streaming__",

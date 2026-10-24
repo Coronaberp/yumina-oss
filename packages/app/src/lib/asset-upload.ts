@@ -62,6 +62,7 @@ interface PresignedUploadData {
   uploadUrl?: string;
   key?: string;
   asset?: unknown;
+  reused?: boolean;
 }
 
 interface UploadRequestContext {
@@ -77,6 +78,8 @@ export interface PresignedAssetUploadConfig {
   prepareUrl: string;
   registerUrl: string;
   prepareBody?: Record<string, unknown>;
+  /** A caller-owned operation ID, retained across retries of that logical upload. */
+  requestId?: string;
   registerBody:
     | Record<string, unknown>
     | ((context: UploadRequestContext) => Record<string, unknown>);
@@ -89,7 +92,7 @@ export interface PresignedAssetUploadConfig {
   signal?: AbortSignal;
   onStage?: (stage: AssetUploadStage) => void;
   onReconciled?: () => void;
-  /** @deprecated Images now retain their dimensions and use lossless server compression. */
+  /** @deprecated Images retain the complete original file for verified master storage. */
   resizeImageMaxDimension?: number;
   /** @deprecated Uploads never use lossy canvas encoding. */
   resizeImageQuality?: number;
@@ -106,6 +109,63 @@ export class AssetUploadError extends Error {
     this.stage = stage;
     this.status = options?.status;
   }
+}
+
+// WebCrypto materializes its input. Reserve room for that buffer and a copy;
+// larger files still upload normally and receive a verified server-side hash.
+const MAX_BROWSER_HASH_INPUT_BYTES = 16 * 1024 * 1024;
+const UPLOAD_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function imageSourceSha256(file: File, signal?: AbortSignal): Promise<string | undefined> {
+  signal?.throwIfAborted();
+  if (file.size < 1 || file.size > MAX_BROWSER_HASH_INPUT_BYTES || typeof globalThis.crypto?.subtle?.digest !== "function") return;
+  try {
+    const bytes = await file.arrayBuffer();
+    signal?.throwIfAborted();
+    const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+    signal?.throwIfAborted();
+    if (hash.length === 32) return Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    signal?.throwIfAborted();
+    // Optional preflight hashing must not prevent the original upload.
+  }
+}
+
+function newUploadRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") globalThis.crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
+  // This identifies one operation, not an authorization or content identity.
+  bytes[6] = (bytes[6]! & 15) | 64; bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function uploadRequestId(explicit: string | undefined, prepared: unknown): string {
+  for (const value of [explicit, prepared]) {
+    if (value !== undefined && (typeof value !== "string" || !UPLOAD_REQUEST_ID.test(value))) throw new AssetUploadError("prepare", "Invalid upload request ID");
+  }
+  if (explicit !== undefined && prepared !== undefined && explicit !== prepared) throw new AssetUploadError("prepare", "Conflicting upload request IDs");
+  return explicit ?? (prepared as string | undefined) ?? newUploadRequestId();
+}
+
+function uploadIdentity(body: Record<string, unknown>, requestId: string, sourceSha256: string | undefined, stage: AssetUploadStage) {
+  if (body.requestId !== undefined && body.requestId !== requestId) throw new AssetUploadError(stage, "Conflicting upload request IDs");
+  const payload: Record<string, unknown> = { ...body, requestId };
+  // Neither a stale caller value nor an unverified fallback may claim a digest.
+  delete payload.sourceSha256;
+  if (sourceSha256) payload.sourceSha256 = sourceSha256;
+  return payload;
+}
+
+function validReuseKey(key: unknown): key is string {
+  if (typeof key !== "string" || key.length === 0 || key.length > 2048 || key.startsWith("/") || /[\\:?#]/.test(key)) return false;
+  for (let index = 0; index < key.length; index++) {
+    const code = key.charCodeAt(index);
+    if (code <= 32 || code === 127) return false;
+  }
+  return key.split("/").every(segment => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function getExtension(filename: string): string {
@@ -370,6 +430,7 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   prepareUrl,
   registerUrl,
   prepareBody,
+  requestId: explicitRequestId,
   registerBody,
   fetchImpl,
   prepareCredentials = "include",
@@ -385,11 +446,14 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   const f = fetchImpl ?? fetch;
   signal?.throwIfAborted();
   onStage?.("prepare");
-  // Preserve source pixels for lossless server compression. Animation detection
+  // Preserve the complete source file for verified master storage. Animation detection
   // still marks covers for progressive animation display.
   const animated = (await isAnimatedImageFile(inputFile)) !== false;
   const file = inputFile;
   const { type: resolvedType, contentType } = getUploadMetadata(file, preferredType);
+  const requestId = uploadRequestId(explicitRequestId, prepareBody?.requestId);
+  const sourceSha256 = resolvedType === "image" ? await imageSourceSha256(file, signal) : undefined;
+  signal?.throwIfAborted();
 
   // Warn (but don't block) on large files
   const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MB
@@ -414,14 +478,14 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
       headers: { "Content-Type": "application/json" },
       credentials: prepareCredentials,
       signal: prepareTimeout.signal,
-      body: JSON.stringify({
+      body: JSON.stringify(uploadIdentity({
         filename: file.name,
         contentType,
         type: resolvedType,
         sizeBytes: file.size,
         ...(animated ? { animated: true } : {}),
         ...prepareBody,
-      }),
+      }, requestId, sourceSha256, "prepare")),
     });
 
     preparePayload = await parseApiResponse<PresignedUploadData>(prepareResponse);
@@ -448,30 +512,34 @@ async function uploadAssetWithPresignedUrlUnguarded<T>({
   }
   const uploadUrl = preparePayload?.data?.uploadUrl;
   const key = preparePayload?.data?.key;
+  const reused = preparePayload?.data?.reused === true;
 
-  if (!uploadUrl || !key) {
+  if (reused ? !sourceSha256 || !validReuseKey(key) || uploadUrl !== undefined : !uploadUrl || !key) {
     throw new AssetUploadError("prepare", "Failed to prepare upload");
   }
 
   // Stage 2: Upload to S3 with retry on transient errors
   signal?.throwIfAborted();
-  onStage?.("storage");
-  const customFetch = fetchImpl ? f : undefined;
-  await withRetry(
-    () => {
-      onProgress?.({ fraction: 0, loaded: 0, total: file.size, bytesPerSecond: 0 });
-      signal?.throwIfAborted();
-      return uploadToStorage(uploadUrl, file, contentType, effectiveStorageTimeout, onProgress, customFetch, signal);
-    },
-    MAX_STORAGE_RETRIES,
-    (error) => !signal?.aborted && isRetryableStorageError(error),
-  );
+  if (!reused) {
+    onStage?.("storage");
+    const customFetch = fetchImpl ? f : undefined;
+    await withRetry(
+      () => {
+        onProgress?.({ fraction: 0, loaded: 0, total: file.size, bytesPerSecond: 0 });
+        signal?.throwIfAborted();
+        return uploadToStorage(uploadUrl!, file, contentType, effectiveStorageTimeout, onProgress, customFetch, signal);
+      },
+      MAX_STORAGE_RETRIES,
+      (error) => !signal?.aborted && isRetryableStorageError(error),
+    );
+  }
 
   // Stage 3: Register asset in DB
-  const payload =
+  const callerPayload =
     typeof registerBody === "function"
-      ? registerBody({ file, resolvedType, contentType, key })
+      ? registerBody({ file, resolvedType, contentType, key: key! })
       : registerBody;
+  const payload = uploadIdentity(callerPayload, requestId, sourceSha256, "register");
 
   signal?.throwIfAborted();
   onStage?.("register");

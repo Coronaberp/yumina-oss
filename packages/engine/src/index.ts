@@ -381,3 +381,6 @@ export type { StoryChapter } from "./story/chapters.js";
 export { chapterEventSchema, chapterEventSceneSchema, chapterEventEffectSchema, chapterEventIssues } from "./story/chapter-event-schema.js";
 export type { ChapterEvent, ChapterEventScene, ChapterEventProgress, ChapterEventEvidence } from "./story/chapter-event-schema.js";
 export { chapterEventContext, chapterEventPrompt, advanceChapterEvents } from "./story/chapter-events.js";
+
+export { upgradeVnSpriteFiles } from "./world/vn-sprite-runtime-upgrade.js";
+export { normalizeSpriteId, normalizeSpriteSelectionId, normalizeSpriteExpression, spriteExpressions } from "./parser/sprite-expressions.js";

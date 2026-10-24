@@ -47,7 +47,7 @@ export const SESSION_MEMORY_MODAL_STYLES = `
 .yumina-memory-tabs > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .yumina-memory-content { min-height: 0; min-width: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #b69a6966 transparent; }
 .yumina-memory-footer { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 24px; }
-.yumina-memory-surface button {
+.yumina-memory-surface button:not([role="checkbox"]):not([role="switch"]) {
   min-height: 44px;
   padding: 10px 14px;
   border: 1px solid var(--memory-border);
@@ -61,7 +61,7 @@ export const SESSION_MEMORY_MODAL_STYLES = `
   cursor: pointer;
   white-space: normal;
 }
-.yumina-memory-surface button:hover:not(:disabled) { background: #ccaa671c; color: #f6e6c3; }
+.yumina-memory-surface button:not([role="checkbox"]):not([role="switch"]):hover:not(:disabled) { background: #ccaa671c; color: #f6e6c3; }
 .yumina-memory-surface button[aria-pressed="true"], .yumina-memory-surface button[aria-selected="true"], .yumina-memory-surface button[class~="bg-primary"] { background: #ccaa6722; color: var(--memory-cream); }
 .yumina-memory-surface button:disabled { opacity: .5; cursor: default; }
 .yumina-memory-surface button[class*="text-red-"], .yumina-memory-surface [class*="text-red-"] { color: #efb8a6; }

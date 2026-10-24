@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -11,7 +12,10 @@ import { SESSION_MEDIA_DDL } from "../db/session-media-ddl.js";
 import { createSessionMediaService } from "../lib/session-media-service.js";
 import { uploadOperationId } from "../lib/asset-upload-operation.js";
 import sharp from "sharp";
-import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
+import { encodeImageMaster } from "../lib/image-master-envelope.js";
+import { createImageMasterService, ImageMasterError, isImageMasterKey, validSourceSha256 } from "../lib/image-master-service.js";
+import { IMAGE_MASTERS_DDL } from "../db/image-masters-ddl.js";
+import { gunzipSync } from "node:zlib";
 import type { AppEnv } from "../lib/types.js";
 
 // Actual route and PostgreSQL semantics, with no runtime database/env import.
@@ -21,7 +25,11 @@ let backend: "local" | "s3" = "local", copies = 0, headCalls = 0;
 let alterCopiedMime = false;
 const client = new PGlite();
 const database = { db: drizzle(client) as unknown as DrizzleDB };
-const objects = new Map<string, {contentType:string;contentLength:number;etag:string;buffer?:Buffer}>();
+const objects = new Map<string, {contentType:string;contentLength:number;etag:string;buffer?:Buffer;contentEncoding?:"gzip"}>();
+const imageMasters = createImageMasterService(database.db, {
+  encode: encodeImageMaster,
+  write: async (key, buffer, contentType, opts) => objects.set(key, { buffer, contentType, contentLength: buffer.length, etag: opts.storedSha256, contentEncoding: opts.contentEncoding }) as unknown as void,
+});
 const service = createSessionMediaService(database.db, {
   signUpload: async key => key, signRead: async key => key,
   read: async () => Buffer.alloc(0), write: async () => {},
@@ -62,16 +70,11 @@ const mocks: Record<string, unknown> = {
   },
   "../lib/session-media.js": { sessionMedia: service },
   "../lib/env.js": { env: { BETTER_AUTH_URL: "https://yumina.test" } },
-  "../lib/image-optimization.js": {
-    losslessWebpKey,
-    optimizeUploadedImage: (asset: Parameters<typeof optimizeUploadedImage>[0]) => optimizeUploadedImage(asset, {
-      read: async key => {
-        const object = objects.get(key)!;
-        assert.ok(object.buffer);
-        return { buffer: object.buffer, contentType: object.contentType };
-      },
-      write: async (key, buffer, contentType) => { objects.set(key, { buffer, contentType, contentLength: buffer.length, etag: "converted" }); },
-    }),
+  "../lib/image-masters.js": { imageMasters, ImageMasterError, isImageMasterKey, validSourceSha256,
+    storeUploadedImage: async (asset: {userId:string;key:string;mimeType:string;sourceSha256?:string}, tx: Pick<DrizzleDB,"execute">) => {
+      if (isImageMasterKey(asset.key)) return imageMasters.findByKey(asset.userId,"public",asset.key,tx);
+      return imageMasters.store({userId:asset.userId,access:"public",bytes:objects.get(asset.key)!.buffer!,mimeType:asset.mimeType,sourceSha256:asset.sourceSha256},tx);
+    },
   },
   "../lib/generation/asset-receipts.js": { detachGenerationAsset: async () => {} },
 };
@@ -89,6 +92,7 @@ before(async () => {
     CREATE TABLE asset_folders (id text PRIMARY KEY, user_id text NOT NULL, name text NOT NULL, parent_folder_id text, created_at timestamp DEFAULT now());
     CREATE TABLE user_assets (id text PRIMARY KEY, user_id text NOT NULL, type text NOT NULL, filename text NOT NULL, url text NOT NULL, size_bytes integer, mime_type text, folder_id text REFERENCES asset_folders(id), source_asset_id text, is_public boolean DEFAULT false, created_at timestamp DEFAULT now());
   `);
+  await client.exec(IMAGE_MASTERS_DDL);
 });
 
 test("lossless image registration publishes matching metadata, settles compressed bytes and survives retries", async () => {
@@ -107,18 +111,19 @@ test("lossless image registration publishes matching metadata, settles compresse
       const response = await post("/", body);
       assert.equal(response.status, 201, await response.clone().text());
       const asset = (await response.json() as { data: {id:string;key:string;filename:string;mimeType:string;sizeBytes:number} }).data;
-      assert.equal(asset.filename, "sprite.webp");
-      assert.equal(asset.mimeType, "image/webp");
-      assert.match(asset.key, /\.webp$/);
-      assert.ok(asset.sizeBytes < input.length);
-      assert.equal(objects.get(asset.key)!.contentLength, asset.sizeBytes);
+      assert.equal(asset.filename, "sprite.png");
+      assert.equal(asset.mimeType, "image/png");
+      assert.match(asset.key, /\/image-masters\/public\/[a-f0-9]{64}\.png$/);
+      assert.equal(asset.sizeBytes, input.length);
+      assert.ok(objects.get(asset.key)!.contentLength <= asset.sizeBytes);
       assert.equal(objects.get(asset.key)!.contentType, asset.mimeType);
-      assert.deepEqual(await sharp(objects.get(asset.key)!.buffer!).raw().toBuffer(), await sharp(input).raw().toBuffer());
+      const object = objects.get(asset.key)!;
+      assert.deepEqual(object.contentEncoding === "gzip" ? gunzipSync(object.buffer!) : object.buffer, input);
       assert.equal((await service.usage(owner)).used, asset.sizeBytes);
       assert.equal((await service.usage(owner)).reserved, 0);
       const retry = await post("/", body);
       assert.equal(retry.status, 201, await retry.clone().text());
-      assert.equal((await data(retry)).id, asset.id, "retry without a request ID must find the converted asset");
+      assert.equal((await data(retry)).id, asset.id, "retry without a request ID must find the same original master");
     }
   } finally { backend = "local"; signedUrls = signedBefore; }
 });
@@ -248,3 +253,113 @@ test("local creative uploads remain available after private media schema install
   assert.equal((await post("/",{...request,key,mimeType:"video/webm"})).status,201);
   assert.equal((await service.usage(owner)).used,12,"local uploads also settle actual bytes");
 });
+
+
+// Hold each request after its real initial DB lookup has observed no asset.
+// The winner can commit before the loser reaches the owner-locked recheck.
+async function raceAfterInitialMiss(
+  first: () => Response | Promise<Response>, second: () => Response | Promise<Response>,
+): Promise<[Response, Response]> {
+  const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
+  const entered = [deferred(), deferred()];
+  const released = [deferred(), deferred()];
+  const select = database.db.select;
+  const transaction = database.db.transaction;
+  const lockOwner = service.lockOwner;
+  const find = imageMasters.find;
+  const winnerLocked = deferred();
+  const loserWaiting = deferred();
+  const finishWinner = deferred();
+  let transactions = 0;
+  let locks = 0;
+  let misses = 0;
+  // Prepare must reach the locked reconciliation path, rather than returning
+  // early because its digest happened to be reusable before the race settled.
+  imageMasters.find = async () => undefined;
+  database.db.transaction = ((...args: Parameters<typeof transaction>) => {
+    if (++transactions === 2) loserWaiting.resolve();
+    return Reflect.apply(transaction, database.db, args);
+  }) as typeof transaction;
+  service.lockOwner = async (...args: Parameters<typeof lockOwner>) => {
+    await lockOwner(...args);
+    if (++locks === 1) {
+      winnerLocked.resolve();
+      await finishWinner.promise;
+    }
+  };
+  database.db.select = ((...args: Parameters<typeof select>) => {
+    const builder = select.apply(database.db, args);
+    const from = builder.from.bind(builder);
+    builder.from = ((...fromArgs: Parameters<typeof from>) => {
+      const query = from(...fromArgs);
+      const limit = query.limit.bind(query);
+      query.limit = (async (...limitArgs: Parameters<typeof limit>) => {
+        const rows = await limit(...limitArgs);
+        if (!rows.length && misses < 2) {
+          const index = misses++;
+          entered[index]!.resolve();
+          await released[index]!.promise;
+        }
+        return rows;
+      }) as typeof query.limit;
+      return query;
+    }) as typeof builder.from;
+    return builder;
+  }) as typeof select;
+  let winner: Response | Promise<Response> | undefined;
+  let loser: Response | Promise<Response> | undefined;
+  try {
+    winner = first();
+    await entered[0]!.promise;
+    loser = second();
+    await entered[1]!.promise;
+    released[0]!.resolve();
+    await winnerLocked.promise;
+    released[1]!.resolve();
+    // PGlite queues transactions on its single connection. Confirm the loser
+    // is waiting for that transaction before allowing the owner lock to clear.
+    await loserWaiting.promise;
+    finishWinner.resolve();
+    const result = await winner;
+    const secondResult = await loser;
+    assert.equal(misses, 2, "Both requests observed the asset missing before the owner lock");
+    assert.equal(locks, 2, "Both requests completed the owner-locked recheck");
+    return [result, secondResult];
+  } finally {
+    released.forEach(value => value.resolve());
+    finishWinner.resolve();
+    await Promise.allSettled([winner, loser]);
+    database.db.select = select;
+    database.db.transaction = transaction;
+    service.lockOwner = lockOwner;
+    imageMasters.find = find;
+  }
+}
+
+for (const endpoint of ["/upload-url", "/"] as const) {
+  for (const sameBytes of [false, true]) {
+    test(`image ${endpoint} rechecks a concurrent winner digest after the initial miss (${sameBytes ? "same" : "different"} bytes)`, async () => {
+      owner = "alice";
+      backend = "s3";
+      const firstBytes = Buffer.from(`winner ${endpoint} ${sameBytes}`);
+      const secondBytes = sameBytes ? firstBytes : Buffer.from(`loser ${endpoint}`);
+      const firstMaster = await imageMasters.store({ userId: owner, access: "public", bytes: firstBytes, mimeType: "image/png" });
+      const secondMaster = await imageMasters.store({ userId: owner, access: "public", bytes: secondBytes, mimeType: "image/png" });
+      const requestId = crypto.randomUUID();
+      const body = (key: string, bytes: Buffer) => ({ requestId, key, filename: "race.png", type: "image", contentType: "image/png", mimeType: "image/png", sizeBytes: bytes.length, sourceSha256: createHash("sha256").update(bytes).digest("hex") });
+      const firstBody = body(firstMaster.key, firstBytes);
+      const secondBody = body(secondMaster.key, secondBytes);
+      try {
+        const [winner, loser] = await raceAfterInitialMiss(() => post("/", firstBody), () => post(endpoint, secondBody));
+        assert.equal(winner.status, 201, await winner.clone().text());
+        assert.equal(loser.status, sameBytes ? endpoint === "/" ? 201 : 200 : 409, await loser.clone().text());
+        if (sameBytes) {
+          const winnerData = await data(winner);
+          const loserData = await data(loser);
+          assert.equal(endpoint === "/" ? loserData.id : loserData.asset?.id, winnerData.id);
+        }
+        assert.equal((await post(endpoint, firstBody)).status, endpoint === "/" ? 201 : 200, "matching retries still reconcile after the winner commits");
+      } finally { backend = "local"; }
+    });
+  }
+}

@@ -58,7 +58,8 @@ test("opening backgrounds use stable IDs after pruning and fall back to Global i
   const source = writeVnOpeningScenes(writeVnAssetMap(sceneTemplate, "backgrounds", { opening: { day: "global-opening" }, garden: { day: "global-garden" }, default: "global-default" }), "one", { opening: { day: "one-day", night: "one-night" }, default: "one-default" }, sceneTemplate);
   const withTwo = writeVnOpeningScenes(writeVnOpeningScenes(source, "two", { opening: "two-opening" }, sceneTemplate), "blank", { default: "blank-route" }, sceneTemplate);
   // Execute only our known runtime template, after data-only writers validated its maps.
-  const resolve = new Function(withTwo.replace(/export /g, "") + '\nreturn backgroundFor;')() as (api: Record<string, unknown>, line?: { scene?: string }) => string;
+  // This test exercises opening selection; message-passage parsing is tested by the runtime suites.
+  const resolve = new Function("messagePassages", withTwo.replace(/^import \{ messagePassages \} from "\.\/passages";\s*/m, "").replace(/export /g, "") + '\nreturn backgroundFor;')(() => []) as (api: Record<string, unknown>, line?: { scene?: string }) => string;
   const entries = [{ id: "two", name: "Second", role: "greeting", enabled: true, position: 2 }, { id: "one", role: "greeting", enabled: true, position: 1 }];
   const api = { entries, variables: {}, hasEarlierMessages: false, messages: [{ role: "assistant", activeSwipeIndex: 0 }] };
   assert.equal(resolve(api), "one-day", "an untagged opening uses its own opening art before defaults");

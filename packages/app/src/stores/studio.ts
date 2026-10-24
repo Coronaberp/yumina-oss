@@ -1,6 +1,7 @@
 import { studioTaskSchema, type StudioTask } from "@yumina/shared";
 import { mergeStudioSteering, studioTaskStart } from "@/features/studio/lib/steering";
 import { createStudioRecoveryRequestCoordinator } from "@/lib/studio-recovery-request";
+import { uploadStudioAttachments as uploadAttachments } from "@/lib/studio-attachment-upload";
 import { mergeStudioImageJobs } from "@/features/studio/lib/image-job-state";
 import { mergeStudioToolTrace, endStudioToolTrace, startStudioToolTrace } from "@/features/studio/lib/tool-trace-state";
 import { create } from "zustand";
@@ -197,8 +198,10 @@ function flushStreamNow() {
 }
 
 // ── World schema refresh ──
-function flushRefresh() {
-  useEditorStore.getState().refreshWorldSchema().catch(() => {});
+function flushRefresh(expectedWorldId?: string) {
+  const editor = useEditorStore.getState();
+  if (expectedWorldId && editor.serverWorldId !== expectedWorldId) return;
+  editor.refreshWorldSchema().catch(() => {});
 }
 
 function nextMsgId(): string {
@@ -1091,67 +1094,6 @@ function connectAgentSSE(
 
 // (old streamSingleTurn removed — agent loop now runs server-side)
 
-// ── File Upload Helper ──
-
-async function uploadAttachments(files: File[]): Promise<ChatAttachment[]> {
-  const results: ChatAttachment[] = [];
-
-  for (const file of files) {
-    // 1. Get presigned upload URL
-    const urlRes = await fetch(`${apiBase}/api/studio/upload-url`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        filename: file.name,
-        contentType: file.type,
-        fileSize: file.size,
-      }),
-    });
-
-    if (!urlRes.ok) {
-      const err = await urlRes.json().catch(() => ({ error: "Upload failed" }));
-      throw new Error(err.error || "Failed to get upload URL");
-    }
-
-    const { data } = await urlRes.json();
-
-    // 2. Upload file directly to S3
-    const putRes = await fetch(data.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": file.type },
-      body: file,
-    });
-
-    if (!putRes.ok) {
-      throw new Error(`Failed to upload ${file.name}`);
-    }
-
-    // 3. Get download URL for the uploaded file
-    const dlRes = await fetch(`${apiBase}/api/studio/download-url`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ key: data.key }),
-    });
-
-    if (!dlRes.ok) {
-      throw new Error(`Failed to get download URL for ${file.name}`);
-    }
-
-    const dlData = await dlRes.json();
-
-    results.push({
-      url: dlData.data.url,
-      key: data.key,
-      mimeType: file.type,
-      name: file.name,
-    });
-  }
-
-  return results;
-}
-
 function parseCreditPause(value: Record<string, unknown>, scope: StudioAgentScope, runId: string): StudioCreditPause | null {
   if ((value.phase !== "preflight" && value.phase !== "generated") || !runId
     || typeof value.requiredCredits !== "number" || !Number.isFinite(value.requiredCredits) || value.requiredCredits < 0) return null;
@@ -1200,6 +1142,7 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
   const epoch = studioAgentEpoch;
   let streamRunId = initialRunId;
   let streamModel = "";
+  let appliedRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   const set = useStudioStore.setState;
   const active = () => epoch === studioAgentEpoch && isActiveStudioChatScope(scope);
   const activeRun = () => active() && isActiveStudioRunScope(scope, streamRunId);
@@ -1270,7 +1213,12 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
       });
     },
     onApplied: data => {
-      if (activeRun()) set(s => ({ appliedCount: s.appliedCount + (Number.isFinite(data.changes) ? data.changes : 1) }));
+      if (!activeRun()) return;
+      set(s => ({ appliedCount: s.appliedCount + (Number.isFinite(data.changes) ? data.changes : 1) }));
+      if (!appliedRefreshTimer) appliedRefreshTimer = setTimeout(() => {
+        appliedRefreshTimer = null;
+        if (activeRun()) flushRefresh(scope.worldId);
+      }, 200);
     },
     onStreamInterrupted: () => {
       if (activeStream()) set({ isRecovering: true });
@@ -1348,6 +1296,7 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
     },
     onDone: () => {
       if (!activeRun()) return;
+      if (appliedRefreshTimer) { clearTimeout(appliedRefreshTimer); appliedRefreshTimer = null; }
       flushStreamNow();
       set(s => {
         const settledMessages = endStudioToolTrace(s.chatMessages, streamRunId).map(message => message.agentRunId === streamRunId
@@ -1360,7 +1309,7 @@ function studioAgentCallbacks(scope: StudioAgentScope, initialRunId: string | nu
         return { ...ended, chatMessages, creditPause: null, creditPauseError: null,
           ...(s.agentCompaction?.status === "summarizing" ? { agentCompaction: { ...s.agentCompaction, status: "cancelled" } } : {}) };
       });
-      flushRefresh();
+      flushRefresh(scope.worldId);
     },
     onCredits: data => {
       if (!activeStream()) return;

@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderOpen, ImagePlus, Upload } from "lucide-react";
 import {
@@ -7,11 +7,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { feedback } from "@/lib/feedback";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import { useAssetStore } from "@/stores/assets";
 import { AssetPicker } from "../asset-picker";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { getImageFilesFromTransfer } from "@/lib/clipboard-image";
 
 /**
  * Put text at the caret of a textarea the way typing would: through the native
@@ -64,102 +65,111 @@ export interface ImageInsert {
  * assets), drag-and-drop, and paste. Files go through the world asset
  * library and land in the text as `[image:@asset:…]` at the caret.
  */
-export function useImageInsert(getTextarea: () => HTMLTextAreaElement | null): ImageInsert {
+export function useImageInsert(getTextarea: () => HTMLTextAreaElement | null, scopeKey?: string): ImageInsert {
   const { t } = useTranslation("editor");
   const uploadAsset = useAssetStore((s) => s.uploadAsset);
-  const serverWorldId = useEditorStore((s) => s.serverWorldId);
   const [busy, setBusy] = useState(false);
-  const [picker, setPicker] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-
-  const ensureWorldId = async (): Promise<string | null> => {
-    const store = useEditorStore.getState;
-    if (store().serverWorldId) return store().serverWorldId;
-    await store().saveDraft();
-    return store().serverWorldId;
-  };
-
-  const insertRef = (ref: string, alt?: string) => {
-    const el = getTextarea();
-    if (!el) return;
-    insertAtCaret(el, imageEmbedTag(ref, alt));
-  };
-
-  const insertFiles = async (files: FileList | File[]) => {
-    const list = [...files].filter((f) => f.type.startsWith("image/"));
-    if (list.length === 0) return;
-    const worldId = await ensureWorldId();
-    if (!worldId) return;
+  const epoch = useRef(0);
+  const inFlight = useRef<Target | null>(null);
+  const uploaded = useRef(new Map<File, string>());
+  const mounted = useRef(true);
+  const currentScope = useRef(scopeKey);
+  currentScope.current = scopeKey;
+  type Target = { token: number; draftId: string; worldId: string | null; scope?: string; area: HTMLTextAreaElement; files?: File[] };
+  const [sources, setSources] = useState<Target | null>(null);
+  const [picker, setPicker] = useState<Target | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    let previous = useEditorStore.getState();
+    const unsubscribe = useEditorStore.subscribe(next => {
+      if (next.worldDraft.id !== previous.worldDraft.id || (previous.serverWorldId && next.serverWorldId !== previous.serverWorldId)
+          || next.readOnlyInspect || next.editingLocked || next.guestMode) {
+        epoch.current++; uploaded.current.clear(); setSources(null); setPicker(null); setBusy(false);
+      }
+      previous = next;
+    });
+    return () => { mounted.current = false; unsubscribe(); };
+  }, []);
+  useEffect(() => { epoch.current++; uploaded.current.clear(); setSources(null); setPicker(null); setBusy(false); }, [scopeKey]);
+  function current(target: Target, signal?: AbortSignal) {
+    const state = useEditorStore.getState();
+    return mounted.current && !signal?.aborted && target.token === epoch.current
+      && target.draftId === state.worldDraft.id && (!target.worldId || target.worldId === state.serverWorldId)
+      && target.scope === currentScope.current && getTextarea() === target.area
+      && !state.readOnlyInspect && !state.editingLocked && !state.guestMode;
+  }
+  function capture(files?: File[]): Target | null {
+    const state = useEditorStore.getState(), area = getTextarea();
+    if (!area || state.readOnlyInspect || state.editingLocked || state.guestMode) return null;
+    uploaded.current.clear();
+    return { token: ++epoch.current, draftId: state.worldDraft.id, worldId: state.serverWorldId, scope: currentScope.current, area, files };
+  }
+  async function ensureWorldId(target: Target) {
+    if (!current(target)) return null;
+    if (!useEditorStore.getState().serverWorldId) await useEditorStore.getState().saveDraft();
+    return current(target) ? useEditorStore.getState().serverWorldId : null;
+  }
+  function openFiles(files?: File[]) {
+    if (busy) return;
+    const target = capture(files);
+    if (target) { setPicker(null); setSources(target); }
+  }
+  const insertFiles = async (files: File[], context: ImageImportContext) => {
+    if (!sources || inFlight.current?.token === sources.token || !current(sources, context.signal)) return;
+    const target = sources;
+    inFlight.current = target;
     setBusy(true);
     try {
-      for (const file of list) {
-        const asset = await uploadAsset(worldId, file, "image");
-        if (!asset) {
-          feedback.error(t("imageInsert.failed", { name: file.name }));
-          continue;
+      const worldId = await ensureWorldId(target);
+      if (!worldId || !current(target, context.signal)) return;
+      for (const file of files) {
+        if (!current(target, context.signal)) return;
+        if (!uploaded.current.has(file)) {
+          const asset = await uploadAsset(worldId, file, "image", { signal: context.signal, onProgress: context.onProgress, silent: true });
+          if (!current(target, context.signal)) return;
+          if (!asset) throw Error(t("imageInsert.failed", { name: file.name }));
+          uploaded.current.set(file, asset.id);
         }
-        insertRef(`@asset:${asset.id}`, file.name.replace(/\.[^.]+$/, ""));
       }
+      if (!current(target, context.signal)) return;
+      for (const file of files) insertAtCaret(target.area, imageEmbedTag(`@asset:${uploaded.current.get(file)!}`, file.name.replace(/\.[^.]+$/, "")));
+      epoch.current++; uploaded.current.clear();
     } finally {
-      setBusy(false);
+      if (inFlight.current === target) {
+        inFlight.current = null;
+        if (mounted.current) setBusy(false);
+      }
     }
   };
-
   const openLibrary = async () => {
-    if (!(await ensureWorldId())) return;
-    setPicker(true);
+    const target = capture();
+    if (!target) return;
+    const worldId = await ensureWorldId(target);
+    if (worldId && current(target)) { setSources(null); setPicker({ ...target, worldId }); }
   };
-
   const dropProps: ImageInsert["dropProps"] = {
-    onDragOver: (e) => {
-      if (![...e.dataTransfer.types].includes("Files")) return;
-      e.preventDefault();
-      setDragOver(true);
-    },
+    onDragOver: event => { if (Array.from(event.dataTransfer.types).includes("Files")) { event.preventDefault(); setDragOver(true); } },
     onDragLeave: () => setDragOver(false),
-    onDrop: (e) => {
-      if (!e.dataTransfer.files?.length) return;
-      e.preventDefault();
+    onDrop: event => {
+      const files = getImageFilesFromTransfer(event.dataTransfer);
       setDragOver(false);
-      void insertFiles(e.dataTransfer.files);
+      if (files.length) { event.preventDefault(); openFiles(files); }
     },
-    onPaste: (e) => {
-      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
-      if (files.length === 0) return;
-      e.preventDefault();
-      void insertFiles(files);
+    onPaste: event => {
+      const files = getImageFilesFromTransfer(event.clipboardData);
+      if (files.length) { event.preventDefault(); openFiles(files); }
     },
   };
-
-  const overlays = (
-    <>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files) void insertFiles(e.target.files);
-          e.target.value = "";
-        }}
-      />
-      {picker && serverWorldId && (
-        <AssetPicker
-          worldId={serverWorldId}
-          filterType="image"
-          onSelect={(ref) => {
-            insertRef(ref);
-            setPicker(false);
-          }}
-          onClose={() => setPicker(false)}
-        />
-      )}
-    </>
-  );
-
-  return { busy, dragOver, dropProps, overlays, openFiles: () => fileRef.current?.click(), openLibrary };
+  const overlays = <>
+    {sources && <ImageImportDialog multiple maxFiles={Infinity} maxBytes={Infinity} accept="image/*" crop="none" preserveOriginal initialFiles={sources.files}
+      onImport={insertFiles} onClose={() => { epoch.current++; uploaded.current.clear(); setSources(null); setBusy(false); }} />}
+    {picker?.worldId && <AssetPicker worldId={picker.worldId} filterType="image" onSelect={ref => {
+      if (!current(picker)) return;
+      epoch.current++; insertAtCaret(picker.area, imageEmbedTag(ref)); setPicker(null);
+    }} onClose={() => { epoch.current++; setPicker(null); }} />}
+  </>;
+  return { busy, dragOver, dropProps, overlays, openFiles: () => openFiles(), openLibrary };
 }
 
 /** The toolbar button: one click, then upload or pick from assets. */

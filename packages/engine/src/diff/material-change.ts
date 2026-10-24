@@ -8,7 +8,7 @@ import { diffWorldSchemas } from "./world-diff.js";
  *  - `entries`   — lorebook entries (what the AI is fed)
  *  - `frontend`  — rootComponent custom-UI files (the playable TSX surface)
  *  - `ageRating` — content maturity claim
- *  - `cover`     — thumbnail / cover image
+ *  - `cover`     — thumbnail / cover image and optional page banner
  *
  * Everything else (variables, behaviors/rules, audio, settings, name,
  * description, tags, announcement, visibility, permissions) is non-material and
@@ -66,7 +66,8 @@ export function detectMaterialChange(
   if (ratingClass(approved.ageRating) !== ratingClass(proposed.ageRating)) {
     reasons.push("ageRating");
   }
-  if (coverKey(approved.thumbnailUrl) !== coverKey(proposed.thumbnailUrl)) {
+  if (coverKey(approved.thumbnailUrl) !== coverKey(proposed.thumbnailUrl)
+    || coverKey(approved.schema.bannerImageUrl) !== coverKey(proposed.schema.bannerImageUrl)) {
     reasons.push("cover");
   }
 

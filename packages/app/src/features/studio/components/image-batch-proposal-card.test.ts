@@ -1,3 +1,4 @@
+import { controlGlobals, choose } from "../../../test/themed-controls.test-helper";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -20,6 +21,7 @@ function translate(key: string, values: Record<string, unknown> = {}) {
 }
 const require = createRequire(import.meta.url);
 const module = { exports: {} as { ImageBatchProposalView: (props: Props) => React.ReactNode } };
+function loadComponent() {
 new Function("require", "module", "exports", transform(readFileSync(new URL("./image-batch-proposal-card.tsx", import.meta.url), "utf8"), {
   transforms: ["typescript", "jsx", "imports"], jsxRuntime: "automatic",
 }).code)((id: string) => {
@@ -30,12 +32,14 @@ new Function("require", "module", "exports", transform(readFileSync(new URL("./i
   if (id === "../lib/use-image-batch") return {};
   return require(id);
 }, module, module.exports);
+}
 
 test("the approved batch card selects only missing images, prices selections and offers targeted recovery", async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: "https://synthetic.test/" });
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const globals = controlGlobals(dom);
   const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  loadComponent();
   const calls: StudioImageBatchEdits[] = [];
   let retried = 0, resumed = 0;
   let props: Props = { proposal, interactive: true, busy: false, error: "", estimates: { [proposal.model]: 35 },
@@ -45,18 +49,18 @@ test("the approved batch card selects only missing images, prices selections and
   const button = (text: string) => [...document.querySelectorAll("button")].find(node => node.textContent?.includes(text))!;
   try {
     await render();
-    const existing = document.querySelector<HTMLInputElement>('[aria-label="Existing portrait"]')!;
-    assert.equal(existing.checked, false); assert.equal(existing.disabled, true);
+    const existing = document.querySelector<HTMLButtonElement>('[aria-label="Existing portrait"]')!;
+    assert.equal(existing.getAttribute("aria-checked"), "false"); assert.equal(existing.disabled, true);
     assert.match(document.body.textContent!, /70/);
     assert.equal(document.querySelectorAll("textarea").length, 2);
-    await act(async () => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click(); });
     assert.equal(button("生成 0 张").disabled, true, "empty selection cannot spend credits");
-    await act(async () => { document.querySelector<HTMLInputElement>('[aria-label="Blue hair"]')!.click(); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Blue hair"]')!.click(); });
     assert.match(document.body.textContent!, /35/);
     await act(async () => button("生成 1 张").click());
     assert.deepEqual(calls[0]?.items, [{ id: "blue", prompt: "A girl with blue hair" }]);
-    const model = document.querySelector("select")!;
-    await act(async () => { model.value = "openai/gpt-image-2"; model.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    const model = document.querySelector<HTMLButtonElement>('[data-editor-control="select"]')!;
+    await choose(model, "GPT Image 2");
     assert.equal(button("生成 1 张").disabled, true, "unknown server estimate does not imply free generation");
     const batch = snapshot();
     await render({ proposal: { ...proposal, status: "submitted", batch } });

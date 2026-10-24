@@ -18,19 +18,38 @@ export function upgradeVnMetadataFiles(files: Record<string, string>, angleSourc
     if (!updated[prefix + 'presentation-literals.ts']) continue;
     const helper = prefix + 'angle-markup.ts';
     if (updated[helper] !== undefined && updated[helper] !== angleSource) continue;
-    if (source.includes('import { stripAngleMarkup }')) {
-      const next = source
-        .replace('standardizeSpeakerMarkup(stripAngleMarkup(stripZeroWidthSpaces(content)), names)', 'standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(content))), names)')
-        .replace('standardizeSpeakerMarkup(stripAngleMarkup(stripZeroWidthSpaces(rawContent)), names)', 'standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(rawContent))), names)');
-      if (next !== source) updated = { ...updated, [name]: next };
-      continue;
+    const oldImport = 'import { stripGameStateDump } from "./metadata";';
+    const newImport = 'import { stripGameStateDump, stripVariableUpdateTags } from "./metadata";';
+    const imports = [oldImport, newImport].filter(statement => source.split(statement).length === 2);
+    if (imports.length !== 1 || source.match(/from ["']\.\/metadata["']/g)?.length !== 1) continue;
+    const metadata = updated[prefix + 'metadata.ts'];
+    if (!metadata) continue;
+    const hasVariableHelper = metadata.includes('export function stripVariableUpdateTags(text: string): string {');
+    // Older snapshot-only metadata has no variable-tag helper to import.
+    if (!hasVariableHelper && imports[0] === newImport) continue;
+    const angleImport = 'import { stripAngleMarkup } from "./angle-markup";';
+    const hasAngleImport = source.includes(angleImport);
+    if (source.includes('import { stripAngleMarkup }') && !hasAngleImport) continue;
+    const wrap = (value: string) => `standardizeSpeakerMarkup(${hasAngleImport ? 'stripAngleMarkup(' : ''}stripZeroWidthSpaces(${value})${hasAngleImport ? ')' : ''}, names)`;
+    const values = ['content', 'rawContent'];
+    const legacy = values.map(value => `${value} = ${wrap(value)};`);
+    const angleFirst = values.map(value => `${value} = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(${value}))), names);`);
+    const snapshotCleanup = 'content = stripVariableUpdateTags(stripGameStateDump(extractResponseChoices(content).text));';
+    // Recognize only the paired shipped cleanup, including its later snapshot
+    // filter. A creator's replacement or partial transform is left untouched.
+    const knownAngleFirst = hasVariableHelper && hasAngleImport && source.split(snapshotCleanup).length === 2;
+    const before = [legacy, ...(knownAngleFirst ? [angleFirst] : [])]
+      .find(anchors => anchors.every(anchor => source.split(anchor).length === 2));
+    if (!before) continue;
+    let next = source;
+    for (const [index, value] of values.entries()) {
+      const cleaned = `stripZeroWidthSpaces(${value})`;
+      const variableCleaned = hasVariableHelper ? `stripVariableUpdateTags(${cleaned})` : cleaned;
+      next = next.replace(before[index]!, `${value} = standardizeSpeakerMarkup(stripAngleMarkup(stripGameStateDump(${variableCleaned})), names);`);
     }
-    const content = 'content = standardizeSpeakerMarkup(stripZeroWidthSpaces(content), names);';
-    const raw = 'rawContent = standardizeSpeakerMarkup(stripZeroWidthSpaces(rawContent), names);';
-    if (!source.includes(content) || !source.includes(raw)) continue;
-    updated = { ...updated, [helper]: angleSource, [name]: 'import { stripAngleMarkup } from "./angle-markup";\n' + source
-      .replace(content, 'content = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(content))), names);')
-      .replace(raw, 'rawContent = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(rawContent))), names);') };
+    if (hasVariableHelper) next = next.replace(oldImport, newImport);
+    if (!hasAngleImport) next = angleImport + '\n' + next;
+    if (next !== source) updated = { ...updated, [helper]: angleSource, [name]: next };
   }
   return updated;
 }

@@ -115,3 +115,129 @@ test("guest auto-start consumes one exact-target origin across login, StrictMode
     assert.equal(attribution.consumeDiscoveryHandoff("other-target")?.worldId, "other-original");
   } finally { await act(async () => root.unmount()); env.restore(); }
 });
+
+function adminPreviewHarness() {
+  const requests: Array<{ body: Record<string, unknown>; resolve: (response: Response) => void }> = [];
+  const env = clientDom({ fetch: (_url: string, init: RequestInit) => new Promise<Response>(resolve => requests.push({ body: JSON.parse(String(init.body)), resolve })) });
+  const consumed: string[] = [];
+  const navigations: unknown[] = [];
+  let navigationFails = false;
+  let currentState: { startError: boolean; retryStart: () => void };
+  const router = { state: { location: { href: "/app/preview/private-card?adminPreview=true" } }, navigate: async (value: unknown) => {
+    navigations.push(value);
+    if (navigationFails) throw new Error("navigation failed after session creation");
+  } };
+  const { useGuestSessionStart } = loadClientModule<typeof import("./use-guest-session-start")>(new URL("./use-guest-session-start.ts", import.meta.url), {
+    "@tanstack/react-router": { useRouter: () => router },
+    "@/lib/discovery-attribution": { ...attribution, consumeDiscoveryHandoff: (worldId: string) => { consumed.push(worldId); return attribution.consumeDiscoveryHandoff(worldId); } },
+  });
+  const context = { returnTo: "/app/hub", returnKey: "hub" };
+  const Host = ({ adminPreview }: { adminPreview: boolean }) => {
+    currentState = useGuestSessionStart(true, "private-card", context, adminPreview);
+    return createElement("button", { onClick: currentState.retryStart }, currentState.startError ? "Retry" : "Starting");
+  };
+  const root = createRoot(env.dom.window.document.getElementById("root")!);
+  return {
+    ...env, requests, consumed, navigations, router, context,
+    render: (adminPreview: boolean) => act(async () => root.render(createElement(StrictMode, {}, createElement(Host, { adminPreview })))),
+    retry: () => act(async () => currentState.retryStart()),
+    resolve: (index: number, id: string) => act(async () => requests[index].resolve(new Response(JSON.stringify({ data: { id } })))),
+    fail: (index: number) => act(async () => requests[index].resolve(new Response("{}", { status: 503 }))),
+    failNavigation: (value: boolean) => { navigationFails = value; },
+    unmount: () => act(async () => root.render(null)),
+    cleanup: async () => { await act(async () => root.unmount()); env.restore(); },
+  };
+}
+
+test("admin preview creates one ephemeral session in StrictMode without consuming discovery attribution", async () => {
+  const h = adminPreviewHarness();
+  const receipt = { worldId: "original-card", surface: "recommended", position: 2, feedRequestId: "admin-page", attributionToken: "admin-receipt" };
+  try {
+    attribution.rememberDiscoveryHandoff("private-card", receipt);
+    await h.render(true);
+    assert.equal(h.requests.length, 1, "StrictMode must reuse the admin creation request");
+    assert.deepEqual(h.requests[0].body, { worldId: "private-card", adminPreview: true, ephemeral: true });
+    assert.deepEqual(h.consumed, [], "admin preview must not consume an ordinary discovery handoff");
+    await h.retry();
+    assert.equal(h.requests.length, 1, "Retry cannot duplicate an in-flight admin session");
+    await h.resolve(0, "admin-session");
+    assert.deepEqual(h.navigations, [{ to: "/app/chat/$sessionId", params: { sessionId: "admin-session" }, search: { moderationGroupKey: undefined, ...h.context } }]);
+    await h.retry();
+    assert.equal(h.requests.length, 1, "Retry after success cannot create another admin session");
+    assert.equal(attribution.consumeDiscoveryHandoff("private-card")?.attributionToken, "admin-receipt");
+  } finally { await h.cleanup(); }
+});
+
+test("admin preview explicitly retries failed creation with the same ephemeral body and reuses a created session after navigation failure", async () => {
+  const h = adminPreviewHarness();
+  try {
+    await h.render(true);
+    await h.fail(0);
+    assert.equal(h.dom.window.document.querySelector("button")!.textContent, "Retry");
+    assert.equal(h.requests.length, 1, "failure does not automatically retry");
+    await h.retry();
+    assert.equal(h.requests.length, 2);
+    assert.deepEqual(h.requests.map(request => request.body), [
+      { worldId: "private-card", adminPreview: true, ephemeral: true },
+      { worldId: "private-card", adminPreview: true, ephemeral: true },
+    ]);
+    assert.deepEqual(h.consumed, []);
+    h.failNavigation(true);
+    await h.resolve(1, "created-admin-session");
+    assert.equal(h.dom.window.document.querySelector("button")!.textContent, "Retry");
+    h.failNavigation(false);
+    await h.retry();
+    assert.equal(h.requests.length, 2, "navigation retry reuses the resolved session ID");
+    assert.equal(h.navigations.length, 2);
+    assert.deepEqual(h.navigations[1], h.navigations[0]);
+    await h.retry();
+    assert.equal(h.requests.length, 2);
+  } finally { await h.cleanup(); }
+});
+
+test("changing the same preview target from ordinary to admin abandons the ordinary request", async () => {
+  const h = adminPreviewHarness();
+  try {
+    attribution.rememberDiscoveryHandoff("private-card", { worldId: "source-card", surface: "recommended", position: 1, feedRequestId: "ordinary-page", attributionToken: "ordinary-receipt" });
+    await h.render(false);
+    assert.deepEqual(h.requests[0].body, { worldId: "private-card", discoveryAttribution: { token: "ordinary-receipt", worldId: "source-card" } });
+    await h.render(true);
+    assert.equal(h.requests.length, 2, "mode is part of the creation request identity");
+    assert.deepEqual(h.requests[1].body, { worldId: "private-card", adminPreview: true, ephemeral: true });
+    assert.deepEqual(h.consumed, ["private-card"]);
+    await h.resolve(0, "old-ordinary-session");
+    assert.deepEqual(h.navigations, [], "a late response from the previous mode cannot navigate");
+    await h.resolve(1, "new-admin-session");
+    assert.equal(h.navigations.length, 1);
+    assert.deepEqual((h.navigations[0] as { params: unknown }).params, { sessionId: "new-admin-session" });
+  } finally { await h.cleanup(); }
+});
+
+test("changing admin preview to ordinary consumes its pending handoff and ignores late admin responses", async () => {
+  const h = adminPreviewHarness();
+  try {
+    attribution.rememberDiscoveryHandoff("private-card", { worldId: "source-card", surface: "recommended", position: 1, feedRequestId: "ordinary-page", attributionToken: "pending-receipt" });
+    await h.render(true);
+    await h.render(false);
+    assert.equal(h.requests.length, 2);
+    assert.deepEqual(h.requests[0].body, { worldId: "private-card", adminPreview: true, ephemeral: true });
+    assert.deepEqual(h.requests[1].body, { worldId: "private-card", discoveryAttribution: { token: "pending-receipt", worldId: "source-card" } });
+    assert.deepEqual(h.consumed, ["private-card"]);
+    await h.resolve(0, "old-admin-session");
+    assert.deepEqual(h.navigations, []);
+    await h.unmount();
+    await h.resolve(1, "abandoned-ordinary-session");
+    assert.deepEqual(h.navigations, [], "unmounted ordinary request cannot navigate");
+  } finally { await h.cleanup(); }
+});
+
+test("admin preview ignores a successful response after leaving its source URL", async () => {
+  const h = adminPreviewHarness();
+  try {
+    await h.render(true);
+    assert.deepEqual(h.requests[0].body, { worldId: "private-card", adminPreview: true, ephemeral: true });
+    h.router.state.location.href = "/app/hub";
+    await h.resolve(0, "admin-session-after-leaving");
+    assert.deepEqual(h.navigations, []);
+  } finally { await h.cleanup(); }
+});

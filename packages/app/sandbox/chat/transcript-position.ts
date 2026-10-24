@@ -147,6 +147,11 @@ export function trackTranscriptPosition(options: {
       if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(key)) return;
       if ((target as Element).closest?.("input,textarea,select,[contenteditable=true]")) return;
     }
+    userNavigated();
+  };
+  // Explicit history buttons also express reader intent when activated with
+  // Enter (which is deliberately not treated as a generic scroll key).
+  const userNavigated = () => {
     cancel();
     options.releaseInitial();
     userMovingUntil = Date.now() + 1500;
@@ -178,8 +183,8 @@ export function trackTranscriptPosition(options: {
     const position: unknown = (event as CustomEvent).detail;
     if (!isTranscriptPosition(position) || position.sessionId !== sessionId) return;
     // A delayed bridge handshake must not override a reader who already moved.
-    if (userMovingUntil > 0) return;
     pendingRestores.delete(sessionId);
+    if (userMovingUntil > 0) return;
     begin(position);
   };
   const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
@@ -198,6 +203,7 @@ export function trackTranscriptPosition(options: {
   if (pending) { pendingRestores.delete(sessionId); begin(pending); }
   schedule();
   return {
+    userNavigated,
     updating: () => Boolean(restoring),
     changed: (messagesChanged = true) => {
       // A slow foreground refresh may finish after the initial settle window.

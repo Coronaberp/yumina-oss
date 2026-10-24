@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { isVnInterface, migrateWorldDefinition, readVnAssetMap, readVnOpeningScenes, type WorldDefinition } from "@yumina/engine";
+import { displayCharacterName, isVnInterface, migrateWorldDefinition, readVnAssetMap, readVnOpeningScenes, readVnSpriteSets, readVnSpriteVariantSets, readVnSpriteVariants, readVnSpriteConfig, type WorldDefinition } from "@yumina/engine";
 import { db } from "../db/index.js";
 import { agentRuns, generationJobs, worldSnapshots, worlds } from "../db/schema.js";
 import { assertOwnedVnImageRef } from "./studio-tools/asset-catalog.js";
@@ -8,14 +8,14 @@ import { getStructuralPreflight } from "./studio-tools/project-intelligence.js";
 import { resolveWorkingSchema, writeStudioWorldSchema } from "./pending-edit.js";
 
 const TEMPLATE = "studio-configured-image";
-type Target = { kind: string; sceneId?: string; period?: string; openingId?: string; characterId?: string; expression?: string };
+type Target = { kind: string; sceneId?: string; period?: string; openingId?: string; characterId?: string; expression?: string; spriteType?: string; spriteVariant?: string };
 type WorkflowParams = { userId: string; worldId: string; runId: string; callId: string;
   proposal: { target?: Target; unassignedReason?: string }; assetStatus?: string; assetReason?: string; taskPreflight?: unknown;
   reviewRequired?: boolean; reviewReasons?: string[] };
 type WorkflowJob = typeof generationJobs.$inferSelect;
 type Outcome = { assetStatus: "verified" | "unassigned"; assetReason?: string };
 
-function slotOperation(world: WorldDefinition, target: Target, assetRef: string): { operation?: Record<string, unknown>; reason?: string; alreadyAssigned?: boolean } {
+export function slotOperation(world: WorldDefinition, target: Target, assetRef: string): { operation?: Record<string, unknown>; reason?: string; alreadyAssigned?: boolean } {
   const root = isVnInterface(world.rootComponent) ? world.rootComponent : null;
   if (!root) return { reason: "The current project has no managed VN asset maps." };
   if (target.kind === "background") {
@@ -38,12 +38,20 @@ function slotOperation(world: WorldDefinition, target: Target, assetRef: string)
     const source = root.files["sprites.ts"];
     if (!source) return { reason: "The managed sprites map is missing." };
     try {
-      const map = readVnAssetMap(source, "sprites");
-      const value = map[target.characterId];
-      const variant = target.expression.toLowerCase();
+      const character = world.entries.find(entry => entry.role === "character" && entry.id === target.characterId);
+      if (!character) return { reason: "The requested character no longer exists." };
+      const spriteType = target.spriteType ?? "normal";
+      const variant = target.expression;
+      const config = readVnSpriteConfig(source);
+      if (!Object.hasOwn(config.types, spriteType) || !Object.hasOwn(config.emotions, variant)) return { reason: "The requested wardrobe or emotion is no longer configured on this card." };
+      if (target.spriteVariant && !Object.hasOwn(readVnSpriteVariants(source)[spriteType] ?? {}, target.spriteVariant)) return { reason: "The requested outfit variant is no longer configured on this card." };
+      const map = target.spriteVariant ? readVnSpriteVariantSets(source)[spriteType]?.[target.spriteVariant] ?? {} : readVnSpriteSets(source)[spriteType] ?? {};
+      const canonicalName = displayCharacterName(character.name);
+      const name = Object.keys(map).find(name => name.toLowerCase() === canonicalName.toLowerCase()) ?? (Object.hasOwn(map, character.id) ? character.id : canonicalName);
+      const value = map[name];
       const existing = typeof value === "string" ? (variant === "normal" ? value : undefined) : value?.[variant];
       if (existing) return existing === assetRef ? { alreadyAssigned: true } : { reason: "That character expression was filled while the image was generating." };
-      return { operation: { kind: "sprites", action: "assign", name: target.characterId, variant, assetRef } };
+      return { operation: { kind: "sprites", action: "assign", name, spriteType, variant, ...(target.spriteVariant ? { spriteVariant: target.spriteVariant } : {}), assetRef } };
     } catch { return { reason: "The current sprites map is not a supported literal map." }; }
   }
   if (target.kind === "portrait") {
@@ -57,7 +65,7 @@ function slotOperation(world: WorldDefinition, target: Target, assetRef: string)
   return { reason: "This image has no supported automatic assignment target; it remains in the asset library." };
 }
 
-function targetIsVerified(world: WorldDefinition, target: Target, assetRef: string): boolean {
+export function targetIsVerified(world: WorldDefinition, target: Target, assetRef: string): boolean {
   if (target.kind === "portrait") return world.entries.some(entry => entry.id === target.characterId && entry.role === "character" && entry.portrait === assetRef);
   const root = isVnInterface(world.rootComponent) ? world.rootComponent : null;
   if (!root) return false;
@@ -73,9 +81,18 @@ function targetIsVerified(world: WorldDefinition, target: Target, assetRef: stri
     if (target.kind === "sprite") {
       const source = root.files["sprites.ts"];
       if (!source || !target.characterId || !target.expression) return false;
-      const value = readVnAssetMap(source, "sprites")[target.characterId];
-      return typeof value === "string" ? target.expression.toLowerCase() === "normal" && value === assetRef
-        : value?.[target.expression.toLowerCase()] === assetRef;
+      const character = world.entries.find(entry => entry.role === "character" && entry.id === target.characterId);
+      if (!character) return false;
+      const spriteType = target.spriteType ?? "normal";
+      const config = readVnSpriteConfig(source);
+      if (!Object.hasOwn(config.types, spriteType) || !Object.hasOwn(config.emotions, target.expression)) return false;
+      if (target.spriteVariant && !Object.hasOwn(readVnSpriteVariants(source)[spriteType] ?? {}, target.spriteVariant)) return false;
+      const map = target.spriteVariant ? readVnSpriteVariantSets(source)[spriteType]?.[target.spriteVariant] ?? {} : readVnSpriteSets(source)[spriteType] ?? {};
+      const canonicalName = displayCharacterName(character.name);
+      const name = Object.keys(map).find(name => name.toLowerCase() === canonicalName.toLowerCase()) ?? character.id;
+      const value = map[name];
+      return typeof value === "string" ? target.expression === "normal" && value === assetRef
+        : value?.[target.expression] === assetRef;
     }
   } catch { return false; }
   return false;

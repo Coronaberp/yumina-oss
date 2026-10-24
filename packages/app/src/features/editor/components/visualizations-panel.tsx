@@ -8,6 +8,10 @@ import { TwoTapDeleteButton } from "@/components/ui/two-tap-delete-button";
 import { DebouncedInput } from "./debounced-field";
 import { StatusBuilder } from "./status-builder";
 import { StatusDesignAssistant } from "./status-design-assistant";
+import { StatusDesignImport } from "./status-design-import";
+import { StatusPreviewValues } from "./status-preview-values";
+import { authoredVariableChoices } from "../lib/variable-data";
+import { statusPreviewValues } from "../lib/status-preview-values";
 import { applyStatusDrop } from "../lib/status-builder";
 import { StatusLayoutPreview } from "./status-layout-preview";
 import { isVnInterface } from "../lib/vn-assets";
@@ -20,22 +24,37 @@ const inputClass = "w-full min-w-0 rounded-lg border border-border bg-background
 export function VisualizationsPanel() {
   const { t } = useTranslation("editor");
   const root = useEditorStore(s => s.worldDraft.rootComponent);
+  const worldId = useEditorStore(s => s.serverWorldId ?? s.worldDraft.id);
   const worldName = useEditorStore(s => s.worldDraft.name);
   const variables = useEditorStore(s => s.worldDraft.variables);
+  const reactions = useEditorStore(s => s.worldDraft.reactions);
+  const previewVariables = useMemo(()=>{
+    const choices=authoredVariableChoices(reactions ?? []);
+    return variables.map(variable=>variable.type === "string" && variable.enumValues === undefined && choices[variable.id] ? {...variable,enumValues:choices[variable.id]} : variable);
+  },[variables,reactions]);
   const updateRoot = useEditorStore(s => s.updateRootComponent);
   const setSection = useEditorStore(s => s.setActiveSection);
-  const readOnly = useEditorStore(s => s.readOnlyInspect || s.guestMode);
+  const readOnly = useEditorStore(s => s.readOnlyInspect || s.guestMode || s.editingLocked);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [categorySelection, setCategorySelection] = useState({ id: "", revision: 0 });
+  const previewScope = `${worldId}:${root?.id}`;
+  const [previewState, setPreviewState] = useState<{ scope: string; overrides: Record<string, unknown> }>({ scope: "", overrides: {} });
+  const previewOverrides = useMemo(() => previewState.scope === previewScope ? previewState.overrides : {}, [previewState, previewScope]);
   const visibleVariables = useMemo(() => variables.filter(variable => !variable.internal), [variables]);
   const parsed = useMemo(() => {
     try { return { config: root?.files[STATUS_CONFIG_FILE] ? readStatusConfig(root.files[STATUS_CONFIG_FILE]) : initialStatusConfig(variables), error: "" }; }
     catch (error) { return { config: initialStatusConfig([]), error: error instanceof Error ? error.message : "Invalid status settings." }; }
   }, [root, variables]);
   const { config } = parsed;
-  const previewValues = useMemo(() => Object.fromEntries(visibleVariables.map(variable => [variable.id, variable.defaultValue])), [visibleVariables]);
-  const selected = config.fields.find(field => field.id === selectedId) ?? (selectedId ? undefined : config.fields[0]);
+  const previewDefaults = useMemo(() => statusPreviewValues(variables), [variables]);
+  const previewValues = useMemo(() => statusPreviewValues(variables, previewOverrides), [variables, previewOverrides]);
+  const category = config.groups.some(group => group.id === categorySelection.id) ? categorySelection.id : config.groups[0]!.id;
+  const selected = config.fields.find(field => field.id === selectedId) ?? (selectedId ? undefined : config.fields.find(field => field.group === category));
   const supported = isVnInterface(root);
+  function selectCategory(id: string) {
+    setCategorySelection(current => ({ id, revision: current.revision + 1 }));
+  }
 
   function commit(next: StatusConfig) {
     const currentRoot = useEditorStore.getState().worldDraft.rootComponent;
@@ -59,6 +78,7 @@ export function VisualizationsPanel() {
     const currentRoot = useEditorStore.getState().worldDraft.rootComponent;
     const current = currentRoot?.files[STATUS_CONFIG_FILE] ? readStatusConfig(currentRoot.files[STATUS_CONFIG_FILE]) : config;
     commit({ ...current, fields: current.fields.map(field => field.id === selected.id ? { ...field, ...updates } : field) });
+    if (updates.group !== undefined) selectCategory(updates.group);
   }
   function move(direction: number) {
     if (!selected) return;
@@ -100,7 +120,7 @@ export function VisualizationsPanel() {
                 const current = currentRoot?.files[STATUS_CONFIG_FILE] ? readStatusConfig(currentRoot.files[STATUS_CONFIG_FILE]) : config;
                 commit({ ...current, groups: current.groups.map(item => item.id === group.id ? { ...item, label: label.trim() || item.label } : item) });
               }} className={inputClass} />
-            <TwoTapDeleteButton disabled={config.groups.length <= 1} aria-label={`Remove category ${group.label}`} onConfirm={() => {
+            <TwoTapDeleteButton disabled={config.groups.length <= 1} title={`Remove category ${group.label}`} onConfirm={() => {
               mutateConfig(current => {
               const groups = current.groups.filter(item => item.id !== group.id);
               const fallback = groups.find(item => item.id === "overview")?.id ?? groups[0]?.id;
@@ -111,7 +131,7 @@ export function VisualizationsPanel() {
           </div>)}
           <p className="text-[11px] text-muted-foreground">These labels appear as tabs in the status sheet. Removing a category keeps its fields and assigns them to a remaining category.</p>
         </details>
-        <StatusBuilder config={config} variables={visibleVariables} selectedId={selected?.id} disabled={readOnly || !!parsed.error} onSelect={setSelectedId} onDrop={(active, over) => {
+        <StatusBuilder config={config} variables={visibleVariables} category={category} onCategoryChange={selectCategory} selectedId={selected?.id} disabled={readOnly || !!parsed.error} onSelect={setSelectedId} onDrop={(active, over) => {
           const currentRoot = useEditorStore.getState().worldDraft.rootComponent;
           const current = currentRoot?.files[STATUS_CONFIG_FILE] ? readStatusConfig(currentRoot.files[STATUS_CONFIG_FILE]) : config;
           const next = applyStatusDrop(current, visibleVariables, active, over);
@@ -125,7 +145,7 @@ export function VisualizationsPanel() {
             <div className="flex items-center gap-1">
               <button type="button" title="Move up" aria-label="Move field up" disabled={config.fields.filter(field => field.group === selected.group)[0]?.id === selected.id} onClick={() => move(-1)} className="rounded p-2 text-muted-foreground hover:bg-muted disabled:opacity-30"><ArrowUp size={15} /></button>
               <button type="button" title="Move down" aria-label="Move field down" disabled={config.fields.filter(field => field.group === selected.group).at(-1)?.id === selected.id} onClick={() => move(1)} className="rounded p-2 text-muted-foreground hover:bg-muted disabled:opacity-30"><ArrowDown size={15} /></button>
-              <TwoTapDeleteButton aria-label="Remove field" onConfirm={() => mutateConfig(current => ({ ...current, fields: current.fields.filter(field => field.id !== selected.id) }))} className="rounded p-2 text-destructive hover:bg-destructive/10" armedChildren="Remove?"><Trash2 size={15} /></TwoTapDeleteButton>
+              <TwoTapDeleteButton title="Remove field" onConfirm={() => mutateConfig(current => ({ ...current, fields: current.fields.filter(field => field.id !== selected.id) }))} className="rounded p-2 text-destructive hover:bg-destructive/10" armedChildren="Remove?"><Trash2 size={15} /></TwoTapDeleteButton>
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -165,7 +185,12 @@ export function VisualizationsPanel() {
           {!visibleVariables.some(variable => variable.id === selected.variableId) && <p className="text-xs text-muted-foreground">This field needs a variable. <button type="button" className="text-primary underline" onClick={() => setSection("variables")}>Open Variables</button></p>}
         </div>}
       </fieldset>
-      <div className="min-w-0 space-y-4 self-start xl:sticky xl:top-0"><StatusLayoutPreview root={root} config={config} variables={previewValues} templates={templates} worldName={worldName} /><StatusDesignAssistant disabled={readOnly} /></div>
+      <div className="order-first min-w-0 space-y-4 self-start xl:order-last xl:sticky xl:top-0">
+        <StatusPreviewValues key={previewScope} variables={previewVariables} values={previewDefaults} overrides={previewOverrides} onOverridesChange={overrides => setPreviewState({ scope: previewScope, overrides })} />
+        <StatusLayoutPreview root={root} config={config} variables={previewValues} templates={templates} worldName={worldName} category={category} categoryRevision={categorySelection.revision} />
+        <StatusDesignImport key={previewScope} root={root} variables={variables} config={config} templates={templates} worldName={worldName} previewValues={previewValues} category={category} disabled={readOnly || !!parsed.error} />
+        <StatusDesignAssistant disabled={readOnly} />
+      </div>
     </div>
   </div>;
 }

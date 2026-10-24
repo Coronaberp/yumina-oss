@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { apiKeys, user } from "../db/schema.js";
+import { apiKeys, user, providerAttempts } from "../db/schema.js";
 import { encryptApiKey } from "./crypto.js";
 
 test("Little Idot always resolves the selected owned NSFW profile", async t => {
@@ -36,6 +36,10 @@ test("Little Idot always resolves the selected owned NSFW profile", async t => {
     }) as typeof fetch;
     for await (const _chunk of resolved.provider.generateStream({ model: resolved.model, messages: [{ role: "user", content: "Test fixture" }] })) { /* consume the actual request */ }
     assert.equal(called, true);
+    const [receipt] = await db.select().from(providerAttempts).where(eq(providerAttempts.userId, owner));
+    assert.ok(receipt);
+    assert.equal(receipt.profileId, "nsfw");
+    assert.equal(receipt.completionTokens, 1);
   });
   await t.test("obsolete Studio preferences never override the NSFW connection", async () => {
     for (const studioApiKeyId of ["sfw", null, "missing"]) {

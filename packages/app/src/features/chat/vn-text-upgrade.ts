@@ -20,7 +20,8 @@ export function upgradeVnTextFiles(files: Record<string, string>, helpers: Recor
       .replace(/(<style>\{styles[\s\S]*?<\/style>)/, '$1\n    <VnTextStyle api={api} />')
       .replace('return <section className="vn-overlay" role="dialog" aria-modal="true" aria-label="Story menu">', 'return <section className="vn-overlay vn-menu-overlay" role="dialog" aria-modal="true" aria-label="Story menu">')
       .replace(drawerClose, anchoredClose)
-      .replace('[turn, index, textSize, choices.length, hidden, spriteLimit]', '[turn, index, textSize, choices.length, hidden, spriteLimit, JSON.stringify(api.vnTextPreferences)]');
+      .replace('[turn, index, textSize, choices.length, hidden, spriteLimit]', '[turn, index, textSize, choices.length, hidden, spriteLimit, JSON.stringify(api.vnTextPreferences)]')
+      .replace('[turn, index, textSize, choices.length, hidden, spriteLimit, error]', '[turn, index, textSize, choices.length, hidden, spriteLimit, error, JSON.stringify(api.vnTextPreferences)]');
   }
   return updated;
 }

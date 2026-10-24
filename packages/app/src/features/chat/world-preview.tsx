@@ -113,9 +113,11 @@ function expandGreeting(
 export function WorldPreview({
   worldId,
   returnContext,
+  adminPreview = false,
 }: {
   worldId: string;
   returnContext: StoryReturnContext;
+  adminPreview?: boolean;
 }) {
   const { t } = useTranslation("chat");
   const router = useRouter();
@@ -146,7 +148,7 @@ export function WorldPreview({
     })();
   }, [worldId]);
 
-  const { startError, retryStart } = useGuestSessionStart(isAuthenticated && world?.id === worldId, worldId, returnContext);
+  const { startError, retryStart } = useGuestSessionStart(isAuthenticated && world?.id === worldId, worldId, returnContext, adminPreview);
 
   // ── Derived data (ALL hooks before any early return) ────────────
   const worldDef = useMemo<WorldDefinition | undefined>(
@@ -513,6 +515,7 @@ export function WorldPreview({
     <div className="play-page-root flex h-full w-full flex-col overflow-hidden" style={playZoomStyle}>
       {previewHeader}
       <WorldRenderer
+        interfaceId={rootComponent.interfaceId}
         entryFile={rootComponent.entryFile}
         files={rootComponent.files}
         variables={variables}

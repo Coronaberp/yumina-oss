@@ -11,6 +11,7 @@ function installDom() {
     document: dom.window.document,
     navigator: dom.window.navigator,
     HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
     Element: dom.window.Element,
     Node: dom.window.Node,
     Event: dom.window.Event,

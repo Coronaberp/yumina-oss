@@ -24,10 +24,19 @@ import {
   type GetObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 import { env, IS_DEV, IS_LOCAL_EDITION, PUBLIC_ORIGIN, STORAGE_DIR } from "./env.js";
 import { LocalDiskStorage, type UploadTokenClaims } from "./storage/local-disk.js";
 import { copyAndVerifyObject, type VerifiedCopyMetadata } from "./s3-copy-verification.js";
+import { decodeImageMaster, imageMasterDecodedLength, isImageMasterEnvelope, type ImageMasterMetadata, type ImageMasterWriteOptions } from "./image-master-envelope.js";
+
+function storedMetadata(metadata?: Record<string, string>): Omit<ImageMasterMetadata, "contentType"> {
+  return {
+    ...(metadata?.['decoded-size'] !== undefined ? { decodedLength: Number(metadata['decoded-size']) } : {}),
+    ...(metadata?.['source-sha256'] !== undefined ? { sourceSha256: metadata['source-sha256'] } : {}),
+    ...(metadata?.['stored-sha256'] !== undefined ? { storedSha256: metadata['stored-sha256'] } : {}),
+  };
+}
 
 export type StorageKind = "s3" | "local" | "none";
 
@@ -123,33 +132,35 @@ export async function generateUploadUrl(
 }
 
 /** Only call after authorizing a private media reference. Never persist this URL. */
-export async function generatePrivateReadUrl(key: string): Promise<string> {
+export async function generatePrivateReadUrl(key: string, contentType = "image/webp"): Promise<string> {
   if (storageKind() !== "s3") throw new Error("MEDIA_NOT_CONFIGURED");
   return getSignedUrl(getClient(), new GetObjectCommand({
     Bucket: env.AWS_S3_BUCKET_NAME, Key: key,
-    ResponseCacheControl: "private, no-store", ResponseContentType: "image/webp",
+    ResponseCacheControl: "private, no-store", ResponseContentType: contentType,
   }), { expiresIn: 300 });
 }
 
 /** Enforce a byte ceiling while streaming; a lying object header cannot exhaust RAM. */
 export async function getObjectBufferLimited(key: string, maxBytes: number): Promise<Buffer> {
   const object = await getObject(key, { signal: AbortSignal.timeout(30_000) });
-  if (!object.body || (object.contentLength ?? 0) > maxBytes) throw new Error("MEDIA_INVALID_SIZE");
+  if (!object.body) throw new Error("MEDIA_INVALID_SIZE");
   const stream = object.body as AsyncIterable<Uint8Array> & { destroy?: () => void };
   const chunks: Buffer[] = [];
   let size = 0;
   try {
+    const limit = isImageMasterEnvelope(object) ? imageMasterDecodedLength(object, maxBytes) : maxBytes;
+    if ((object.contentLength ?? 0) > limit) throw new Error("MEDIA_INVALID_SIZE");
     for await (const chunk of stream) {
       size += chunk.length;
-      if (size > maxBytes) throw new Error("MEDIA_INVALID_SIZE");
+      if (size > limit) throw new Error("MEDIA_INVALID_SIZE");
       chunks.push(Buffer.from(chunk));
     }
-    return Buffer.concat(chunks, size);
+    return await decodeImageMaster(Buffer.concat(chunks, size), object, { maxBytes });
   } finally { stream.destroy?.(); }
 }
 
 /** Inspect an object without exposing it through the public CDN proxy. */
-export async function headObject(key: string): Promise<{
+export async function headObject(key: string): Promise<ImageMasterMetadata & {
   contentType: string;
   contentLength: number;
   etag: string | null;
@@ -166,8 +177,7 @@ export async function headObject(key: string): Promise<{
     contentLength: response.ContentLength ?? 0,
     etag: response.ETag?.replace(/^\"|\"$/g, "") ?? null,
     contentEncoding: response.ContentEncoding,
-    decodedLength: Number.isSafeInteger(Number(response.Metadata?.['decoded-size'])) && Number(response.Metadata?.['decoded-size']) > 0
-      ? Number(response.Metadata?.['decoded-size']) : undefined,
+    ...storedMetadata(response.Metadata),
   };
 }
 
@@ -176,7 +186,7 @@ export async function headObject(key: string): Promise<{
  * `body` is an SDK stream for S3 or a Node `Readable` for local disk; both
  * consumers (`cdn.ts`, event-proof reads) already branch on `instanceof Readable`.
  */
-export async function getObject(key: string, opts?: { range?: string; ifMatch?: string; signal?: AbortSignal }): Promise<{
+export async function getObject(key: string, opts?: { range?: string; ifMatch?: string; signal?: AbortSignal }): Promise<ImageMasterMetadata & {
   body: GetObjectCommandOutput["Body"] | Readable;
   contentType: string;
   contentLength: number | undefined;
@@ -203,8 +213,7 @@ export async function getObject(key: string, opts?: { range?: string; ifMatch?: 
     contentRange: response.ContentRange ?? null,
     etag: response.ETag ?? null,
     contentEncoding: response.ContentEncoding,
-    decodedLength: Number.isSafeInteger(Number(response.Metadata?.['decoded-size']))&&Number(response.Metadata?.['decoded-size'])>0
-      ?Number(response.Metadata?.['decoded-size']):undefined,
+    ...storedMetadata(response.Metadata),
   };
 }
 
@@ -218,28 +227,26 @@ export async function getObjectBuffer(
   options?: { signal?: AbortSignal; maxBytes?: number },
 ): Promise<{ buffer: Buffer; contentType: string }> {
   if (useLocal()) return getLocalDiskStorage().getObjectBuffer(key, options);
-  const command = new GetObjectCommand({
-    Bucket: env.AWS_S3_BUCKET_NAME,
-    Key: key,
-  });
-  const response = await getClient().send(command, { abortSignal: options?.signal });
-  if (!response.Body) throw new Error("Empty S3 object body");
-  const reader = response.Body.transformToWebStream().getReader();
+  options?.signal?.throwIfAborted();
+  const object = await getObject(key, options);
+  if (!object.body) throw new Error("Empty S3 object body");
+  const stream = object.body instanceof Readable ? object.body : Readable.fromWeb(object.body.transformToWebStream());
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const limit = isImageMasterEnvelope(object) ? imageMasterDecodedLength(object, options?.maxBytes) : options?.maxBytes;
+    if (limit !== undefined && (object.contentLength ?? 0) > limit) throw new Error("S3 object too large");
+    for await (const value of stream) {
+      options?.signal?.throwIfAborted();
       size += value.byteLength;
-      if (options?.maxBytes && size > options.maxBytes) throw new Error("S3 object too large");
+      if (limit !== undefined && size > limit) throw new Error("S3 object too large");
       chunks.push(value);
     }
-  } finally { await reader.cancel().catch(() => {}); }
+  } finally { stream.destroy(); }
   const bytes = Buffer.concat(chunks, size);
   return {
-    buffer: Buffer.from(bytes),
-    contentType: response.ContentType ?? "application/octet-stream",
+    buffer: await decodeImageMaster(bytes, object, options),
+    contentType: object.contentType,
   };
 }
 
@@ -248,7 +255,7 @@ export async function putObject(
   key: string,
   body: Buffer,
   contentType: string,
-  opts?: { signal?: AbortSignal },
+  opts?: ImageMasterWriteOptions,
 ): Promise<void> {
   if (useLocal()) return getLocalDiskStorage().putObject(key, body, contentType, opts);
   const command = new PutObjectCommand({
@@ -256,6 +263,12 @@ export async function putObject(
     Key: key,
     Body: body,
     ContentType: contentType,
+    ...(opts?.contentEncoding !== undefined ? { ContentEncoding: opts.contentEncoding } : {}),
+    ...((opts?.decodedLength !== undefined || opts?.sourceSha256 !== undefined || opts?.storedSha256 !== undefined) ? { Metadata: {
+      ...(opts.decodedLength !== undefined ? { "decoded-size": String(opts.decodedLength) } : {}),
+      ...(opts.sourceSha256 !== undefined ? { "source-sha256": opts.sourceSha256 } : {}),
+      ...(opts.storedSha256 !== undefined ? { "stored-sha256": opts.storedSha256 } : {}),
+    } } : {}),
   });
   await getClient().send(command, { abortSignal: opts?.signal });
 }
@@ -265,12 +278,13 @@ export async function copyObject(
   sourceKey: string,
   destinationKey: string,
   etag?: string,
-  expectedMetadata?: { contentLength: number; contentType: string },
+  expectedMetadata?: { contentLength: number } & ImageMasterMetadata,
 ): Promise<void> {
   if (useLocal()) {
     // The local backend has no atomic conditional-copy operation.
     if (etag) throw new Error("Conditional copy requires S3 storage");
-    return getLocalDiskStorage().copyObject(sourceKey, destinationKey);
+    return getLocalDiskStorage().copyObject(sourceKey, destinationKey,
+      expectedMetadata?.contentType !== undefined ? { contentType: expectedMetadata.contentType } : undefined);
   }
   const encodedSource = `${env.AWS_S3_BUCKET_NAME}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`;
   const copy = (metadata?: VerifiedCopyMetadata) => getClient().send(new CopyObjectCommand({
@@ -281,7 +295,21 @@ export async function copyObject(
     ...(etag ? { CopySourceIfMatch: `"${etag}"` } : {}),
   }), { abortSignal: AbortSignal.timeout(30_000) });
   if (etag) {
-    await copyAndVerifyObject(copy, () => headObject(destinationKey), { ...expectedMetadata, etag });
+    // REPLACE must not discard representation metadata from an encoded master.
+    const source = expectedMetadata?.contentType !== undefined ? await headObject(sourceKey) : undefined;
+    await copyAndVerifyObject(copy, () => headObject(destinationKey), {
+      ...(source ? { contentEncoding: source.contentEncoding, decodedLength: source.decodedLength,
+        sourceSha256: source.sourceSha256, storedSha256: source.storedSha256 } : {}),
+      ...expectedMetadata, etag,
+    });
+  } else if (expectedMetadata?.contentType !== undefined) {
+    // Explicit destination MIME corrections must work for providers without a
+    // conditional-copy ETag too. Retain the source encoding and user metadata.
+    const source = await getClient().send(new HeadObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME, Key: sourceKey }));
+    await copy({ MetadataDirective: "REPLACE", ContentType: expectedMetadata.contentType,
+      ...(source.ContentEncoding !== undefined ? { ContentEncoding: source.ContentEncoding } : {}),
+      ...(source.Metadata !== undefined ? { Metadata: source.Metadata } : {}),
+    });
   } else {
     await copy();
   }

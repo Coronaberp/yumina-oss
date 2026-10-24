@@ -402,11 +402,6 @@ setTimeout(clearChunkErrorFlag, 8_000);
 // first iframe mount doesn't block on a cold cache. Fire-and-forget.
 import("@/lib/sandbox-prewarm").then((m) => m.prewarmSandbox()).catch(() => {});
 
-// Prewarm the chat-view chunk so it's already loaded when the user first
-// enters chat. This avoids lazy-import failures on flaky connections — if
-// the initial page load succeeds, the chat chunk rides along with it.
-import("@/features/chat/chat-view").catch(() => {});
-
 // Service worker REMOVED (2026-05-29). The shell-caching SW served stale assets
 // to clients returning from the background after a deploy (iOS especially),
 // causing chunk-import failures, a reload loop, and a black screen that only a

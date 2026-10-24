@@ -7,14 +7,32 @@ import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { StateGuardSettingsProps } from "../../../sandbox/extensions/state-update-guard/settings";
 
+const modelTrigger = () => document.querySelector<HTMLButtonElement>('fieldset [data-editor-control="select"]');
+async function openModelOptions() {
+  const trigger = modelTrigger();
+  assert.ok(trigger, "Correction model picker is visible");
+  await act(async () => trigger.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0 })));
+  const options = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+  assert.ok(options.length, "Correction model options opened");
+  return options;
+}
+async function chooseModelOption(label: string) {
+  const option = (await openModelOptions()).find(option => option.textContent?.trim() === label);
+  assert.ok(option, `Missing correction model option: ${label}`);
+  await act(async () => option.click());
+}
+
 test("guard controls save Off and a separate model, reload, recover failures, and ignore stale loads", async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element, Node: dom.window.Node, CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true };
   const original = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const root = createRoot(document.getElementById("root")!);
   const vite = await createServer({ root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, envFile: false,
+    resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } },
     appType: "custom", logLevel: "silent", server: { middlewareMode: true, watch: null }, esbuild: { jsx: "automatic" } });
   const { StateGuardSettingsPanel } = await vite.ssrLoadModule("/sandbox/extensions/state-update-guard/settings.tsx");
   const { StateGuardHistory } = await vite.ssrLoadModule("/sandbox/extensions/state-update-guard/details.tsx");
@@ -32,11 +50,11 @@ test("guard controls save Off and a separate model, reload, recover failures, an
   const history = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes("View history"))!;
   const back = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes("Back"))!;
   const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"]')!;
-  const select = () => document.querySelector<HTMLSelectElement>("select")!;
+  const select = modelTrigger;
   try {
     await render();
     assert.match(document.body.textContent!, /Paid per correction/);
-    assert.equal(select().selectedOptions[0]!.textContent, "Gemini 2.5 Flash Lite");
+    assert.equal(select()!.textContent, "Gemini 2.5 Flash Lite");
     const useFree = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === "Use free model");
     await act(async () => useFree()!.click());
     assert.deepEqual(patches.at(-1), { model: "official::openrouter/free" });
@@ -58,7 +76,7 @@ test("guard controls save Off and a separate model, reload, recover failures, an
     await act(async () => back().click());
     assert.doesNotMatch(document.body.textContent!, /Checked commands/);
     await act(async () => toggle().click());
-    await act(async () => { select().value = "custom/correction"; select().dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    await chooseModelOption("Correction");
     assert.deepEqual(patches.at(-1), { model: "custom/correction" });
     assert.deepEqual(stored, { enabled: true, model: "custom/correction" });
     assert.match(document.body.textContent!, /Your API provider may charge; no Yumina mushies/);
@@ -73,11 +91,11 @@ test("guard controls save Off and a separate model, reload, recover failures, an
     failSave = false;
     await act(async () => toggle().click());
     assert.equal(toggle().getAttribute("aria-checked"), "true");
-    assert.equal(select().value, "custom/correction", "turning back On restores the selected model");
+    assert.equal(select()!.textContent, "Correction", "turning back On restores the selected model");
     await act(async () => history().click());
     assert.match(document.body.textContent!, /Recorded checks/, "history also opens while On");
     await act(async () => back().click());
-    await act(async () => { select().value = ""; select().dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    await chooseModelOption("Gemini 2.5 Flash Lite");
     assert.deepEqual(patches.at(-1), { model: null });
 
     await render({ ...props, sessionId: "missing-models", getModels: async () => { throw new Error("offline"); } });
@@ -104,11 +122,14 @@ test("guard controls save Off and a separate model, reload, recover failures, an
 test("local Guard settings hide official models and billing actions and default to the story BYOK model", async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element, Node: dom.window.Node, CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true };
   const original = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const root = createRoot(document.getElementById("root")!);
   const vite = await createServer({ root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, envFile: false,
+    resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } },
     appType: "custom", logLevel: "silent", server: { middlewareMode: true, watch: null }, esbuild: { jsx: "automatic" } });
   const { StateGuardSettingsPanel } = await vite.ssrLoadModule("/sandbox/extensions/state-update-guard/settings.tsx");
   let stored = { enabled: true, model: "official::google/gemini-2.5-flash-lite" as string | null, officialModels: false };
@@ -124,10 +145,11 @@ test("local Guard settings hide official models and billing actions and default 
     await act(async () => root.render(createElement(StateGuardSettingsPanel, props)));
     assert.doesNotMatch(document.body.textContent!, /Paid per correction|Use free model|Free updates|Gemini|Yumina official|Only saved corrections are charged/);
     assert.match(document.body.textContent!, /Your API provider may charge; no Yumina mushies/);
-    const select = document.querySelector<HTMLSelectElement>("select")!;
-    assert.equal(select.selectedOptions[0]!.textContent, "custom/story");
-    assert.deepEqual([...select.options].map((option) => option.value), ["", "private::custom/repair"]);
-    await act(async () => { select.value = "private::custom/repair"; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    assert.equal(modelTrigger()!.textContent, "custom/story");
+    const options = await openModelOptions();
+    assert.deepEqual(options.map(option => option.textContent?.trim()), ["custom/story", "Own repair model"]);
+    assert.equal(options[0].getAttribute("aria-checked"), "true");
+    await act(async () => options[1].click());
     assert.deepEqual(patches, [{ model: "private::custom/repair" }]);
     await act(async () => root.render(createElement(StateGuardSettingsPanel, { ...props,
       chooseModel: (selected: string | null) => { pickerSelection = selected; },

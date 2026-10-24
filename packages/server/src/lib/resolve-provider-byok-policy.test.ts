@@ -19,8 +19,8 @@ test("official mode continues to use the official key path", () => {
 });
 
 test("user-owned keys use the BYOK provider factory", () => {
-  assert.match(source, /provider: createByokProvider\(providerName, apiKey\)/);
-  assert.match(source, /provider: createByokProvider\("openrouter", orKey\)/);
+  assert.match(source, /provider: createByokProvider\(providerName, profile\.apiKey, undefined, profile\.metadata\)/);
+  assert.match(source, /provider: createByokProvider\("openrouter", orProfile\.apiKey, undefined, orProfile\.metadata\)/);
 });
 
 test("the resolver enforces the fail-closed billing policy", () => {

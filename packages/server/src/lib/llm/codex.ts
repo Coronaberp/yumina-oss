@@ -47,6 +47,7 @@ class CodexSession {
   usage?: StreamChunk["usage"];
   private reportedUsage?: StreamChunk["usage"];
   private previousSystem = "";
+  private toolSignature = "";
   private previousUsers: string[] = [];
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly lines;
@@ -89,6 +90,12 @@ class CodexSession {
         const pending = this.requests.get(message.id)!; this.requests.delete(message.id);
         if (message.error) pending.reject(new Error(`${pending.method} failed: ${message.error.message ?? "Codex request failed."}`));
         else pending.resolve(message.result);
+      } else if (message.method === "thread/tokenUsage/updated" && (!message.params?.threadId || message.params.threadId === this.threadId)) {
+        // Usage can follow a tool request in the same stdout batch. Record it
+        // on arrival, before Studio receives the tool boundary or replaces us.
+        const tokens = message.params?.tokenUsage?.total ?? message.params?.tokenUsage?.last;
+        if (tokens) this.usage = { promptTokens: tokens.inputTokens, completionTokens: tokens.outputTokens,
+          totalTokens: tokens.totalTokens, reasoningTokens: tokens.reasoningOutputTokens };
       } else { this.events.push(message); this.wake?.(); }
     });
   }
@@ -150,18 +157,21 @@ class CodexSession {
       features: { shell_tool: false, apps: false, hooks: false, memories: false, multi_agent: false, image_generation: images, code_mode: { enabled: false } },
       mcp_servers: disable(settings?.config?.mcp_servers), plugins: disable(settings?.config?.plugins) };
   }
+  matchesTools(params: GenerateParams) { return this.toolSignature === selectedToolSignature(params); }
   async initialize(params: GenerateParams) {
+    this.toolSignature = selectedToolSignature(params);
     this.previousSystem = systemText(params.messages);
     this.previousUsers = params.messages.filter(message => message.role === "user").map(message => JSON.stringify(message));
     const effort = params.reasoningEffortOverride ?? CODEX_STUDIO_EFFORT;
     const settings = await this.connect("gpt-6-luna", effort);
-    const tools = params.availableTools ?? selectedTools(params);
+    const tools = selectedTools(params);
     const thread = await this.rpc("thread/start", {
       model: "gpt-6-luna", allowProviderModelFallback: false, ephemeral: true, cwd: this.directory,
       sandbox: "read-only", approvalPolicy: "never", environments: [],
       config: this.isolatedConfig(settings),
       baseInstructions: systemText(params.messages),
       developerInstructions: "You are the Yumina Studio agent. The input contains the saved chronological conversation. Continue its latest request. Use only the provided Yumina tools. Yumina executes tool calls and handles proposals and approvals; do not use filesystem, shell, external integrations or coding tools."
+        + " Saved assistant tool calls and tool results are historical completion receipts. Do not replay completed calls; continue from the latest result."
         + toolPolicy(params),
       dynamicTools: tools.map(tool => ({ type: "function", name: tool.function.name, description: tool.function.description, inputSchema: tool.function.parameters })),
     });
@@ -220,12 +230,15 @@ class CodexSession {
           : transparent ? "Use transparent_background=true. Isolated subject with a transparent PNG background; do not draw a checkerboard."
             : "Use transparent_background=false and preserve the requested opaque background." }), true, undefined, referenceImages);
   }
-  async continueTools(params: GenerateParams) {
-    const results = this.pendingTools.map(call => {
+  pendingResults(params: GenerateParams) {
+    return this.pendingTools.map(call => {
       const result = params.messages.find(message => message.role === "tool" && message.tool_call_id === call.params.callId);
       if (!result || result.role !== "tool") throw new Error("The pending Codex tool result is unavailable. Start a new agent request.");
       return { call, result };
     });
+  }
+  async continueTools(params: GenerateParams) {
+    const results = this.pendingResults(params);
     const currentSystem = systemText(params.messages);
     const users = params.messages.filter(message => message.role === "user");
     const currentUsers = users.map(message => JSON.stringify(message));
@@ -257,6 +270,15 @@ class CodexSession {
 
 function selectedTools(params: GenerateParams) {
   return params.toolChoice === "none" ? [] : (params.tools ?? []).filter(tool => typeof params.toolChoice !== "object" || tool.function.name === params.toolChoice.function.name);
+}
+
+/** Object/property ordering does not change a tool contract; descriptions and array order do. */
+function selectedToolSignature(params: GenerateParams): string {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, value]) => [key, canonical(value)]))
+      : value;
+  const tools = selectedTools(params).slice().sort((a, b) => a.function.name < b.function.name ? -1 : a.function.name > b.function.name ? 1 : 0);
+  return JSON.stringify(canonical(tools));
 }
 
 export type CodexImageOptions = { command?: string; timeoutMs?: number; signal?: AbortSignal; prompt: string; imageKind: "sprite" | "background" | "image"; transparent?: boolean; referenceImages?: string[] };
@@ -303,6 +325,17 @@ export async function generateCodexImage(options: CodexImageOptions): Promise<{ 
   } finally { await session.close(); }
 }
 
+/** Each replaced thread has its own cumulative counter. Carry only the
+ * not-yet-reported old delta, then add this thread's ordinary delta. */
+function combineUsage(previous: StreamChunk["usage"], current: StreamChunk["usage"]): StreamChunk["usage"] {
+  if (!previous) return current;
+  if (!current) return previous;
+  return { promptTokens: previous.promptTokens + current.promptTokens,
+    completionTokens: previous.completionTokens + current.completionTokens,
+    totalTokens: previous.totalTokens + current.totalTokens,
+    reasoningTokens: (previous.reasoningTokens ?? 0) + (current.reasoningTokens ?? 0) };
+}
+
 function toolPolicy(params: GenerateParams): string {
   if (params.toolChoice === "none") return " Do not call tools. Finish the requested response now.";
   if (typeof params.toolChoice === "object") return " The host requires the next call to be " + params.toolChoice.function.name + ". Call only that tool until the host updates this policy.";
@@ -325,10 +358,33 @@ export class CodexProvider implements LLMProvider {
     }
     const key = sessionKey(params.conversationId ?? this.sessionId, params.generationId);
     let session = sessions.get(key), keepAlive = false;
+    let carriedUsage: StreamChunk["usage"];
     if (session?.busy) { yield { type: "error", content: "This Codex conversation is already generating." }; return; }
     try {
       if (session) {
-        session.busy = true; session.attach(params.signal); await session.continueTools(params);
+        session.busy = true;
+        if (!session.matchesTools(params)) {
+          // Dynamic tools belong to thread/start. Validate every completed host
+          // result before replacing the suspended thread with its saved history.
+          session.pendingResults(params);
+          const previous = session;
+          const directory = await mkdtemp(join(tmpdir(), "yumina-codex-"));
+          if (sessions.get(key) !== previous || params.signal?.aborted) {
+            await rm(directory, { recursive: true, force: true });
+            params.signal?.throwIfAborted();
+            throw new Error("The Codex tool session was stopped before refreshing its tools. Start a new agent request.");
+          }
+          const replacement = new CodexSession(key, this.command, directory, this.timeoutMs);
+          replacement.busy = true; replacement.attach(params.signal);
+          // Register the replacement before closing so stop/concurrent callers
+          // retain a fenced, busy owner throughout the process transition.
+          sessions.set(key, replacement); session = replacement;
+          await previous.close();
+          carriedUsage = previous.reportUsage();
+          params.signal?.throwIfAborted();
+          if (sessions.get(key) !== session) throw new Error("The Codex tool session was stopped before refreshing its tools. Start a new agent request.");
+          await session.initialize(params);
+        } else { session.attach(params.signal); await session.continueTools(params); }
       } else {
         if (params.messages.at(-1)?.role === "tool") throw new Error("The Codex tool session expired or was stopped. Start a new agent request.");
         session = new CodexSession(key, this.command, await mkdtemp(join(tmpdir(), "yumina-codex-")), this.timeoutMs);
@@ -342,11 +398,7 @@ export class CodexProvider implements LLMProvider {
         if (data?.threadId && data.threadId !== session.threadId) continue;
         if (event.method === "item/agentMessage/delta" && typeof data?.delta === "string") yield { type: "text", content: data.delta };
         else if (event.method === "item/reasoning/summaryTextDelta" && typeof data?.delta === "string") yield { type: "reasoning", content: data.delta };
-        else if (event.method === "thread/tokenUsage/updated") {
-          const tokens = data?.tokenUsage?.total ?? data?.tokenUsage?.last;
-          if (tokens) session.usage = { promptTokens: tokens.inputTokens, completionTokens: tokens.outputTokens,
-            totalTokens: tokens.totalTokens, reasoningTokens: tokens.reasoningOutputTokens };
-        } else if (event.method === "item/tool/call") {
+        else if (event.method === "item/tool/call") {
           // Capture parallel requests before yielding control to Studio's loop.
           await new Promise(resolve => setTimeout(resolve, 25));
           let calls = [event];
@@ -369,10 +421,10 @@ export class CodexProvider implements LLMProvider {
             yield { type: "tool_call_end", content: "", toolCall, toolCallIndex: index };
           }
           keepAlive = true;
-          yield { type: "done", content: "", stopReason: "tool_use", usage: session.reportUsage(), model: CODEX_STUDIO_MODEL }; return;
+          yield { type: "done", content: "", stopReason: "tool_use", usage: combineUsage(carriedUsage, session.reportUsage()), model: CODEX_STUDIO_MODEL }; return;
         } else if (event.method === "turn/completed") {
           if (data?.turn?.status !== "completed") throw new Error("Codex turn/completed: " + (data?.turn?.error?.message ?? "turn " + (data?.turn?.status ?? "failed") + "."));
-          yield { type: "done", content: "", stopReason: "end_turn", usage: session.reportUsage(), model: CODEX_STUDIO_MODEL }; return;
+          yield { type: "done", content: "", stopReason: "end_turn", usage: combineUsage(carriedUsage, session.reportUsage()), model: CODEX_STUDIO_MODEL }; return;
         } else if (event.method === "error") {
           if (!data?.willRetry) throw new Error("Codex error event: " + (data?.error?.message ?? "generation failed."));
         } else if (event.id !== undefined && event.method) throw new Error("Codex requested an unsupported action; the request was stopped.");
@@ -380,7 +432,7 @@ export class CodexProvider implements LLMProvider {
     } catch (error) {
       if (params.signal?.aborted) throw error;
       console.error("[Codex] Studio turn failed:", error);
-      yield { type: "error", content: error instanceof Error ? error.message : "Codex generation failed." };
+      yield { type: "error", content: error instanceof Error ? error.message : "Codex generation failed.", ...(carriedUsage ? { usage: carriedUsage } : {}) };
     } finally {
       if (session) {
         session.busy = false;

@@ -1,12 +1,10 @@
+import { upgradeCompatibleVnFiles } from "./vn-compatible-files";
+import { vnCompatibilitySources } from "./vn-compatibility-sources";
+import { swipeStateSnapshot } from "./turn-swipes";
 import { canSelectStoryOpening } from "@/lib/can-select-story-opening";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { saveVnTextPreferences } from "@/lib/vn-text-preferences";
 import { normalizeVnText } from "@yumina/shared";
-import { withVnTextSettings } from "@/features/editor/lib/vn-text-template";
-import { upgradeVnPortraitFiles } from "./vn-portrait-upgrade";
-import { upgradeVnMetadataFiles } from "./vn-metadata-upgrade";
-import vnPortraitSource from "../../../../../interfaces/vn/portrait-ref.ts?raw";
-import vnAngleSource from "../../../../../interfaces/vn/angle-markup.ts?raw";
 import { stripAngleMarkup, stripStateReceipts } from "@yumina/engine";
 import { ChatAssetPicker } from "./chat-asset-picker";
 import { readChatAsset } from "@/lib/chat-asset-input";
@@ -37,17 +35,10 @@ import { slimMessages } from "./slim-messages";
 import { scopeStorageKey, writeWorldStorage } from "./world-storage";
 import { createSideCallStreamReader } from "./side-call-stream";
 import { visibleSessionVariables } from "./visible-variables";
-import { currentStatusFiles } from "@/features/editor/lib/status-template-upgrade";
-import { upgradeVnLoadingFiles } from "./vn-loading-progress";
-import vnLoadingSource from "../../../../../interfaces/vn/loading-status.tsx?raw";
-import { upgradeVnReadingFiles } from "./vn-reading-upgrade";
-import vnReadingSource from "../../../../../interfaces/vn/reading.ts?raw";
-import { upgradeVnCharacterVisibilityFiles } from "./vn-character-visibility-upgrade";
-import vnCharacterVisibilitySource from "../../../../../interfaces/vn/character-visibility.ts?raw";
 import { isCompiledValid, type CompiledRoot } from "@/features/studio/lib/compiled-format";
 import { absoluteImageUrl } from "@/lib/asset-url";
 import type { YuminaAPI } from "@/features/studio/lib/custom-component-renderer";
-import type { Condition, LoreUiBinding, Worldbook, StateChannel, StoryProgress } from "@yumina/engine";
+import type { Condition, LoreUiBinding, Worldbook, StateChannel, StoryProgress, RootComponent } from "@yumina/engine";
 import { storyhavenMemoryRequest } from "@/../sandbox/protocol";
 import type {
   VariablesChannelData,
@@ -124,6 +115,7 @@ const SESSION_CAPABILITIES: SandboxCapabilities = {
 };
 
 interface WorldRendererProps {
+  interfaceId?: RootComponent["interfaceId"];
   dialogTheme?: "vn";
   /** Entry file name */
   entryFile: string | undefined;
@@ -183,6 +175,7 @@ interface WorldRendererProps {
 }
 
 export function WorldRenderer({
+  interfaceId,
   dialogTheme,
   entryFile,
   files: incomingFiles,
@@ -216,8 +209,9 @@ export function WorldRenderer({
   const modelFallback = useChatStore((s) => s.modelFallback?.sessionId === sessionId ? s.modelFallback : null);
   const files = useMemo(() => {
     const adapted = adaptOncinGalleryFiles(worldId, incomingFiles);
-    return adapted ? upgradeVnMetadataFiles(upgradeVnPortraitFiles(withVnTextSettings(upgradeVnCharacterVisibilityFiles(upgradeVnReadingFiles(upgradeVnLoadingFiles(currentStatusFiles(adapted), vnLoadingSource), vnReadingSource), vnCharacterVisibilitySource)), vnPortraitSource), vnAngleSource) : adapted;
-  }, [worldId, incomingFiles]);
+    if (!adapted || interfaceId === "classic") return adapted;
+    return upgradeCompatibleVnFiles(adapted, interfaceId, vnCompatibilitySources);
+  }, [worldId, incomingFiles, interfaceId]);
   const bgmVolume = useAudioStore((s) => s.bgmVolume);
   const sfxVolume = useAudioStore((s) => s.sfxVolume);
   const router = useRouter();
@@ -515,6 +509,7 @@ export function WorldRenderer({
             if (data.content !== undefined) {
               store.updateMessage(swipeMsgId, {
                 content: data.content,
+                stateSnapshot: swipeStateSnapshot(data),
                 activeSwipeIndex: data.activeSwipeIndex,
                 contentFlags: data.contentFlags ?? null,
                 stateValidation: Object.hasOwn(data, "stateValidation") ? data.stateValidation : store.messages.find((message) => message.id === swipeMsgId)?.swipes?.[data.activeSwipeIndex]?.stateValidation ?? null,
@@ -848,6 +843,14 @@ export function WorldRenderer({
         case "openModelPicker":
           setModelPickerOpen(true);
           return;
+        case "openStateGuardSettings": {
+          const store = useChatStore.getState();
+          const sid = sessionIdRef.current;
+          if (mode !== "session" || !isActive || !sid || !capabilities.canUseSessionApis
+            || (currentApi as YuminaAPI & { readOnly?: boolean }).readOnly || store.readOnly || store.session?.id !== sid) return;
+          window.dispatchEvent(new CustomEvent("yumina:request-state-guard"));
+          return;
+        }
         case "resolveModelFallback": {
           const store = useChatStore.getState();
           if (store.modelFallback?.sessionId !== sessionIdRef.current) return null;
@@ -1356,7 +1359,7 @@ export function WorldRenderer({
           return { error: `unknown_method:${method}` };
       }
     },
-    [i18n, navigateToStory, router, mode, capabilities.canSendMessage, capabilities.canPersistSession, capabilities.canUseSessionApis],
+    [isActive, i18n, navigateToStory, router, mode, capabilities.canSendMessage, capabilities.canPersistSession, capabilities.canUseSessionApis],
   );
 
   // ── Streaming API call handler (LLM completions) ──

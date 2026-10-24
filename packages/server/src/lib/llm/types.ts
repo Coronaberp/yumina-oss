@@ -102,11 +102,29 @@ export interface GenerateParams {
   fallbackOnTransientErrors?: boolean;
   /** Make exactly one upstream request; used by callers with their own shared retry budget. */
   singleAttempt?: boolean;
+  /** Server-owned audit hook, called once for each actual custom HTTP attempt. */
+  onProviderAttempt?: (attempt: ProviderAttempt) => Promise<void>;
   /** AbortSignal to cancel the upstream request when client disconnects */
   signal?: AbortSignal;
 }
 
 // ── Stream Chunks ──
+
+export interface ProviderAttempt {
+  id: string;
+  invocationId: string;
+  providerHost: string;
+  model: string;
+  conversationId?: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "complete" | "error" | "cancelled";
+  httpStatus?: number;
+  providerRequestId?: string;
+  /** Missing upstream counters stay unknown even if the UI needs a fallback. */
+  usage?: Partial<NonNullable<StreamChunk["usage"]>>;
+  stopReason?: string;
+}
 
 export interface StreamChunk {
   type: "text" | "reasoning" | "done" | "error" | "tool_call_start" | "tool_call_delta" | "tool_call_end";

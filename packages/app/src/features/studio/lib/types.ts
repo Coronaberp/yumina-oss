@@ -53,6 +53,7 @@ export interface StudioImageTarget {
   openingId?: string;
   characterId?: string;
   expression?: string;
+  spriteType?: string;
 }
 
 /** Configured pictures start automatically; each card can be cancelled. */

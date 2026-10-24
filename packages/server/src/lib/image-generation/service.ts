@@ -180,6 +180,7 @@ export function createImageGenerationService(dependencies: GenerationDependencie
             bytes = result.bytes; promptId = result.promptId;
             await dependencies.storage.validate(bytes, signal);
             if (transparentSprite) {
+              storedArtifacts = { originalBytes: bytes };
               try { bytes = await dependencies.removeGreenBackground(bytes, signal);backgroundRemoved = true; }
               catch { signal.throwIfAborted(); throw new GenerationError('SPRITE_PROCESSING_FAILED', 'ComfyUI sprite background could not be removed. Use a solid bright green background in the workflow.', 503); }
             }
@@ -189,6 +190,7 @@ export function createImageGenerationService(dependencies: GenerationDependencie
           bytes = await generateForgeNeoImage(profile, prompt, input.imageKind, signal, dependencies.fetch);
           await dependencies.storage.validate(bytes, signal);
           if (transparentSprite) {
+            storedArtifacts = { originalBytes: bytes };
             try { bytes = await dependencies.removeGreenBackground(bytes, signal);backgroundRemoved = true; }
             catch { signal.throwIfAborted(); throw new GenerationError('SPRITE_PROCESSING_FAILED', 'Forge Neo sprite background could not be removed. Use a solid bright green background in the prompt.', 503); }
           }

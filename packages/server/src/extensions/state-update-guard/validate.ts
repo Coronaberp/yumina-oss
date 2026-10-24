@@ -99,7 +99,9 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
     // genuinely oversized or unbroken values still hit the conservative guard.
     const data = JSON.stringify({
       variables, writableVariableIds, state: Object.fromEntries(variables.map((v) => [v.id, ctx.state.variables[v.id]])),
-      history: ctx.history.slice(-4).map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "[attachment]", ...(m.choices?.length ? { choices: m.choices } : {}) })),
+      // Prompt-format suffixes are not conversation and must not displace the
+      // player's latest choice. Rules remain in variables and our instructions.
+      history: ctx.history.filter((m) => m.role === "user" || m.role === "assistant").slice(-4).map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "[attachment]", ...(m.choices?.length ? { choices: m.choices } : {}) })),
       draft: ctx.raw, diagnostics: audit.diagnostics,
     }, null, 2);
     // Do not silently truncate the schema/draft: that can fabricate a no-op.
@@ -141,7 +143,13 @@ export async function guardTurnOutput(ctx: TurnOutputContext): Promise<Validated
           requested = true;
           try {
             for await (const chunk of correction.provider.generateStream({
-              model: correction.model, singleAttempt: true, reasoningEffortOverride: "low",
+              model: correction.model, singleAttempt: true,
+              // DeepSeek V4's low effort still enables native thinking. Give
+              // bounded state repair its supported opt-out; retain low effort
+              // for other models, including those that require thinking.
+              ...(/^custom\/(?:deepseek\/)?deepseek-v4(?:[.-]|$)/i.test(correction.model)
+                ? { disableReasoning: true }
+                : { reasoningEffortOverride: "low" as const }),
               ...(formatAttempt === 0 && { responseFormat: { type: "json_object" as const } }),
               maxTokens: 4096, signal: controller.signal,
               // Story-provider transport/cache overrides may not suit another model.

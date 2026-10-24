@@ -5,8 +5,9 @@ import type {
   CustomUIComponent,
 } from "@yumina/engine";
 import type { Reaction } from "@yumina/engine";
-import { isVnInterface, readVnAssetMap, readVnOpeningScenes, vnAssetRows } from "@yumina/engine";
+import { isVnInterface, readVnAssetMap, readVnOpeningScenes, vnAssetRows, vnSpriteRows, readVnSpriteConfig } from "@yumina/engine";
 import { loadAssetCatalog, formatAssetCatalog } from "./asset-catalog.js";
+import { readWorldMedia } from "./world-media-tools.js";
 
 // ── Types ──
 
@@ -242,12 +243,13 @@ function scoreRule(rule: Rule, keywords: string[]): number {
 
 // ── Layer 1: Rich Inventory ──
 
-function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string {
+function buildInventory(world: WorldDefinition, assets: AssetSummary[], thumbnailUrl?: string | null, includeMediaInventory = true): string {
   const parts: string[] = [];
 
   // World metadata
   parts.push(`World: "${world.name || "(unnamed)"}"`);
   if (world.description) parts.push(`Description: ${world.description}`);
+  if (includeMediaInventory) parts.push(`\nCARD MEDIA (read_entities id=world-media): ${JSON.stringify(readWorldMedia(world, thumbnailUrl))}`);
 
   // Story definitions are platform data in Classic, VN and custom interfaces.
   // Keep IDs and selection metadata discoverable; read long prose on demand.
@@ -353,7 +355,13 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
       // Surface setup-scope so the AI can tell a pre-game choice variable is
       // protected from the opening-switch reset (or spot that it's missing).
       const scope = v.scope === "setup" ? " scope:setup" : "";
-      parts.push(`  ${v.id}: "${v.name}" (${v.type}${scope}, default: ${JSON.stringify(v.defaultValue)})${range}${desc}${rules}`);
+      const vn = isVnInterface(world.rootComponent);
+      const dataType = vn && v.type === "json" ? (Array.isArray(v.defaultValue) ? "/list" : "/group")
+        : vn && v.type === "string" && v.enumValues !== undefined ? "/choice" : "";
+      const options = vn && v.enumValues !== undefined
+        ? `\n    enumValues: ${JSON.stringify(v.enumValues.slice(0, 6)).slice(0, 240)}${v.enumValues.length > 6 || JSON.stringify(v.enumValues.slice(0, 6)).length > 240 ? "… (read_entities for full options)" : ""}`
+        : "";
+      parts.push(`  ${v.id}: "${v.name}" (${v.type}${dataType}${scope}, default: ${JSON.stringify(v.defaultValue)})${range}${desc}${rules}${options}`);
     }
   }
 
@@ -387,10 +395,12 @@ function buildInventory(world: WorldDefinition, assets: AssetSummary[]): string 
     parts.push(`  ${rc.id}: "${rc.name}" entry=${rc.entryFile}`);
     if (isVnInterface(rc)) {
       try {
-        const sprites = vnAssetRows(readVnAssetMap(rc.files["sprites.ts"] ?? "", "sprites"), "sprites");
+        const sprites = vnSpriteRows(rc.files["sprites.ts"] ?? "");
         const backgrounds = vnAssetRows(readVnAssetMap(rc.files["scenes.ts"] ?? "", "backgrounds"), "backgrounds");
         const openings = readVnOpeningScenes(rc.files["scenes.ts"] ?? "");
-        parts.push(`  VN ASSETS: ${sprites.length} sprite expressions; ${backgrounds.length} Global backgrounds; ${Object.keys(openings).length} opening collections. Use list_vn_assets for help, defaults, and stable IDs; edit_vn_assets for assignments/order.`);
+        const spriteConfig = readVnSpriteConfig(rc.files["sprites.ts"] ?? "");
+        parts.push(`  VN SPRITE CATALOG: types ${JSON.stringify(spriteConfig.types)}; emotions ${JSON.stringify(spriteConfig.emotions)}. Tag [SPEAKER:Name:emotion:type], omitted type=normal; NPC gender/identity unchanged.`);
+        parts.push(`  VN ASSETS: ${sprites.length} sprite expressions; ${backgrounds.length} Global backgrounds; ${Object.keys(openings).length} opening collections. Use list_vn_assets for help, defaults, and stable IDs; edit_vn_assets for assignments/order and set_wardrobe_description (name, spriteType, description; empty removes). Character/type/emotion lists refresh automatically from this draft. Use {{sprite_wardrobe}} in lore for mutable clothing; preserve body/identity and authored interface code.`);
       } catch {
         parts.push("  VN ASSETS: custom source; use list_vn_assets for editability and read_entities before changing authored maps.");
       }
@@ -574,6 +584,10 @@ export async function resolveContext(
   request: string,
   options: {
     userId: string;
+    /** Actual current working portrait cover, including a held edit. */
+    thumbnailUrl?: string | null;
+    includeAssetInventory?: boolean;
+    includeMediaInventory?: boolean;
     /** Database world ID, which can differ from the imported schema.id. */
     worldId?: string;
     /** Model context window size in tokens (default 120k) */
@@ -588,8 +602,8 @@ export async function resolveContext(
   const contextBudget = Math.floor(contextWindow * 0.45);
 
   // Load assets
-  let assetInventory: string;
-  try {
+  let assetInventory = "";
+  if (options.includeAssetInventory !== false) try {
     assetInventory = options.worldId
       ? formatAssetCatalog(await loadAssetCatalog(options.userId, options.worldId))
       : "\nASSET LIBRARY unavailable: database worldId was not provided.\n";
@@ -598,7 +612,7 @@ export async function resolveContext(
   }
 
   // Build Layer 1: rich inventory (always loaded)
-  const inventory = buildInventory(world, []) + assetInventory;
+  const inventory = buildInventory(world, [], options.thumbnailUrl, options.includeMediaInventory !== false) + assetInventory;
   let tokenEstimate = estimateTokens(inventory);
 
   // Extract keywords from user request

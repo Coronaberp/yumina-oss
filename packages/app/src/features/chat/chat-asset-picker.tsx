@@ -8,7 +8,7 @@ import { cardImageUrl, fallbackToOriginalOnError } from "@/lib/asset-url";
 import { assetFolderTrail, chatAssetQuery } from "./chat-asset-folders";
 import { CHAT_IMAGE_MIME_TYPES, MAX_CHAT_IMAGE_BYTES } from "@yumina/shared";
 import { chatImageCopy as chatInputCopy } from "@/lib/chat-image-input";
-import { toast } from "sonner";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -29,7 +29,8 @@ export function ChatAssetPicker({ onSelect, onClose }: {
   const [uploading, setUploading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<UserAsset | null>(null);
-  const input = useRef<HTMLInputElement>(null);
+  const [imageImport, setImageImport] = useState<{ folderId: string | null; token: number } | null>(null);
+  const imageRequest = useRef(0);
   const returnFocus = useRef(document.activeElement);
   const mounted = useRef(true);
   const uploadInFlight = useRef(false);
@@ -52,29 +53,33 @@ export function ChatAssetPicker({ onSelect, onClose }: {
     return () => controller.abort();
   }, [folderId, search, page, revision]);
 
-  function navigate(id: string | null) { setFolderId(id); setSearch(""); setPage(1); setSelected(null); }
-  async function upload(file: File) {
+  function closeImageImport() { imageRequest.current++; setImageImport(null); setUploading(false); uploadInFlight.current = false; }
+  function navigate(id: string | null) { closeImageImport(); setFolderId(id); setSearch(""); setPage(1); setSelected(null); }
+  async function upload(file: File, context: ImageImportContext, target: NonNullable<typeof imageImport>) {
+    const current = () => mounted.current && imageRequest.current === target.token && !context.signal.aborted;
+    if (!current()) return;
     if (uploadInFlight.current) return;
     if (!CHAT_IMAGE_MIME_TYPES.includes(file.type as typeof CHAT_IMAGE_MIME_TYPES[number])) {
-      toast.error(chatInputCopy(i18n.language, "format")); return;
+      throw new Error(chatInputCopy(i18n.language, "format"));
     }
     if (!file.size || file.size > MAX_CHAT_IMAGE_BYTES) {
-      toast.error(chatInputCopy(i18n.language, "size")); return;
+      throw new Error(chatInputCopy(i18n.language, "size"));
     }
     uploadInFlight.current = true; setUploading(true);
     try {
-      const asset = await useUserAssetStore.getState().uploadAsset(file, "image", folderId ?? undefined, { addToList: false });
-      if (!mounted.current || !asset) return;
+      const asset = await useUserAssetStore.getState().uploadAsset(file, "image", target.folderId ?? undefined, { addToList: false, signal: context.signal, onProgress: context.onProgress, silent: true });
+      if (!current()) return;
+      if (!asset) throw new Error(copy.failed);
       setSearch(""); setPage(1); setSelected(asset); setRevision(value => value + 1);
+      uploadInFlight.current = false; setUploading(false); imageRequest.current++;
     } finally {
-      uploadInFlight.current = false;
-      if (mounted.current) setUploading(false);
+      if (current()) { uploadInFlight.current = false; setUploading(false); }
     }
   }
   const childFolders = folders.filter(folder => folder.parentFolderId === folderId && folder.name.toLowerCase().includes(search.trim().toLowerCase()));
   const trail = assetFolderTrail(folders, folderId);
 
-  return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+  return <><Dialog open onOpenChange={open => { if (!open) onClose(); }}>
     <DialogContent className="gap-0 overflow-hidden rounded-2xl p-0 sm:rounded-2xl" aria-describedby={undefined} onEscapeKeyDown={event => event.stopPropagation()} onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus.current instanceof HTMLElement && returnFocus.current.isConnected) returnFocus.current.focus(); }} portalContainer={document.fullscreenElement as HTMLElement | null}>
       <div className="border-b border-border px-4 py-4"><DialogTitle className="text-sm font-medium">{copy.title}</DialogTitle></div>
       <div className="flex gap-2 border-b border-border p-3">
@@ -82,10 +87,9 @@ export function ChatAssetPicker({ onSelect, onClose }: {
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input aria-label={copy.search} placeholder={copy.search} value={search} disabled={uploading} onChange={e => { setSearch(e.target.value); setPage(1); setSelected(null); }} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" />
         </label>
-        <button type="button" disabled={uploading} onClick={() => input.current?.click()} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary disabled:opacity-50">
+        <button type="button" disabled={uploading} onClick={() => setImageImport({ folderId, token: ++imageRequest.current })} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary disabled:opacity-50">
           {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{uploading ? copy.uploading : copy.upload}
         </button>
-        <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void upload(file); }} />
       </div>
       <nav aria-label={copy.root} className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <button type="button" disabled={uploading} onClick={() => navigate(null)} className="min-h-9 rounded px-1 hover:text-foreground">{copy.root}</button>
@@ -105,5 +109,9 @@ export function ChatAssetPicker({ onSelect, onClose }: {
       {total > 24 && <div className="flex items-center justify-center gap-4 border-t border-border px-3 py-2 text-xs"><button type="button" disabled={page === 1 || loading || uploading} onClick={() => { setPage(value => value - 1); setSelected(null); }} className="min-h-9 disabled:opacity-40">{copy.previous}</button><span>{page} / {Math.ceil(total / 24)}</span><button type="button" disabled={page * 24 >= total || loading || uploading} onClick={() => { setPage(value => value + 1); setSelected(null); }} className="min-h-9 disabled:opacity-40">{copy.next}</button></div>}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3"><span className="text-xs text-muted-foreground" aria-live="polite">{selected ? copy.selected : copy.none}</span><button type="button" disabled={!selected || uploading || loading || error} onClick={() => { if (selected) onSelect({ type: "image", assetId: selected.id, url: selected.url, mimeType: selected.mimeType ?? "image/png", name: selected.filename }); }} className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40">{copy.add}</button></div>
     </DialogContent>
-  </Dialog>;
+  </Dialog>
+  {imageImport && <ImageImportDialog preserveOriginal crop="none" maxBytes={MAX_CHAT_IMAGE_BYTES}
+    title={copy.upload} portalContainer={document.fullscreenElement as HTMLElement | null}
+    onImport={(files, context) => upload(files[0]!, context, imageImport)} onClose={closeImageImport} />}
+  </>;
 }

@@ -1,5 +1,3 @@
-import sharp from "sharp";
-
 export interface UploadedImage {
   key: string;
   filename: string;
@@ -12,17 +10,9 @@ interface ImageStorage {
   write(key: string, bytes: Buffer, contentType: string, options: { signal: AbortSignal }): Promise<void>;
 }
 
-const MAX_INPUT_BYTES = 32 * 1024 * 1024;
-const SUPPORTED_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
-let active = 0;
-const waiting: Array<() => void> = [];
-
+/** Existing references still use this legacy key; never create a new variant. */
 export function losslessWebpKey(key: string): string {
   return `${key}.lossless.webp`;
-}
-
-function convertedAsset(asset: UploadedImage, bytes: Buffer): UploadedImage {
-  return { key: losslessWebpKey(asset.key), filename: `${asset.filename.replace(/\.[^./\\]+$/, "") || "image"}.webp`, mimeType: "image/webp", sizeBytes: bytes.length };
 }
 
 // libvips can read an APNG's first frame as a still PNG. Inspect real chunk
@@ -40,44 +30,10 @@ export function isAnimatedPng(bytes: Buffer): boolean {
   return true;
 }
 
-/**
- * Optimize a NEW upload before registering/publishing it. Full resolution,
- * lossless pixels and alpha; keep animation, high bit depth, unsupported files,
- * and originals that are smaller. The source remains intact until DB commit.
- * Storage is injected so both S3 and local disk use the same conversion.
- */
-export async function optimizeUploadedImage(asset: UploadedImage, storage: ImageStorage): Promise<UploadedImage> {
-  if (!SUPPORTED_MIMES.has(asset.mimeType.toLowerCase()) || asset.sizeBytes > MAX_INPUT_BYTES) return asset;
-  if (active >= 2) await new Promise<void>(resolve => waiting.push(resolve));
-  else active++;
-  try {
-    const signal = AbortSignal.timeout(15_000);
-    let buffer: Buffer;
-    try {
-      ({ buffer } = await storage.read(asset.key, { maxBytes: MAX_INPUT_BYTES, signal }));
-    } catch {
-      // Successful confirmation may have removed the staging original. Reuse
-      // the published variant when that confirmation is retried.
-      const stored = await storage.read(losslessWebpKey(asset.key), { maxBytes: MAX_INPUT_BYTES, signal });
-      if (stored.contentType !== "image/webp" || (await sharp(stored.buffer).metadata()).format !== "webp") return asset;
-      return convertedAsset(asset, stored.buffer);
-    }
-    if (!buffer.length || buffer.length > MAX_INPUT_BYTES || isAnimatedPng(buffer)) return asset;
-    const image = sharp(buffer, { animated: true, limitInputPixels: 40_000_000, failOn: "warning" }).timeout({ seconds: 10 });
-    const metadata = await image.metadata();
-    if (!metadata.width || !metadata.height || !["png", "jpeg", "webp"].includes(metadata.format ?? "") || (metadata.pages ?? 1) > 1 || metadata.depth !== "uchar") return asset;
-    // exact also preserves the RGB values of fully transparent pixels.
-    const bytes = await image.rotate().keepIccProfile().webp({ lossless: true, exact: true, effort: 6 }).toBuffer();
-    if (bytes.length >= buffer.length) return asset;
-    const key = losslessWebpKey(asset.key);
-    await storage.write(key, bytes, "image/webp", { signal });
-    return convertedAsset(asset, bytes);
-  } catch {
-    // Optimization is optional: decoding/storage failures keep the upload usable.
-    return asset;
-  } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else active--;
-  }
+
+/** @deprecated Compatibility passthrough only. Masters must retain complete
+ * original files through the verified image-master service. Do not transcode,
+ * resize, read alternate legacy objects or mutate storage in this wrapper. */
+export async function optimizeUploadedImage(asset: UploadedImage, _storage: ImageStorage): Promise<UploadedImage> {
+  return asset;
 }

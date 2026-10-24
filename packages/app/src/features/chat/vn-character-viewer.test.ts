@@ -6,13 +6,14 @@ import React, { act, createElement } from "react";
 import { JSDOM } from "jsdom";
 import { marked } from "marked";
 import { bundleAndCompile } from "../studio/lib/tsx-bundler";
+import { upgradeVnCharacterMentionFiles } from "./vn-character-mention-upgrade";
 
 const source = fileURLToPath(new URL("../../../../../interfaces/vn/", import.meta.url));
 const files = Object.fromEntries(readdirSync(source).filter(n => /\.(tsx?|jsx?)$/.test(n)).map(n => [n, readFileSync(source + n, "utf8")]));
 const content = '*Sera smiles at you. Seraphine carries a book.*\n\n[SPEAKER:Sera:normal] "Diane, meet Sera."\n\n*LATER_SECRET Sera is the queen.*';
 type CompleteRequest = { includeLorebook: boolean; maxTokens: number; messages: { role: string; content: string }[] };
 type FixtureMessage = { id: string; role: string; content: string; activeSwipeIndex?: number; swipes?: Record<string, unknown>[] };
-async function fixture(extra: Record<string, unknown> = {}, configOverride?: string) {
+async function fixture(extra: Record<string, unknown> = {}, configOverride?: string, interfaceFiles = files) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
   const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, React, IS_REACT_ACT_ENVIRONMENT: true };
   const originals = Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
@@ -30,7 +31,7 @@ async function fixture(extra: Record<string, unknown> = {}, configOverride?: str
     ...extra,
   };
   const config = 'export const statusConfig = {title:"Status",groups:[{id:"relationships",label:"Relationships"},{id:"vitals",label:"Vitals"}],fields:[{id:"r",label:"Sera",variableId:"rel-sera",path:"",group:"relationships",min:-100,max:100},{id:"hp",label:"Sera HP",variableId:"sera-hp",path:"",group:"vitals"},{id:"s",label:"Sera secret",variableId:"secret-sera",path:"",group:"vitals"},{id:"player",label:"HP",variableId:"hp",group:"vitals"}]};';
-  const result = bundleAndCompile({ files: { ...files, "status-config.ts": configOverride || config }, entryFile: "index.tsx" }, () => api);
+  const result = bundleAndCompile({ files: { ...interfaceFiles, "status-config.ts": configOverride || config }, entryFile: "index.tsx" }, () => api);
   assert.equal(result.error, null, result.error ?? undefined);
   const { createRoot } = await import("react-dom/client");
   const container = dom.window.document.getElementById("root")!, root = createRoot(container);
@@ -72,11 +73,100 @@ test("character viewer generates once on click with revealed evidence, sprites a
 
 test("mention matching preserves markdown, ignores ambiguous aliases, links and code, and uses word boundaries", async () => {
   const text = '*Sera and **Diane Bluerose** greet Diane. Anna watches Annabel. `Sera` [Sera](/link) <span title="Sera">Seraphine</span>*';
-  const f = await fixture({ entries: [{ id:'s',name:'Sera (Seraphine)',role:'character' },{id:'d',name:'Diane Bluerose',role:'character'},{id:'a',name:'Anna Rose',role:'character'},{id:'b',name:'Anna Stone',role:'character'}], messages: [{ id:'m1',role:'assistant',content:text }] });
+  const f = await fixture({ entries: [{ id:'s',name:'Sera (Seraphine)',role:'character' },{id:'d',name:'Diane Bluerose (Diane)',role:'character'},{id:'a',name:'Anna Rose',role:'character'},{id:'b',name:'Anna Stone',role:'character'}], messages: [{ id:'m1',role:'assistant',content:text }] });
   try {
     assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(n => n.textContent), ['Sera','Diane Bluerose','Diane','Seraphine']);
     assert.ok(f.container.querySelector('strong .vn-character-link'));
     assert.equal(f.container.querySelector('a .vn-character-link'), null); assert.equal(f.container.querySelector('code .vn-character-link'), null);
+  } finally { await f.dispose(); }
+});
+
+test("inferred character name fragments do not link descriptions in the story or log", async () => {
+  const text = '*An eager woman with short black hair visits a black-haired vendor in the black market garden. Black and Garden are ordinary words here. Diane greets Bluerose, dIaNe BlUeRoSe and bLaCk GaRdEn. Sera and sErApHiNe wave. An NPC visits the Annex.*';
+  const f = await fixture({ entries: [
+    { id: 'garden', name: 'Black Garden', role: 'character' },
+    { id: 'diane', name: 'Diane Bluerose (Diane)', role: 'character' },
+    { id: 'sera', name: 'Sera (Seraphine)', role: 'character' },
+    { id: 'npc', name: 'NPC', role: 'character', enabled: false },
+    { id: 'annex', name: 'Annex', role: 'location' },
+  ], messages: [{ id: 'm1', role: 'assistant', content: text }] });
+  try {
+    const linked = (selector: string) => Array.from(f.container.querySelectorAll(selector + ' .vn-character-link')).map(node => node.textContent);
+    const expected = ['Diane', 'dIaNe BlUeRoSe', 'bLaCk GaRdEn', 'Sera', 'sErApHiNe'];
+    assert.deepEqual(linked('.vn-dialogue'), expected);
+    await f.click('[aria-label="Log"]');
+    assert.deepEqual(linked('.vn-log'), expected);
+    await f.click('.vn-log .vn-character-link');
+    assert.equal(f.container.querySelector('.vn-character-card h1')!.textContent, 'Diane');
+    assert.match(JSON.stringify(f.calls[0]), /Diane/);
+  } finally { await f.dispose(); }
+});
+
+test("complete authored aliases stay case-insensitive without promoting their individual words", async () => {
+  const text = '*The garden queen of night wears a cloak of silk and greets BLACK GARDEN and qUeEn oF nIgHt. Night and Garden answer.*';
+  const f = await fixture({ entries: [{ id: 'garden', name: 'Black Garden (Queen of Night)', role: 'character' }], messages: [{ id: 'm1', role: 'assistant', content: text }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['queen of night', 'BLACK GARDEN', 'qUeEn oF nIgHt']);
+  } finally { await f.dispose(); }
+});
+
+test("an authored single-word character name still links in lowercase", async () => {
+  const f = await fixture({ entries: [{ id: 'black', name: 'Black', role: 'character' }], messages: [{ id: 'm1', role: 'assistant', content: '*black waits.*' }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['black']);
+    await f.click('.vn-dialogue .vn-character-link');
+    assert.equal(f.container.querySelector('.vn-character-card h1')!.textContent, 'black');
+  } finally { await f.dispose(); }
+});
+
+test("lowercase-authored complete names do not make their individual words character links", async () => {
+  const f = await fixture({ entries: [{ id: 'garden', name: 'black garden', role: 'character' }], messages: [{ id: 'm1', role: 'assistant', content: '*A black coat in the garden belongs to BLACK GARDEN.*' }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['BLACK GARDEN']);
+  } finally { await f.dispose(); }
+});
+
+test("multiword personal names link in full and accept explicitly authored short aliases", async () => {
+  const f = await fixture({ entries: [
+    { id: 'diane', name: 'Diane Bluerose', role: 'character' },
+    { id: 'mei', name: 'Mei Amery (Mei)', role: 'character' },
+  ], messages: [{ id: 'm1', role: 'assistant', content: '*Diane and Bluerose greet dIaNe BlUeRoSe. mEi and MEI AMERY answer.*' }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['dIaNe BlUeRoSe', 'mEi', 'MEI AMERY']);
+  } finally { await f.dispose(); }
+});
+
+test("discarded name fragments do not suppress another character's authored alias", async () => {
+  const f = await fixture({ entries: [
+    { id: 'mei', name: 'Mei Amery (Mei)', role: 'character' },
+    { id: 'ling', name: 'Mei Ling', role: 'character' },
+    { id: 'a', name: 'A (Black)', role: 'character' },
+    { id: 'garden', name: 'Black Garden', role: 'character' },
+  ], messages: [{ id: 'm1', role: 'assistant', content: '*Mei greets bLaCk beneath Black Garden. Mei Ling waits.*' }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['Mei', 'bLaCk', 'Black Garden', 'Mei Ling']);
+  } finally { await f.dispose(); }
+});
+
+test("a short alias authored for multiple characters remains ambiguous", async () => {
+  const f = await fixture({ entries: [
+    { id: 'rose', name: 'Anna Rose (Anna)', role: 'character' },
+    { id: 'stone', name: 'Anna Stone (Anna)', role: 'character' },
+  ], messages: [{ id: 'm1', role: 'assistant', content: '*Anna greets Anna Rose and ANNA STONE.*' }] });
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['Anna Rose', 'ANNA STONE']);
+  } finally { await f.dispose(); }
+});
+
+test("saved stock character viewers receive the complete-name matching policy at render time", async () => {
+  const legacyCopy = readFileSync(new URL('./test-fixtures/vn-character-copy-legacy.txt', import.meta.url), 'utf8').trimEnd();
+  const legacyViewer = files['character-viewer.tsx'].replace(/export function CharacterCopy\([\s\S]*?\n\}(?=\n\nfunction visibleText\()/, legacyCopy);
+  const upgraded = upgradeVnCharacterMentionFiles({ ...files, 'character-viewer.tsx': legacyViewer }, files['character-viewer.tsx']);
+  const f = await fixture({ entries: [{ id: 'garden', name: 'Black Garden', role: 'character' }], messages: [{ id: 'm1', role: 'assistant', content: '*Black hair, black-haired, black market, Garden and garden describe the scene. bLaCk GaRdEn speaks.*' }] }, undefined, upgraded);
+  try {
+    assert.deepEqual(Array.from(f.container.querySelectorAll('.vn-dialogue .vn-character-link')).map(node => node.textContent), ['bLaCk GaRdEn']);
+    await f.click('.vn-dialogue .vn-character-link');
+    assert.equal(f.container.querySelector('.vn-character-card h1')!.textContent, 'bLaCk GaRdEn');
   } finally { await f.dispose(); }
 });
 

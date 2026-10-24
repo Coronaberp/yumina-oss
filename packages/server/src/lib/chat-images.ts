@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { and, eq, inArray } from "drizzle-orm";
 import { CHAT_IMAGE_MIME_TYPES, MAX_CHAT_IMAGES, MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_TOTAL_BYTES, type ChatImageInput, type ImageCompletionMessage } from "@yumina/shared";
 import type { ChatMessage, MessageContent, ContentPart } from "./llm/types.js";
 import { db } from "../db/index.js";
 import { messages } from "../db/schema.js";
-import { putObject, getObjectBuffer } from "./s3.js";
+import { getObjectBuffer } from "./s3.js";
+import { imageMasters, isImageMasterKey } from "./image-masters.js";
 import { PUBLIC_ORIGIN } from "./env.js";
 
 export async function validateChatImages(value: unknown): Promise<ChatImageInput[]> {
@@ -39,9 +39,11 @@ export function imageContent(text: string, images: Array<{ url: string }>): Mess
 export async function storeChatImages(userId: string, images: ChatImageInput[]) {
   return Promise.all(images.map(async a => {
     const buffer = Buffer.from(a.data, "base64");
-    const key = `users/${userId}/chat-images/${createHash("sha256").update(buffer).digest("hex")}`;
-    await putObject(key, buffer, a.mimeType);
-    return { type: "image", mimeType: a.mimeType, name: a.name, storageKey: key,
+    // Attachments retain their existing public-CDN exposure; private session
+    // gallery masters deliberately use a distinct access class and key space.
+    const master = await imageMasters.store({ userId, access: "public", bytes: buffer, mimeType: a.mimeType });
+    const key = master.key;
+    return { type: "image", mimeType: master.mimeType, name: a.name, storageKey: key,
       url: `${PUBLIC_ORIGIN}/cdn/key/${Buffer.from(key).toString("base64url")}` };
   }));
 }
@@ -58,7 +60,9 @@ export async function restoreChatImages(sessionId: string, prompt: Array<{ role:
     const images = await Promise.all((stored ?? []).filter(a => a.type === "image").map(async a => {
       const key = (a as typeof a & { storageKey?: string }).storageKey;
       if (key) {
-        if (!/^users\/[^/]+\/chat-images\/[a-f0-9]{64}$/.test(key)) throw new Error("Invalid stored image.");
+        const legacy = /^users\/[^/]+\/chat-images\/[a-f0-9]{64}$/.test(key);
+        const master = /^users\/[^/]+\/image-masters\/public\//.test(key) && isImageMasterKey(key);
+        if (!legacy && !master) throw new Error("Invalid stored image.");
         const object = await getObjectBuffer(key, { maxBytes: MAX_CHAT_IMAGE_BYTES });
         return { url: `data:${a.mimeType};base64,${object.buffer.toString("base64")}` };
       }

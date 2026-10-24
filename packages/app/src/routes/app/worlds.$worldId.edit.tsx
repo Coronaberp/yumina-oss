@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEditorStore } from "@/stores/editor";
 import { lazyRouteComponent } from "@/lib/lazy-route-component";
-import { getEditorMode, getGlobalEditorMode } from "@/features/editor/quick-create-editor";
+import { getEditorMode, getGlobalEditorMode } from "@/lib/editor-mode";
 import { useUnsavedChangesGuard } from "@/features/editor/use-unsaved-changes-guard";
 import { UnsavedChangesDialog } from "@/features/editor/unsaved-changes-dialog";
 import { navigateBackSafely } from "@/lib/safe-back";

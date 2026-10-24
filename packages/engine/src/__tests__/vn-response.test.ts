@@ -41,8 +41,8 @@ describe("VN response protocol", () => {
     expect(buildSpeakerFormatBlock(world)).toContain("[SPEAKER:NPC:emotion:female:stable-id]");
     expect(reminder?.content).toContain("Never infer gender from a name alone");
     for (const prompt of [buildSpeakerFormatBlock(world), reminder?.content]) {
-      expect(prompt).toContain("ONLY one of these six sprite expressions: normal, happy, sad, angry, shy, smug");
-      expect(prompt).toContain("Use angry for irritated");
+      expect(prompt).toContain("Sprite emotions: angry, sad, shy, normal, smug, happy.");
+      expect(prompt).toContain("Sprite types: normal.");
       expect(prompt).toContain("Narrator always uses normal");
     }
   });

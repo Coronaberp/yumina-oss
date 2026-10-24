@@ -8,14 +8,40 @@ export const STATUS_LAYOUT_FILE = "status-layout.tsx";
 
 /** Preview the same saved layout and frame as play, inside the existing sandbox. */
 export function buildStatusPreviewFiles(root: RootComponent, config: StatusConfig, templates: Record<string, string>): { entryFile: string; files: Record<string, string> } {
-  const files = installStatusLayoutFiles({ ...templates, ...root.files }, templates);
+  const files = installStatusLayoutFiles(upgradeStatusFiles({ ...templates, ...root.files }, templates), templates);
   const entryFile = "__status-preview.tsx";
   return { entryFile, files: { ...files, [STATUS_CONFIG_FILE]: writeStatusConfig(config), [entryFile]: `
 import { StatusSheet } from "./status-sheet";
 import { styles } from "./styles";
+import { statusConfig } from "./status-config";
+${files["font.ts"] ? 'import { fontRef } from "./font";' : 'const fontRef = "";'}
 export default function StatusPreview(){
   const api=useYumina();
-  return <div className="vn vn-status-design-preview"><style>{styles}</style><style>{\`
+  const container=React.useRef(null);
+  React.useEffect(()=>{
+    const parentOrigin=new URLSearchParams(window.location.search).get("parentOrigin");
+    function selectCategory(event){
+      if(event.source!==window.parent || !parentOrigin || event.origin!==parentOrigin || event.data?.type!=="yumina-status-preview-category") return;
+      const index=statusConfig.groups.findIndex(group=>group.id===event.data.categoryId);
+      if(index<0) return;
+      const list=container.current?.querySelector('[role="tablist"][aria-label="Status categories"]');
+      const tabs=list ? Array.from(list.querySelectorAll('[role="tab"]')) : [];
+      const group=statusConfig.groups[index];
+      const labeled=tabs.filter(tab=>tab.getAttribute("aria-label")===group.label || Array.from(tab.childNodes).filter(node=>node.nodeType===3).map(node=>node.textContent).join("").trim()===group.label);
+      const tab=tabs.find(tab=>tab.getAttribute("data-status-category")===group.id) || (labeled.length===1 && statusConfig.groups.filter(item=>item.label===group.label).length===1 ? labeled[0] : tabs.length===statusConfig.groups.length ? tabs[index] : null);
+      if(!tab) return;
+      if(tab.getAttribute("aria-selected")!=="true") tab.click();
+      const bounds=tab.getBoundingClientRect(), viewport=list.getBoundingClientRect();
+      if(bounds.left<viewport.left) list.scrollLeft-=viewport.left-bounds.left;
+      else if(bounds.right>viewport.right) list.scrollLeft+=bounds.right-viewport.right;
+    }
+    window.addEventListener("message",selectCategory);
+    if(parentOrigin) window.parent.postMessage({type:"yumina-status-preview-ready"},parentOrigin);
+    return ()=>window.removeEventListener("message",selectCategory);
+  },[]);
+  const fontUrl=fontRef ? api.resolveAssetUrl(fontRef) : "";
+  const previewStyles=fontUrl ? styles.replaceAll("__FONT_URL__",fontUrl) : styles.replace(/@font-face\\s*\\{[^}]*__FONT_URL__[^}]*\\}/gi, "");
+  return <div ref={container} className="vn vn-status-design-preview"><style>{previewStyles}</style><style>{\`
     .vn-status-design-preview .vn-drawer{animation:none!important;transform:none!important;width:100%;max-width:100%;border:0}
     .vn-status-design-preview .vn-overlay{z-index:1}
   \`}</style><StatusSheet api={api} onClose={()=>{}} onBack={()=>{}} preview /></div>;

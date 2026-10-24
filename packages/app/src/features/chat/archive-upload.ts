@@ -1,9 +1,10 @@
 import { ARCHIVE_MAX_FILE_BYTES, type ArchiveMode } from "@yumina/shared";
-import { parseArchiveFile } from "./archive-html";
+import { isArchiveDataScript, parseArchiveFile } from "./archive-html";
 
 export interface ArchiveUpload {
   preview: { sessionName: string | null; worldName: string; messageCount: number; mode: ArchiveMode };
   payload: Blob;
+  requestId: string;
 }
 
 /** Scan bounded byte chunks for the inert JSON block. Keep the file-backed
@@ -30,7 +31,7 @@ export async function parseArchiveUpload(file: Blob): Promise<ArchiveUpload> {
           script = null;
         } else if (!script) {
           const attributes = match[1];
-          script = { marked: /\bid\s*=\s*["']yumina-export["']/i.test(attributes) && /\btype\s*=\s*["']application\/json["']/i.test(attributes), start: processed };
+          script = { marked: isArchiveDataScript(attributes), start: processed };
         }
       }
       carry = text.slice(-4096);
@@ -39,5 +40,8 @@ export async function parseArchiveUpload(file: Blob): Promise<ArchiveUpload> {
     payload = file.slice(start, end, "application/json");
   }
   const archive = parseArchiveFile(await payload.text());
-  return { preview: { sessionName: archive.session.name, worldName: archive.world.name, messageCount: archive.messages.length, mode: archive.mode }, payload };
+  // Embedded portraits make the offline transcript readable. Restoring it on
+  // its original card reuses that card's images and sends message metadata only.
+  if (archive.mode === "transcript") payload = new Blob([JSON.stringify({ ...archive, assets: {} })], { type: "application/json" });
+  return { preview: { sessionName: archive.session.name, worldName: archive.world.name, messageCount: archive.messages.length, mode: archive.mode }, payload, requestId: crypto.randomUUID() };
 }

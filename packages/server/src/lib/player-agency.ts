@@ -1,4 +1,4 @@
-import { extractResponseChoices, maskPresentationLiterals, ResponseParser, type ParseResult } from "@yumina/engine";
+import { extractResponseChoices, maskPresentationLiterals, ResponseParser, ThinkingTagFilter, type ParseResult } from "@yumina/engine";
 import { anonymizePlayerPrompt } from "./player-prompt-identity.js";
 import { normalizePersonaControlMode } from '@yumina/shared';
 
@@ -39,7 +39,22 @@ export function purgePlayerAgency(parsed: ParseResult, raw = "", aliases: readon
   }
 
   // Keep hidden state/audio commands even when they share a removed prose line.
-  function protectCommands(text: string, controls: string[]): string {
+  function protectCommands(text: string, controls: string[], restoreLiterals: (value: string) => string): string {
+    // Use the guard's visibility rules before removing player prose, so hidden
+    // reasoning cannot become an active receipt when its opening tag is removed.
+    const visible = ThinkingTagFilter.strip(text);
+    if (visible !== text.replace(/\n{3,}/g, "\n\n").trim()) text = visible;
+    const receiptLine = /^[\t ]*<yumina-state\b[^\n]*/gm;
+    const receipts = [...text.matchAll(receiptLine)];
+    text = text.replace(receiptLine, (source, offset: number) => {
+      const tail = text.slice(offset + source.length);
+      // Keep malformed/duplicate metadata for strict validation. A lone
+      // nonterminal marker may survive only the engine's existing updated +
+      // command-only-tail case; removing prose must never validate bad placement.
+      if (receipts.length === 1 && tail.trim() && (!/^<yumina-state\s+version="1"\s+status="updated"\s+count="[1-9]\d*"\s*\/>$/.test(restoreLiterals(source).trim())
+        || new ResponseParser().parse(restoreLiterals(tail)).cleanText.trim())) return '';
+      return `\u0001${controls.push(source) - 1}\u0001`;
+    });
     let output = "", cursor = 0;
     for (let start = 0; start < text.length; start++) {
       if (text[start] !== "[") continue;
@@ -69,7 +84,7 @@ export function purgePlayerAgency(parsed: ParseResult, raw = "", aliases: readon
     const choices = extractResponseChoices(text);
     const literals = maskPresentationLiterals(choices.text);
     const controls: string[] = [];
-    const source = protectCommands(literals.text, controls);
+    const source = protectCommands(literals.text, controls, literals.restore);
     let playerBlock = player(initialSpeaker);
     let dialogueBlock = !!initialSpeaker && !playerBlock && !/^(?:narrator|narration)$/i.test(initialSpeaker);
     const lines = source.replace(/(?=\[(?:speaker|name)\s*:)/gi, "\n").split("\n");

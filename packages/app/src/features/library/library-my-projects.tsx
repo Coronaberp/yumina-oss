@@ -13,10 +13,11 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { feedback } from "@/lib/feedback";
-import type { WorldItem } from "@/stores/worlds";
+import type { AdminLibraryItem, WorldItem } from "@/stores/worlds";
 import { useWorldsStore } from "@/stores/worlds";
 import { useLibrarySearchStore, type LibraryProjectSort } from "@/stores/library-search";
 import { usePlayWithLanguage } from "@/hooks/use-play-with-language";
+import { useDuplicateCard } from "@/hooks/use-duplicate-card";
 import { escapeHtml } from "@/lib/markdown";
 import { isOwnTranslationSource } from "@/lib/fork-attribution";
 import { LibraryGameCard } from "./library-game-card";
@@ -38,6 +39,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface LibraryMyProjectsProps {
   worlds: WorldItem[];
+  adminLibraryItems?: AdminLibraryItem[];
   userId: string;
   searchQuery: string;
   onSelectItem: (item: WorldItem) => void;
@@ -46,6 +48,7 @@ interface LibraryMyProjectsProps {
 
 export function LibraryMyProjects({
   worlds,
+  adminLibraryItems = [],
   userId,
   searchQuery,
   onSelectItem,
@@ -65,6 +68,7 @@ export function LibraryMyProjects({
   const deleteWorld = useWorldsStore((s) => s.deleteWorld);
   const setEditingLocked = useWorldsStore((s) => s.setEditingLocked);
   const navigate = useNavigate();
+  const { duplicateCard, duplicatingId } = useDuplicateCard();
 
   const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -192,7 +196,10 @@ export function LibraryMyProjects({
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const sorted = [...filtered].sort((a, b) => {
+  const compareProjects = (
+    a: Pick<WorldItem, "name" | "createdAt" | "updatedAt">,
+    b: Pick<WorldItem, "name" | "createdAt" | "updatedAt">,
+  ) => {
     switch (sortBy) {
       case "title":
         return a.name.localeCompare(b.name);
@@ -203,12 +210,18 @@ export function LibraryMyProjects({
       default:
         return 0;
     }
-  });
+  };
+  const sorted = [...filtered].sort(compareProjects);
 
   const drafts = sorted.filter((w) => w.status !== "pending_review" && w.status !== "rejected" && !w.isPublished);
   const inReview = sorted.filter((w) => w.status === "pending_review");
   const rejected = sorted.filter((w) => w.status === "rejected");
-  const published = sorted.filter((w) => w.isPublished);
+  const published = [
+    ...sorted.filter((w) => w.isPublished).map((item) => ({ kind: "owned" as const, item })),
+    ...adminLibraryItems
+      .filter((item) => item.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map((item) => ({ kind: "admin" as const, item })),
+  ].sort((a, b) => compareProjects(a.item, b.item));
 
   return (
     <>
@@ -252,7 +265,7 @@ export function LibraryMyProjects({
         <div className="flex items-center gap-3">
           <div className="h-6 w-1.5 rounded-full bg-primary" />
           <h2 className="library-list-title text-2xl font-black tracking-tight text-foreground">
-            {t("projects.title")} <span className="text-muted-foreground text-lg font-bold ml-1">{t("projects.count", { count: myProjects.length })}</span>
+            {t("projects.title")} <span className="text-muted-foreground text-lg font-bold ml-1">{t("projects.count", { count: myProjects.length + adminLibraryItems.length })}</span>
           </h2>
         </div>
 
@@ -324,6 +337,9 @@ export function LibraryMyProjects({
                     status="draft"
                     onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                     onPlay={() => handlePlay(item)}
+                    onDuplicate={() => void duplicateCard(item.id)}
+                    duplicatePending={duplicatingId === item.id}
+                    duplicateDisabled={!!duplicatingId}
                     onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                     selectable={bulkMode}
                     selected={selectedIds.has(item.id) && !item.editingLocked}
@@ -362,6 +378,9 @@ export function LibraryMyProjects({
                   status="pending_review"
                   onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                   onPlay={() => handlePlay(item)}
+                  onDuplicate={() => void duplicateCard(item.id)}
+                  duplicatePending={duplicatingId === item.id}
+                  duplicateDisabled={!!duplicatingId}
                   onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                   selectable={bulkMode}
                   selected={selectedIds.has(item.id) && !item.editingLocked}
@@ -393,6 +412,9 @@ export function LibraryMyProjects({
                   status="rejected"
                   onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                   onPlay={() => handlePlay(item)}
+                  onDuplicate={() => void duplicateCard(item.id)}
+                  duplicatePending={duplicatingId === item.id}
+                  duplicateDisabled={!!duplicatingId}
                   onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                   selectable={bulkMode}
                   selected={selectedIds.has(item.id) && !item.editingLocked}
@@ -415,7 +437,27 @@ export function LibraryMyProjects({
             </span>
           </h3>
           <div className="library-card-grid">
-            {published.map((item) => {
+            {published.map((entry) => {
+              if (entry.kind === "admin") {
+                const item = entry.item;
+                const preview = () => navigate({
+                  to: "/app/preview/$worldId",
+                  params: { worldId: item.id },
+                  search: { adminPreview: true },
+                });
+                return (
+                  <div key={item.id} className="flex flex-col">
+                    <LibraryGameCard item={item} status="published" onClick={preview} onPlay={preview} />
+                    <p className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
+                      <span className="shrink-0 rounded-full border border-primary/25 px-1.5 py-0.5 font-semibold text-primary">
+                        {t("projects.adminOnly", { defaultValue: "Admin-only" })}
+                      </span>
+                      <span className="truncate">{t("detail.byAuthor")} {item.creatorName}</span>
+                    </p>
+                  </div>
+                );
+              }
+              const item = entry.item;
               const sourceName = sourceWorldNames.get(item.id);
               const isOrphaned = !!item.sourceWorldId && item.sourceWorldTakenDown === true;
 
@@ -445,6 +487,9 @@ export function LibraryMyProjects({
                     status="published"
                     onEdit={() => navigate({ to: "/app/worlds/$worldId/edit", params: { worldId: item.id } })}
                     onPlay={() => handlePlay(item)}
+                    onDuplicate={() => void duplicateCard(item.id)}
+                    duplicatePending={duplicatingId === item.id}
+                    duplicateDisabled={!!duplicatingId}
                     onDelete={item.editingLocked ? undefined : () => setConfirmDeleteItem(item)}
                     selectable={bulkMode}
                     selected={selectedIds.has(item.id) && !item.editingLocked}
@@ -463,7 +508,7 @@ export function LibraryMyProjects({
         </div>
       )}
 
-      {sorted.length === 0 && (
+      {sorted.length === 0 && published.length === 0 && (
         searchQuery ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <Search size={48} className="mb-4 opacity-20" />

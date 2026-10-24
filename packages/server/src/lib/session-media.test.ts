@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import sharp from "sharp";
 import { sql } from "drizzle-orm";
 import { SESSION_MEDIA_DDL } from "../db/session-media-ddl.js";
+import { IMAGE_MASTERS_DDL } from "../db/image-masters-ddl.js";
 import type { DrizzleDB } from "../db/index.js";
 import { createSessionMediaService, mediaPrefix } from "./session-media-service.js";
 import { MEDIA_RESERVATION, prepareSessionImage } from "./session-media-image.js";
@@ -33,6 +34,7 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         // Legacy uploads must still finish inside their transaction before rollout.
         assert.deepEqual(await db.transaction(tx => unconfigured.usage('alice', tx)), { used: 0, mediaBytes: 0, reserved: 0 });
         await pg.exec(SESSION_MEDIA_DDL);
+        await pg.exec(IMAGE_MASTERS_DDL);
         // Installing twice must preserve all tables and not duplicate triggers.
         await pg.exec(SESSION_MEDIA_DDL);
         const objects = new Map<string, Buffer>();
@@ -135,7 +137,8 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         await db.execute(sql `UPDATE session_media_uploads SET expires_at=now()-interval '1 hour'`);
         await service.sweep();
         assert.equal((await service.usage('alice')).reserved, 0);
-        assert.equal(objects.size, 0, 'originals and deduplicated attempt files are cleaned');
+        assert.equal(objects.size, 1, 'only the immutable shared master remains; staging and attempt derivatives are cleaned');
+        assert.ok([...objects.keys()][0]!.includes('/image-masters/private/'));
         const tempKey = mediaPrefix('alice') + 'pending/failed-creative';
         const orphanKey = `users/alice/registered/${createHash('sha256').update(tempKey).digest('hex')}`;
         objects.set(tempKey, image);
@@ -144,7 +147,7 @@ test("private media: ownership, atomic reservations, immutable snapshots, retrie
         await db.execute(sql`INSERT INTO session_media_uploads(id,user_id,entry_id,filename,content_type,input_bytes,reserved_bytes,metadata,temp_key,expires_at)
           VALUES(${randomUUID()},'alice','creative','map.png','image/png',${image.length},${image.length},'{"purpose":"creative-asset"}',${tempKey},now()-interval '1 hour')`);
         await service.sweep();
-        assert.equal(objects.size, 0, 'a copied creative asset whose registration failed must not leak storage');
+        assert.equal(objects.size, 1, 'failed creative staging is removed while the immutable master is retained');
         assert.ok(!mediaPrefix('alice').startsWith('users/'));
         assert.equal(isPublicCdnKey(mediaPrefix('alice') + 'objects/file/main.webp'), false);
         assert.equal(isPublicCdnKey('users/alice/../../private-session-media/alice/file'), false);
@@ -213,7 +216,7 @@ test("nested branches retain inherited image and collection history without futu
         await pg.close();
     }
 });
-test("image processing rejects false formats and strips metadata while preserving alpha", async () => {
+test("image processing rejects false formats and retains original metadata and alpha", async () => {
     await assert.rejects(prepareSessionImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>')));
     await assert.rejects(prepareSessionImage(Buffer.from('not an image')));
     const original = await sharp({ create: { width: 3000, height: 500, channels: 4, background: '#aabbcc80' } }).withMetadata().png().toBuffer();
@@ -222,7 +225,8 @@ test("image processing rejects false formats and strips metadata while preservin
     assert.equal(decoded.width, 3000);
     assert.equal(decoded.height, 500);
     assert.equal(decoded.hasAlpha, true);
-    assert.equal(decoded.exif, undefined);
+    assert.deepEqual(result.main, original);
+    assert.deepEqual(decoded.exif, (await sharp(original).metadata()).exif);
     assert.deepEqual(await sharp(result.main).ensureAlpha().raw().toBuffer(), await sharp(original).ensureAlpha().raw().toBuffer());
     assert.ok(result.thumbnail.length < 128 * 1024);
 });

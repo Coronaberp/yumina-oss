@@ -36,6 +36,7 @@ import type { AppEnv } from "../lib/types.js";
 import { type SchemaChange, type ToolResult } from "../lib/studio-tools/index.js";
 import { buildToolResultMessages } from "../lib/studio-tools/tool-results.js";
 import { STUDIO_TOOLS, READ_TOOL_NAMES, WRITE_TOOL_NAMES, CONTROL_TOOL_NAMES } from "../lib/studio-tools/tools.js";
+import { isToolSelectionState, readToolSelectionState, seedStudioToolSelection, selectStudioTools, requestStudioTools, pinnedStudioToolNames, contextNeedsForTools } from "../lib/studio-tools/tool-catalog.js";
 import { couldStartTextToolCall, looksLikeTextToolRequest, recoverTextToolCalls } from '../lib/studio-tools/text-tool-calls.js';
 import { STUDIO_MODEL_IDS, SMART_IMAGE_MODEL, normalizeStudioOutputLanguage, describeStudioTrace, recoverStudioTrace, type ImageBatchProposal } from "@yumina/shared";
 import { readStudioToolTrace } from "../lib/studio-tool-trace.js";
@@ -46,7 +47,7 @@ import { IMAGE_BATCH_TOOL_NAME, normalizeImageBatchProposal, editImageBatchPropo
 import { createImageBatch, getImageBatch, listImageBatchesForRun, retryImageBatch, resumeImageBatch, isImageBatchEnabled, ImageBatchError } from "../lib/generation/image-batches.js";
 import { getImageBatchBindingState } from "../lib/generation/image-batch-bindings.js";
 import { resolveContext } from "../lib/studio-tools/context-resolver.js";
-import { loadAssetCatalog, assertOwnedVnImageRef } from "../lib/studio-tools/asset-catalog.js";
+import { loadAssetCatalog, assertOwnedVnImageRef, inspectOwnedVnImageRefs } from "../lib/studio-tools/asset-catalog.js";
 import { readOwnedStudioImage, attachViewedStudioImages } from "../lib/studio-image-view.js";
 import { configuredImageJobs } from "../lib/configured-image-jobs.js";
 import { studioImageNotifications, subscribeStudioImageNotifications, publishStudioImageNotification } from "../lib/studio-image-notifications.js";
@@ -78,6 +79,9 @@ import {
 import { acceptanceCriteriaTurn, harnessTurn, outputBudgetGuidance, withToolNote } from "../lib/studio-tools/harness-notes.js";
 import { migrateWorldDefinition } from "@yumina/engine";
 import type { WorldDefinition } from "@yumina/engine";
+import { encodeStudioSnapshotMaterial, decodeStudioSnapshotMaterial } from "../lib/studio-world-material.js";
+import { prepareStudioWorldMediaChange } from "../lib/studio-world-media-change.js";
+import { parseWorldMediaOperation, readWorldMedia } from "../lib/studio-tools/world-media-tools.js";
 import { createScopedStudioRun, resumeScopedStudioApproval, writeScopedStudioWorldSchema } from "../lib/studio-run-scope.js";
 import { resolveWorkingSchema, writeStudioWorldSchema } from "../lib/pending-edit.js";
 import { loadAgentHistoryForConversation, withStudioUserMessageContext } from "../lib/studio-conversations.js";
@@ -274,12 +278,16 @@ function collectRunWriteToolCalls(run: AgentRunRow): ToolCall[] {
   return calls;
 }
 
-function buildChangeCompareFromRun(
+async function buildChangeCompareFromRun(
   snapshotWorld: WorldDefinition,
   writeToolCalls: ToolCall[],
   toolCallId: string,
-): ChangeComparePayload | null {
+  snapshotThumbnailUrl: string | null | undefined,
+  userId: string,
+  worldId: string,
+): Promise<ChangeComparePayload | null> {
   let simulatedWorld = snapshotWorld;
+  let simulatedThumbnailUrl = snapshotThumbnailUrl;
   const targetToolCall = writeToolCalls.find((tc) => tc.id === toolCallId);
   if (!targetToolCall) return null;
 
@@ -293,7 +301,37 @@ function buildChangeCompareFromRun(
       const isTarget = parsed.toolCallId === toolCallId;
       const result = executeApplyChanges(simulatedWorld, [change], { replayHistoricalChanges: true });
       const nextWorld = result.success ? result.world : simulatedWorld;
-      const compareValues = getComparableValues(simulatedWorld, nextWorld, change);
+      let compareValues = getComparableValues(simulatedWorld, nextWorld, change);
+      if (change.data?.world_media_operation && result.success) {
+        const operation = parseWorldMediaOperation(change.data.world_media_operation);
+        let afterThumbnail = simulatedThumbnailUrl;
+        let requestedPortraitAssetRef: string | undefined;
+        if (operation.portraitAssetRef !== undefined) {
+          try {
+            // Historical banner references can disappear independently. Resolve
+            // only the portrait here; writes still authorize the whole operation.
+            const media = await prepareStudioWorldMediaChange(userId, worldId, {
+              ...change, data: { world_media_operation: { portraitAssetRef: operation.portraitAssetRef } },
+            });
+            afterThumbnail = media.thumbnailUrl;
+          } catch {
+            afterThumbnail = undefined;
+            if (typeof operation.portraitAssetRef === "string") requestedPortraitAssetRef = operation.portraitAssetRef;
+          }
+        }
+        const originalMedia = readWorldMedia(simulatedWorld, simulatedThumbnailUrl);
+        const changedMedia = readWorldMedia(nextWorld, afterThumbnail);
+        compareValues = {
+          original: { ...originalMedia,
+            ...(simulatedThumbnailUrl === undefined ? { thumbnailUrl: undefined, thumbnailUrlKnown: false,
+              ...(originalMedia.pageBannerSource !== "banner" ? { pageBannerImageUrl: undefined, pageBannerSource: undefined } : {}) } : {}) },
+          changed: { ...changedMedia,
+            ...(afterThumbnail === undefined ? { thumbnailUrl: undefined, thumbnailUrlKnown: false,
+              ...(changedMedia.pageBannerSource !== "banner" ? { pageBannerImageUrl: undefined, pageBannerSource: undefined } : {}),
+              ...(requestedPortraitAssetRef ? { requestedPortraitAssetRef } : {}) } : {}) },
+        };
+        simulatedThumbnailUrl = afterThumbnail;
+      }
 
       if (isTarget) {
         parts.push({
@@ -699,12 +737,12 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
     return c.json({ error: "World not found" }, 404);
   }
 
-  const approveWorkingSchema = await resolveWorkingSchema(
-    worldId,
-    worldRows[0]!.status,
-    worldRows[0]!.schema as unknown as Record<string, unknown>,
-  );
+  const approveMaterial = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
+  const approveWorkingSchema = approveMaterial.schema;
+  let workingThumbnailUrl = approveMaterial.thumbnailUrl;
+  let proposedThumbnailUrl: string | null | undefined;
   let world = migrateWorldDefinition(approveWorkingSchema as unknown as WorldDefinition);
+  const approveOriginalSchema = JSON.stringify(world);
 
   // Check if user has unlimited plan (skip credit deduction for internal tier)
   const wallet = await ensureWallet(currentUser.id);
@@ -723,7 +761,7 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       worldId,
       userId: currentUser.id,
       agentRunId: body.runId,
-      schemaData: world as unknown as Record<string, unknown>,
+      schemaData: encodeStudioSnapshotMaterial(world as unknown as Record<string, unknown>, workingThumbnailUrl),
       label: `Before: ${toolNames}`.slice(0, 200),
     });
 
@@ -760,10 +798,19 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       }
       if (!parsed.change) continue;
 
+      let media: { thumbnailUrl?: string | null };
+      try { media = await prepareStudioWorldMediaChange(currentUser.id, worldId, parsed.change); }
+      catch (error) {
+        writeResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error", result: null,
+          error: error instanceof Error ? error.message : "Image not authorized." });
+        continue;
+      }
       const singleResult = executeApplyChanges(world, [parsed.change]);
       if (singleResult.success) {
         world = singleResult.world;
-        writeResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success" as const, result: singleResult.summary });
+        if (media.thumbnailUrl !== undefined) { proposedThumbnailUrl = media.thumbnailUrl; workingThumbnailUrl = media.thumbnailUrl; }
+        writeResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success" as const,
+          result: parsed.change.data?.world_media_operation ? readWorldMedia(world, workingThumbnailUrl) : singleResult.summary });
       } else {
         writeResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error" as const, result: null, error: singleResult.summary });
       }
@@ -773,7 +820,16 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
     // for re-review (the live card is untouched) instead of going live.
     try {
       await writeScopedStudioWorldSchema({ worldId, userId: currentUser.id, runId: run.id,
-        schema: world as unknown as Record<string, unknown>, expectedSchema: approveWorkingSchema });
+        schema: world as unknown as Record<string, unknown>, expectedSchema: approveWorkingSchema,
+        expectedThumbnailUrl: approveMaterial.thumbnailUrl, ...(proposedThumbnailUrl !== undefined ? { thumbnailUrl: proposedThumbnailUrl } : {}) });
+      if (writeResults.some(result => result.status === "success")
+        && (JSON.stringify(world) !== approveOriginalSchema || workingThumbnailUrl !== approveMaterial.thumbnailUrl)) {
+        try {
+          await db.update(agentRuns).set({
+            context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioAppliedChanges}', 'true'::jsonb, true)`,
+          }).where(and(eq(agentRuns.id, run.id), eq(agentRuns.userId, currentUser.id), eq(agentRuns.worldId, worldId)));
+        } catch (markerErr) { console.error("[Agent] Applied-change marker failed:", markerErr instanceof Error ? markerErr.message : markerErr); }
+      }
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "STALE_STUDIO_WORLD_SCHEMA") throw error;
       for (const result of writeResults) {
@@ -782,6 +838,7 @@ agentRoutes.post("/:worldId/agent/approve", async (c) => {
       }
       const latest = await captureStudioCreditWorldRevision({ worldId, userId: currentUser.id });
       world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
+      workingThumbnailUrl = latest.thumbnailUrl;
     }
   } else {
     // Rejection results
@@ -1379,11 +1436,15 @@ agentRoutes.get("/:worldId/agent/changes/:runId/:toolCallId", async (c) => {
     return c.json({ error: "Original snapshot not found" }, 404);
   }
 
+  const snapshotMaterial = decodeStudioSnapshotMaterial(snapshot.schemaData as Record<string, unknown>);
   const writeToolCalls = collectRunWriteToolCalls(run);
-  const compare = buildChangeCompareFromRun(
-    migrateWorldDefinition(snapshot.schemaData as unknown as WorldDefinition, { preserveStatusSources: true }),
+  const compare = await buildChangeCompareFromRun(
+    migrateWorldDefinition(snapshotMaterial.schema as unknown as WorldDefinition, { preserveStatusSources: true }),
     writeToolCalls,
     toolCallId,
+    snapshotMaterial.thumbnailUrl,
+    currentUser.id,
+    worldId,
   );
 
   if (!compare) {
@@ -1831,19 +1892,6 @@ function publicCreditPause(checkpoint: StudioCreditCheckpoint | null) {
   };
 }
 
-async function inspectOwnedVnImageRefs(userId: string, worldId: string, refs: string[]) {
-  const uniqueRefs = [...new Set(refs)];
-  const checked = await Promise.all(uniqueRefs.map(async (ref) => {
-    try {
-      await assertOwnedVnImageRef(userId, worldId, ref);
-      return null;
-    } catch (error) {
-      return { ref, reason: error instanceof Error ? error.message : "Image reference could not be verified." };
-    }
-  }));
-  return checked.filter((item): item is NonNullable<typeof item> => item !== null);
-}
-
 async function evaluateCurrentAcceptance(world: WorldDefinition, userId: string, worldId: string, criteria: ReturnType<typeof readAcceptanceCriteria>) {
   if (!criteria) return null;
   const missingAssets = criteria.cleanPreflight
@@ -1930,8 +1978,14 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       provider, isByok, apiKeyTier, context, iteration, maxIterations,
       tools,
     } = params;
-    const [taskRun] = await db.select({ context: agentRuns.context }).from(agentRuns)
+    const [taskRun] = await db.select({ context: agentRuns.context, pendingToolCalls: agentRuns.pendingToolCalls, creditCheckpoint: agentRuns.creditCheckpoint }).from(agentRuns)
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId), eq(agentRuns.worldId, params.worldId)));
+    // Optional tool selection is server-owned. Request context supplies hints only.
+    let toolSelection = readToolSelectionState(taskRun?.context?.studioToolSelection);
+    const savedToolSelection = isToolSelectionState(taskRun?.context?.studioToolSelection);
+    const pendingSelectionCalls = (taskRun?.pendingToolCalls ?? []) as unknown as ToolCall[];
+    const savedSelectionCheckpoint = readStudioCreditCheckpoint(taskRun?.creditCheckpoint);
+    let advertisedToolNames: string[] = [];
     let task: StudioTask | null = params.imageNotification ? null : readStudioTask(taskRun?.context ?? context);
     if (!task && context?.studioTaskRunner === true) task = createStudioTask(latestStudioUserText(messages), isStudioWorkRequest(latestStudioUserText(messages)) ? "work" : "answer", typeof context.studioTaskMaxSteps === "number" ? context.studioTaskMaxSteps : undefined);
     if (task?.status === "waiting") { task.status = "working"; delete task.reason; }
@@ -1984,6 +2038,15 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         ? sql`${agentRuns.creditCheckpoint}->'claim'->>'id' = ${creditClaimId}`
         : sql`${agentRuns.creditCheckpoint}->'claim'->>'id' IS NULL`) : undefined,
     );
+    const persistToolSelection = async (next: typeof toolSelection) => {
+      const saved = await db.update(agentRuns).set({
+        context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioToolSelection}', ${JSON.stringify(next)}::jsonb, true)`,
+        updatedAt: new Date(),
+      }).where(ownedRunWhere()).returning();
+      if (!saved.length) throw new Error("This agent run is no longer active; tool selection was not saved.");
+      toolSelection = next;
+      cachedSystemPrompt = null;
+    };
     const markStudioChangesApplied = async () => db.update(agentRuns).set({
       context: sql`jsonb_set(COALESCE(${agentRuns.context}, '{}'::jsonb), '{studioAppliedChanges}', 'true'::jsonb, true)`,
     }).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, userId)));
@@ -2477,7 +2540,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
     const endpointOutputLimit = (desired: number) => endpointContextWindow === undefined
       ? desired : Math.min(desired, Math.max(1, Math.floor(endpointContextWindow / 4)));
 
-    async function getSystemPromptParts(): Promise<SystemPromptParts> {
+    async function getSystemPromptParts(thumbnailUrl: string | null): Promise<SystemPromptParts> {
       if (cachedSystemPrompt) return cachedSystemPrompt;
 
       // Tiered context resolver — Layer 1 (rich inventory) + Layer 2 (pre-loaded matches)
@@ -2489,8 +2552,10 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       const resolved = await resolveContext(world, requestText, {
         userId,
         worldId: params.worldId,
+        thumbnailUrl,
+        ...contextNeedsForTools(advertisedToolNames),
         selectedEntityId: context?.selectedElementId,
-        activePanel: context?.activePanel,
+        activePanel: context?.activePanel ?? (typeof taskRun?.context?.activePanel === "string" ? taskRun.context.activePanel : undefined),
         // Pass the message budget as the resolver's "context window" — it takes 45% of
         // this for Layer 2 preload. For Sonnet 4.6 (1M window, 600K budget) this yields
         // ~270K for preloaded custom UI content, so the agent can skip read_entities for
@@ -2499,6 +2564,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       });
       cachedSystemPrompt = buildSystemPrompt(resolved, {
         contextWindow: endpointContextWindow,
+        toolNames: advertisedToolNames,
         outputLanguage,
         imageCapabilities,
         activePanel: context?.activePanel,
@@ -2521,6 +2587,10 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
       tools = tools.filter(tool =>
         (tool.function.name !== IMAGE_TOOL_NAME || imageCapabilities.imageGeneration) &&
         (tool.function.name !== IMAGE_BATCH_TOOL_NAME || imageCapabilities.imageBatchGeneration));
+      if (!savedToolSelection) await persistToolSelection(seedStudioToolSelection(tools, {
+        activePanel: context?.activePanel ?? (typeof taskRun?.context?.activePanel === "string" ? taskRun.context.activePanel : undefined),
+        userMessage: latestStudioUserText(messages),
+      }));
       if (params.prelude) {
         try {
           const extra = await params.prelude({ send: safeSend, progress: noteProgress, signal: controller.signal });
@@ -2579,6 +2649,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         noteProgress();
         const sourceRevision = await captureStudioCreditWorldRevision(creditScope);
         let expectedWorkingSchema = sourceRevision.schema;
+        let workingThumbnailUrl = sourceRevision.thumbnailUrl;
+        let expectedWorkingThumbnailUrl = sourceRevision.thumbnailUrl;
         if (sourceRevision && !replayGenerated) {
           world = migrateWorldDefinition(sourceRevision.schema as unknown as WorldDefinition);
           if (task) { verifyTask(world); await saveTask(); }
@@ -2589,7 +2661,15 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         const summarizing = isStudioSummaryRequest(messages);
         const namingRequest = studioNamingRequest(messages);
         const requireNames = !summarizing && namingRequest.required;
-        const requestTools = summarizing ? [] : requireNames ? tools.filter(tool => tool.function.name === "generate_names") : tools;
+        const activeCheckpoint = creditCheckpoint ?? (iteration === params.iteration ? savedSelectionCheckpoint : null);
+        const pinnedNames = pinnedStudioToolNames(messages, pendingSelectionCalls,
+          activeCheckpoint?.phase === "generated" ? activeCheckpoint.generated.toolCalls : []);
+        const requestTools = selectStudioTools(tools, toolSelection, {
+          mode: summarizing ? "summary" : requireNames ? "naming" : "normal", pinnedNames,
+        });
+        const nextAdvertisedNames = requestTools.map(tool => tool.function.name);
+        if (nextAdvertisedNames.join(",") !== advertisedToolNames.join(",")) cachedSystemPrompt = null;
+        advertisedToolNames = nextAdvertisedNames;
         const compressedMessages = summarizing ? messages : compressOldToolResults(messages);
         // Sliding window: keep recent messages raw, summarize older ones (budget varies by model)
         let windowedMessages = buildWindowedMessages(compressedMessages, model);
@@ -2603,7 +2683,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         //   Block A (static):  identity + tools-guide + core skills — 1h, never changes within session
         //   Block B (world):   Layer 1 inventory + Layer 2 preloaded content — 1h, rebuilt after writes (cachedSystemPrompt = null)
         //   Block C (dynamic): studio context (active panel / selected entity) — no cache (changes per request)
-        const promptParts = summarizing ? { static: "", world: "", dynamic: "" } : await getSystemPromptParts();
+        const promptParts = summarizing ? { static: "", world: "", dynamic: "" } : await getSystemPromptParts(workingThumbnailUrl);
         const systemContent: ContentPart[] = [
           { type: "text", text: promptParts.static, cache_control: { type: "ephemeral", ttl: "1h" } },
           ...(promptParts.world ? [{ type: "text" as const, text: promptParts.world, cache_control: { type: "ephemeral", ttl: "1h" } as const }] : []),
@@ -2649,12 +2729,12 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
             budget = planBudget();
           }
           const preflight: StudioCreditCheckpoint = {
-            version: 1, phase: "preflight", messages, iteration, worldRevision: sourceRevision.revision,
+            version: 1, phase: "preflight", messages, iteration, worldRevision: sourceRevision.revision, sourceThumbnailUrl: sourceRevision.thumbnailUrl,
             requiredCredits: budget.minimumRequiredCredits,
           };
           if (!budget.ok) { await pauseForCredits(preflight, budget.reason); return; }
           outputBudget = budget.maxTokens;
-          const staged = await stageStudioCreditIteration(creditScope, preflight, creditClaimId, { staleWorld: "reject" });
+          const staged = await stageStudioCreditIteration(creditScope, preflight, creditClaimId, { staleWorld: "reject", sourceThumbnailUrl: sourceRevision.thumbnailUrl });
           if (!staged.ok) {
             if (staged.code === "STALE_WORLD") {
               // A save between capturing the revision and journaling it:
@@ -2714,7 +2794,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
             maxTokens: outputBudget,
             temperature: summarizing ? 0.2 : 0.7,
             tools: requestTools,
-            availableTools: tools,
+            availableTools: requestTools,
             toolChoice: summarizing ? "none" as const : requireNames
               ? { type: "function" as const, function: { name: "generate_names" } }
               : requireToolRetry ? "required" as const : "auto" as const,
@@ -2858,7 +2938,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         if (creditRecovery && !replay && !hasKnownStudioUsage(iterationUsage) && sourceRevision
           && (!controller.signal.aborted || isShutdownAbort(controller.signal))) {
           const checkpoint: StudioCreditCheckpoint = {
-            version: 1, phase: "generated", messages, iteration, worldRevision: sourceRevision.revision, requiredCredits: 0,
+            version: 1, phase: "generated", messages, iteration, worldRevision: sourceRevision.revision, sourceThumbnailUrl: sourceRevision.thumbnailUrl, requiredCredits: 0,
             generated: { textContent, reasoningContent, toolCalls, usage: iterationUsage, cost: 0, usageLogId, stopReason: iterationStopReason, billingUnavailable: true },
           };
           await pauseForCredits(checkpoint, "USAGE_UNAVAILABLE");
@@ -2902,10 +2982,10 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               }
               if (creditRecovery && !replay && sourceRevision) {
                 const generatedCheckpoint: StudioCreditCheckpoint = {
-                  version: 1, phase: "generated", messages, iteration, worldRevision: sourceRevision.revision, requiredCredits: cost,
+                  version: 1, phase: "generated", messages, iteration, worldRevision: sourceRevision.revision, sourceThumbnailUrl: sourceRevision.thumbnailUrl, requiredCredits: cost,
                   generated: { textContent, reasoningContent, toolCalls, usage: iterationUsage, cost, usageLogId, stopReason: iterationStopReason },
                 };
-                const staged = await stageStudioCreditIteration(creditScope, generatedCheckpoint, creditClaimId, { staleWorld: "reject" });
+                const staged = await stageStudioCreditIteration(creditScope, generatedCheckpoint, creditClaimId, { staleWorld: "reject", sourceThumbnailUrl: sourceRevision.thumbnailUrl });
                 if (!staged.ok) {
                   if (staged.code === "STALE_WORLD") {
                     // The world moved while the model was generating. This
@@ -3269,7 +3349,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
                   ? input.imageKind : autoContext.target?.kind === "background" ? "background" : "sprite";
                 const imageRoute = resolveStudioImageRoute(input, personal, refs.length, imageKind, isSmartGenerationEnabled());
                 const parallelSource = imageRoute.source;
-                const parallelProposal = normalizeImageProposal({ ...input, imageKind, target: autoContext.target, referenceImages: refs,
+                const parallelProposal = normalizeImageProposal({ ...input, imageKind, outfitInstructions: autoContext.outfitInstructions, target: autoContext.target, referenceImages: refs,
                   ...imageRoute, imageWorkflow: imageRoute.workflow,
                   ...(autoContext.target ? { target: autoContext.target } : {}), ...(autoContext.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
                   ...(autoContext.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(parallelSource ? { source: parallelSource,
@@ -3314,7 +3394,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
             ? raw.imageKind : autoContext?.target?.kind === "background" ? "background" : "sprite";
           const imageRoute = resolveStudioImageRoute(raw, personal, referenceImages.length, imageKind, isSmartGenerationEnabled());
           const source = imageRoute.source;
-          const proposal = normalizeImageProposal({ ...raw, imageKind, target: autoContext?.target, referenceImages,
+          const proposal = normalizeImageProposal({ ...raw, imageKind, outfitInstructions: autoContext?.outfitInstructions, target: autoContext?.target, referenceImages,
             ...imageRoute, imageWorkflow: imageRoute.workflow,
             ...(autoContext?.target ? { target: autoContext.target } : {}), ...(autoContext?.styleInstructions ? { styleInstructions: autoContext.styleInstructions } : {}),
             ...(autoContext?.unassignedReason ? { unassignedReason: autoContext.unassignedReason } : {}), ...(source ? { source,
@@ -3402,7 +3482,14 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
           try {
             const args = parseToolArgs(tc.function.arguments);
 
-            if (tc.function.name === "generate_names") {
+            if (tc.function.name === "request_tools") {
+              const requested = requestStudioTools(args, tools, toolSelection);
+              if (JSON.stringify(requested.state) !== JSON.stringify(toolSelection)) await persistToolSelection(requested.state);
+              allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result: {
+                ...requested.result,
+                activeNames: selectStudioTools(tools, toolSelection, { pinnedNames }).map(tool => tool.function.name),
+              } });
+            } else if (tc.function.name === "generate_names") {
               const result = await executeStudioGenerateNames({ worldId: params.worldId, runId, userId, toolCallId: tc.id, input: args, world, messages });
               allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "success", result });
             } else if (tc.function.name === "list_name_profiles") {
@@ -3539,7 +3626,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               const offsetLines = typeof args.offset_lines === "number" ? args.offset_lines : undefined;
               const limitLines = typeof args.limit_lines === "number" ? args.limit_lines : undefined;
               const paginated = offsetLines !== undefined || limitLines !== undefined;
-              const readResult = executeReadEntities(world, args.ids ?? [], { offset_lines: offsetLines, limit_lines: limitLines });
+              const readResult = executeReadEntities(world, args.ids ?? [], { offset_lines: offsetLines, limit_lines: limitLines, thumbnailUrl: workingThumbnailUrl });
               const snippedResults: Record<string, unknown> = {};
               for (const [id, entity] of Object.entries(readResult.results)) {
                 if (entity == null) { snippedResults[id] = null; continue; }
@@ -3704,6 +3791,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
         console.log(`[Agent] Parsed ${writeCalls.length} write tools → ${parsedCalls.filter((p) => p.change).length} valid, ${parsedCalls.filter((p) => p.error).length} errors`);
 
         // Snapshot ONCE before all writes (for batch undo)
+        let worldMediaSnapshotFailed = false;
         if (hasValidChanges && !(creditCheckpoint?.phase === "generated" && Object.keys(creditCheckpoint.generated.progress ?? {}).length)) {
           if (controller.signal.aborted) break;
           const worldId = params.worldId;
@@ -3713,10 +3801,11 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               worldId,
               userId,
               agentRunId: runId,
-              schemaData: world as unknown as Record<string, unknown>,
+              schemaData: encodeStudioSnapshotMaterial(world as unknown as Record<string, unknown>, workingThumbnailUrl),
               label: `Before: ${toolNames}`.slice(0, 200),
             });
           } catch (snapshotErr) {
+            worldMediaSnapshotFailed = true;
             console.error("[Agent] Snapshot insert failed:", snapshotErr instanceof Error ? snapshotErr.message : snapshotErr);
           }
         }
@@ -3786,11 +3875,22 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
             }
           }
 
+          let media: { thumbnailUrl?: string | null };
+          try {
+            if (change.data?.world_media_operation && worldMediaSnapshotFailed) throw new Error("Card images were not changed because the undo snapshot could not be saved. Please retry.");
+            media = await prepareStudioWorldMediaChange(userId, params.worldId, change);
+          } catch (error) {
+            allResults.push({ tool_call_id: tc.id, name: tc.function.name, status: "error", result: null,
+              error: error instanceof Error ? error.message : "Image not authorized." });
+            continue;
+          }
+          const nextThumbnailUrl = media.thumbnailUrl !== undefined ? media.thumbnailUrl : workingThumbnailUrl;
+
           // Apply this single change
           const singleResult = executeApplyChanges(world, [change]);
 
           if (singleResult.success) {
-            const schemaChanged = JSON.stringify(singleResult.world) !== JSON.stringify(world);
+            const schemaChanged = JSON.stringify(singleResult.world) !== JSON.stringify(world) || nextThumbnailUrl !== workingThumbnailUrl;
             const beforeWrite = world;
             world = singleResult.world;
             const note = singleResult.results[0]?.note;
@@ -3802,6 +3902,7 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               const meta = extractEntityMeta(world, change.entityType, resultId);
               if (meta) richResult = { status: "OK", ...meta, ...(note ? { note } : {}) };
             }
+            if (change.data?.world_media_operation) richResult = { status: "OK", ...readWorldMedia(world, nextThumbnailUrl) };
 
             allResults.push({
               tool_call_id: tc.id,
@@ -3820,15 +3921,19 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
                 const saved = await withStudioCreditClaimTransaction(creditScope, creditClaimId, async (tx, checkpoint) => {
                   if (checkpoint.phase !== "generated") throw new Error("Missing generated credit checkpoint");
                   if (!checkpoint.generated.progress?.[progressKey]) {
-                    await writeStudioWorldSchema({ worldId, creatorId: params.userId, schema: world as unknown as Record<string, unknown>, database: tx });
+                    await writeStudioWorldSchema({ worldId, creatorId: params.userId, schema: world as unknown as Record<string, unknown>, database: tx,
+                      expectedThumbnailUrl: expectedWorkingThumbnailUrl, ...(media.thumbnailUrl !== undefined ? { thumbnailUrl: media.thumbnailUrl } : {}) });
                   }
                   return { value: null, checkpoint: { ...checkpoint, generated: { ...checkpoint.generated, progress: { ...checkpoint.generated.progress, [progressKey]: saveResult } } } };
                 });
                 creditCheckpoint = saved.checkpoint;
               } else {
-                await writeScopedStudioWorldSchema({ worldId, userId: params.userId, runId, schema: world as unknown as Record<string, unknown>, expectedSchema: expectedWorkingSchema });
+                await writeScopedStudioWorldSchema({ worldId, userId: params.userId, runId, schema: world as unknown as Record<string, unknown>, expectedSchema: expectedWorkingSchema,
+                  expectedThumbnailUrl: expectedWorkingThumbnailUrl, ...(media.thumbnailUrl !== undefined ? { thumbnailUrl: media.thumbnailUrl } : {}) });
                 expectedWorkingSchema = JSON.parse(JSON.stringify(world)) as Record<string, unknown>;
               }
+              workingThumbnailUrl = nextThumbnailUrl;
+              expectedWorkingThumbnailUrl = nextThumbnailUrl;
               saved = true;
               appliedCount++;
               noteProgress();
@@ -3840,6 +3945,8 @@ export async function runAgentLoop(params: AgentLoopParams, stream: {
               staleWriteBatch = true;
               const latest = await captureStudioCreditWorldRevision(creditScope);
               world = migrateWorldDefinition(latest.schema as unknown as WorldDefinition);
+              workingThumbnailUrl = latest.thumbnailUrl;
+              expectedWorkingThumbnailUrl = latest.thumbnailUrl;
               cachedSystemPrompt = null;
               console.error("[Agent] World save failed:", saveErr instanceof Error ? saveErr.message : saveErr);
               allResults[allResults.length - 1] = {

@@ -15,19 +15,24 @@ import {
   type CoverCropSettings,
 } from "@/lib/cover-crop";
 import { getWorldGalleryDisplayCrop } from "@/lib/world-cover-crop";
+import { DEFAULT_WORLD_BANNER_CROP, normalizeWorldBannerCrop } from "@/lib/world-detail-media";
+import { resolveImageUrl } from "@/lib/asset-url";
 
 interface CoverCropDialogProps {
   src: string;
+  variant?: "cover" | "banner";
+  initialBannerCrop?: CoverCropSettings | null;
   initialCoverCrop?: CoverCropSettings | null;
   initialGalleryCrop?: CoverCropSettings | null;
   onCancel: () => void;
   onSave: (value: {
     coverCrop: CoverCropSettings;
     galleryCoverCrop: CoverCropSettings;
+    bannerCrop?: CoverCropSettings;
   }) => void;
 }
 
-type CropMode = "cover" | "gallery";
+type CropMode = "cover" | "gallery" | "banner";
 
 function getTargetAspect(mode: CropMode) {
   return mode === "cover" ? 3 / 4 : 16 / 5;
@@ -78,22 +83,26 @@ function fromPercentCrop(
 
 export function CoverCropDialog({
   src,
+  variant = "cover",
+  initialBannerCrop,
   initialCoverCrop,
   initialGalleryCrop,
   onCancel,
   onSave,
 }: CoverCropDialogProps) {
   const { t } = useTranslation("editor");
-  const [mode, setMode] = useState<CropMode>("cover");
+  const [mode, setMode] = useState<CropMode>(variant === "banner" ? "banner" : "cover");
   const [coverCrop, setCoverCrop] = useState<CoverCropSettings>(
     clampCoverCrop(initialCoverCrop ?? DEFAULT_COVER_CROP),
   );
   const [galleryCoverCrop, setGalleryCoverCrop] = useState<CoverCropSettings>(
     getWorldGalleryDisplayCrop(initialGalleryCrop ?? DEFAULT_COVER_CROP),
   );
+  const [bannerCrop, setBannerCrop] = useState<CoverCropSettings>(() => normalizeWorldBannerCrop(initialBannerCrop));
   const [sourceAspect, setSourceAspect] = useState<number | null>(null);
 
-  const activeCrop = mode === "cover" ? coverCrop : galleryCoverCrop;
+  const activeCrop = mode === "banner" ? bannerCrop : mode === "cover" ? coverCrop : galleryCoverCrop;
+  const fullBanner = mode === "banner" && bannerCrop.fit === "contain";
   const activeTargetAspect = getTargetAspect(mode);
   const safeSourceAspect = sourceAspect ?? activeTargetAspect;
   const activePercentCrop = useMemo(
@@ -135,6 +144,8 @@ export function CoverCropDialog({
         );
       if (mode === "cover") {
         setCoverCrop(apply);
+      } else if (mode === "banner") {
+        setBannerCrop(apply);
       } else {
         setGalleryCoverCrop((current) => getWorldGalleryDisplayCrop(apply(current)));
       }
@@ -170,7 +181,7 @@ export function CoverCropDialog({
   }, [setActiveCrop]);
 
   const resetActiveCrop = useCallback(() => {
-    setActiveCrop(mode === "gallery" ? getWorldGalleryDisplayCrop(DEFAULT_COVER_CROP) : DEFAULT_COVER_CROP);
+    setActiveCrop(mode === "banner" ? DEFAULT_WORLD_BANNER_CROP : mode === "gallery" ? getWorldGalleryDisplayCrop(DEFAULT_COVER_CROP) : DEFAULT_COVER_CROP);
   }, [mode, setActiveCrop]);
 
   const maximizeActiveCrop = useCallback(() => {
@@ -186,9 +197,9 @@ export function CoverCropDialog({
       <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200 md:h-auto md:max-h-[calc(100dvh-2rem)]">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3 sm:items-center sm:px-5">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">{t("extra.adjustCoverCrop")}</h3>
+            <h3 className="text-sm font-semibold text-foreground">{variant === "banner" ? "Page banner framing" : t("extra.adjustCoverCrop")}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground/60 max-sm:hidden">
-              Drag the crop box, then set separate framing for cards and gallery previews.
+              {variant === "banner" ? "Keep the full artwork, or crop a separate 16:5 page banner." : "Drag the crop box, then set separate framing for cards and gallery previews."}
             </p>
           </div>
           <button
@@ -201,7 +212,12 @@ export function CoverCropDialog({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 sm:p-4">
-          <div className="mb-3 grid grid-cols-2 rounded-lg border border-border bg-card p-1 sm:mb-4 sm:inline-grid sm:w-fit">
+          {variant === "banner" ? (
+            <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Banner fitting">
+              <button type="button" aria-pressed={fullBanner} className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => setBannerCrop({ ...DEFAULT_WORLD_BANNER_CROP })}>Fit full image</button>
+              <button type="button" aria-pressed={!fullBanner} className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => setBannerCrop(current => ({ ...current, fit: "cover" }))}>Crop to fill</button>
+            </div>
+          ) : <div className="mb-3 grid grid-cols-2 rounded-lg border border-border bg-card p-1 sm:mb-4 sm:inline-grid sm:w-fit">
             <button
               onClick={() => setMode("cover")}
               className={`rounded-md px-3 py-2 text-xs font-medium transition-colors sm:py-1.5 ${
@@ -222,13 +238,15 @@ export function CoverCropDialog({
             >
               Gallery preview
             </button>
-          </div>
+          </div>}
 
           <div className="flex flex-col gap-4 lg:grid lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="relative z-0 flex items-start justify-center overflow-hidden lg:min-h-0 lg:items-center">
               <div className="isolate w-full rounded-xl border border-primary/25 bg-card/60 p-3 shadow-inner">
                 <div className="relative mx-auto flex w-full max-w-[760px] justify-center overflow-hidden rounded-lg border border-primary/40 bg-black">
-                  <ReactCrop
+                  {fullBanner ? (
+                    <img src={resolveImageUrl(src) ?? src} alt="Full banner artwork" draggable={false} className="block max-h-[48dvh] max-w-full select-none sm:max-h-[56dvh]" />
+                  ) : <ReactCrop
                     crop={activePercentCrop}
                     aspect={activeTargetAspect}
                     keepSelection
@@ -237,7 +255,7 @@ export function CoverCropDialog({
                     className="max-h-[48dvh] max-w-full sm:max-h-[56dvh]"
                   >
                     <img
-                      src={src}
+                      src={resolveImageUrl(src) ?? src}
                       alt=""
                       draggable={false}
                       className="block max-h-[48dvh] max-w-full select-none sm:max-h-[56dvh]"
@@ -249,6 +267,7 @@ export function CoverCropDialog({
                           setCoverCrop((current) =>
                             clampCoverCropForAspect(current, nextSourceAspect, getTargetAspect("cover")),
                           );
+                          setBannerCrop(current => current.fit === "contain" ? current : clampCoverCropForAspect(current, nextSourceAspect, 16 / 5));
                           setGalleryCoverCrop((current) =>
                             getWorldGalleryDisplayCrop(
                               clampCoverCropForAspect(current, nextSourceAspect, getTargetAspect("gallery")),
@@ -257,17 +276,17 @@ export function CoverCropDialog({
                         }
                       }}
                     />
-                  </ReactCrop>
-                  <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-medium text-white/85">
+                  </ReactCrop>}
+                  {!fullBanner && <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-medium text-white/85">
                     <Move className="h-3 w-3" />
                     Drag or resize the crop box
-                  </div>
+                  </div>}
                 </div>
               </div>
             </div>
 
             <div className="relative z-0 min-h-0 space-y-4 lg:overflow-y-auto lg:pr-1">
-              <div className="rounded-lg border border-border bg-card p-3">
+              {!fullBanner && <><div className="rounded-lg border border-border bg-card p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-xs font-medium text-foreground">{t("extra.cropSize")}</span>
                   <span className="text-xs text-muted-foreground/60">{Math.round(activeCrop.zoom * 100)}%</span>
@@ -314,7 +333,12 @@ export function CoverCropDialog({
                 </button>
               </div>
 
+              </>}
               <div className="space-y-3 rounded-lg border border-border bg-card p-3">
+                {variant === "banner" ? <div>
+                  <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Page banner · 16:5</p>
+                  <CroppedImage src={src} alt="Page banner framing preview" crop={bannerCrop} className="aspect-[16/5] w-full rounded-md border border-border" />
+                </div> : <>
                 <div>
                   <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">{t("extra.cardCover")}</p>
                   <CroppedImage src={src} alt="" crop={coverCrop} className="mx-auto aspect-[3/4] w-20 rounded-md border border-border" />
@@ -322,7 +346,7 @@ export function CoverCropDialog({
                 <div>
                   <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">{t("extra.galleryPreview")}</p>
                   <CroppedImage src={src} alt="" crop={galleryCoverCrop} className="aspect-[16/5] w-full rounded-md border border-border" />
-                </div>
+                </div></>}
               </div>
             </div>
           </div>
@@ -336,11 +360,11 @@ export function CoverCropDialog({
             Cancel
           </button>
           <button
-            onClick={() => onSave({ coverCrop: clampCoverCrop(coverCrop), galleryCoverCrop: getWorldGalleryDisplayCrop(galleryCoverCrop) })}
+            onClick={() => onSave({ coverCrop: clampCoverCrop(coverCrop), galleryCoverCrop: getWorldGalleryDisplayCrop(galleryCoverCrop), ...(variant === "banner" ? { bannerCrop: normalizeWorldBannerCrop(bannerCrop) } : {}) })}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
             <Check className="h-4 w-4" />
-            Save crop
+            {variant === "banner" ? "Save banner framing" : "Save crop"}
           </button>
         </div>
       </div>

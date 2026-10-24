@@ -108,3 +108,36 @@ test("HTML file extraction handles split UTF8 headers and rejects duplicate data
   await assert.rejects(parseArchiveUpload(new Blob([html, html])), /Choose a Yumina/);
   await assert.rejects(parseArchiveUpload(new Blob(['<script>throw new Error("do not run")</script>'])), /Choose a Yumina/);
 });
+
+test("transcript HTML imports messages onto the original card without uploading offline portraits", async () => {
+  const source = fixtureArchive();
+  const url = "/cdn/12345678-original";
+  const archive = sessionArchiveSchema.parse({ ...source, assets: { [url]: "data:image/png;base64,aGVsbG8=" }, player: { name: "Player", avatar: url } });
+  const upload = await parseArchiveUpload(new Blob([buildArchiveHtml(archive)]));
+  const payload = JSON.parse(await upload.payload.text());
+  assert.deepEqual(payload.messages, archive.messages); assert.deepEqual(payload.world, archive.world);
+  assert.deepEqual(payload.assets, {}); assert.equal(payload.player.avatar, url);
+  assert.match(upload.requestId, /^[a-f0-9-]{36}$/);
+});
+
+test("full-save HTML retains every embedded asset and all saved state in the extracted JSON", async () => {
+  const archive = sessionArchiveSchema.parse({ ...fixtureArchive(), mode: "full-save", world: { ...fixtureArchive().world, schema: { entries: [], variables: [], sprite: "@asset:12345678-sprite" } },
+    assets: { "@asset:12345678-sprite": "data:image/png;base64,aGVsbG8=", "/vn-assets/font.ttf": "data:font/ttf;base64,d29ybGQ=" },
+    restore: { state: { turnCount: 15, variables: { hp: 7 } }, persona: { persona: { name: "Saved player" } }, settings: { summary: "Saved summary" }, checkpoints: [], memories: [], snippets: [] } });
+  const html = buildArchiveHtml(archive);
+  const json = /<script type="application\/json" id="yumina-export">([\s\S]*?)<\/script>/.exec(html)![1];
+  const upload = await parseArchiveUpload(new Blob([html]));
+  assert.equal(await upload.payload.text(), json);
+  assert.deepEqual(parseArchiveFile(await upload.payload.text()), archive);
+});
+
+test("malformed JSON and fake data-id script markers fail explicitly without executing HTML", async () => {
+  const marker = '<script type="application/json" id="yumina-export">';
+  await assert.rejects(parseArchiveUpload(new Blob([marker, '{broken}', '</script>'])), /valid archive JSON/);
+  for (const attributes of ['data-id="yumina-export" type="application/json"', `title='id="yumina-export"' type="application/json"`, 'id="yumina-export" data-type="application/json"']) {
+    const html = `<script ${attributes}>${JSON.stringify(fixtureArchive())}</script><script>globalThis.importedScriptExecuted=true</script>`;
+    assert.throws(() => parseArchiveFile(html), /Choose a Yumina/);
+    await assert.rejects(parseArchiveUpload(new Blob([html])), /Choose a Yumina/);
+  }
+  assert.equal((globalThis as Record<string, unknown>).importedScriptExecuted, undefined);
+});

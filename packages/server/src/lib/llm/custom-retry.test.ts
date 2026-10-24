@@ -96,7 +96,7 @@ test("CustomProvider accepts a finish reason without a separate DONE marker", as
   }
 });
 
-test("CustomProvider retries an all-reasoning empty completion and yields the retry's text", async () => {
+test("CustomProvider retains all-reasoning usage without buying another completion", async () => {
   const emptyAttempt = () => sseResponse([
     { choices: [{ delta: { reasoning_content: "thinking hard..." } }] },
     { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 } },
@@ -109,10 +109,11 @@ test("CustomProvider retries an all-reasoning empty completion and yields the re
   try {
     const provider = new CustomProvider("test-key", "https://api.example.com/v1");
     const chunks = await collect(provider.generateStream(PARAMS));
-    assert.equal(mock.calls(), 2, "should retry exactly once after the empty completion");
+    assert.equal(mock.calls(), 1, "a completed empty reply must not spend another budget");
     const text = chunks.filter((c) => c.type === "text").map((c) => c.content).join("");
-    assert.equal(text, "Actual reply");
+    assert.equal(text, "");
     assert.equal(chunks.at(-1)?.type, "done");
+    assert.equal(chunks.at(-1)?.usage?.completionTokens, 4096);
   } finally {
     mock.restore();
   }
@@ -151,7 +152,7 @@ test("CustomProvider surfaces a non-retryable auth error immediately", async () 
   }
 });
 
-test("CustomProvider gives up after retries and emits the empty done for the server-side guard", async () => {
+test("CustomProvider emits the first empty done for the server-side guard", async () => {
   const emptyAttempt = () => sseResponse([
     { choices: [{ delta: { reasoning_content: "..." } }] },
     { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 100, total_tokens: 110 } },
@@ -160,7 +161,7 @@ test("CustomProvider gives up after retries and emits the empty done for the ser
   try {
     const provider = new CustomProvider("test-key", "https://api.example.com/v1");
     const chunks = await collect(provider.generateStream(PARAMS));
-    assert.equal(mock.calls(), 3, "2 retries = 3 attempts");
+    assert.equal(mock.calls(), 1, "completed empty replies must not automatically retry");
     assert.equal(chunks.filter((c) => c.type === "text").length, 0);
     assert.equal(chunks.at(-1)?.type, "done", "must still terminate so the empty-reply guard can fire");
   } finally {

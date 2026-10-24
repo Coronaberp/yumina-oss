@@ -8,7 +8,13 @@
     "openingBackgrounds": "オープニング：{{name}}",
     "openingNumber": "オープニング {{number}}",
     "globalBackgroundsHint": "すべてのオープニングで共有されます。各オープニングの背景を編集しても、このコレクションは変更されません。",
-    "openingBackgroundsHint": "このオープニングを選ぶと使用されます。同じシーンはこの背景が優先され、その他はグローバル背景が使用されます。"
+    "openingBackgroundsHint": "このオープニングを選ぶと使用されます。同じシーンはこの背景が優先され、その他はグローバル背景が使用されます。",
+    "addBackground": "背景を追加",
+    "backgroundDropHint": "シーン名と時間帯を指定し、画像をドロップするかファイルを選択してください。",
+    "singleBackground": "シーンと時間帯を正しく指定できるよう、背景は1枚ずつ追加してください。",
+    "searchBackgrounds": "シーンや時間帯を検索",
+    "backgroundCount": "背景 {{count}} 枚",
+    "backgroundCount_other": "背景 {{count}} 枚"
   },
   "twoTapConfirm": "もう一度タップして確認",
   "shell": {
@@ -1744,5 +1750,15 @@
     "library": "アセットから選ぶ",
     "uploading": "アップロード中…",
     "failed": "アップロードに失敗しました：{{name}}"
+  },
+  "spriteManager": {
+    "addCharacter": "キャラクターを追加",
+    "characterName": "キャラクター名",
+    "searchCharacters": "キャラクターを検索",
+    "noMatches": "見つかりません。別の名前をお試しください。",
+    "characterHint": "衣装を選んで、このキャラクターの表情を追加します。",
+    "outfitDescription": "この衣装で着ているもの",
+    "outfitPlaceholder": "服、アクセサリー、靴などを説明…",
+    "outfitHint": "物語で{{type}}が選択されると、{{character}}にこの説明が使われます。変わらない身体的特徴はキャラクター設定に残してください。"
   }
 }

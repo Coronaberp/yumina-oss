@@ -1,0 +1,16 @@
+    function layout() {
+      if (cancelled) return;
+      const bounds = node.getBoundingClientRect();
+      const controls = node.querySelector(".vn-controls");
+      const top = controls ? controls.getBoundingClientRect().bottom - bounds.top + 12 : 12;
+      const reading = [...node.querySelectorAll(".vn-dialogue,.vn-choices")].filter(element => element.getClientRects().length);
+      const edge = reading.length ? Math.min(...reading.map(element => element.getBoundingClientRect().top)) : bounds.bottom - bounds.height * .19;
+      node.style.setProperty("--cast-top", `${top}px`);
+      const dialogue = node.querySelector(".vn-dialogue");
+      if (dialogue) {
+        const bottom = bounds.bottom - dialogue.getBoundingClientRect().top + 16;
+        node.style.setProperty("--choices-bottom", `${bottom}px`);
+        node.style.setProperty("--choices-max-height", `${Math.max(44, bounds.height - bottom - top)}px`);
+      }
+      node.style.setProperty("--reading-shade-height", `${Math.min(bounds.height, Math.max(0, bounds.bottom - edge + 80))}px`);
+    }

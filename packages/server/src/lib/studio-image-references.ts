@@ -6,7 +6,8 @@ import type { ChatMessage } from "./llm/types.js";
 import { isHarnessTurn } from "./studio-tools/harness-notes.js";
 import { assertOwnedVnImageRef } from "./studio-tools/asset-catalog.js";
 import { readOwnedStudioImage } from "./studio-image-view.js";
-import { isVnInterface, readVnAssetMap, readVnOpeningScenes, type WorldDefinition, type VnAssetMap } from "@yumina/engine";
+import { imageMasters, isImageMasterKey } from "./image-masters.js";
+import { displayCharacterName, isVnInterface, readVnAssetMap, readVnOpeningScenes, readVnSpriteSets, readVnSpriteVariants, readVnSpriteVariantSets, readVnSpriteOutfit, readVnSpriteConfig, type WorldDefinition, type VnAssetMap } from "@yumina/engine";
 
 export type StudioReferenceRole = "identity" | "environment" | "style" | "creator";
 export type StudioImageTarget = {
@@ -16,6 +17,8 @@ export type StudioImageTarget = {
   openingId?: string;
   characterId?: string;
   expression?: string;
+  spriteType?: string;
+  spriteVariant?: string;
 };
 export type StudioImageReference = {
   key: string; url: string; name: string; assetRef?: string;
@@ -24,6 +27,7 @@ export type StudioImageReference = {
 export type StudioImageContext = {
   referenceImages: StudioImageReference[];
   styleInstructions?: string;
+  outfitInstructions?: string;
   target?: StudioImageTarget;
   unassignedReason?: string;
 };
@@ -33,8 +37,16 @@ const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif
 
 function ownedKey(userId: string, key: unknown): asserts key is string {
   const prefix = `studio-chat/${userId}/`;
-  if (typeof key !== "string" || !key.startsWith(prefix) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpe?g|webp|gif)$/i.test(key.slice(prefix.length)))
+  const master = typeof key === "string" && key.startsWith(`users/${userId}/image-masters/public/`) && isImageMasterKey(key);
+  if (!master && (typeof key !== "string" || !key.startsWith(prefix) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpe?g|webp|gif)$/i.test(key.slice(prefix.length))))
     throw new GenerationError("INVALID_REFERENCE", "Use only your own uploaded images as references.");
+}
+
+/** Candidate syntax is not authorization; verify before every native byte read. */
+async function authorizeUploadedStudioKey(userId: string, key: string) {
+  ownedKey(userId, key);
+  if (isImageMasterKey(key) && !await imageMasters.findByKey(userId, "public", key))
+    throw new GenerationError("INVALID_REFERENCE", "The uploaded image master is not available in your account.");
 }
 
 /** Client URLs never determine which object the server reads or sends. */
@@ -122,7 +134,7 @@ export async function loadStudioImageReferenceInputs(userId: string, worldId: st
       if (!data) throw new GenerationError("INVALID_REFERENCE", "A selected project reference could not be decoded.");
       source = Buffer.from(data, "base64");
     } else {
-      ownedKey(userId, reference.key);
+      await authorizeUploadedStudioKey(userId, reference.key);
       const result = await getObjectBuffer(reference.key, { signal, maxBytes: MAX_BYTES });
       source = result.buffer;
     }
@@ -173,7 +185,7 @@ function orderedVnEntries(map: VnAssetMap, preferredPeriod?: string): Array<{ na
   return result;
 }
 
-function requestedTarget(world: WorldDefinition, source: string, intent: string, value: unknown): { target?: StudioImageTarget; reason?: string } {
+export function requestedTarget(world: WorldDefinition, source: string, intent: string, value: unknown): { target?: StudioImageTarget; reason?: string } {
   const scenes = (() => { try { return readVnAssetMap(source, "backgrounds"); } catch { return {}; } })();
   const openings = (() => { try { return readVnOpeningScenes(source); } catch { return {}; } })();
   const entries = world.entries ?? [];
@@ -186,11 +198,13 @@ function requestedTarget(world: WorldDefinition, source: string, intent: string,
   const characterId = typeof raw.characterId === "string" ? raw.characterId : undefined;
   const period = typeof raw.period === "string" ? raw.period : undefined;
   const expression = typeof raw.expression === "string" ? raw.expression : undefined;
+  const spriteType = typeof raw.spriteType === "string" ? raw.spriteType : undefined;
+  const spriteVariant = typeof raw.spriteVariant === "string" ? raw.spriteVariant : undefined;
   const openingMap = openingId ? openings[openingId] : undefined;
   const availableScenes = openingMap ?? scenes;
   const sceneEntry = sceneId ? Object.keys(availableScenes).find(name => name === sceneId) : Object.keys(availableScenes).find(name => mentions(intent, name));
   const characterEntry = characterId ? entries.find(entry => entry.role === "character" && entry.id === characterId)
-    : entries.find(entry => entry.role === "character" && (mentions(intent, entry.name) || mentions(intent, entry.id)));
+    : entries.find(entry => entry.role === "character" && (mentions(intent, displayCharacterName(entry.name)) || mentions(intent, entry.id)));
   const inferredPeriod = period ?? ["day", "evening", "night"].find(candidate => mentions(intent, candidate));
   const backgroundIntent = /\b(background|backgrounds|location|scene|setting)\b/i.test(intent)
     && !/\b(cg|cutscene|illustration|portrait|sprite)\b/i.test(intent);
@@ -207,11 +221,26 @@ function requestedTarget(world: WorldDefinition, source: string, intent: string,
     return { target: { kind: "background", sceneId: sceneEntry, period: inferredPeriod ?? "day", ...(openingId ? { openingId } : {}) } };
   }
   if (targetKind === "sprite" || targetKind === "portrait") {
+    if ((raw.spriteType !== undefined && typeof raw.spriteType !== "string") || (raw.expression !== undefined && typeof raw.expression !== "string") || (raw.spriteVariant !== undefined && typeof raw.spriteVariant !== "string")) return { reason: "Sprite type and emotion must be catalog IDs." };
     if (characterId && !characterEntry) return { reason: "The requested character ID does not match a current character entry." };
     if (!characterEntry) return { reason: "The character target could not be matched to one exact character ID." };
-    const existingExpression = expression ?? (targetKind === "sprite"
-      ? ["normal", "happy", "sad", "angry", "surprised"].find(candidate => mentions(intent, candidate)) ?? "normal" : undefined);
-    return { target: { kind: targetKind, characterId: characterEntry.id, ...(existingExpression ? { expression: existingExpression } : {}) } };
+    if (targetKind === "portrait") return { target: { kind: "portrait", characterId: characterEntry.id } };
+    try {
+      const config = readVnSpriteConfig(world.rootComponent?.files["sprites.ts"] ?? "");
+      const inferOption = (options: Record<string, string>) => Object.entries(options).filter(([id, label]) => id !== "normal" && (mentions(intent, id) || mentions(intent, label))).map(([id]) => id);
+      const emotions = inferOption(config.emotions);
+      const types = inferOption(config.types);
+      if ((!expression && emotions.length > 1) || (!spriteType && types.length > 1)) return { reason: "Multiple wardrobe or emotion options were mentioned; select an exact catalog ID." };
+      const emotionId = expression ?? emotions[0] ?? "normal";
+      const typeId = spriteType ?? types[0] ?? "normal";
+      if (!Object.hasOwn(config.emotions, emotionId) || !Object.hasOwn(config.types, typeId)) return { reason: "Choose wardrobe and emotion IDs from this card’s spriteConfig in list_vn_assets." };
+      const variants = readVnSpriteVariants(world.rootComponent?.files["sprites.ts"] ?? "")[typeId] ?? {};
+      const inferredVariants = Object.entries(variants).filter(([id, label]) => mentions(intent, id) || mentions(intent, label)).map(([id]) => id);
+      if (spriteVariant === undefined && inferredVariants.length > 1) return { reason: "Multiple outfit variants were mentioned; select an exact spriteVariant ID." };
+      const variantId = spriteVariant ?? inferredVariants[0];
+      if (variantId && !Object.hasOwn(variants, variantId)) return { reason: "Choose a configured outfit variant ID from list_vn_assets." };
+      return { target: { kind: "sprite", characterId: characterEntry.id, expression: emotionId, spriteType: typeId, ...(variantId ? { spriteVariant: variantId } : {}) } };
+    } catch { return { reason: "The card’s sprite catalog could not be read safely; the image will remain in the library." }; }
   }
   if (targetKind === "cg") return { target: { kind: "cg" } };
   if (targetKind === "library") return { target: { kind: "library" } };
@@ -227,9 +256,24 @@ export async function resolveAutomaticStudioImageContext(
   const spritesSource = root?.files["sprites.ts"] ?? "";
   const scenes = (() => { try { return readVnAssetMap(scenesSource, "backgrounds"); } catch { return {}; } })();
   const openingScenes = (() => { try { return readVnOpeningScenes(scenesSource); } catch { return {}; } })();
-  const sprites = (() => { try { return readVnAssetMap(spritesSource, "sprites"); } catch { return {}; } })();
+  const spriteSets = (() => { try { return readVnSpriteSets(spritesSource); } catch { return {}; } })();
+  const variantSets = (() => { try { return readVnSpriteVariantSets(spritesSource); } catch { return {}; } })();
   const targetResult = requestedTarget(world, scenesSource, intent, targetInput);
   const target = targetResult.target;
+  let outfitInstructions: string | undefined;
+  if (target?.kind === "sprite") {
+    const character = world.entries.find(entry => entry.role === "character" && entry.id === target.characterId);
+    if (character) try {
+      const name = displayCharacterName(character.name);
+      const outfit = readVnSpriteOutfit(spritesSource, name, target.spriteType ?? "normal", target.spriteVariant ?? "");
+      outfitInstructions = [
+        "Exact target outfit: " + name.slice(0, 200) + "; type=" + (target.spriteType ?? "normal") + "; variant=" + (target.spriteVariant || "base") + ".",
+        "This outfit guidance takes precedence over clothing visible in identity portraits, style references, older biographies, and other outfits. Preserve character identity from portraits; do not copy their clothing or borrow clothes from another type or variant.",
+        outfit.description ? "Authored clothing description:\n" + outfit.description.slice(0, 2000)
+          : "Clothing for this exact outfit is unspecified. Do not infer it from another outfit or identity portrait; use only clothing details explicitly requested by the creator.",
+      ].join("\n").slice(0, 3000);
+    } catch { /* Unsupported source never contributes invented outfit guidance. */ }
+  }
   const candidates: StudioImageReference[] = [];
   const push = (assetRef: unknown, name: string, role: StudioReferenceRole) => {
     if (ownedRef(assetRef) && !candidates.some(ref => ref.assetRef === assetRef)) {
@@ -237,17 +281,20 @@ export async function resolveAutomaticStudioImageContext(
     }
   };
   const characters = (world.entries ?? []).filter(entry => entry.role === "character" && entry.enabled !== false
-    && (mentions(intent, entry.name) || mentions(intent, entry.id) || (target?.characterId === entry.id)));
+    && (mentions(intent, displayCharacterName(entry.name)) || mentions(intent, entry.id) || (target?.characterId === entry.id)));
   for (const entry of characters.slice(0, 2)) {
     if (ownedRef(entry.portrait)) push(entry.portrait, `${entry.name} portrait`, "identity");
-    else {
-    const mapEntry = Object.entries(sprites).find(([name]) => name === entry.id || name === entry.name || mentions(entry.name, name) || mentions(entry.id, name))?.[1];
+    // Clothing references must come from the exact requested outfit; portraits retain identity.
+    const sprites = target?.kind === "sprite" ? (target.spriteVariant
+      ? variantSets[target.spriteType ?? "normal"]?.[target.spriteVariant] ?? {}
+      : spriteSets[target.spriteType ?? "normal"] ?? {}) : {};
+    const matchesCharacter = ([name]: [string, unknown]) => name === entry.id || name === displayCharacterName(entry.name) || mentions(displayCharacterName(entry.name), name) || mentions(entry.id, name);
+    const mapEntry = Object.entries(sprites).find(matchesCharacter)?.[1];
     if (typeof mapEntry === "string") push(mapEntry, `${entry.name} sprite`, "identity");
     else if (mapEntry) {
       const variants = Object.entries(mapEntry);
       const canonical = variants.find(([variant]) => variant.toLowerCase() === "normal") ?? variants[0];
       if (canonical) push(canonical[1], `${entry.name} ${canonical[0]} sprite`, "identity");
-    }
     }
   }
 
@@ -281,7 +328,7 @@ export async function resolveAutomaticStudioImageContext(
       referenceImages.push(candidate);
     } catch { /* stale and unavailable project art is omitted deterministically */ }
   }
-  return { referenceImages, ...(styleInstructions ? { styleInstructions } : {}), ...(target ? { target } : {}),
+  return { referenceImages, ...(outfitInstructions ? { outfitInstructions } : {}), ...(styleInstructions ? { styleInstructions } : {}), ...(target ? { target } : {}),
     ...(targetResult.reason ? { unassignedReason: targetResult.reason } : {}) };
 }
 
@@ -304,10 +351,10 @@ export function mergeStudioImageReferences(...groups: StudioImageReference[][]):
   return [...selected.values(), ...automatic.values()].slice(0, MAX_STUDIO_IMAGE_REFERENCES);
 }
 
-export function studioImageReferenceGuidance(refs: StudioImageReference[], styleInstructions?: string): string {
+export function studioImageReferenceGuidance(refs: StudioImageReference[], styleInstructions?: string, outfitInstructions?: string): string {
   const labels = refs.map(ref => `- ${ref.role ?? "creator"}: ${ref.name}`).join("\n");
   return ["Use each supplied image according to its labeled role. Preserve identity from identity references, scene layout from environment references, and palette/rendering from style references. Creator references show the requested content to adapt.",
-    labels ? `Reference roles:\n${labels}` : "", styleInstructions ? `Project visual style:\n${styleInstructions}` : ""].filter(Boolean).join("\n\n");
+    labels ? `Reference roles:\n${labels}` : "", styleInstructions ? `Project visual style:\n${styleInstructions}` : "", outfitInstructions ? `Exact outfit clothing guidance:\n${outfitInstructions.slice(0, 3000)}` : ""].filter(Boolean).join("\n\n");
 }
 
 /** Text-only agents can propose a referenced image while the separate Codex
@@ -329,7 +376,7 @@ export async function loadStudioImageReferences(userId: string, refs: StudioImag
       if (!worldId || !/^@asset:[A-Za-z0-9_-]+$/.test(ref.assetRef) || ref.key !== ref.assetRef || ref.url !== ref.assetRef)
         throw new GenerationError("INVALID_REFERENCE", "Choose an owned image from this card or your asset library.");
     } else {
-      ownedKey(userId, ref.key);
+      await authorizeUploadedStudioKey(userId, ref.key);
       if (ref.url !== resolveImageCdn(ref.key)) throw new GenerationError("INVALID_REFERENCE", "Use only your own uploaded images as references.");
     }
   }

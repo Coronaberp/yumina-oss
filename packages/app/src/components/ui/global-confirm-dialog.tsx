@@ -26,6 +26,7 @@ interface PromptState {
 }
 const useGlobalPromptStore = create<PromptState>(() => ({ request: null, resolve: null }));
 
+// eslint-disable-next-line react-refresh/only-export-components -- Imperative actions share the global dialog host's store.
 export function promptAction(description: string, initialValue = ""): Promise<string | null> {
   return new Promise(resolve => {
     useGlobalPromptStore.getState().resolve?.(null);
@@ -58,6 +59,7 @@ function GlobalPromptDialog() {
   </Dialog>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- Imperative actions share the global dialog host's store.
 export function confirmAction(
   description: string,
   options: Omit<ConfirmRequest, "description"> = {},

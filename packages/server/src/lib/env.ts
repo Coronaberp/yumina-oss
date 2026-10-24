@@ -24,7 +24,9 @@ const envSchema = z.object({
     },
     z.string().url().optional()
   ),
-  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(100),
+  // Direct local PostgreSQL also serves memory and maintenance connections.
+  // The hosted pooler's 100-client budget can exhaust a local 100-slot server.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(process.env.YUMINA_EDITION === "local" ? 10 : 100),
   MEMORY_DATABASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   MEMORY_PGLITE_DATA_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
   IMAGE_EXECUTION_MODE: z.enum(["embedded", "external"]).default("embedded"),

@@ -74,16 +74,37 @@ export function formatAssetCatalog(catalog: Awaited<ReturnType<typeof loadAssetC
         + '\nUse list_assets to search filenames, browse a folder, or page with offset. scope="all" searches the entire owned library. An absent item in this page is NOT proof it does not exist.\n';
 }
 
+const IMAGE_REF = /^@asset:[A-Za-z0-9_-]+$/;
+const IMAGE_CHECK_BATCH_SIZE = 200;
+const MISSING_IMAGE = "Image not found in this card or your asset library. Use list_assets or import_danbooru_image first.";
+
+/** Check the whole card without opening connections for every image at once.
+ * Database errors propagate: a failed check is not evidence of a missing image.
+ */
+export async function inspectOwnedVnImageRefs(userId: string, worldId: string, refs: readonly string[]) {
+    const unique = [...new Set(refs)];
+    if (!unique.length) return [];
+    const [owned] = await db.select({ id: worlds.id }).from(worlds)
+        .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId))).limit(1);
+    if (!owned) throw new Error("World not found or not authorized");
+    const ids = unique.filter(ref => IMAGE_REF.test(ref)).map(ref => ref.slice("@asset:".length));
+    const found = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += IMAGE_CHECK_BATCH_SIZE) {
+        const batch = ids.slice(offset, offset + IMAGE_CHECK_BATCH_SIZE);
+        const library = await db.select({ id: userAssets.id }).from(userAssets)
+            .where(and(inArray(userAssets.id, batch), eq(userAssets.userId, userId), eq(userAssets.type, "image")));
+        const worldImages = await db.select({ id: assets.id }).from(assets)
+            .where(and(inArray(assets.id, batch), eq(assets.worldId, worldId), eq(assets.type, "image")));
+        for (const row of [...library, ...worldImages]) found.add(row.id);
+    }
+    return unique.flatMap(ref => !IMAGE_REF.test(ref)
+        ? [{ ref, reason: "Use an owned image @asset reference." }]
+        : found.has(ref.slice("@asset:".length)) ? [] : [{ ref, reason: MISSING_IMAGE }]);
+}
+
 /** VN assignment tools accept images in this owned world or the creator's library. */
 export async function assertOwnedVnImageRef(userId: string, worldId: string, ref: unknown) {
-    if (typeof ref !== "string" || !/^@asset:[A-Za-z0-9_-]+$/.test(ref)) throw new Error("Use an owned image @asset reference.");
-    const id = ref.slice("@asset:".length);
-    const [owned] = await db.select({ id: worlds.id }).from(worlds)
-        .where(and(eq(worlds.id, worldId), eq(worlds.creatorId, userId)));
-    if (!owned) throw new Error("World not found or not authorized");
-    const [library, worldImages] = await Promise.all([
-        db.select({ id: userAssets.id }).from(userAssets).where(and(eq(userAssets.id, id), eq(userAssets.userId, userId), eq(userAssets.type, "image"))).limit(1),
-        db.select({ id: assets.id }).from(assets).where(and(eq(assets.id, id), eq(assets.worldId, worldId), eq(assets.type, "image"))).limit(1),
-    ]);
-    if (!library.length && !worldImages.length) throw new Error("Image not found in this card or your asset library. Use list_assets or import_danbooru_image first.");
+    if (typeof ref !== "string" || !IMAGE_REF.test(ref)) throw new Error("Use an owned image @asset reference.");
+    const [missing] = await inspectOwnedVnImageRefs(userId, worldId, [ref]);
+    if (missing) throw new Error(missing.reason);
 }

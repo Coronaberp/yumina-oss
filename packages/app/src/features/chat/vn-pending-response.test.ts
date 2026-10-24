@@ -211,6 +211,55 @@ test("VN exposes pending-response recovery instead of stale choices", async () =
   }
 });
 
+test("VN reserves passage space for an error banner and updates it as the banner resizes", async () => {
+  const fixture = makeApi();
+  const view = await setup(fixture.api);
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  const observers = new Set<{ elements: Set<Element>; notify: () => void }>();
+  let errorHeight = 108;
+  let progressOverflow = 0;
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class {
+    elements = new Set<Element>();
+    notify: () => void;
+    constructor(notify: () => void) { this.notify = notify; observers.add(this); }
+    observe(element: Element) { this.elements.add(element); }
+    disconnect() { observers.delete(this); }
+  } });
+  const measure = view.dom.window.HTMLElement.prototype.getBoundingClientRect;
+  view.dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+    const offset = parseFloat(view.container.querySelector<HTMLElement>(".vn")?.style.getPropertyValue("--error-space") || "0");
+    if (this.classList.contains("vn")) return new view.dom.window.DOMRect(0, 0, 390, 844);
+    if (this.classList.contains("vn-controls")) return new view.dom.window.DOMRect(0, 8, 390, 52);
+    if (this.classList.contains("vn-error")) return new view.dom.window.DOMRect(24, 824 - errorHeight, 342, errorHeight);
+    if (this.classList.contains("vn-dialogue")) return new view.dom.window.DOMRect(20, 562 - offset, 350, 262);
+    if (this.classList.contains("vn-text")) return new view.dom.window.DOMRect(20, 600 - offset, 350, 190);
+    if (this.classList.contains("vn-progress")) return new view.dom.window.DOMRect(20, 804 - offset, 350, 20 + progressOverflow);
+    return measure.call(this);
+  };
+  try {
+    await view.render();
+    fixture.api.error = "Custom endpoint request failed: fetch failed";
+    await view.render();
+    const stage = view.container.querySelector<HTMLElement>(".vn")!;
+    assert.equal(stage.style.getPropertyValue("--error-space"), "124px", "passage reserves the wrapped error height plus a gap");
+    errorHeight = 200;
+    const banner = view.container.querySelector(".vn-error")!;
+    for (const observer of observers) if (observer.elements.has(banner)) observer.notify();
+    assert.equal(stage.style.getPropertyValue("--error-space"), "216px", "wrapping or font changes resize the reserved space");
+    progressOverflow = 40;
+    const progress = view.container.querySelector(".vn-progress")!;
+    for (const observer of observers) if (observer.elements.has(progress)) observer.notify();
+    assert.equal(stage.style.getPropertyValue("--error-space"), "256px", "wrapped reading metrics also remain above the error");
+    fixture.api.error = null;
+    await view.render();
+    assert.equal(stage.style.getPropertyValue("--error-space"), "0px", "a recovered response restores the normal passage position");
+  } finally {
+    await act(async () => view.root.unmount()); view.dom.window.close(); view.restore();
+    if (descriptor) Object.defineProperty(globalThis, "ResizeObserver", descriptor);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
+
 test("VN pending response hides controls while loading and restores choices after choosing something else", async () => {
   const fixture = makeApi();
   const view = await setup(fixture.api);
@@ -247,11 +296,14 @@ test("a pending player choice pages through action and speech while retaining it
   const sent: string[] = [];
   fixture.api.sendMessage = (text: string) => { sent.push(text); fixture.api.messages.push({ id: "new-user", role: "user", content: text }); fixture.api.isStreaming = true; };
   const view = await setup(fixture.api);
-  const advance = async () => { await act(async () => findButton(view.container, "Advance story").click()); };
   try {
     await view.render();
+    const announcement = view.container.querySelector('.vn-reply-announcement');
+    assert.ok(announcement, "the empty polite announcement region is mounted before completion");
+    assert.equal(announcement.textContent, "");
     await act(async () => findButton(view.container, choice).click());
     await view.render();
+    assert.equal(view.container.querySelector('.vn-reply-ready'), null, "a reply still generating has no ready cue");
     assert.deepEqual(sent, [choice], "the original model input is preserved");
     assert.equal(view.container.querySelector('.vn-text.vn-action')?.textContent, "Flash a confident grin and place 100 gold coins on the counter.");
     assert.equal(view.container.querySelector('.vn-name')?.textContent?.trim(), "");
@@ -262,13 +314,24 @@ test("a pending player choice pages through action and speech while retaining it
     assert.match(view.container.querySelector('.vn-name')?.textContent ?? "", /Aelorian Myrren/);
     await act(async () => view.container.querySelector('.vn')!.dispatchEvent(new view.dom.window.WheelEvent("wheel", { deltaY: -120, bubbles: true, cancelable: true })));
     assert.ok(view.container.querySelector('.vn-text.vn-action'));
-    await advance();
     fixture.api.isStreaming = false;
-    fixture.api.messages.push({ id: "new-answer", role: "assistant", content: '[SPEAKER:Miveth:normal] "Yes, that is enough."' });
+    fixture.api.messages.push({ id: "new-answer", role: "assistant", content: '[SPEAKER:Miveth:normal] "Yes, that is enough."\n\n[SPEAKER:Miveth:normal] "Here is your receipt."' });
+    findButton(view.container, "Advance story").focus();
+    const focused = view.dom.window.document.activeElement;
     await view.render();
+    assert.equal(view.dom.window.document.activeElement, focused, "completion does not move keyboard focus");
+    assert.ok(view.container.querySelector('.vn-text.vn-action'), "completion keeps the submitted passage visible");
+    assert.equal(view.container.querySelector('.vn-reply-ready'), null, "the ready cue waits for the last submitted page");
+    await act(async () => findButton(view.container, "Advance story").click());
     assert.equal(view.container.querySelector('.vn-text')?.textContent, "Is this enough for now?");
-    await advance();
+    assert.equal(view.container.querySelector('.vn-reply-announcement'), announcement, "completion updates the existing live region");
+    assert.equal(announcement.textContent, "Reply ready");
+    assert.equal(view.container.querySelectorAll('[role="status"]').length, 1, "only the persistent region announces readiness");
+    const continueButton = findButton(view.container, "Continue");
+    await act(async () => { continueButton.click(); continueButton.click(); });
     assert.equal(view.container.querySelector('.vn-text')?.textContent, "Yes, that is enough.");
+    assert.equal(view.container.querySelector('.vn-reply-ready'), null, "Continue opens the first reply page exactly once");
+    assert.equal(announcement.textContent, "", "the persistent announcement clears after continuing");
   } finally {
     await act(async () => view.root.unmount()); view.dom.window.close(); view.restore();
   }

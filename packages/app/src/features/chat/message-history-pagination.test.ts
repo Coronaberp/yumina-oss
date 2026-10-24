@@ -282,7 +282,8 @@ test("Verdant's nested scroll viewport reveals local history, fetches the server
         ),
       );
     });
-    assert.equal(container.querySelectorAll(".play-message-row").length, 50);
+    const mountedRows = container.querySelectorAll(".play-message-row").length;
+    assert.ok(mountedRows >= 50 && mountedRows <= 100, "Viewport refill retains its overlapping, bounded reading window");
     loadServer = async () => false;
 
     await act(async () => {
@@ -293,7 +294,7 @@ test("Verdant's nested scroll viewport reveals local history, fetches the server
 
     assert.equal(loadCalls, 3);
     assert.equal(container.querySelectorAll(".play-message-row").length, 60);
-    const retry = container.querySelector<HTMLButtonElement>("button");
+    const retry = container.querySelector<HTMLButtonElement>('[data-history-direction="older"]');
     assert.equal(retry?.textContent, makeChatT("en")("loadEarlierFailed"));
 
     loadServer = async () => true;
@@ -306,7 +307,7 @@ test("Verdant's nested scroll viewport reveals local history, fetches the server
 
     let finishStaleLoad: ((loaded: boolean) => void) | undefined;
     loadServer = () => new Promise<boolean>((resolve) => { finishStaleLoad = resolve; });
-    const loadAgain = container.querySelector<HTMLButtonElement>("button");
+    const loadAgain = container.querySelector<HTMLButtonElement>('[data-history-direction="older"]');
     await act(async () => {
       loadAgain?.click();
       await Promise.resolve();

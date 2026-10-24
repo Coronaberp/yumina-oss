@@ -1,7 +1,7 @@
 import { modelFallbackReason } from "./openrouter.js";
 import { PUBLIC_ORIGIN } from "../env.js";
 import { createHash, randomUUID } from "node:crypto";
-import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall } from "./types.js";
+import type { LLMProvider, GenerateParams, StreamChunk, Model, ChatMessage, ToolCall, ProviderAttempt } from "./types.js";
 import type { ApiKeyMetadata } from "@yumina/shared";
 import { PROFILE_SAMPLING_DEFAULTS } from "@yumina/shared";
 import { isStrataLocalEndpoint, validateCustomEndpointUrl } from "../ssrf.js";
@@ -11,6 +11,30 @@ import { parseUnsupportedParam, stripParamFromBody, looksLikeReasoningModel } fr
 import { localGenerationTimeoutMs, readLocalStream } from "./local-timeout.js";
 import { fitCustomImageRequest } from "./image-request-size.js";
 import { backgroundReasoningEffort } from "./background-reasoning.js";
+import { normalizeProviderCostUsd } from "../provider-cost.js";
+
+type AttemptTrace = Omit<ProviderAttempt, "finishedAt" | "status"> & { started?: boolean; reported?: boolean };
+
+type CustomUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
+};
+
+function responseUsage(usage?: CustomUsage, billing?: { billed_cost_usd?: string | number }): ProviderAttempt["usage"] {
+  if (!usage && billing?.billed_cost_usd === undefined) return undefined;
+  const billed = billing?.billed_cost_usd;
+  const parsedCost = typeof billed === "string" && billed.trim() !== "" ? Number(billed) : billed;
+  return {
+    promptTokens: usage?.prompt_tokens,
+    completionTokens: usage?.completion_tokens,
+    totalTokens: usage?.total_tokens,
+    reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens,
+    providerCostUsd: normalizeProviderCostUsd(usage?.cost) ?? normalizeProviderCostUsd(parsedCost),
+  };
+}
 
 // Account caps must never enter the global model catalog: two users can have
 // different Featherless plans for the same model. Keys are opaque hashes.
@@ -70,21 +94,16 @@ export class CustomProvider implements LLMProvider {
   }
 
   /**
-   * Public streaming entry. Wraps `streamOnce` with retries mirroring
-   * OpenRouterProvider.generateStream: reasoning models routed through
-   * user-configured proxies regularly burn the whole completion budget on
-   * `reasoning_content` and finish with empty `content` (the "空回" community
-   * reports — upstream bills tokens, Yumina shows nothing). A fresh attempt
-   * recovers most of these, same as the ~87% manual-regenerate recovery rate
-   * measured for OpenRouter reasoners. Retries only fire before any visible
-   * output, so they can never duplicate streamed text.
+   * Retry transient failures before visible output. A completed empty reply
+   * already spent its token budget: surface its receipt rather than silently
+   * paying for another generation. Audit attempts independently of acceptance.
    */
   async *generateStream(params: GenerateParams): AsyncIterable<StreamChunk> {
     // Allocate once before retrying; chat callers supply a persistent identity.
     params = { ...params, conversationId: params.conversationId || randomUUID() };
     const MAX_RETRIES = params.singleAttempt ? 0 : 2;
     let lastError: StreamChunk | null = null;
-    let lastDone: StreamChunk | null = null;
+    const invocationId = randomUUID();
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (params.signal?.aborted) return;
@@ -92,32 +111,42 @@ export class CustomProvider implements LLMProvider {
       let visibleYielded = false;
       let errorChunk: StreamChunk | null = null;
       let doneChunk: StreamChunk | null = null;
+      let threw = false;
+      const trace: AttemptTrace = {
+        id: randomUUID(), invocationId, providerHost: new URL(this.baseUrl).hostname,
+        model: params.model.replace(/^custom\//, ""), conversationId: params.conversationId,
+        startedAt: new Date().toISOString(),
+      };
 
-      for await (const chunk of this.streamOnce(params)) {
-        if (chunk.type === "error") {
-          const nonRetryable = !/^Custom endpoint error \((500|502|503)\):/.test(chunk.content);
-          if (!visibleYielded && attempt < MAX_RETRIES && !nonRetryable) {
+      try {
+        for await (const chunk of this.streamOnce(params, trace)) {
+          if (chunk.providerRequestId) trace.providerRequestId = chunk.providerRequestId;
+          if (chunk.stopReason) trace.stopReason = chunk.stopReason;
+          if (chunk.type === "error") {
+            const nonRetryable = !/^Custom endpoint error \((500|502|503)\):/.test(chunk.content);
             errorChunk = chunk;
+            if (!visibleYielded && attempt < MAX_RETRIES && !nonRetryable) break;
+            yield { ...chunk, providerRequestId: trace.providerRequestId };
+            return;
+          }
+          if (chunk.type === "done") {
+            doneChunk = chunk;
             break;
           }
-          yield chunk;
-          return;
+          if (
+            chunk.type === "text" ||
+            chunk.type === "tool_call_start" ||
+            chunk.type === "tool_call_delta" ||
+            chunk.type === "tool_call_end"
+          ) visibleYielded = true;
+          yield { ...chunk, providerRequestId: trace.providerRequestId };
         }
-        // Buffer the terminal chunk so an EMPTY completion can retry BEFORE the
-        // consumer finalizes and surfaces a blank reply.
-        if (chunk.type === "done") {
-          doneChunk = chunk;
-          break;
-        }
-        if (
-          chunk.type === "text" ||
-          chunk.type === "tool_call_start" ||
-          chunk.type === "tool_call_delta" ||
-          chunk.type === "tool_call_end"
-        ) {
-          visibleYielded = true;
-        }
-        yield chunk;
+      } catch (err) {
+        threw = true;
+        throw err;
+      } finally {
+        const status = params.signal?.aborted ? "cancelled" : doneChunk ? "complete" : errorChunk || threw ? "error" : "cancelled";
+        await this.finishAttempt(params, trace, status);
       }
 
       if (errorChunk) {
@@ -128,34 +157,30 @@ export class CustomProvider implements LLMProvider {
         continue;
       }
 
-      // Completed via `done` with no visible text or tool calls (all-reasoning
-      // turn or truly empty completion) — retry silently.
-      if (doneChunk && !visibleYielded && attempt < MAX_RETRIES && !params.signal?.aborted) {
-        lastDone = doneChunk;
-        console.warn(
-          `[Custom] Empty completion (no visible output) on attempt ${attempt + 1}/${MAX_RETRIES + 1} for ${params.model}, retrying.`,
-        );
-        continue;
-      }
-
       if (doneChunk) {
-        yield doneChunk;
+        yield { ...doneChunk, providerRequestId: trace.providerRequestId,
+          ...(doneChunk.usage ? { usage: { ...doneChunk.usage, providerRequestId: trace.providerRequestId } } : {}) };
         return;
       }
       // streamOnce ended without a terminal chunk (shouldn't happen).
       return;
     }
 
-    // Retries exhausted — surface the last error, or the (still-empty) done so
-    // the server-side empty-reply guard produces a clear "try again".
+    // A completed empty reply already returned its original usage above.
     if (lastError) { yield lastError; return; }
-    if (lastDone) { yield lastDone; return; }
+  }
+
+  private async finishAttempt(params: GenerateParams, trace: AttemptTrace, status: ProviderAttempt["status"]) {
+    if (!trace.started || trace.reported) return;
+    trace.reported = true;
+    const { started, reported, ...receipt } = trace;
+    await params.onProviderAttempt?.({ ...receipt, finishedAt: new Date().toISOString(), status });
   }
 
   /** Single-attempt pass — see `generateStream` for the retry wrapper. */
-  private async *streamOnce(params: GenerateParams): AsyncIterable<StreamChunk> {
+  private async *streamOnce(params: GenerateParams, trace: AttemptTrace): AsyncIterable<StreamChunk> {
     if (params.stream === false) {
-      yield* this.generateNonStream(params);
+      yield* this.generateNonStream(params, trace);
       return;
     }
 
@@ -175,7 +200,7 @@ export class CustomProvider implements LLMProvider {
 
     let response: Response;
     try {
-      response = await this.postChatWithRetry(initialBody, fetchSignal, !params.singleAttempt, params.conversationId);
+      response = await this.postChatWithRetry(initialBody, fetchSignal, !params.singleAttempt, params.conversationId, { params, trace });
     } catch (err) {
       clearTimeout(connTimer);
       if (params.signal?.aborted) return;
@@ -234,6 +259,8 @@ export class CustomProvider implements LLMProvider {
 
           try {
             const parsed = JSON.parse(data);
+            if (!trace.providerRequestId && typeof parsed.id === "string") trace.providerRequestId = parsed.id;
+            trace.usage = responseUsage(parsed.usage, parsed.billing) ?? trace.usage;
             if (parsed.error) {
               const error = parsed.error;
               const message = typeof error === "string" ? error
@@ -249,7 +276,10 @@ export class CustomProvider implements LLMProvider {
             const delta = choice?.delta;
             if (choice?.finish_reason) completionFinished = true;
 
-            if (choice?.finish_reason) lastFinishReason = choice.finish_reason;
+            if (choice?.finish_reason) {
+              lastFinishReason = choice.finish_reason;
+              trace.stopReason = lastFinishReason === "length" ? "max_tokens" : lastFinishReason ?? undefined;
+            }
 
             if (delta?.content) {
               yield { type: "text", content: delta.content };
@@ -315,6 +345,8 @@ export class CustomProvider implements LLMProvider {
                   completionTokens: parsed.usage.completion_tokens,
                   totalTokens: parsed.usage.total_tokens,
                   reasoningTokens: parsed.usage.completion_tokens_details?.reasoning_tokens,
+                  providerCostUsd: trace.usage?.providerCostUsd,
+                  providerRequestId: trace.providerRequestId,
                 },
               };
               return;
@@ -343,7 +375,7 @@ export class CustomProvider implements LLMProvider {
   }
 
   /** Non-streaming path. Bypass for proxies that moderate streams differently. */
-  private async *generateNonStream(params: GenerateParams): AsyncIterable<StreamChunk> {
+  private async *generateNonStream(params: GenerateParams, trace: AttemptTrace): AsyncIterable<StreamChunk> {
     const model = params.model.replace(/^custom\//, "");
     const messages = applyPromptPostProcessing(params.messages, this.metadata.promptPostProcessing).map(serializeMessage);
 
@@ -360,7 +392,7 @@ export class CustomProvider implements LLMProvider {
 
     let response: Response;
     try {
-      response = await this.postChatWithRetry(initialBody, fetchSignal, !params.singleAttempt, params.conversationId);
+      response = await this.postChatWithRetry(initialBody, fetchSignal, !params.singleAttempt, params.conversationId, { params, trace });
     } catch (err) {
       clearTimeout(connTimer);
       if (params.signal?.aborted) return;
@@ -376,6 +408,8 @@ export class CustomProvider implements LLMProvider {
     }
 
     let parsed: {
+      id?: string;
+      billing?: { billed_cost_usd?: string | number };
       choices?: Array<{
         message?: {
           content?: string;
@@ -385,15 +419,14 @@ export class CustomProvider implements LLMProvider {
         };
         finish_reason?: string;
       }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        completion_tokens_details?: { reasoning_tokens?: number };
-      };
+      usage?: CustomUsage;
     };
     try {
       parsed = (await response.json()) as typeof parsed;
+      if (!trace.providerRequestId && typeof parsed.id === "string") trace.providerRequestId = parsed.id;
+      // Parse the entire buffered receipt before yielding any content. A caller
+      // can stop consuming after the first text chunk without losing usage.
+      trace.usage = responseUsage(parsed.usage, parsed.billing);
     } catch (err) {
       yield { type: "error", content: `Custom endpoint: failed to parse response (${(err as Error).message})` };
       return;
@@ -407,6 +440,7 @@ export class CustomProvider implements LLMProvider {
 
     const message = choice.message ?? {};
     const fr = choice.finish_reason ?? null;
+    trace.stopReason = fr === "length" ? "max_tokens" : fr ?? undefined;
 
     const reasoningContent = typeof message.reasoning_content === "string"
       ? message.reasoning_content
@@ -449,6 +483,8 @@ export class CustomProvider implements LLMProvider {
           completionTokens: usage.completion_tokens ?? 0,
           totalTokens: usage.total_tokens ?? 0,
           reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+          providerCostUsd: trace.usage?.providerCostUsd,
+          providerRequestId: trace.providerRequestId,
         },
       }),
     };
@@ -624,11 +660,12 @@ export class CustomProvider implements LLMProvider {
 
     // DeepSeek V4 enables thinking by default. Background callers can request
     // disableReasoning; translate that into DeepSeek's native field
-    // only for the official DeepSeek endpoint so generic OpenAI-compatible
-    // proxies never receive a vendor-specific parameter. Apply this after
+    // for DeepSeek's endpoint and its CheaperInference models. Other generic
+    // endpoints retain their configured request shape. Apply this after
     // metadata shaping so an account-level includeBody cannot accidentally
     // re-enable reasoning for a summary request.
-    if ((disableReasoning || params.reasoningEffortOverride) && isOfficialDeepSeekEndpoint(this.baseUrl)) {
+    if ((disableReasoning || params.reasoningEffortOverride) && (isOfficialDeepSeekEndpoint(this.baseUrl)
+      || (new URL(this.baseUrl).hostname === "api.cheaperinference.com" && /(?:^|\/)deepseek[-/]/i.test(model)))) {
       shaped.thinking = { type: disableReasoning ? "disabled" : "enabled" };
     }
 
@@ -667,6 +704,7 @@ export class CustomProvider implements LLMProvider {
     signal: AbortSignal,
     allowRetry = true,
     conversationId?: string,
+    audit?: { params: GenerateParams; trace: AttemptTrace },
   ): Promise<Response> {
     const url = `${this.baseUrl}/chat/completions`;
     const headers = this.buildHeaders({ conversationId });
@@ -675,7 +713,17 @@ export class CustomProvider implements LLMProvider {
     const model = typeof body.model === 'string' ? body.model : '';
     if (this.unsupportedReasoningHistoryModels.has(model)) body = stripAssistantReasoningHistory(body) ?? body;
     body = await fitCustomImageRequest(body, signal);
-    let response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
+    const send = async () => {
+      if (audit) { audit.trace.started = true; audit.trace.model = typeof body.model === "string" ? body.model : model; }
+      const response = await fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
+      if (audit) {
+        audit.trace.httpStatus = response.status;
+        audit.trace.providerRequestId = response.headers.get("x-ci-request-id")
+          ?? response.headers.get("x-cheaper-inference-request-id") ?? undefined;
+      }
+      return response;
+    };
+    let response = await send();
     if (response.ok || response.status !== 400 || !allowRetry) return response;
 
     // Drain the error body (Response bodies can only be consumed once). If we
@@ -689,11 +737,16 @@ export class CustomProvider implements LLMProvider {
     const offendingParam = rejectedReasoning ? 'messages[].reasoning_content' : parseUnsupportedParam(errorText);
     const retryBody = rejectedReasoning ? reasoningRetry : (offendingParam ? stripParamFromBody(body, offendingParam) : null);
     if (!retryBody) return errorShim();
+    if (audit) {
+      await this.finishAttempt(audit.params, audit.trace, "error");
+      Object.assign(audit.trace, { id: randomUUID(), startedAt: new Date().toISOString(), started: false, reported: false,
+        httpStatus: undefined, providerRequestId: undefined, usage: undefined, stopReason: undefined });
+    }
     if (reasoningRetry) this.unsupportedReasoningHistoryModels.add(model);
 
     console.warn(`[Custom] Upstream rejected param '${offendingParam}'. Retrying once without it. Excerpt: ${errorText.slice(0, 200)}`);
     body = retryBody;
-    return fetch(url, { method: "POST", headers, signal, body: JSON.stringify(body) });
+    return send();
   }
 
   /** Compose request headers: Authorization (always ours) + Content-Type + user-supplied includeHeaders.

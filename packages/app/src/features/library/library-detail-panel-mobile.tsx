@@ -61,6 +61,7 @@ import { VariantForkPicker } from "@/components/variant-fork-picker";
 import { fetchVariantsForDownload } from "@/lib/download-world";
 import type { LanguageVariant } from "@/lib/languages";
 import { CroppedImage } from "@/lib/cover-crop";
+import { useWorldDetailMedia } from "@/lib/world-detail-media";
 import { useActivityStats } from "@/lib/library-detail-stats";
 import { SessionExportModal } from "./session-export-modal";
 import { SharePlaythroughModal } from "@/features/chat/share-playthrough-modal";
@@ -110,7 +111,6 @@ export function LibraryDetailPanelMobile({
   const [lockPending, setLockPending] = useState(false);
   const [downloadPreparing, setDownloadPreparing] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [heroImageFailed, setHeroImageFailed] = useState(false);
   const navigateToStory = useStoryNavigation();
   const { openWorldPreview } = useOpenWorldPreview();
   const { features } = useEdition();
@@ -406,11 +406,11 @@ export function LibraryDetailPanelMobile({
   // File-system control characters are invalid in download names.
   // eslint-disable-next-line no-control-regex
   const safeDownloadWorldName = selectedItem.name?.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+  const heroMedia = useWorldDetailMedia(selectedItem, "mobile");
   const mobileDropdownItemClass = "min-h-12 rounded-xl px-3 text-sm font-medium focus:bg-white/[0.08] focus:text-foreground data-[disabled]:opacity-50";
 
   useEffect(() => {
     setDescriptionExpanded(false);
-    setHeroImageFailed(false);
   }, [selectedItem.id]);
 
   const secondaryActionLabel = canInspectLocked
@@ -483,16 +483,18 @@ export function LibraryDetailPanelMobile({
         className="library-detail-root relative flex h-full w-full min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-foreground"
       >
           <div>
-          <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted sm:aspect-[3/2]">
-          {selectedItem.thumbnailUrl && !heroImageFailed ? (
+          <div data-world-detail-media={heroMedia.hasBanner ? "banner" : "cover"} className={heroMedia.hasBanner ? "relative aspect-[16/5] w-full shrink-0 overflow-hidden bg-muted" : "relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted sm:aspect-[3/2]"}>
+          {heroMedia.src ? (
             <CroppedImage
-              src={selectedItem.thumbnailUrl}
+              key={heroMedia.src}
+              src={heroMedia.src}
+              crop={heroMedia.crop}
               alt={selectedItem.name}
               width={1280}
               placeholder
               loading="eager"
               fetchPriority="high"
-              onError={() => setHeroImageFailed(true)}
+              onError={heroMedia.onError}
               className="absolute inset-0 h-full w-full opacity-35 grayscale"
               imgClassName="object-cover"
             />
@@ -570,16 +572,18 @@ export function LibraryDetailPanelMobile({
     >
         <div className="flex flex-col">
         {/* A taller mobile gallery reveals more of the original cover while reserving space before load. */}
-        <div className="relative z-10 aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted sm:aspect-[3/2]">
-        {selectedItem.thumbnailUrl && !heroImageFailed ? (
+        <div data-world-detail-media={heroMedia.hasBanner ? "banner" : "cover"} className={heroMedia.hasBanner ? "relative z-10 aspect-[16/5] w-full shrink-0 overflow-hidden bg-muted" : "relative z-10 aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted sm:aspect-[3/2]"}>
+        {heroMedia.src ? (
           <CroppedImage
-            src={selectedItem.thumbnailUrl}
+            key={heroMedia.src}
+            src={heroMedia.src}
+            crop={heroMedia.crop}
             alt={selectedItem.name}
             width={1280}
             placeholder
             loading="eager"
             fetchPriority="high"
-            onError={() => setHeroImageFailed(true)}
+            onError={heroMedia.onError}
             className="absolute inset-0 h-full w-full"
             imgClassName="object-cover"
           />

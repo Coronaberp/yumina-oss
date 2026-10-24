@@ -2,6 +2,8 @@ import { sql, type SQL } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import type { DrizzleDB } from "../db/index.js";
 import { MEDIA_INPUT_LIMIT, MEDIA_MIMES, MEDIA_RESERVATION, prepareSessionImage } from "./session-media-image.js";
+import { createImageMasterService, isImageMasterKey } from "./image-master-service.js";
+import { encodeImageMaster } from "./image-master-envelope.js";
 type Executor = Pick<DrizzleDB, "execute">;
 export async function mediaRows<T = Record<string, unknown>>(tx: Executor, query: SQL): Promise<T[]> {
     return (await tx.execute(query)).rows as T[];
@@ -42,9 +44,9 @@ type Upload = {
 };
 export type MediaStorage = {
     signUpload(key: string, mime: string, size: number, seconds: number): Promise<string>;
-    signRead(key: string): Promise<string>;
+    signRead(key: string, mimeType?: string): Promise<string>;
     read(key: string, max: number): Promise<Buffer>;
-    write(key: string, data: Buffer): Promise<void>;
+    write(key: string, data: Buffer, mimeType?: string, options?: { signal?: AbortSignal; contentEncoding?: "gzip"; decodedLength: number; sourceSha256: string; storedSha256: string }): Promise<void>;
     remove(key: string): Promise<void>;
 };
 export type MediaScope = {
@@ -71,7 +73,15 @@ function canonical(value: unknown): string {
         return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
     return JSON.stringify(value);
 }
-export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) {
+export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage, masters = createImageMasterService(db, {
+    encode: encodeImageMaster,
+    write: (key, bytes, mime, options) => storage.write(key, bytes, mime, options),
+})) {
+    async function signOriginal(file: FileRow) {
+        const master = isImageMasterKey(file.object_key) ? await masters.findByKey(file.user_id, "private", file.object_key) : undefined;
+        if (isImageMasterKey(file.object_key) && !master) throw new MediaError("MEDIA_NOT_FOUND", 404);
+        return storage.signRead(file.object_key, master?.mimeType ?? "image/webp");
+    }
     let ready = false;
     async function isReady(executor: Executor = db) {
         if (ready)
@@ -194,8 +204,8 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
             if (input.length !== Number(upload.input_bytes))
                 throw new MediaError("MEDIA_SIZE_MISMATCH");
             const image = await prepareSessionImage(input);
-            await storage.write(keys.main, image.main);
-            await storage.write(keys.thumbnail, image.thumbnail);
+            if (image.mimeType !== upload.content_type) throw new MediaError("MEDIA_FORMAT_MISMATCH");
+            await storage.write(keys.thumbnail, image.thumbnail, "image/webp");
             const result = await db.transaction(async (tx) => {
                 await lockOwner(tx, userId);
                 await ownSession(tx, userId, upload.session_id!);
@@ -207,8 +217,10 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
                 // until cleanup. The successful new file moves into used storage.
                 const remainingReservation = Number(upload.input_bytes) + (current.attempts.length - 1) * MEDIA_RESERVATION + (file ? image.size : 0);
                 if (!file) {
+                    const master = await masters.store({ userId, access: "private", bytes: image.main,
+                        mimeType: image.mimeType, sourceSha256: image.hash }, tx);
                     [file] = await mediaRows<FileRow>(tx, sql `INSERT INTO session_media(id,user_id,filename,hash,object_key,thumbnail_key,size_bytes,width,height)
-            VALUES(${randomUUID()},${userId},${`${upload.filename.replace(/\.[^./\\]+$/, "") || "image"}.webp`},${image.hash},${keys.main},${keys.thumbnail},${image.size},${image.width},${image.height}) RETURNING *`);
+            VALUES(${randomUUID()},${userId},${upload.filename},${image.hash},${master.key},${keys.thumbnail},${master.storedSize + image.thumbnail.length},${image.width},${image.height}) RETURNING *`);
                 }
                 const [entry] = await mediaRows<{
                     media_id: string;
@@ -253,7 +265,7 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
             present: boolean;
         }>(db, sql `SELECT EXISTS(SELECT 1 FROM session_media_refs WHERE session_id=${scope.sessionId}) AS present`) : [];
         return { initialized: !!document || !!history?.present || rows.length > 0, document: document ?? { value: {}, version: 0 }, items: await Promise.all(rows.slice(0, 50).map(async (r) => ({ id: r.id, entryId: r.entry_id, metadata: r.metadata, version: r.version,
-                filename: r.filename, sizeBytes: Number(r.size_bytes), deleted: r.status !== "ready", url: r.status === "ready" ? await storage.signRead(r.object_key) : null,
+                filename: r.filename, sizeBytes: Number(r.size_bytes), deleted: r.status !== "ready", url: r.status === "ready" ? await signOriginal(r) : null,
                 thumbnailUrl: r.status === "ready" ? await storage.signRead(r.thumbnail_key) : null }))), hasMore: rows.length > 50 };
     }
     async function ownList(userId: string, opts: {
@@ -289,7 +301,7 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
             count: number;
         }>(db, sql `SELECT count(*)::int AS count FROM session_media_refs WHERE media_id=${id}`);
         return { id: file.id, filename: file.filename, revision: file.revision, status: file.status, sizeBytes: Number(file.size_bytes), references: refs, referenceCount: counts?.count ?? 0,
-            url: file.status === "ready" ? await storage.signRead(file.object_key) : null };
+            url: file.status === "ready" ? await signOriginal(file) : null };
     }
     async function unlink(userId: string, sessionId: string, entryId: string, version: number) {
         await requireReady();
@@ -317,7 +329,9 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
         if (file.status === 'deleted')
             return { deleted: true };
         try {
-            await storage.remove(file.object_key);
+            // A canonical master may also back chat/library/import references.
+            // Revoke this logical record; proven-last-reference GC is deferred.
+            if (!isImageMasterKey(file.object_key)) await storage.remove(file.object_key);
             await storage.remove(file.thumbnail_key);
         }
         catch {
@@ -407,7 +421,7 @@ export function createSessionMediaService(db: DrizzleDB, storage: MediaStorage) 
                 }
                 for (const candidate of row.attempts) {
                     const keys = attemptKeys(row, candidate);
-                    const [owned] = await mediaRows(db, sql `SELECT id FROM session_media WHERE object_key=${keys.main} AND status<>'deleted'`);
+                    const [owned] = await mediaRows(db, sql `SELECT id FROM session_media WHERE (object_key=${keys.main} OR thumbnail_key=${keys.thumbnail}) AND status<>'deleted'`);
                     if (!owned) {
                         await storage.remove(keys.main);
                         await storage.remove(keys.thumbnail);

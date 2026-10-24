@@ -37,6 +37,30 @@ function service(repo: GenerationRepository, store: GeneratedStorage, fetcher: t
   return createImageGenerationService({ repository: repo, storage: store, fetch: fetcher, buildGreenScreenPrompt: prompt => prompt + ', green_background',
     removeGreenBackground: async bytes => bytes, pollDelayMs: 1, ...extras });
 }
+test('generic ComfyUI and Forge transparency processing passes the untouched provider source to storage', async t => {
+  for (const provider of ['comfyui', 'forgeneo'] as const) await t.test(provider, async () => {
+    const original = Buffer.from('untouched provider output with metadata');
+    const derivative = Buffer.from('explicit transparency derivative');
+    let stored = false;
+    const store = storage();
+    store.save = async (_owner, bytes, metadata, _signal, artifacts) => {
+      stored = true;
+      assert.deepEqual(bytes, derivative);
+      assert.deepEqual(artifacts?.originalBytes, original);
+      assert.equal(metadata.greenRemoved, true);
+      return { ...saved, source: metadata };
+    };
+    const engine = service(await configuredRepository(), store, mockFetch(url => {
+      if (url.pathname === '/sdapi/v1/txt2img') return json({ images: [original.toString('base64')] });
+      if (url.pathname === '/prompt') return json({ prompt_id: 'job' });
+      if (url.pathname.startsWith('/history')) return json({ job: { status: { completed: true }, outputs: {
+        x: { images: [{ filename: 'x.png', subfolder: '', type: 'output' }] } } } });
+      return new Response(original.toString());
+    }), { removeGreenBackground: async bytes => { assert.deepEqual(bytes, original); return derivative; } });
+    await engine.generate('u', { provider, prompt: 'isolated character', imageKind: 'sprite', transparent: true });
+    assert.equal(stored, true);
+  });
+});
 test('ComfyUI settings select the built-in Anima mode while preserving a return path to custom workflows', () => {
   let state = mergeGenerationSettings(defaultGenerationConfig(), { provider: 'comfyui', enabled: true,
     baseUrl: 'http://127.0.0.1:8188', workflowMode: 'anima' }, true);
@@ -141,9 +165,9 @@ test('ComfyUI and Forge Neo sprites remove green; backgrounds do not', async () 
     if (url.pathname.startsWith('/history')) return json({ job: { status: { completed: true }, outputs: { x: { images: [{ filename: 'x.png', subfolder: '', type: 'output' }] } } } });
     return new Response('pixels');
   }), { removeGreenBackground: async bytes => { greens++; return bytes; }, now: (() => { let time = 0; return () => time += 20_000; })() });
-  const sprite = await engine.generate('u', { provider: 'comfyui', prompt: '1girl', imageKind: 'sprite' });
+  const sprite = await engine.generate('u', { provider: 'comfyui', prompt: '1girl', imageKind: 'sprite', transparent: true });
   await engine.generate('u', { provider: 'comfyui', prompt: 'forest', imageKind: 'background' });
-  const forge = await engine.generate('u', { provider: 'forgeneo', prompt: '1girl, smiling person', imageKind: 'sprite' });
+  const forge = await engine.generate('u', { provider: 'forgeneo', prompt: '1girl, smiling person', imageKind: 'sprite', transparent: true });
   await engine.generate('u', { provider: 'forgeneo', prompt: 'forest', imageKind: 'background' });
   assert.equal(greens, 2); assert.deepEqual(sent, ['1girl, green_background', 'forest', '1girl, smiling person, green_background', 'forest']);
   assert.equal(sprite.source.greenRemoved, true); assert.equal(forge.source.greenRemoved, true);

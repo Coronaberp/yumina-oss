@@ -50,7 +50,7 @@ const COLLECTIONS: CollectionSpec[] = [
   { kind: "ending",   get: (w) => (w.endings as unknown as Row[]) ?? [], fields: ["name", "enabled", "priority", "routeIds", "conditions", "conditionLogic", "allowUnconditional", "outcome", "mode", "prose", "guidance"] },
 ];
 
-const META_FIELDS = ["name", "description"] as const;
+const META_FIELDS = ["name", "description", "coverCrop", "bannerImageUrl", "bannerCrop"] as const;
 
 function asText(v: unknown): string {
   if (v === undefined || v === null) return "";
@@ -126,7 +126,7 @@ export function diffWorldSchemas(
     changes.push({ kind: "meta", op: "modified", id: "settings.storyStructureEnabled", name: "Story structure", ...(detail ? { fields: [{ field: "storyStructureEnabled", before: String(prevStructured), after: String(nextStructured) }] } : {}) });
   }
 
-  // meta scalars
+  // Root metadata, including independent artwork and framing.
   for (const f of META_FIELDS) {
     const before = asText((prev as unknown as Row)[f]);
     const after = asText((next as unknown as Row)[f]);

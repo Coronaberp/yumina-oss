@@ -22,6 +22,8 @@ export interface SelectProps extends Pick<React.ComponentPropsWithoutRef<typeof 
   triggerClassName?: string;
   contentClassName?: string;
   disabled?: boolean;
+  /** Changes only the current view, so locked cards can still be browsed. */
+  browseOnly?: boolean;
 }
 
 export function Select({
@@ -35,6 +37,7 @@ export function Select({
   triggerClassName,
   contentClassName,
   disabled,
+  browseOnly = false,
   ...triggerProps
 }: SelectProps) {
   const choices = options ?? selectOptionsFromChildren(children);
@@ -55,6 +58,7 @@ export function Select({
         ref={captureTrigger}
         {...triggerProps}
         type="button"
+        data-editor-control={browseOnly ? "browse" : "select"}
         disabled={disabled}
         className={cn(
           "group flex max-w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-border bg-card text-foreground shadow-inner transition-all hover:bg-accent focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50",

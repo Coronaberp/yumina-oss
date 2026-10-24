@@ -7,6 +7,127 @@
   "additionalProperties": false,
   "required": ["version", "kind", "sprites"],
   "properties": {
+    "spriteConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "types",
+        "emotions"
+      ],
+      "properties": {
+        "types": {
+          "type": "object",
+          "required": [
+            "normal"
+          ],
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]{0,99}$"
+          },
+          "properties": {
+            "normal": {
+              "const": "Normal"
+            }
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": "Card-specific stable IDs and labels. Normal is protected. New cards seed Uniform, Casual, Controlled_Battle, Battle_Holder and Battle_Cascade; existing catalogs retain their options."
+        },
+        "emotions": {
+          "type": "object",
+          "required": [
+            "angry",
+            "sad",
+            "shy",
+            "normal",
+            "smug",
+            "happy"
+          ],
+          "maxProperties": 30,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]{0,99}$"
+          },
+          "properties": {
+            "angry": {
+              "const": "Angry"
+            },
+            "sad": {
+              "const": "Sad"
+            },
+            "shy": {
+              "const": "Shy"
+            },
+            "normal": {
+              "const": "Normal"
+            },
+            "smug": {
+              "const": "Smug"
+            },
+            "happy": {
+              "const": "Happy"
+            }
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": "Card-specific stable IDs and labels. Built-ins are protected. Warn at 20 emotions."
+        }
+      }
+    },
+    "spriteTypes": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?!normal$)[a-z][a-z0-9_-]{0,99}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/characterSprite"
+        }
+      },
+      "description": "Wardrobe ID to character inventory; sprites holds Normal. Types have no arbitrary count cap. Each character may have different expressions or no artwork."
+    },
+    "spriteVariants": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 100 } },
+      "description": "Optional stable variant IDs and display labels within each wardrobe type. Base outfits remain in sprites or spriteTypes."
+    },
+    "spriteVariantSprites": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "$ref": "#/$defs/characterSprite" } } },
+      "description": "Type to variant to character inventory. Missing expressions fall back only within the selected type and variant; missing art never borrows another costume."
+    },
+    "spriteVariantWardrobeDescriptions": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 2000 } } },
+      "description": "Character display name to type to variant to clothing description, independent of image availability."
+    },
+    "spriteChapterDefaults": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["type"],
+        "properties": { "type": { "type": "string", "minLength": 1 }, "variant": { "type": "string" } }
+      } },
+      "description": "Stable chapter-opening greeting ID to character name to starting type and optional variant. Later explicit wardrobe changes persist on the accepted story branch."
+    },
+    "spriteWardrobeDescriptions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": {
+          "pattern": "^[a-z][a-z0-9_-]{0,99}$"
+        },
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "description": "Character display name to wardrobe ID to authored clothing description. Descriptions are separate from identity and image assignments."
+    },
     "version": { "const": 1 },
     "kind": { "const": "sprite-set" },
     "npcSprites": {
@@ -43,14 +164,13 @@
           "minLength": 1,
           "maxLength": 100,
           "pattern": "\\S",
-          "description": "Exact character display name used by [SPEAKER:name:emotion] or [Name:name:emotion]."
+          "description": "Exact character display name used by [SPEAKER:name:emotion:type:variant] or [Name:name:emotion:type:variant]. Omitted type retains the current outfit; explicit type without variant selects its base."
         },
         "expressions": {
           "type": "object",
-          "required": ["normal"],
           "propertyNames": { "pattern": "^[a-z][a-z0-9_-]{0,49}$" },
           "additionalProperties": { "$ref": "#/$defs/expression" },
-          "description": "Emotion IDs map to authored cutouts. normal is the fallback. idle is an ordinary expression, not an animation instruction."
+          "description": "Only available emotion IDs map to authored cutouts. normal, or the first image in this exact outfit, is the fallback. Artwork and additional expressions are optional; prose emotions remain unrestricted."
         }
       }
     },

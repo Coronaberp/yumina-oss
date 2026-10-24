@@ -769,6 +769,7 @@ export function ChatView({
       <StoryEndingStatus overlay={vnPerspective} />
       <StoryNavigation key={sessionId} chapters={worldDef?.chapters ?? []} showTrigger={false} greetings={(worldDef?.entries ?? []).filter(entry => entry.role === "greeting" && entry.enabled !== false).sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity))} />
       <WorldRenderer
+        interfaceId={rc.interfaceId}
         dialogTheme={vnPerspective ? "vn" : undefined}
         entryFile={rc.entryFile}
         files={rc.files}

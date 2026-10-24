@@ -361,6 +361,8 @@
     "authorDoesNotAllowEditing": "Author does not allow editing"
   },
   "card": {
+    "duplicate": "Duplicate card",
+    "duplicateFailed": "Could not duplicate the card. Please try again.",
     "play": "Play",
     "editProject": "Edit Project",
     "editAsMyProject": "Edit as My Project",

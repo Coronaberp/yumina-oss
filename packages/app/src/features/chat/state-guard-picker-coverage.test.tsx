@@ -11,11 +11,14 @@ import type { StateGuardSettingsProps } from "../../../sandbox/extensions/state-
 test("guard picker callback saves independently, blocks overlapping writes, and ignores a prior chat's save", async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element, Node: dom.window.Node, CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true };
   const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const root = createRoot(document.getElementById("root")!);
   const vite = await createServer({ root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, envFile: false,
+    resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } },
     appType: "custom", logLevel: "silent", server: { middlewareMode: true, watch: null }, esbuild: { jsx: "automatic" } });
   const { StateGuardSettingsPanel } = await vite.ssrLoadModule("/sandbox/extensions/state-update-guard/settings.tsx");
   const patches: Partial<StateGuardSettings>[] = [];
@@ -79,11 +82,14 @@ test("guard picker callback saves independently, blocks overlapping writes, and 
 test("guard renders a supplied model trigger, saves its selection, and hides it while Off", async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element, Node: dom.window.Node, CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true };
   const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const root = createRoot(document.getElementById("root")!);
   const vite = await createServer({ root: fileURLToPath(new URL("../../..", import.meta.url)), configFile: false, envFile: false,
+    resolve: { alias: { "@": fileURLToPath(new URL("../..", import.meta.url)) } },
     appType: "custom", logLevel: "silent", server: { middlewareMode: true, watch: null }, esbuild: { jsx: "automatic" } });
   const { StateGuardSettingsPanel } = await vite.ssrLoadModule("/sandbox/extensions/state-update-guard/settings.tsx");
   let stored: StateGuardSettings = { enabled: true, model: null };

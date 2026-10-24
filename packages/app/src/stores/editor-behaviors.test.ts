@@ -1,3 +1,4 @@
+import { controlGlobals } from "../test/themed-controls.test-helper";
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -89,7 +90,7 @@ test("Studio keyword editing and deletion work through the rendered legacy behav
   const { JSDOM } = await import("jsdom");
   const dom = new JSDOM('<div id="root"></div>');
   const React = await import("react");
-  const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, React, IS_REACT_ACT_ENVIRONMENT: true };
+  const globals = { ...controlGlobals(dom), React };
   const descriptors = Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const { createRoot } = await import("react-dom/client");

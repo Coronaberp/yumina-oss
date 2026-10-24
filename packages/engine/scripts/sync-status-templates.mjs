@@ -20,9 +20,12 @@ let previous;
 try { previous = readFileSync(target, 'utf8'); } catch { /* First build. */ }
 if (previous !== content) writeFileSync(target, content);
 
-const personaFiles = Object.fromEntries(['player.ts', 'passages.ts', 'dialogue-spans.ts', 'choice-text.tsx', 'persona-menu.ts', 'choices.ts', 'metadata.ts', 'presentation-literals.ts', 'presentation-markup.ts', 'speaker.ts', 'speaker-tag.ts', 'expressions.ts', 'text-normalization.ts'].map(name => [name, readFileSync(new URL(name, source), 'utf8')]));
+const personaFiles = Object.fromEntries(['player.ts', 'passages.ts', 'dialogue-spans.ts', 'vn-dialogue-spans.ts', 'choice-text.tsx', 'persona-menu.ts', 'choices.ts', 'metadata.ts', 'presentation-literals.ts', 'presentation-markup.ts', 'speaker.ts', 'speaker-tag.ts', 'expressions.ts', 'text-normalization.ts'].map(name => [name, readFileSync(new URL(name, source), 'utf8')]));
 const personaTarget = new URL('../src/world/persona-templates.generated.ts', import.meta.url);
 const personaContent = '// Generated from interfaces/vn; do not edit.\nexport const personaTemplates: Record<string, string> = ' + JSON.stringify(personaFiles, null, 2) + ';\n';
 let oldPersona;
 try { oldPersona = readFileSync(personaTarget, 'utf8'); } catch {}
 if (oldPersona !== personaContent) writeFileSync(personaTarget, personaContent);
+
+// Keep the narrowly scoped saved-card sprite upgrader in step with its source.
+await import("./sync-sprite-runtime.mjs");

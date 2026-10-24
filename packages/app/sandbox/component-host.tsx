@@ -102,6 +102,7 @@ import { withVariableNameAliases } from "./variable-alias";
 import { installCompatShims, resolveShimCall, updateShimState } from "./compat-shims";
 import { syncInstalledExtensions } from "./extensions";
 import { ChatCanvas } from "./chat/chat-canvas";
+import { BuiltinChatProvider } from "./chat/builtin-chat-context";
 import { LoreSlot } from "./lore-slot";
 import { LoreButton, LorePanel, LoreGroup, LoreSwitch } from "./lore-button";
 import { Chat } from "./building-blocks/chat";
@@ -1582,6 +1583,7 @@ export function ComponentHost() {
 
   return (
     <YuminaContext.Provider value={api}>
+      <BuiltinChatProvider api={api}>
       <div
         ref={hostRef}
         data-yumina-world-root="true"
@@ -1630,6 +1632,7 @@ export function ComponentHost() {
       <MemoryPanelHostMount />
       <ContentFlagsHostMount />
       <ModelFallbackHost />
+      </BuiltinChatProvider>
     </YuminaContext.Provider>
   );
 }

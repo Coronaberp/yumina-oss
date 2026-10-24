@@ -13,6 +13,8 @@ import { USER_MUTES_STATEMENTS } from "./user-mutes-ddl.js";
 import { WORLD_AUDIENCE_DDL } from "./world-audience-ddl.js";
 import { CUSTOM_UI_PRESETS_DDL } from "./custom-ui-presets-ddl.js";
 import { CONTENT_FLAGS_DDL } from "./content-flags-ddl.js";
+import { PROVIDER_ATTEMPTS_DDL } from "./provider-attempts-ddl.js";
+import { IMAGE_MASTERS_STATEMENTS } from "./image-masters-ddl.js";
 import { IMAGE_GENERATION_DDL } from "./image-generation-ddl.js";
 import { DANBOORU_DDL } from "./danbooru-ddl.js";
 import { MEMORY_APP_DDL } from "../memory/app-ddl.js";
@@ -1499,9 +1501,11 @@ export async function ensureTables() {
   await ensureWorldsSchemaDerived();
   await ensureMessagesSwipeCount();
   await ensureContentFlags();
+  await ensureProviderAttemptTables();
   await ensureStoryhavenMemoryTables();
   await ensureDanbooruTables();
   await ensureImageGenerationTables();
+  await ensureImageMasterTables();
   console.log("[DEV] PGlite tables + indexes created");
 }
 
@@ -1616,6 +1620,10 @@ export async function ensureWorldsSchemaDerived() {
  */
 export async function ensureContentFlags(): Promise<void> {
   for (const ddl of CONTENT_FLAGS_DDL) await db.execute(sql.raw(ddl));
+}
+
+export async function ensureProviderAttemptTables(): Promise<void> {
+  for (const ddl of PROVIDER_ATTEMPTS_DDL) await db.execute(sql.raw(ddl));
 }
 
 export async function ensureMessagesSwipeCount() {
@@ -2400,6 +2408,7 @@ export async function ensureExtensionTables() {
 export async function ensureSessionContextColumns() {
   if (IS_PGLITE) return;
   await ensureContentFlags();
+  await ensureProviderAttemptTables();
   await db.execute(sql.raw(`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_enabled BOOLEAN NOT NULL DEFAULT true`));
   await db.execute(sql.raw(`ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS state_guard_model TEXT`));
   await db.execute(sql.raw(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS state_validation JSONB`));
@@ -3717,4 +3726,8 @@ export async function ensureDanbooruTables(): Promise<void> {
 
 export async function ensureImageGenerationTables(): Promise<void> {
   for (const ddl of IMAGE_GENERATION_DDL) await db.execute(sql.raw(ddl));
+}
+
+export async function ensureImageMasterTables(): Promise<void> {
+  for (const ddl of IMAGE_MASTERS_STATEMENTS) await db.execute(sql.raw(ddl));
 }

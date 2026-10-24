@@ -1,5 +1,4 @@
-/** One expression vocabulary for every character, marker and structured segment.
- * Surprise has no dedicated art in this six-state set, so it uses normal. */
+/** Built-in expressions remain the compatibility fallback for older cards. */
 export const spriteExpressions = ["normal", "happy", "sad", "angry", "shy", "smug"] as const;
 export type SpriteExpression = typeof spriteExpressions[number];
 
@@ -14,8 +13,25 @@ const aliases: Record<SpriteExpression, string[]> = {
 const expressionMap = Object.fromEntries(spriteExpressions.flatMap(expression =>
   [expression, ...aliases[expression]].map(alias => [alias, expression])));
 
-/** Normalize complete labels, never substrings such as "not angry". */
-export function normalizeSpriteExpression(value: unknown): SpriteExpression {
+/** Stable marker/catalog ID; defer aliases until the card catalog is available. */
+export function normalizeSpriteSelectionId(value: unknown): string | undefined {
+  if (typeof value !== "string" || ["__proto__", "constructor", "prototype"].includes(value.trim().toLowerCase())) return;
+  const key = typeof value === "string" ? value.trim().normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") : "";
+  return key && !/[:|\]\r\n]/.test(key) && !["constructor", "prototype"].includes(key) ? key : undefined;
+}
+
+export function normalizeSpriteId(value: unknown): string {
+  return normalizeSpriteSelectionId(value) || "normal";
+}
+
+/** Resolve exact configured IDs before legacy aliases; never match substrings. */
+export function normalizeSpriteExpression(value: unknown, configured?: Record<string, unknown>): string {
+  const id = normalizeSpriteId(value);
+  if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+    if (Object.prototype.hasOwnProperty.call(configured, id)) return id;
+    const exact = Object.keys(configured).find(key => normalizeSpriteId(key) === id);
+    if (exact) return exact;
+  }
   const key = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]+/g, " ") : "";
   return Object.prototype.hasOwnProperty.call(expressionMap, key) ? expressionMap[key]! : "normal";
 }

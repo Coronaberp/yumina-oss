@@ -1,3 +1,4 @@
+import { upgradeVnSpriteFiles } from "./vn-sprite-runtime-upgrade.js";
 import type { RootComponent, WorldDefinition } from "../types/index.js";
 import { personaTemplates } from "./persona-templates.generated.js";
 import { formattingUpgradeBases } from "./formatting-upgrade-bases.generated.js";
@@ -5,11 +6,15 @@ import { formattingUpgradeBases } from "./formatting-upgrade-bases.generated.js"
 /** Upgrade recognizable shipped VN helpers in memory; never write an authored card. */
 export function upgradePersonaRoot<T extends RootComponent | undefined>(root: T): T {
   if (!root?.files) return root;
+  try {
+    const spriteFiles=upgradeVnSpriteFiles(root.files);
+    if(spriteFiles!==root.files) return upgradePersonaRoot({...root,files:spriteFiles,compiled:undefined} as T);
+  } catch { /* Unknown authored sprite code stays intact for an explicit reviewed update. */ }
   const index = root.files[root.entryFile];
   if (!index?.includes('function Menu({ api, onClose, setPanel, settings, onSetting, busy, run })')) return root;
   const files = { ...root.files };
   const upgradeFormatting = () => {
-    const dependencies = ['presentation-literals.ts', 'presentation-markup.ts'];
+    const dependencies = ['presentation-literals.ts', 'presentation-markup.ts', 'vn-dialogue-spans.ts'];
     if (dependencies.some(name => files[name] && files[name] !== personaTemplates[name])) return;
     let changed = false;
     for (const [name, bases] of Object.entries(formattingUpgradeBases)) {
@@ -25,7 +30,7 @@ export function upgradePersonaRoot<T extends RootComponent | undefined>(root: T)
   const choiceParser = files['passages.ts'] || "";
   const compatibleChoiceParser = choiceParser.includes('export function messagePassages(api, message)')
     && choiceParser.includes('function pages(text)')
-    && choiceParser.includes('import { dialogueSpans, plainDialogue } from "./dialogue-spans";')
+    && (choiceParser.includes('import { dialogueSpans, plainDialogue } from "./dialogue-spans";') || choiceParser.includes('from "./vn-dialogue-spans";'))
     && choiceParser.includes('import { stripZeroWidthSpaces } from "./text-normalization";')
     && Boolean(files['dialogue-spans.ts'] && files['text-normalization.ts']);
   if (source.includes(oldPlayerLine) && compatibleChoiceParser) {

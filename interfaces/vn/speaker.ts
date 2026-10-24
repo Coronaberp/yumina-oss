@@ -1,3 +1,4 @@
+import type { DialogueSpan } from "./dialogue-spans";
 // Adapted from the existing Yumina chat speaker parser; presentation only.
 /**
  * Which character is "speaking" an assistant message — drives the portrait +
@@ -15,7 +16,8 @@
  *      that, it is narration and keeps the plain label.
  */
 import { displayCharacterName, characterIdentifiers, canonicalCharacterName, NARRATOR_SPEAKER, parseLeadingSpeakerTag, isPartialLeadingSpeakerTag } from "./speaker-tag";
-import { dialogueSpans, plainDialogue, speechAttribution, legacyQuoteSpeakers } from "./dialogue-spans";
+import { speechAttribution, legacyQuoteSpeakers } from "./dialogue-spans";
+import { vnDialogueSpans as dialogueSpans } from "./vn-dialogue-spans";
 
 export { displayCharacterName, isPartialLeadingSpeakerTag };
 
@@ -120,6 +122,8 @@ export interface SpeakerSection {
   text: string;
   /** Prose to render, with an explicit `Name:` label moved into the header. */
   content: string;
+  /** Retain classification across speaker sections rather than parsing fragments again. */
+  spans?: DialogueSpan[];
 }
 
 /** Split the display text, never the raw provider output: display rules and
@@ -139,6 +143,7 @@ export function splitSpeakerSections(
   const characters = (entries ?? []).filter(
     e => e.role === "character" && e.enabled !== false && displayCharacterName(e.name).length > 0,
   ).slice().sort((a, b) => displayCharacterName(b.name).length - displayCharacterName(a.name).length);
+  const names = characters.map(e => displayCharacterName(e.name));
   const prefix = "^(\\s*)(?:\\*\\*|\\*|__|_|【|\\[|「|\\()?";
   const suffix = "(?:\\*\\*|\\*|__|_|】|\\]|」|\\))?\\s*[:：][\\t ]*";
   const identifiers = characterIdentifiers(characters.map(e => displayCharacterName(e.name)));
@@ -167,6 +172,8 @@ export function splitSpeakerSections(
 
   // Only cut outside fenced blocks. Retain the whole message when raw HTML
   // containers are present; a split must not leave unbalanced DOM fragments.
+  const protectedSpans = dialogueSpans(content, names).filter(span => span.kind !== "text");
+  const insideSpan = (offset: number) => protectedSpans.some(span => offset > span.end - span.text.length && offset < span.end);
   const cuts = new Set([0]);
   let offset = 0;
   let blankStart: number | undefined;
@@ -185,9 +192,9 @@ export function splitSpeakerSections(
       blankStart ??= offset;
     } else {
       if (blankStart !== undefined) {
-        if (blankStart > 0) cuts.add(blankStart);
+        if (blankStart > 0 && !insideSpan(blankStart)) cuts.add(blankStart);
         blankStart = undefined;
-      } else if (offset > 0 && explicitLabel(line)) {
+      } else if (offset > 0 && !insideSpan(offset) && explicitLabel(line)) {
         cuts.add(offset);
       }
       if (marker) fence = { char: marker[1]![0]!, length: marker[1]!.length };
@@ -196,17 +203,17 @@ export function splitSpeakerSections(
   }
   const starts = [...cuts].sort((a, b) => a - b);
   const sections: SpeakerSection[] = [];
-  const names = characters.map(e => displayCharacterName(e.name));
-  const recovered = tag.speaker ? new Map<number, string>() : legacyQuoteSpeakers(content, names);
+  const recovered = tag.speaker ? new Map<number, string>() : legacyQuoteSpeakers(content, names, dialogueSpans(content, names));
   const paragraphCharacter = (text: string) => isIndentedCode(text) ? undefined : characters.find(e => new RegExp(
     `${prefix}${escapeRegExp(displayCharacterName(e.name))}(?=$|[\\s:：,，.!?。！？]|['’]s\\b|\\*|_|】|\\]|」|\\))`, "i",
   ).test(text));
-  const append = (speaker: Speaker | null, text: string, content: string) => {
+  const append = (speaker: Speaker | null, text: string, content: string, span: DialogueSpan) => {
     const previous = sections.at(-1);
     if (previous && previous.speaker?.name === speaker?.name && previous.speaker?.portrait === speaker?.portrait) {
       previous.text += text;
       previous.content += content;
-    } else sections.push({ speaker, text, content });
+      previous.spans!.push({ ...span, text: content });
+    } else sections.push({ speaker, text, content, spans: [{ ...span, text: content }] });
   };
   for (let i = 0; i < starts.length; i++) {
     const text = content.slice(starts[i], starts[i + 1] ?? content.length);
@@ -214,7 +221,12 @@ export function splitSpeakerSections(
     const prose = label?.content ?? text;
     const named = paragraphCharacter(prose);
     let context = label ? label.speaker : pinSpeaker || (i === 0 && hasInitialSpeaker) ? initialSpeaker : characters.length === 1 ? toSpeaker(characters[0]!) : null;
-    const spans = isIndentedCode(prose) ? [{ kind: "literal" as const, text: prose, end: prose.length }] : dialogueSpans(prose);
+    const spans = isIndentedCode(prose) ? [{ kind: "literal" as const, text: prose, end: prose.length }] : dialogueSpans(prose, names);
+    const adjacentAttribution = (index: number) => {
+      const neighbor = spans[index];
+      return neighbor?.kind === "action" && /^(?:\*(?!\*)|_(?!_))/.test(neighbor.text)
+        ? speechAttribution(neighbor.text, names) : null;
+    };
     let previousDialogueEnd = 0;
     let pendingText = "";
     let pendingContent = "";
@@ -260,13 +272,20 @@ export function splitSpeakerSections(
         // Plain `Name: dialogue` remains compatible. Unlabelled prose and
         // all italic actions are narrator text, even in one-character worlds.
         resolved = label.speaker;
+      } else if (span.kind === "text" && !pinSpeaker) {
+        const before = adjacentAttribution(j - 1), after = adjacentAttribution(j + 1);
+        const attribution = after?.matched ? after : before;
+        if (attribution?.matched && attribution.name && !(before?.matched && after?.matched && before.name !== after.name)) {
+          const attributed = characters.find(entry => displayCharacterName(entry.name) === attribution.name);
+          resolved = attributed ? toSpeaker(attributed) : null;
+        }
       }
-      append(resolved, pendingText + source, pendingContent + (span.kind === "dialogue" ? plainDialogue(span.text) : span.text));
+      append(resolved, pendingText + source, pendingContent + span.text, span);
       pendingText = ""; pendingContent = "";
     }
     if (pendingText) {
       const previous = sections.at(-1);
-      if (previous) { previous.text += pendingText; previous.content += pendingContent; }
+      if (previous) { previous.text += pendingText; previous.content += pendingContent; previous.spans!.at(-1)!.text += pendingContent; }
     }
   }
   return sections;

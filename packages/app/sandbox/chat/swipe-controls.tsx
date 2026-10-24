@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useYumina } from "../sandbox-context";
+import { useBuiltinChat } from "./builtin-chat-context";
 import { makeChatT } from "./i18n";
 
 interface SwipeControlsProps {
@@ -12,7 +12,7 @@ interface SwipeControlsProps {
 }
 
 export function SwipeControls({ message }: SwipeControlsProps) {
-  const api = useYumina();
+  const api = useBuiltinChat();
   const t = useMemo(() => makeChatT(api.language), [api.language]);
 
   const swipes = message.swipes ?? [];

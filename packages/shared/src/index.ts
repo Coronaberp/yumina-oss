@@ -1,3 +1,4 @@
+export type { ModelRoutingRecord } from "./types/model-routing.js";
 // Types
 export * from "./studio-task.js";
 export { sessionArchiveSchema, archiveMessageSchema, archiveMediaReferences, replaceArchiveMediaReferences, ARCHIVE_MAX_FILE_BYTES, ARCHIVE_MAX_MEDIA_BYTES, ARCHIVE_MAX_ASSET_BYTES } from "./session-archive.js";

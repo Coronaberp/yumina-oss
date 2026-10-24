@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { VN_BACKGROUND_TEMPLATE, readVnAssetMap, readVnOpeningScenes, readVnNpcSpritePools, type WorldDefinition } from "@yumina/engine";
+import { VN_BACKGROUND_TEMPLATE, readVnAssetMap, readVnOpeningScenes, readVnNpcSpritePools, readVnSpriteSets, type WorldDefinition } from "@yumina/engine";
 import { executeApplyChanges, toolCallsToSchemaChanges } from "./tool-executor.js";
 import { executeListVnAssets } from "./vn-asset-tools.js";
 import { READ_TOOL_NAMES, WRITE_TOOL_NAMES } from "./tools.js";
@@ -43,6 +43,30 @@ test("two assignments parsed together accumulate and retain authored source", ()
   assert.equal(changed.rootComponent!.files["index.tsx"], original.rootComponent!.files["index.tsx"]);
   assert.equal(readVnAssetMap(original.rootComponent!.files["sprites.ts"]!, "sprites").Alice instanceof Object, true);
   assert.ok(!original.rootComponent!.files["sprites.ts"]!.includes("@asset:happy"));
+});
+
+test("wardrobe descriptions use built-in batches and list description-only characters", () => {
+  const original = world();
+  const changed = apply(original,
+    { kind: "sprites", action: "add_option", optionKind: "types", label: "Uniform" },
+    { kind: "sprites", action: "set_wardrobe_description", name: "Alice", spriteType: "uniform", description: "A blue blazer and silver boots." },
+    { kind: "sprites", action: "set_wardrobe_description", name: "Clara", spriteType: "normal", description: "A green dress." });
+  const inventory = executeListVnAssets(changed, { kind: "sprites", name: "alice", spriteType: "uniform" });
+  assert.deepEqual(inventory.wardrobeDescriptions, [{ name: "Alice", spriteType: "uniform", spriteVariant: "", description: "A blue blazer and silver boots." }]);
+  assert.deepEqual(inventory.characters, ["Alice"]);
+  assert.ok(executeListVnAssets(changed, { kind: "sprites" }).characters?.includes("Clara"));
+  assert.deepEqual(readVnSpriteSets(changed.rootComponent!.files["sprites.ts"]!), readVnSpriteSets(original.rootComponent!.files["sprites.ts"]!));
+  const cleared = apply(changed, { kind: "sprites", action: "set_wardrobe_description", name: "alice", spriteType: "uniform", description: "" });
+  assert.deepEqual(executeListVnAssets(cleared, { kind: "sprites", name: "Alice" }).wardrobeDescriptions, []);
+});
+
+test("wardrobe description operations reject missing fields and incompatible scopes", () => {
+  for (const args of [
+    { kind: "sprites", action: "set_wardrobe_description", name: "Alice", description: "Coat" },
+    { kind: "sprites", action: "set_wardrobe_description", name: "Alice", spriteType: "normal" },
+    { kind: "sprites", action: "set_wardrobe_description", npcGender: "male", name: "Alice", spriteType: "normal", description: "Coat" },
+    { kind: "backgrounds", action: "set_wardrobe_description", name: "Alice", spriteType: "normal", description: "Coat" },
+  ]) assert.ok(toolCallsToSchemaChanges(calls(args), world())[0]?.error);
 });
 
 test("opening and Global scene/default assignments are isolated", () => {
@@ -128,4 +152,105 @@ test("agent receives VN tools and help and the packaged resolver matches the act
     lorebookHealth: { alwaysCount: 0, alwaysTokens: 0, pseudoAlwaysCount: 0, pseudoAlwaysTokens: 0, totalTokens: 0, topEntries: [], overBudget: false, reasons: [] } });
   assert.match(prompt.static, /edit_vn_assets/);
   assert.equal(VN_BACKGROUND_TEMPLATE, readFileSync(new URL("../../../../../interfaces/vn/scenes.ts", import.meta.url), "utf8"));
+});
+
+
+test("typed assignments and catalog edits preserve Normal and expose card-specific options", () => {
+  const changed = apply(world(),
+    { kind: "sprites", action: "add_option", optionKind: "types", label: "Battle Wear" },
+    { kind: "sprites", action: "add_option", optionKind: "emotions", label: "Embarrassed" },
+    { kind: "sprites", action: "assign", name: "Alice", spriteType: "battle-wear", variant: "embarrassed", assetRef: "@asset:battle" });
+  const source = changed.rootComponent!.files["sprites.ts"]!;
+  assert.deepEqual(readVnAssetMap(source, "sprites").Alice, { normal: "@asset:old" });
+  assert.deepEqual(readVnSpriteSets(source)["battle-wear"]!.Alice, { embarrassed: "@asset:battle" });
+  const inventory = executeListVnAssets(changed, { kind: "sprites", spriteType: "battle-wear" });
+  assert.equal(inventory.spriteConfig!.types["battle-wear"], "Battle Wear");
+  assert.equal(inventory.spriteConfig!.emotions.embarrassed, "Embarrassed");
+  assert.equal(inventory.rows![0]!.spriteType, "battle-wear");
+  assert.equal(inventory.rows![0]!.id, '["battle-wear","Alice","embarrassed"]');
+  const renamed = apply(changed, { kind: "sprites", action: "rename_option", optionKind: "types", optionId: "battle-wear", label: "Battle Uniform" });
+  assert.equal(executeListVnAssets(renamed, {}).spriteConfig!.types["battle-wear"], "Battle Uniform");
+  const removed = apply(renamed, { kind: "sprites", action: "remove_option", optionKind: "types", optionId: "battle-wear" });
+  assert.equal(readVnSpriteSets(removed.rootComponent!.files["sprites.ts"]!)["battle-wear"], undefined);
+  assert.deepEqual(readVnAssetMap(removed.rootComponent!.files["sprites.ts"]!, "sprites"), readVnAssetMap(source, "sprites"));
+});
+
+test("sprite options reject incompatible scopes and protect built-ins", () => {
+  for (const input of [
+    { kind: "backgrounds", action: "add_option", optionKind: "types", label: "Battle" },
+    { kind: "sprites", action: "assign", npcGender: "male", name: "guard", spriteType: "battle", assetRef: "@asset:guard" },
+    { kind: "backgrounds", action: "assign", name: "garden", spriteType: "normal", assetRef: "@asset:garden" },
+    { kind: "sprites", action: "add_option", optionKind: "types" },
+  ]) assert.ok(toolCallsToSchemaChanges(calls(input), world())[0]!.error);
+  const original = world();
+  const parsed = toolCallsToSchemaChanges(calls({ kind: "sprites", action: "remove_option", optionKind: "emotions", optionId: "normal" }), original);
+  assert.equal(executeApplyChanges(original, [parsed[0]!.change!]).success, false);
+});
+
+
+test("Studio caps and warning use the card's own catalog", () => {
+  let current = world();
+  for (let index = 0; index < 6; index++) current = apply(current, { kind: "sprites", action: "add_option", optionKind: "types", label: `Outfit ${index}` });
+  for (let index = 0; index < 14; index++) current = apply(current, { kind: "sprites", action: "add_option", optionKind: "emotions", label: `Emotion ${index}` });
+  assert.equal(executeListVnAssets(current, {}).warnings!.length, 1);
+  assert.equal(Object.keys(executeListVnAssets(world(), {}).spriteConfig!.types).length, 1);
+  const parsed = toolCallsToSchemaChanges(calls({ kind: "sprites", action: "add_option", optionKind: "types", label: "More outfits" }), current);
+  assert.equal(executeApplyChanges(current, [parsed[0]!.change!]).success, true);
+  for (let index = 14; index < 24; index++) current = apply(current, { kind: "sprites", action: "add_option", optionKind: "emotions", label: `Emotion ${index}` });
+  const overflow = toolCallsToSchemaChanges(calls({ kind: "sprites", action: "add_option", optionKind: "emotions", label: "Overflow" }), current);
+  assert.equal(executeApplyChanges(current, [overflow[0]!.change!]).success, false);
+});
+
+test("typed subset reorder preserves rows hidden in another wardrobe", () => {
+  const current = apply(world(),
+    { kind: "sprites", action: "add_option", optionKind: "types", label: "Battle" },
+    { kind: "sprites", action: "assign", name: "Alice", spriteType: "battle", variant: "happy", assetRef: "@asset:battlehappy" },
+    { kind: "sprites", action: "assign", name: "Alice", spriteType: "battle", variant: "sad", assetRef: "@asset:battlesad" });
+  const rows = executeListVnAssets(current, { spriteType: "battle" }).rows!;
+  const changed = apply(current, { kind: "sprites", action: "reorder", spriteType: "battle", order: rows.map(row => row.id).reverse() });
+  assert.equal(executeListVnAssets(changed, {}).rows!.length, 4);
+  assert.equal(JSON.parse(changed.rootComponent!.files["vn-asset-order.json"]!)["sprites:character"].length, 4);
+});
+
+test("variant tools isolate assignments, descriptions, inventory and stable row IDs", () => {
+  let current = apply(world(), { kind: "sprites", action: "add_variant", spriteType: "normal", label: "Rain coat" });
+  current = apply(current,
+    { kind: "sprites", action: "assign", name: "Alice", spriteType: "normal", spriteVariant: "rain-coat", variant: "normal", assetRef: "@asset:rain" },
+    { kind: "sprites", action: "set_wardrobe_description", name: "Alice", spriteType: "normal", spriteVariant: "rain-coat", description: "A red rain coat." });
+  const variant = executeListVnAssets(current, { name: "Alice", spriteType: "normal", spriteVariant: "rain-coat" });
+  assert.equal(variant.editable, true);
+  if (!variant.editable || !("rows" in variant)) throw Error("Expected editable inventory");
+  assert.equal(variant.rows!.length, 1);
+  assert.equal(variant.rows![0]!.assetRef, "@asset:rain");
+  assert.equal(variant.wardrobeDescriptions![0]!.description, "A red rain coat.");
+  assert.deepEqual(variant.outfits![0]!.availableExpressions, ["normal"]);
+  assert.equal(variant.spriteLimits!.types, null);
+  const base = executeListVnAssets(current, { name: "Alice", spriteType: "normal", spriteVariant: "" });
+  if (!("rows" in base)) throw Error("Expected base inventory");
+  assert.notEqual(base.rows![0]!.id, variant.rows![0]!.id);
+  current = apply(current, { kind: "sprites", action: "remove", name: "Alice", spriteType: "normal", spriteVariant: "rain-coat", variant: "normal" });
+  assert.deepEqual(readVnSpriteSets(current.rootComponent!.files["sprites.ts"]!).normal!.Alice, { normal: "@asset:old" });
+});
+
+test("chapter outfit tools use separate greeting scope without changing shared assignment scope", () => {
+  let current = apply(world(), { kind: "sprites", action: "set_chapter_outfit", chapterOpeningId: "opening-one", name: "Alice", spriteType: "normal" });
+  assert.match(current.rootComponent!.files["sprites.ts"]!, /spriteChapterDefaults/);
+  current = apply(current, { kind: "sprites", action: "clear_chapter_outfit", chapterOpeningId: "opening-one", name: "Alice" });
+  const invalid = toolCallsToSchemaChanges(calls({ operations: [
+    { kind: "sprites", action: "assign", name: "Alice", assetRef: "@asset:new" },
+    { kind: "sprites", action: "set_chapter_outfit", name: "Alice", spriteType: "normal" },
+  ] }), current);
+  assert.ok(invalid[0]!.error);
+});
+
+ test("outfit and wardrobe catalogs use bounded independent pagination", () => {
+  let source = world();
+  for (let index = 0; index < 12; index++) source = apply(source, { kind: "sprites", action: "add_option", optionKind: "types", label: "Outfit " + index });
+  const first = executeListVnAssets(source, { limit: 5 });
+  assert.equal(first.spriteTypeTotal, 13);
+  assert.equal(first.nextSpriteTypeOffset, 5);
+  assert.equal(Object.keys(first.spriteConfig!.types).length, 5);
+  const next = executeListVnAssets(source, { offset: 5, limit: 5 });
+  assert.equal(Object.keys(next.spriteConfig!.types).length, 5);
+  assert.equal(Object.keys(next.spriteConfig!.types).some(id => Object.hasOwn(first.spriteConfig!.types, id)), false);
 });

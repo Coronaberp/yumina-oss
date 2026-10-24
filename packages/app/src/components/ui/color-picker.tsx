@@ -15,7 +15,7 @@ export function ColorPicker({ value, onValueChange, className, ...props }: Color
   const [draft, setDraft] = useState(value);
   const valid = /^#[\da-f]{6}$/i.test(draft);
   return <DropdownMenu open={open} onOpenChange={next => { if (next) setDraft(value); setOpen(next); }}>
-    <DropdownMenuTrigger {...props} type="button" aria-label={props["aria-label"] ?? "Color"}
+    <DropdownMenuTrigger {...props} type="button" data-editor-control="color" aria-label={props["aria-label"] ?? "Color"}
       className={cn("inline-flex h-10 w-14 shrink-0 items-center justify-center rounded-lg border border-border bg-card p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40", className)}>
       <span aria-hidden="true" className="h-full min-h-4 w-full rounded-sm border border-foreground/15" style={{ backgroundColor: value }} />
     </DropdownMenuTrigger>

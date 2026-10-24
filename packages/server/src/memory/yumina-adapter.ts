@@ -71,6 +71,8 @@ export interface TurnContextInput {
   /** Available space in the complete prompt, not an independent memory allowance. */
   memoryBudgetTokens?: number;
   characterEntryIds?: string[];
+  /** Request-only placeholder values, never part of canonical lore/source hashes. */
+  loreWardrobeValues?: Record<string, string>;
 }
 /** Internal route provenance, captured before the story reply queues memory. */
 export async function rememberStoryhavenModelRoute(sessionId: string, actingUserId: string, model: string, profileId?: string): Promise<void> {
@@ -627,6 +629,7 @@ export async function retrieveStoryhavenMemory(
     }).retrieveBlock({
       ...temporaryCtx,
       loreEntries: keyword,
+      loreWardrobeValues: input.loreWardrobeValues,
       memoryBudgetTokens: requestBudget,
       ...(input.memoryBudgetTokens !== undefined ? { promptTokenCounter: (text: string) => estimateTokens(text, input.model ?? ctx.model) } : {}),
     });

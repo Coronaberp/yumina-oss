@@ -1,3 +1,5 @@
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
+import { useSession } from "@/lib/auth-client";
 import { confirmAction } from "@/components/ui/global-confirm-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
@@ -5,7 +7,7 @@ import { StoryStructureTabs } from "./components/story-structure-tabs";
 import { LoreMemoryFields } from "./components/lore-memory-fields";
 import { GreetingNameField } from "./components/greeting-name-field";
 import { useStoryNavigation } from "@/hooks/use-story-navigation";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Save,
@@ -97,6 +99,8 @@ import {
   recomposeIndex,
 } from "./visual-layer-helpers";
 import { importWithChunkRecovery } from "@/lib/stale-chunk-reload";
+import { saveEditorMode, saveGlobalEditorMode } from "@/lib/editor-mode";
+export { getEditorMode, getGlobalEditorMode, saveEditorMode, saveGlobalEditorMode } from "@/lib/editor-mode";
 const VersionHistoryDialog = lazy(() =>
   importWithChunkRecovery(() => import("./version-history-dialog")).then((m) => ({
     default: m.VersionHistoryDialog,
@@ -105,48 +109,6 @@ const VersionHistoryDialog = lazy(() =>
 import type { YuminaBundle } from "@yumina/engine";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
-
-/* ─── Editor mode persistence ─── */
-
-const EDITOR_MODE_KEY = "yumina-editor-mode";
-
-export function saveEditorMode(worldId: string, mode: "simple" | "advanced") {
-  try {
-    const data = JSON.parse(localStorage.getItem(EDITOR_MODE_KEY) || "{}");
-    data[worldId] = mode;
-    localStorage.setItem(EDITOR_MODE_KEY, JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
-}
-
-export function getEditorMode(worldId: string): "simple" | "advanced" | null {
-  try {
-    const data = JSON.parse(localStorage.getItem(EDITOR_MODE_KEY) || "{}");
-    return data[worldId] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-const GLOBAL_MODE_KEY = "yumina-editor-mode-global";
-
-export function getGlobalEditorMode(): "simple" | "advanced" | null {
-  try {
-    const val = localStorage.getItem(GLOBAL_MODE_KEY);
-    return val === "simple" || val === "advanced" ? val : null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveGlobalEditorMode(mode: "simple" | "advanced") {
-  try {
-    localStorage.setItem(GLOBAL_MODE_KEY, mode);
-  } catch {
-    /* ignore */
-  }
-}
 
 /* ─── Tag conventions ─── */
 
@@ -820,60 +782,110 @@ function ArchetypeLabel({ archetype }: { archetype: "chat" | "world" }) {
 }
 
 /* ─── Cover ─── */
+
+interface CardMediaTarget {
+  check: (signal?: AbortSignal) => void;
+  cancel: () => void;
+  begin: (signal: AbortSignal) => boolean;
+  end: (success: boolean) => void;
+  worldId: (signal?: AbortSignal) => Promise<string>;
+}
+
+// Keep an upload attached to the exact draft, account and destination that opened it.
+function useCardMediaTarget(onRetire: () => void) {
+  const ownerId = useSession().data?.user.id;
+  const owner = useRef(ownerId);
+  const retireCallback = useRef(onRetire);
+  useLayoutEffect(() => { owner.current = ownerId; retireCallback.current = onRetire; });
+  const revision = useRef(0);
+  const alive = useRef(true);
+  const retire = useCallback(() => { revision.current++; retireCallback.current(); }, []);
+  useEffect(() => {
+    alive.current = true;
+    const unsubscribe = useEditorStore.subscribe((next, previous) => {
+      if (next.worldDraft.id !== previous.worldDraft.id ||
+          (previous.serverWorldId && next.serverWorldId !== previous.serverWorldId) ||
+          (!previous.readOnlyInspect && next.readOnlyInspect) ||
+          (!previous.editingLocked && next.editingLocked) || (!previous.guestMode && next.guestMode)) retire();
+    });
+    return () => { alive.current = false; unsubscribe(); };
+  }, [retire]);
+  useLayoutEffect(() => { retire(); }, [ownerId, retire]);
+  const capture = useCallback((field: "avatar" | "galleryImages"): CardMediaTarget => {
+    const initial = useEditorStore.getState();
+    const token = revision.current;
+    const account = owner.current;
+    const draftId = initial.worldDraft.id;
+    let worldId = initial.serverWorldId;
+    let active = true, running = false;
+    const value = field === "avatar" ? initial.worldDraft.avatar : initial.galleryImages;
+    const check = (signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      const current = useEditorStore.getState();
+      if (!active || !alive.current || token !== revision.current || owner.current !== account ||
+          current.worldDraft.id !== draftId || (worldId && current.serverWorldId !== worldId) ||
+          current.readOnlyInspect || current.editingLocked || current.guestMode ||
+          (field === "avatar" ? current.worldDraft.avatar : current.galleryImages) !== value) {
+        throw new DOMException("The image destination changed.", "AbortError");
+      }
+    };
+    return { check, cancel: () => { active = false; },
+      begin: signal => { check(signal); if (running) return false; running = true; return true; },
+      end: success => { running = false; if (success) active = false; },
+      worldId: async signal => {
+      check(signal);
+      if (!worldId) { await useEditorStore.getState().saveDraft(); check(signal); worldId = useEditorStore.getState().serverWorldId; }
+      if (!worldId) throw new Error("Save this world before adding an image.");
+      return worldId;
+    } };
+  }, []);
+  return { capture, retire };
+}
+
 function CoverSection() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { t } = useTranslation("editor") as { t: (key: string) => string };
   const worldDraft = useEditorStore((s) => s.worldDraft);
-  const serverWorldId = useEditorStore((s) => s.serverWorldId);
-  const saveDraft = useEditorStore((s) => s.saveDraft);
   const setField = useEditorStore((s) => s.setField);
   const guestMode = useEditorStore((s) => s.guestMode);
   const { requireAuth } = useAuthGuard();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const ensureWorldId = async (): Promise<string | null> => {
-    let id = serverWorldId;
-    if (!id) {
-      await saveDraft();
-      id = useEditorStore.getState().serverWorldId;
-    }
-    if (!id) {
-      setError(t("simple.needWorldName"));
-      return null;
-    }
-    return id;
+  const activeUpload = useRef<CardMediaTarget | null>(null);
+  const [imageImport, setImageImport] = useState<CardMediaTarget | null>(null);
+  const media = useCardMediaTarget(() => { setImageImport(null); setUploading(false); activeUpload.current = null; });
+  const openImport = () => {
+    if (guestMode) { requireAuth("create worlds"); return; }
+    setImageImport(media.capture("avatar"));
   };
 
-  const handleUpload = async (file: File) => {
-    if (guestMode) { requireAuth("create worlds"); return; }
-    setUploading(true);
-    setError(null);
+  const handleUpload = async (files: File[], context: ImageImportContext) => {
+    if (!imageImport || !files[0]) return;
+    if (!imageImport.begin(context.signal)) return;
+    let success = false; activeUpload.current = imageImport;
+    setUploading(true); setError(null);
     try {
-      const id = await ensureWorldId();
-      if (!id) return;
+      const id = await imageImport.worldId(context.signal);
       const data = await uploadAssetWithPresignedUrl<{ thumbnailUrl: string }>({
-        file,
-        preferredType: "image",
+        file: files[0], preferredType: "image",
         prepareUrl: `${apiBase}/api/worlds/${id}/thumbnail`,
         registerUrl: `${apiBase}/api/worlds/${id}/thumbnail/confirm`,
-        registerBody: ({ key }) => ({ key }),
+        registerBody: ({ key }) => ({ key }), signal: context.signal, onProgress: context.onProgress,
       });
-      // The thumbnail swaps in place — nothing to announce.
+      imageImport.check(context.signal);
       setField("avatar", data.thumbnailUrl);
-    } catch (err) {
-      setError(getAssetUploadErrorMessage(err));
-    } finally {
-      setUploading(false);
-    }
+      success = true;
+    } catch (error) {
+      if (activeUpload.current === imageImport && !context.signal.aborted && error instanceof Error && error.name !== "AbortError") setError(getAssetUploadErrorMessage(error));
+      throw error;
+    } finally { imageImport.end(success); if (activeUpload.current === imageImport) { activeUpload.current = null; setUploading(false); } }
   };
 
   return (
     <Card n={1} icon={Camera} title={t("simple.cover.title")} hint={t("simple.cover.hint")} accent="cyan" optional>
       <div className="flex items-center gap-5">
         <button
-          onClick={() => inputRef.current?.click()}
+          onClick={openImport}
           disabled={uploading}
           className="group relative flex h-32 w-32 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-cyan-400/40"
         >
@@ -897,7 +909,7 @@ function CoverSection() {
             dangerouslySetInnerHTML={{ __html: t("simple.cover.aspectHint") }}
           />
           <button
-            onClick={() => inputRef.current?.click()}
+            onClick={openImport}
             disabled={uploading}
             className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-cyan-400/40 hover:bg-cyan-500/5 disabled:opacity-40"
           >
@@ -907,17 +919,7 @@ function CoverSection() {
           <FieldError id="simple-cover-error" message={error} />
         </div>
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/gif,image/webp"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) handleUpload(f);
-          e.target.value = "";
-        }}
-      />
+      {imageImport && <ImageImportDialog title="Upload portrait card cover" crop="none" preserveOriginal maxFiles={1} maxBytes={Infinity} accept="image/jpeg,image/png,image/gif,image/webp" onImport={handleUpload} onClose={() => media.retire()} />}
     </Card>
   );
 }
@@ -1753,49 +1755,42 @@ function MoreDisclosure({ onOpenFullEditor }: { onOpenFullEditor: () => void }) 
   const language = useEditorStore((s) => s.language);
   const setLanguage = useEditorStore((s) => s.setLanguage);
   const serverWorldId = useEditorStore((s) => s.serverWorldId);
-  const saveDraft = useEditorStore((s) => s.saveDraft);
   const guestMode = useEditorStore((s) => s.guestMode);
   const { requireAuth } = useAuthGuard();
 
   const [uploading, setUploading] = useState(false);
   const [removingIdx, setRemovingIdx] = useState<number | null>(null);
   const [galleryError, setGalleryError] = useState<string | null>(null);
-  const galleryRef = useRef<HTMLInputElement>(null);
-
-  const ensureWorldId = async (): Promise<string | null> => {
-    let id = serverWorldId;
-    if (!id) {
-      await saveDraft();
-      id = useEditorStore.getState().serverWorldId;
-    }
-    if (!id) {
-      setGalleryError(t("simple.needWorldName"));
-      return null;
-    }
-    return id;
+  const activeUpload = useRef<CardMediaTarget | null>(null);
+  const [imageImport, setImageImport] = useState<CardMediaTarget | null>(null);
+  const media = useCardMediaTarget(() => { setImageImport(null); setUploading(false); activeUpload.current = null; });
+  const openImport = () => {
+    if (guestMode) { requireAuth("create worlds"); return; }
+    if (useEditorStore.getState().galleryImages.length >= 8) return;
+    setImageImport(media.capture("galleryImages"));
   };
 
-  const handleGalleryUpload = async (file: File) => {
-    if (guestMode) { requireAuth("create worlds"); return; }
-    setUploading(true);
-    setGalleryError(null);
+  const handleGalleryUpload = async (files: File[], context: ImageImportContext) => {
+    if (!imageImport || !files[0]) return;
+    if (useEditorStore.getState().galleryImages.length >= 8) throw new Error("Gallery is limited to eight images.");
+    if (!imageImport.begin(context.signal)) return;
+    let success = false; activeUpload.current = imageImport;
+    setUploading(true); setGalleryError(null);
     try {
-      const id = await ensureWorldId();
-      if (!id) return;
+      const id = await imageImport.worldId(context.signal);
       const data = await uploadAssetWithPresignedUrl<{ url: string; galleryImages: string[] }>({
-        file,
-        preferredType: "image",
+        file: files[0], preferredType: "image",
         prepareUrl: `${apiBase}/api/worlds/${id}/gallery/upload-url`,
         registerUrl: `${apiBase}/api/worlds/${id}/gallery/confirm`,
-        registerBody: ({ key }) => ({ key }),
+        registerBody: ({ key }) => ({ key }), signal: context.signal, onProgress: context.onProgress,
       });
-      // The new tile appears in the grid below — nothing to announce.
-      setGalleryImages([...galleryImages, data.url]);
-    } catch (err) {
-      setGalleryError(getAssetUploadErrorMessage(err));
-    } finally {
-      setUploading(false);
-    }
+      imageImport.check(context.signal);
+      setGalleryImages([...useEditorStore.getState().galleryImages, data.url]);
+      success = true;
+    } catch (error) {
+      if (activeUpload.current === imageImport && !context.signal.aborted && error instanceof Error && error.name !== "AbortError") setGalleryError(getAssetUploadErrorMessage(error));
+      throw error;
+    } finally { imageImport.end(success); if (activeUpload.current === imageImport) { activeUpload.current = null; setUploading(false); } }
   };
 
   const handleGalleryRemove = async (i: number) => {
@@ -1870,24 +1865,14 @@ function MoreDisclosure({ onOpenFullEditor }: { onOpenFullEditor: () => void }) 
               </div>
             ))}
             <button
-              onClick={() => galleryRef.current?.click()}
-              disabled={uploading}
+              onClick={openImport}
+              disabled={uploading || galleryImages.length >= 8}
               className="flex aspect-video items-center justify-center rounded-lg border border-dashed border-border transition-colors hover:border-primary/30 hover:bg-primary/5 disabled:opacity-40"
             >
               {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5 text-muted-foreground/40" />}
             </button>
           </div>
-          <input
-            ref={galleryRef}
-            type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleGalleryUpload(f);
-              e.target.value = "";
-            }}
-          />
+          {imageImport && <ImageImportDialog title="Upload gallery image" crop="none" preserveOriginal maxFiles={1} maxBytes={Infinity} accept="image/jpeg,image/png,image/gif,image/webp" onImport={handleGalleryUpload} onClose={() => media.retire()} />}
           <FieldError id="simple-gallery-error" message={galleryError} />
         </div>
 

@@ -28,6 +28,7 @@ export interface TurnSwipe {
   createdAt: string;
   model?: string;
   modelFallback?: import("@yumina/shared").ModelFallbackRecord;
+  modelRouting?: import("@yumina/shared").ModelRoutingRecord;
   tokenCount?: number;
   creditCost?: number;
   creditBalanceAfter?: number;
@@ -65,4 +66,9 @@ export function appendRegenSwipe(
     swipes.length - 1,
   );
   return { swipes, activeSwipeIndex };
+}
+
+/** The live-state fallback returned for pruned swipes is not a historical snapshot. */
+export function swipeStateSnapshot(data: { state?: Record<string, unknown> | null; stateRestored?: boolean }): Record<string, unknown> | null {
+  return data.stateRestored === false ? null : data.state ?? null;
 }

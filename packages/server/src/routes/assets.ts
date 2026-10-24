@@ -8,17 +8,21 @@ import {
   generateUploadUrl,
   deleteObject,
   storageKind,
-  getObjectBuffer,
-  putObject,
-  headObject,
 } from "../lib/s3.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import type { AppEnv } from "../lib/types.js";
 import { normalizeAssetMimeType } from "../lib/asset-mime.js";
 import { applyWorldCover } from "../lib/pending-edit.js";
-import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
+import { losslessWebpKey } from "../lib/image-optimization.js";
+import { imageMasters, storeUploadedImage, isImageMasterKey, validSourceSha256, ImageMasterError } from "../lib/image-masters.js";
+import { uploadOperationId, validUploadRequestId } from "../lib/asset-upload-operation.js";
 
 const assetRoutes = new Hono<AppEnv>();
+assetRoutes.onError((error, c) => {
+  if (error instanceof ImageMasterError) return c.json({ error: error.message }, error.status);
+  console.error("Asset operation failed", error);
+  return c.json({ error: "Asset operation failed" }, 500);
+});
 const ASSET_TYPES = ["image", "video", "audio", "font", "txt", "other"] as const;
 type AssetType = (typeof ASSET_TYPES)[number];
 
@@ -95,9 +99,12 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
     filename: string;
     contentType?: string;
     type: string;
+    requestId?: string;
+    sourceSha256?: string;
     sizeBytes?: number;
   }>();
 
+  if (!validSourceSha256(body.sourceSha256) || !validUploadRequestId(body.requestId)) return c.json({ error: "Invalid upload identity" }, 400);
   if (!body.filename || !body.type) {
     return c.json({ error: "filename and type are required" }, 400);
   }
@@ -120,6 +127,22 @@ assetRoutes.post("/worlds/:worldId/assets/upload-url", async (c) => {
 
   if (!(await verifyWorldOwnership(worldId, currentUser.id))) {
     return c.json({ error: "World not found or not authorized" }, 404);
+  }
+
+  if (body.requestId) {
+    const id = uploadOperationId(`${currentUser.id}:world:${worldId}`, "file", body.requestId);
+    const [existing] = await db.select().from(assets).where(and(eq(assets.id, id), eq(assets.worldId, worldId))).limit(1);
+    if (existing) {
+      if (body.sourceSha256 && (await imageMasters.findByKey(currentUser.id, "public", existing.url))?.sourceSha256 !== body.sourceSha256.toLowerCase()) return c.json({ error: "Upload request conflicts with an earlier image" }, 409);
+      return c.json({ data: { asset: { ...existing, url: storageKind() === "local" ? `/cdn/${existing.id}` : resolveImageCdn(existing.url) ?? "", key: existing.url } } });
+    }
+  }
+  if (assetType === "image" && body.sourceSha256) {
+    const master = await imageMasters.find(currentUser.id, "public", body.sourceSha256);
+    if (master) {
+      if (body.sizeBytes !== undefined && body.sizeBytes !== master.originalSize) return c.json({ error: "Image size does not match this source hash" }, 409);
+      return c.json({ data: { key: master.key, reused: true } });
+    }
   }
 
   // Generate S3 key
@@ -147,8 +170,11 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
     type: string;
     mimeType?: string;
     sizeBytes: number;
+    requestId?: string;
+    sourceSha256?: string;
   }>();
 
+  if (!validSourceSha256(body.sourceSha256) || !validUploadRequestId(body.requestId)) return c.json({ error: "Invalid upload identity" }, 400);
   if (!body.key || !body.filename || !body.type) {
     return c.json({ error: "key, filename, and type are required" }, 400);
   }
@@ -158,7 +184,8 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
   }
 
   // Validate key belongs to this world
-  if (!body.key.startsWith(`worlds/${worldId}/`)) {
+  const canonical = body.type === "image" && isImageMasterKey(body.key);
+  if (!canonical && !body.key.startsWith(`worlds/${worldId}/`)) {
     return c.json({ error: "Invalid asset key" }, 400);
   }
 
@@ -167,36 +194,31 @@ assetRoutes.post("/worlds/:worldId/assets", async (c) => {
   }
 
   const mimeType = normalizeAssetMimeType(body.filename, body.mimeType);
-  if (body.type === "image") {
-    const [existing] = await db.select().from(assets).where(and(eq(assets.worldId, worldId), inArray(assets.url, [body.key, losslessWebpKey(body.key)]))).limit(1);
-    if (existing) {
-      const url = storageKind() === "local" ? `/cdn/${existing.id}` : resolveImageCdn(existing.url) ?? "";
-      return c.json({ data: { ...existing, url } }, 201);
-    }
+  const allowed = ALLOWED_MIME_TYPES[body.type];
+  if (allowed.length && !allowed.includes(mimeType)) return c.json({ error: "Invalid asset MIME type" }, 400);
+  if (canonical && !await imageMasters.findByKey(currentUser.id, "public", body.key)) return c.json({ error: "Image master not found" }, 404);
+  const id = body.requestId ? uploadOperationId(`${currentUser.id}:world:${worldId}`, "file", body.requestId)
+    : body.type === "image" ? uploadOperationId(`${currentUser.id}:world:${worldId}`, "file", JSON.stringify([body.key, body.filename])) : crypto.randomUUID();
+  const [existing] = await db.select().from(assets).where(and(eq(assets.id, id), eq(assets.worldId, worldId))).limit(1);
+  if (existing) {
+    if (body.sourceSha256 && (await imageMasters.findByKey(currentUser.id, "public", existing.url))?.sourceSha256 !== body.sourceSha256.toLowerCase()) return c.json({ error: "Upload request conflicts with an earlier image" }, 409);
+    return c.json({ data: { ...existing, url: storageKind() === "local" ? `/cdn/${existing.id}` : resolveImageCdn(existing.url) ?? "" } }, 201);
   }
-  const stored = body.type === "image"
-    ? await optimizeUploadedImage({ key: body.key, filename: body.filename, mimeType, sizeBytes: (await headObject(body.key)).contentLength }, { read: getObjectBuffer, write: putObject })
+  const image = body.type === "image" ? await storeUploadedImage({ userId: currentUser.id, key: body.key, mimeType, sourceSha256: body.sourceSha256 }) : undefined;
+  const stored = image ? { key: image.key, filename: body.filename, mimeType: image.mimeType, sizeBytes: image.originalSize }
     : { key: body.key, filename: body.filename, mimeType, sizeBytes: body.sizeBytes };
-
-  const [result] = await db
-    .insert(assets)
-    .values({
-      worldId,
-      type: body.type,
-      filename: stored.filename,
-      url: stored.key, // Store object key, not presigned URL
-      sizeBytes: stored.sizeBytes,
-      mimeType: stored.mimeType,
-    })
-    .returning();
-
-  // Only discard the staging image after the converted object is registered.
-  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
+  const [inserted] = await db.insert(assets).values({ id, worldId, type: body.type, filename: stored.filename, url: stored.key, sizeBytes: stored.sizeBytes, mimeType: stored.mimeType }).onConflictDoNothing().returning();
+  const result = inserted ?? (await db.select().from(assets).where(and(eq(assets.id, id), eq(assets.worldId, worldId))).limit(1))[0];
+  if (!result) return c.json({ error: "Asset registration could not be reconciled" }, 409);
+  if (!inserted && body.sourceSha256 && (await imageMasters.findByKey(currentUser.id, "public", result.url))?.sourceSha256 !== body.sourceSha256.toLowerCase()) {
+    return c.json({ error: "Upload request conflicts with an earlier image" }, 409);
+  }
+  if (stored.key !== body.key && !isImageMasterKey(body.key)) await deleteObject(body.key).catch(() => {});
 
   // Return with CDN URL
   const downloadUrl = storageKind() === "local"
     ? `/cdn/${result!.id}`
-    : resolveImageCdn(stored.key) ?? "";
+    : resolveImageCdn(result.url) ?? "";
 
   return c.json(
     {
@@ -291,7 +313,7 @@ assetRoutes.delete("/worlds/:worldId/assets/:id", async (c) => {
   }
 
   // Delete from S3
-  if (isS3Configured()) {
+  if (isS3Configured() && !isImageMasterKey(rows[0]!.url)) {
     try {
       await deleteObject(rows[0]!.url);
     } catch { /* S3 delete failed — still remove DB record */ }
@@ -310,7 +332,8 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
 
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean; sizeBytes?: number }>();
+  const body = await c.req.json<{ filename: string; contentType: string; animated?: boolean; sourceSha256?: string; sizeBytes?: number }>();
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
 
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
@@ -327,6 +350,13 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
 
+  if (body.sourceSha256) {
+    const master = await imageMasters.find(currentUser.id, "public", body.sourceSha256);
+    if (master) {
+      if (body.sizeBytes !== undefined && body.sizeBytes !== master.originalSize) return c.json({ error: "Image size does not match this source hash" }, 409);
+      return c.json({ data: { key: master.key, reused: true } });
+    }
+  }
   const ext = body.filename.split(".").pop() ?? "png";
   // `.anim.` marks an animated cover (the uploader sniffs the file): the app
   // paints its still first frame from the CDN and fades the animation in, so a
@@ -345,21 +375,23 @@ assetRoutes.post("/worlds/:worldId/thumbnail", async (c) => {
 assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
   const currentUser = c.get("user");
   const worldId = c.req.param("worldId");
-  const body = await c.req.json<{ key: string }>();
-
-  if (!body.key || !body.key.startsWith(`worlds/${worldId}/thumbnail/`)) {
+  const body = await c.req.json<{ key: string; sourceSha256?: string; sizeBytes?: number }>();
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
+  if (!body.key || (!isImageMasterKey(body.key) && !body.key.startsWith(`worlds/${worldId}/thumbnail/`))) {
     return c.json({ error: "Invalid thumbnail key" }, 400);
   }
 
   if (!(await verifyWorldOwnership(worldId, currentUser.id))) {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
-  const keys = [body.key, losslessWebpKey(body.key)];
+  const verified = isImageMasterKey(body.key) ? await imageMasters.findByKey(currentUser.id, "public", body.key) : await imageMasters.findUpload(currentUser.id, "public", body.key);
+  if ((isImageMasterKey(body.key) && !verified) || (verified && body.sourceSha256 && verified.sourceSha256 !== body.sourceSha256.toLowerCase())) return c.json({ error: "Image master not found or upload hash changed" }, 409);
+  const keys = [body.key, losslessWebpKey(body.key), ...(verified ? [verified.key] : [])];
   const [pendingCover] = await db.select({ thumbnailUrl: worldPendingEdits.thumbnailUrl }).from(worldPendingEdits).where(and(eq(worldPendingEdits.worldId, worldId), inArray(worldPendingEdits.thumbnailUrl, keys))).limit(1);
   if (pendingCover?.thumbnailUrl) return c.json({ data: { thumbnailUrl: resolveImageCdn(pendingCover.thumbnailUrl) ?? pendingCover.thumbnailUrl, heldForReview: true } });
   const [currentCover] = await db.select({ thumbnailUrl: worlds.thumbnailUrl }).from(worlds).where(and(eq(worlds.id, worldId), inArray(worlds.thumbnailUrl, keys))).limit(1);
   if (currentCover?.thumbnailUrl) return c.json({ data: { thumbnailUrl: resolveImageCdn(currentCover.thumbnailUrl) ?? currentCover.thumbnailUrl, heldForReview: false } });
-  const stored = await optimizeUploadedImage({ key: body.key, filename: body.key.split("/").pop()!, mimeType: normalizeAssetMimeType(body.key), sizeBytes: 0 }, { read: getObjectBuffer, write: putObject });
+  const stored = await storeUploadedImage({ userId: currentUser.id, key: body.key, mimeType: verified?.mimeType, sourceSha256: body.sourceSha256 });
 
   // For a published world the cover is a material change: hold it for re-review
   // instead of overwriting the live cover.
@@ -368,7 +400,7 @@ assetRoutes.post("/worlds/:worldId/thumbnail/confirm", async (c) => {
     return c.json({ error: applied.error, ...(applied.code ? { code: applied.code } : {}) }, applied.status);
   }
 
-  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
+  if (stored.key !== body.key && !isImageMasterKey(body.key)) await deleteObject(body.key).catch(() => {});
 
   return c.json({ data: { thumbnailUrl: applied.thumbnailUrl, heldForReview: applied.held } });
 });

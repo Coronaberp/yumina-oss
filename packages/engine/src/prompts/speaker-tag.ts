@@ -1,4 +1,5 @@
 import type { WorldDefinition, WorldEntry } from "../types/index.js";
+import { readVnSpriteConfig, readVnSpriteVariants, VN_SPRITE_DEFAULT_EMOTIONS, type VnSpriteConfig } from "../world/vn-assets.js";
 import { personaControlInstructions, type PersonaControlMode } from '@yumina/shared';
 
 /**
@@ -114,7 +115,19 @@ function usesVnSpeakerFormat(world: SpeakerFormatWorld): boolean {
 export const CHOICE_TEXT_FORMAT = 'Wrap choice actions in single asterisks, e.g. *Inspect the cup*, and dialogue in double quotes, e.g. "Can you explain?". A choice may combine an action and dialogue. Write the exact proposed player speech rather than an instruction to say it. Escape dialogue quotes inside the JSON strings. Whenever a choice names the player, use the literal token {{user}}, including in spoken self-introductions such as "My name is {{user}}." Use {{user}}\'s for a possessive. Never invent or substitute a personal name for the player; preserve NPC names. The interface substitutes the selected persona name locally. {{user}} represents the complete selected name: never append fill-in placeholders such as [Surname] or [Your name]. Do not invent the player\'s education, rank, abilities, possessions or payment history; use the supplied persona and authoritative state.';
 const VN_CHOICE_FORMAT = 'For EVERY playable turn, generate 2–4 distinct, concrete actions or replies that the player can choose next. Include exactly one [CHOICES: ["Option one", "Option two"]] block after the story passages, using a valid JSON array of nonempty strings. Never omit choices, return an empty array, or use "..." as a generated option for an ongoing story; the interface adds its own custom-response button. Do not perform a choice or write its outcome before the player selects it. Omit choices only for an explicitly ended story. ' + CHOICE_TEXT_FORMAT;
 const VN_NPC_FORMAT = 'For an undefined NPC whose gender is established in the story, extend the marker to [SPEAKER:NPC:emotion:male:stable-id] or [SPEAKER:NPC:emotion:female:stable-id], for example [SPEAKER:NPC:normal:male:academy-clerk]. Reuse that hidden stable-id and gender across all passages and future turns for the same NPC. The visible label is always NPC; do not output NPC A/B/C. Never infer gender from a name alone. If gender or identity is unknown, keep [SPEAKER:NPC:emotion] without inventing metadata. Never add NPC gender metadata to a defined character or Narrator.';
-const VN_EXPRESSION_FORMAT = 'The emotion field must be ONLY one of these six sprite expressions: normal, happy, sad, angry, shy, smug. Choose the closest available expression; never invent an expression name. Use angry for irritated, annoyed or furious; happy for amused or joyful; sad for worried or hurt; shy for embarrassed or blushing; smug for haughty, arrogant or condescending. Surprise, shock, confusion and unknown emotions use normal. Narrator always uses normal.';
+function vnSpriteFormat(world: SpeakerFormatWorld): string {
+  let config: VnSpriteConfig = { types: { normal: "Normal" }, emotions: { ...VN_SPRITE_DEFAULT_EMOTIONS } };
+  let variants: ReturnType<typeof readVnSpriteVariants> = {};
+  try {
+    const source = world.rootComponent?.files["sprites.ts"] || "export const sprites = {};";
+    config = readVnSpriteConfig(source);
+    variants = readVnSpriteVariants(source);
+  }
+  catch { /* Legacy executable maps stay supported without evaluating authored code. */ }
+  const nested = Object.entries(variants).filter(([, options]) => Object.keys(options).length)
+    .map(([type, options]) => `${type}: ${Object.keys(options).join(", ")}`).join("; ");
+  return `Sprite emotions: ${Object.keys(config.emotions).join(", ")}. Sprite types: ${Object.keys(config.types).join(", ")}. Use only configured type and variant IDs. Select a wardrobe with [SPEAKER:Name:emotion:type], or a nested variant with [SPEAKER:Name:emotion:type:variant]. ${nested ? `Variants by type: ${nested}. ` : ""}Omitting type keeps the current outfit, including its variant. An explicit type without a variant selects that type's base outfit. Opening defaults apply until a later valid outfit marker changes them. Available image expressions are scoped to each character and exact outfit in current visual context; use its default image expression when there is no matching image, and normal when that outfit has no art. Never borrow art from another outfit. Describe emotions freely in prose; image availability does not limit character emotions or story choices. Narrator always uses normal. NPC gender and stable-id fields retain their existing meaning and are never wardrobe types or variants.`;
+}
 const VN_STORY_CONSISTENCY = 'Continue from the latest actual player input; a selected action has already been chosen. React to its consequences instead of asking the player to choose it again or repeating name-registration steps. The {{user}} identity is distinct from every NPC, including similarly spelled roster names; never interpret a player self-introduction as summoning an NPC. Keep incidental NPCs distinct from defined characters and preserve established gender, species and identity; a shared appearance does not establish that two people are the same person. Stage directions and third-person actions belong to Narrator, outside spoken quotes. A generic NPC marker never authorizes player speech. Narrative outcomes must agree with the authoritative game-state and valid declared updates: spending, rewards, injuries, time advancement and registration cannot be completed in prose while omitting their corresponding mechanics. Derive clock times and durations consistently from the authoritative clock; do not invent contradictory countdowns or bell counts. Do not equate ordinary excitement or exertion with sexual arousal, or invent the player\'s private feelings. Preserve confirmed scene commitments and advance the current event rather than replaying an already resolved beat.';
 
 export function buildVnTurnReminder(world: SpeakerFormatWorld, personaControlMode?: PersonaControlMode): string {
@@ -125,7 +138,7 @@ export function buildVnTurnReminder(world: SpeakerFormatWorld, personaControlMod
     "This VN output contract takes precedence over older style instructions that make markers optional or request an unstructured ending.",
     `Known character names: ${names.join(", ")}.`,
     "Prefix EVERY spoken passage, including each new quote after an action, with [SPEAKER:Name:emotion]. Use the exact known character name; never omit the speaker or replace the name with a pronoun.",
-    VN_EXPRESSION_FORMAT,
+    vnSpriteFormat(world),
     "For a character without a defined character entry, use [SPEAKER:NPC:emotion]. Every dialogue passage needs an identifier, including incidental NPCs without a portrait.",
     VN_NPC_FORMAT,
     "Narration and actions use [SPEAKER:Narrator:normal] and *italics*. Keep them separate from dialogue. Never write she/he/they says, asks, whispers, or other pronoun speech attribution.",
@@ -147,7 +160,7 @@ export function buildSpeakerFormatBlock(world: SpeakerFormatWorld, personaContro
       "Follow this VN output contract even when older authored style text calls markers optional or asks for free-form roleplay.",
       `Character names: ${names.join(", ")}.`,
       "Use the authored VN markers. Prefix EVERY spoken passage with [SPEAKER:Name:emotion], preserving the exact character name and expression; [Name:Name:emotion] is also supported.",
-      VN_EXPRESSION_FORMAT,
+      vnSpriteFormat(world),
       "For a character without a defined character entry, use [SPEAKER:NPC:emotion]. Every dialogue passage needs an identifier, including incidental NPCs without a portrait.",
       VN_NPC_FORMAT,
       "For narration use [SPEAKER:Narrator:normal]. Keep every action and description in its own *italic* narration passage, separate from spoken text.",

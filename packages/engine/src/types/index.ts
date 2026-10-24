@@ -24,6 +24,8 @@ export interface Variable {
   defaultValue: number | string | boolean | Record<string, unknown> | unknown[];
   /** Authoring-only JSON source; runtime uses defaultValue. */
   defaultValueText?: string;
+  /** Optional choices for a text variable; VN authoring and preview dropdowns. */
+  enumValues?: string[];
   description?: string;
   min?: number;
   max?: number;
@@ -608,6 +610,10 @@ export interface WorldDefinition {
   coverCrop?: CoverCropSettings;
   /** Crop framing for the cover when it appears as a gallery preview image. */
   galleryCoverCrop?: CoverCropSettings;
+  /** Optional page-banner image, stored as a stable @asset:UUID reference; empty clears it. */
+  bannerImageUrl?: string;
+  /** Independent framing for the optional page banner. */
+  bannerCrop?: CoverCropSettings;
   entries: WorldEntry[];
   variables: Variable[];
   rules: Rule[];

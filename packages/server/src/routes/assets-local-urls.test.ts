@@ -1,16 +1,20 @@
 import "../test/database-fixture.js";
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
-import { db } from "../db/index.js";
+import { db, ensureImageMasterTables } from "../db/index.js";
 import { user, worlds, worldPendingEdits } from "../db/schema.js";
 import { assets } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import sharp from "sharp";
 import { getLocalDiskStorage } from "../lib/s3.js";
+import { createHash } from "node:crypto";
+import { ImageMasterError } from "../lib/image-masters.js";
 import { assetRoutes } from "./assets.js";
 import { worldRoutes } from "./worlds.js";
 import type { AppEnv } from "../lib/types.js";
+
+after(async () => { if ("close" in db.$client && !db.$client.closed) await db.$client.close(); });
 
 test("world asset upload and listing use browser-relative local URLs", async () => {
   const uid = crypto.randomUUID(); const worldId = crypto.randomUUID();
@@ -37,7 +41,7 @@ test("world asset upload and listing use browser-relative local URLs", async () 
   assert.equal(rows.find(row => row.id === asset.id)!.url, `/cdn/${asset.id}`);
 });
 
-test("covers and gallery uploads use lossless WebP and reconcile confirmations after staging cleanup", async () => {
+test("covers and gallery uploads preserve original files and reconcile confirmations after staging cleanup", async () => {
   const uid = crypto.randomUUID();
   await db.insert(user).values({ id: uid, name: "Lossless covers", email: `${uid}@test.local` });
   const app = new Hono<AppEnv>();
@@ -61,9 +65,10 @@ test("covers and gallery uploads use lossless WebP and reconcile confirmations a
     const [row] = status === "published"
       ? await db.select({ key: worldPendingEdits.thumbnailUrl }).from(worldPendingEdits).where(eq(worldPendingEdits.worldId, worldId))
       : await db.select({ key: worlds.thumbnailUrl }).from(worlds).where(eq(worlds.id, worldId));
-    assert.match(row!.key!, /\.webp$/);
+    assert.match(row!.key!, /\/image-masters\/public\/[a-f0-9]{64}\.png$/);
+    assert.deepEqual((await storage.getObjectBuffer(row!.key!)).buffer,input);
     await assert.rejects(storage.headObject(key));
-    assert.equal((await storage.headObject(row!.key!)).contentType, "image/webp");
+    assert.equal((await storage.headObject(row!.key!)).contentType, "image/png");
     // A committed confirmation reconciles without any storage reads, including
     // during an outage after the source has already been removed.
     const originalRead = storage.getObjectBuffer;
@@ -78,13 +83,13 @@ test("covers and gallery uploads use lossless WebP and reconcile confirmations a
     const gallery = await post(`/${worldId}/gallery/confirm`, galleryKey);
     assert.equal(gallery.status, 200, await gallery.clone().text());
     const galleryBody = await gallery.json() as {data:{galleryImages:string[]}};
-    assert.match(galleryBody.data.galleryImages[0]!, /\.webp$/);
+    assert.equal(galleryBody.data.galleryImages[0]!, row!.key, "cover and gallery bind independently to one original master");
     await assert.rejects(storage.headObject(galleryKey));
     assert.deepEqual(await (await post(`/${worldId}/gallery/confirm`, galleryKey)).json(), galleryBody);
   }
 });
 
-test("world image uploads register and serve lossless WebP with compressed storage metadata", async () => {
+test("world image uploads register and serve byte-exact originals with matching metadata", async () => {
   const uid = crypto.randomUUID(); const worldId = crypto.randomUUID();
   await db.insert(user).values({ id: uid, name: "Lossless assets", email: `${uid}@test.local` });
   await db.insert(worlds).values({ id: worldId, creatorId: uid, name: "Lossless assets", schema: {} });
@@ -92,22 +97,60 @@ test("world image uploads register and serve lossless WebP with compressed stora
   app.use("*", async (c, next) => { c.set("user", { id: uid } as AppEnv["Variables"]["user"]); await next(); });
   for (const route of assetRoutes.routes.filter(r => r.path === "/worlds/:worldId/assets")) app.on(route.method, route.path, route.handler);
   const original = await sharp({ create: { width: 100, height: 100, channels: 4, background: "#12345680" } }).png({ compressionLevel: 0 }).toBuffer();
-  const key = `worlds/${worldId}/image/test.png`;
+  const key = `worlds/${worldId}/image/test.jpg`;
   const storage = getLocalDiskStorage();
-  await storage.putObject(key, original, "image/png");
-  const response = await app.request(`/worlds/${worldId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, filename: "test.png", type: "image", mimeType: "image/png", sizeBytes: 1 }) });
+  await storage.putObject(key, original, "image/jpeg");
+  const response = await app.request(`/worlds/${worldId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, filename: "test.jpg", type: "image", mimeType: "image/jpeg", sizeBytes: 1 }) });
   assert.equal(response.status, 201, await response.clone().text());
   const asset = (await response.json() as { data: {id:string;filename:string;mimeType:string;sizeBytes:number} }).data;
-  assert.equal(asset.filename, "test.webp");
-  assert.equal(asset.mimeType, "image/webp");
+  assert.equal(asset.filename, "test.jpg");
+  assert.equal(asset.mimeType, "image/png");
   const [stored] = await db.select().from(assets).where(eq(assets.id, asset.id));
-  assert.match(stored!.url, /\.webp$/);
+  assert.match(stored!.url, /\/image-masters\/public\/[a-f0-9]{64}\.png$/);
   const object = await storage.getObjectBuffer(stored!.url);
-  assert.equal(object.contentType, "image/webp");
+  assert.equal(object.contentType, "image/png");
   assert.equal(object.buffer.length, asset.sizeBytes);
-  assert.ok(asset.sizeBytes < original.length);
-  assert.deepEqual(await sharp(object.buffer).raw().toBuffer(), await sharp(original).raw().toBuffer());
-  const retried = await app.request(`/worlds/${worldId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, filename: "test.png", type: "image", mimeType: "image/png", sizeBytes: 1 }) });
+  assert.equal(asset.sizeBytes, original.length);
+  assert.deepEqual(object.buffer, original);
+  const retried = await app.request(`/worlds/${worldId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, filename: "test.jpg", type: "image", mimeType: "image/jpeg", sizeBytes: 1 }) });
   assert.equal(retried.status, 201, await retried.clone().text());
   assert.equal((await retried.json() as {data:{id:string}}).data.id, asset.id);
+});
+
+
+test("world preflight reuse keeps independent logical rows and deletion preserves sibling original", async () => {
+  const uid = crypto.randomUUID(), worldId = crypto.randomUUID();
+  await db.insert(user).values({ id: uid, name: "Reuse fixture", email: `${uid}@test.local` });
+  await db.insert(worlds).values({ id: worldId, creatorId: uid, name: "Reuse fixture", schema: {} });
+  const app = new Hono<AppEnv>();
+  app.use("*", async(c,next)=>{c.set("user",{id:uid} as AppEnv["Variables"]["user"]);await next();});
+  app.onError((error,c)=>error instanceof ImageMasterError?c.json({error:error.message},error.status):c.json({error:"fixture failed"},500));
+  for(const r of assetRoutes.routes.filter(r=>r.path.startsWith("/worlds/:worldId/assets"))) if(r.path!=="/*") app.on(r.method,r.path,r.handler);
+  for(const r of assetRoutes.routes.filter(r=>r.path==="/worlds/:worldId/thumbnail"))app.on(r.method,r.path,r.handler);
+  const galleryPrepare=worldRoutes.routes.filter(r=>r.path==="/:id/gallery/upload-url"&&r.method==="POST").at(-1)!;app.on("POST",galleryPrepare.path,galleryPrepare.handler);
+  const path=`/worlds/${worldId}/assets`,post=(url:string,body:unknown)=>app.request(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const bytes=await sharp({create:{width:10,height:8,channels:4,background:"#12345678"}}).withMetadata().png().toBuffer();
+  const sourceSha256=createHash("sha256").update(bytes).digest("hex");
+  const firstRequest={filename:"first.png",type:"image",contentType:"image/png",requestId:crypto.randomUUID(),sourceSha256};
+  const p=await post(`${path}/upload-url`,firstRequest);assert.equal(p.status,200);const prepared=(await p.json() as {data:{key:string}}).data;
+  await getLocalDiskStorage().putObject(prepared.key,bytes,"image/png");
+  const firstResponse=await post(path,{...firstRequest,key:prepared.key,mimeType:"image/png",sizeBytes:bytes.length});assert.equal(firstResponse.status,201,await firstResponse.clone().text());
+  const first=(await firstResponse.json() as {data:{id:string}}).data;
+  const secondRequest={...firstRequest,filename:"different.jpeg",contentType:"image/jpeg",requestId:crypto.randomUUID()};
+  const reused=(await (await post(`${path}/upload-url`,secondRequest)).json() as {data:{key:string;reused:boolean;uploadUrl?:string}}).data;
+  assert.equal(reused.reused,true);assert.equal(reused.uploadUrl,undefined);
+  const secondResponse=await post(path,{...secondRequest,key:reused.key,mimeType:"image/jpeg",sizeBytes:bytes.length});assert.equal(secondResponse.status,201);
+  const second=(await secondResponse.json() as {data:{id:string;filename:string}}).data;assert.notEqual(second.id,first.id);assert.equal(second.filename,"different.jpeg");
+  assert.equal((await app.request(`${path}/${first.id}`,{method:"DELETE"})).status,200);
+  assert.deepEqual((await getLocalDiskStorage().getObjectBuffer(reused.key)).buffer,bytes);
+  for(const endpoint of [`/worlds/${worldId}/thumbnail`,`/${worldId}/gallery/upload-url`]){
+    const hit=await post(endpoint,{filename:"same-bytes.jpg",contentType:"image/jpeg",sourceSha256,sizeBytes:bytes.length});assert.equal(hit.status,200,await hit.clone().text());
+    const value=(await hit.json() as {data:{key:string;reused:boolean}}).data;assert.equal(value.reused,true);assert.equal(value.key,reused.key);
+    assert.equal((await post(endpoint,{filename:"same-bytes.jpg",contentType:"image/jpeg",sourceSha256,sizeBytes:bytes.length+1})).status,409);
+  }
+});
+
+
+test("image master bootstrap is idempotent through the real prepared DB facade", async () => {
+ await ensureImageMasterTables(); await ensureImageMasterTables();
 });

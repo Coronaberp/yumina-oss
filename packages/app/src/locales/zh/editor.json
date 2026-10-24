@@ -8,7 +8,13 @@
     "openingBackgrounds": "开场：{{name}}",
     "openingNumber": "开场 {{number}}",
     "globalBackgroundsHint": "所有开场共用。编辑某个开场的背景不会改变此集合。",
-    "openingBackgroundsHint": "选择此开场时使用。相同场景优先使用此集合，其他场景使用全局背景。"
+    "openingBackgroundsHint": "选择此开场时使用。相同场景优先使用此集合，其他场景使用全局背景。",
+    "addBackground": "添加背景",
+    "backgroundDropHint": "填写场景和时段，然后将图片拖到这里或选择文件。",
+    "singleBackground": "请每次添加一张背景，以便正确分配场景和时段。",
+    "searchBackgrounds": "搜索场景或时段",
+    "backgroundCount": "{{count}}张背景",
+    "backgroundCount_other": "{{count}}张背景"
   },
   "twoTapConfirm": "再点一次确认",
   "shell": {
@@ -1996,5 +2002,15 @@
     "library": "从素材库选",
     "uploading": "上传中…",
     "failed": "上传失败：{{name}}"
+  },
+  "spriteManager": {
+    "addCharacter": "添加角色",
+    "characterName": "角色名称",
+    "searchCharacters": "搜索角色",
+    "noMatches": "没有匹配结果，请尝试其他名称。",
+    "characterHint": "选择服装，再为这个角色添加表情。",
+    "outfitDescription": "这套服装的穿着描述",
+    "outfitPlaceholder": "描述衣服、配饰和鞋子…",
+    "outfitHint": "故事中选择{{type}}时，会为{{character}}使用此描述。固定的外貌特征请保留在角色设定中。"
   }
 }

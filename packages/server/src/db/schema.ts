@@ -544,6 +544,7 @@ export const messages = pgTable("messages", {
         createdAt: string;
         model?: string;
         modelFallback?: import("@yumina/shared").ModelFallbackRecord;
+        modelRouting?: import("@yumina/shared").ModelRoutingRecord;
         tokenCount?: number;
         creditCost?: number;
         creditBalanceAfter?: number;
@@ -579,6 +580,36 @@ export const messages = pgTable("messages", {
   index("messages_session_created_idx").on(t.sessionId, t.createdAt),
   index("messages_session_compacted_idx").on(t.sessionId, t.compacted),
   index("messages_session_summaryception_compacted_idx").on(t.sessionId, t.summaryceptionCompacted),
+]);
+
+/** New byte-exact masters only; references remain independent asset/card rows.
+ * Shared orphan reclamation is deferred instead of risking referenced originals. */
+export const imageMasters = pgTable("image_masters", {
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  accessClass: text("access_class").notNull(),
+  sourceSha256: text("source_sha256").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  mimeType: text("mime_type").notNull(),
+  originalSize: bigint("original_size", { mode: "number" }).notNull(),
+  storedSize: bigint("stored_size", { mode: "number" }).notNull(),
+  storedSha256: text("stored_sha256").notNull(),
+  contentEncoding: text("content_encoding"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [
+  primaryKey({ columns: [t.userId, t.accessClass, t.sourceSha256] }),
+  check("image_masters_access_check", sql`${t.accessClass} IN ('public','private')`),
+  check("image_masters_source_check", sql`${t.sourceSha256} ~ '^[a-f0-9]{64}$'`),
+  check("image_masters_stored_check", sql`${t.storedSha256} ~ '^[a-f0-9]{64}$'`),
+  check("image_masters_sizes_check", sql`${t.originalSize} > 0 AND ${t.storedSize} > 0`),
+  check("image_masters_encoding_check", sql`${t.contentEncoding} IS NULL OR ${t.contentEncoding}='gzip'`),
+]);
+
+/** Verified staging aliases keep confirmation retries safe after source cleanup. */
+export const imageMasterUploads = pgTable("image_master_uploads", {
+  userId: text("user_id").notNull(), accessClass: text("access_class").notNull(),
+  uploadKey: text("upload_key").notNull(), sourceSha256: text("source_sha256").notNull(),
+}, t => [primaryKey({ columns: [t.userId, t.accessClass, t.uploadKey] }),
+  foreignKey({ columns: [t.userId, t.accessClass, t.sourceSha256], foreignColumns: [imageMasters.userId, imageMasters.accessClass, imageMasters.sourceSha256] }).onDelete("cascade"),
 ]);
 
 export const assets = pgTable("assets", {
@@ -2100,6 +2131,33 @@ export const analyticsActivity = pgTable('analytics_activity', {
 export const analyticsSourceHeartbeat = pgTable('analytics_source_heartbeat', {
   id:integer('id').primaryKey(),observedAt:timestamp('observed_at',{withTimezone:true}).notNull(),
 },t=>[check('analytics_source_heartbeat_id_check',sql`${t.id}=1`)]);
+
+// One receipt per custom-provider HTTP attempt, including rejected/cancelled
+// calls. Never use these rows to debit credits or count accepted story turns.
+export const providerAttempts = pgTable("provider_attempts", {
+  id: text("id").primaryKey(),
+  invocationId: text("invocation_id").notNull(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  profileId: text("profile_id"), // Retain attribution if the saved connection is removed.
+  providerHost: text("provider_host").notNull(),
+  model: text("model").notNull(),
+  conversationId: text("conversation_id"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+  status: text("status").$type<"complete" | "error" | "cancelled">().notNull(),
+  httpStatus: integer("http_status"),
+  providerRequestId: text("provider_request_id"),
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  totalTokens: integer("total_tokens"),
+  reasoningTokens: integer("reasoning_tokens"),
+  providerCostUsd: numeric("provider_cost_usd", { precision: 24, scale: 12 }),
+  stopReason: text("stop_reason"),
+}, t => [
+  index("provider_attempts_user_started_idx").on(t.userId, t.startedAt),
+  index("provider_attempts_invocation_idx").on(t.invocationId),
+  check("provider_attempts_status_check", sql`${t.status} IN ('complete', 'error', 'cancelled')`),
+]);
 
 export const usageLogs = pgTable("usage_logs", {
   id: text("id")

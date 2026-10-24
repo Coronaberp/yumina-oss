@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {gzipSync,gunzipSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
 import {Hono} from 'hono';
 process.env.BETTER_AUTH_SECRET='cdn-encoding-test-only';
 process.env.DATABASE_URL='postgresql://test:test@127.0.0.1:1/test';
@@ -144,10 +145,93 @@ test('ordinary ranged media retains its unencoded range and short cache policy',
  const app=new Hono();let received:unknown;
  app.get('/media',c=>streamS3Object(c,'users/test/audio.ogg','fixture',async(_key,opts)=>{
   received=opts;return {body:Readable.from([Buffer.from('abc')]),contentType:'audio/ogg',contentLength:3,contentRange:'bytes 2-4/10',etag:null};
- }));
+ },async()=>({contentType:'audio/ogg',contentLength:10,etag:null})));
  const response=await app.request('/media',{headers:{Range:'bytes=2-4'}});
  assert.deepEqual(received,{range:'bytes=2-4'});assert.equal(response.status,206);
  assert.equal(response.headers.get('content-encoding'),null);assert.equal(response.headers.get('x-uncompressed-length'),null);
  assert.equal(response.headers.get('content-range'),'bytes 2-4/10');assert.equal(await response.text(),'abc');
  assert.doesNotMatch(response.headers.get('cache-control')??'',/immutable/);
+});
+
+test('image envelopes negotiate identity or gzip and ignore every Range form',async()=>{
+ const original=Buffer.from('original PNG metadata and frames '.repeat(100)),bytes=gzipSync(original);
+ const sourceSha256=createHash('sha256').update(original).digest('hex'),storedSha256=createHash('sha256').update(bytes).digest('hex');
+ const metadata={contentType:'image/png',contentEncoding:'gzip',contentLength:bytes.length,decodedLength:original.length,sourceSha256,storedSha256,etag:'stored-image'};
+ for(const accept of [undefined,'identity','gzip;q=0','gzip','gzip;q=0.5, identity;q=1','identity;q=0, gzip;q=1']){
+  let reads=0;const app=new Hono();
+  app.get('/image',c=>streamS3Object(c,'users/test/master.png','fixture',async(_key,opts)=>{
+   reads++;assert.equal(opts,undefined,'encoded images must never forward Range to storage');
+   return {...metadata,body:Readable.from([bytes]),contentRange:null};
+  },async()=>metadata));
+  const gzip=accept==='gzip'||accept==='identity;q=0, gzip;q=1';
+  for(const range of ['bytes=0-1','bytes=999999-']){
+   const headers:Record<string,string>={Range:range};if(accept)headers['Accept-Encoding']=accept;
+   const response=await app.request('/image',{headers});
+   assert.equal(response.status,200);assert.equal(response.headers.get('content-range'),null);assert.equal(response.headers.get('accept-ranges'),'none');
+   assert.match(response.headers.get('vary')??'',/Accept-Encoding/i);
+   assert.equal(response.headers.get('content-encoding'),gzip?'gzip':null);
+   assert.equal(response.headers.get('content-length'),String(gzip?bytes.length:original.length));
+   assert.equal(response.headers.get('etag'),gzip?'"stored-image"':`"${sourceSha256}"`);
+   assert.deepEqual(Buffer.from(await response.arrayBuffer()),gzip?bytes:original);
+  }
+  const headers=accept?{'Accept-Encoding':accept}:undefined;
+  const head=await app.request('/image',{method:'HEAD',headers});assert.equal(head.status,200);assert.equal(reads,2);
+  assert.equal(head.headers.get('content-length'),String(gzip?bytes.length:original.length));
+  const cached=await app.request('/image',{headers:{...headers,'If-None-Match':head.headers.get('etag')!}});
+  assert.equal(cached.status,304);assert.equal(reads,2);assert.equal(cached.headers.get('content-length'),null);
+ }
+});
+
+test('identity-to-envelope overwrite closes any partial body and rereads the complete image',async()=>{
+ const original=Buffer.from('original image '.repeat(100)),bytes=gzipSync(original);
+ const metadata={contentType:'image/png',contentEncoding:'gzip',contentLength:bytes.length,decodedLength:original.length,sourceSha256:createHash('sha256').update(original).digest('hex'),storedSha256:createHash('sha256').update(bytes).digest('hex'),etag:'new'};
+ const partial=Readable.from([bytes.subarray(0,2)]);let reads=0;const app=new Hono();
+ app.get('/image',c=>streamS3Object(c,'users/test/master.png','fixture',async(_key,opts)=>{
+  reads++;return {...metadata,body:opts?.range?partial:Readable.from([bytes]),contentLength:opts?.range?2:bytes.length,contentRange:opts?.range?'bytes 0-1/30':null};
+ },async()=>({contentType:'image/png',contentLength:1000,etag:'old'})));
+ const response=await app.request('/image',{headers:{Range:'bytes=0-1'}});
+ assert.equal(response.status,200);assert.equal(reads,2);assert.equal(partial.destroyed,true);
+ assert.deepEqual(Buffer.from(await response.arrayBuffer()),original);
+});
+
+test('encoded images reject unavailable encodings and do not reuse another representation ETag',async()=>{
+ const original=Buffer.from('original image bytes '.repeat(100)),bytes=gzipSync(original);
+ const metadata={contentType:'image/png',contentEncoding:'gzip',contentLength:bytes.length,decodedLength:original.length,sourceSha256:createHash('sha256').update(original).digest('hex'),storedSha256:createHash('sha256').update(bytes).digest('hex'),etag:'compressed'};
+ const bodies:Readable[]=[];const app=new Hono();
+ app.get('/image',c=>{c.header('Vary','Origin');return streamS3Object(c,'users/test/master.png','fixture',async()=>{
+  const body=Readable.from([bytes]);bodies.push(body);return {...metadata,body,contentRange:null};
+ },async()=>metadata)});
+ const refused=await app.request('/image',{headers:{'Accept-Encoding':'gzip;q=0, identity;q=0'}});
+ assert.equal(refused.status,406);assert.equal(bodies[0]!.destroyed,true);
+ const identity=await app.request('/image',{headers:{'Accept-Encoding':'identity','If-None-Match':'"compressed"'}});
+ assert.equal(identity.status,200);assert.deepEqual(Buffer.from(await identity.arrayBuffer()),original);
+ assert.equal(identity.headers.get('vary'),'Origin, Accept-Encoding');
+ const encoded=await app.request('/image',{headers:{'Accept-Encoding':'gzip','If-None-Match':`"${metadata.sourceSha256}"`}});
+ assert.equal(encoded.status,200);assert.equal(encoded.headers.get('etag'),'"compressed"');
+ assert.deepEqual(Buffer.from(await encoded.arrayBuffer()),bytes);
+});
+
+test('encoded identity reads close malformed or cancelled bodies instead of exposing compressed partial data',async t=>{
+ t.mock.method(console,'error',()=>{});
+ const original=Buffer.from('original image bytes '.repeat(100)),bytes=gzipSync(original);
+ const metadata={contentType:'image/png',contentEncoding:'gzip',contentLength:bytes.length,decodedLength:original.length,sourceSha256:createHash('sha256').update(original).digest('hex'),storedSha256:createHash('sha256').update(bytes).digest('hex'),etag:'compressed'};
+ const broken=Readable.from([bytes.subarray(0,-3)]),pending=new Readable({read(){}});let body=broken;
+ const app=new Hono();app.get('/image',c=>streamS3Object(c,'users/test/master.png','fixture',async()=>({...metadata,body,contentRange:null})));
+ assert.equal((await app.request('/image')).status,502);assert.equal(broken.destroyed,true);
+ body=pending;const controller=new AbortController();const request=app.request('/image',{signal:controller.signal});
+ setImmediate(()=>controller.abort());
+ assert.equal((await request).status,502);assert.equal(pending.destroyed,true);
+});
+
+test('a Range416 after an encoding overwrite retries only the complete encoded image',async()=>{
+ const original=Buffer.from('original image bytes '.repeat(100)),bytes=gzipSync(original);
+ const metadata={contentType:'image/png',contentEncoding:'gzip',contentLength:bytes.length,decodedLength:original.length,sourceSha256:createHash('sha256').update(original).digest('hex'),storedSha256:createHash('sha256').update(bytes).digest('hex'),etag:'compressed'};
+ let heads=0,reads=0;const app=new Hono();
+ app.get('/image',c=>streamS3Object(c,'users/test/master.png','fixture',async(_key,opts)=>{
+  reads++;if(opts?.range)throw Object.assign(new Error('new size'),{$metadata:{httpStatusCode:416}});
+  return {...metadata,body:Readable.from([bytes]),contentRange:null};
+ },async()=>++heads===1?{contentType:'image/png',contentLength:1000,etag:'old'}:metadata));
+ const response=await app.request('/image',{headers:{Range:'bytes=999-'}});
+ assert.equal(response.status,200);assert.equal(reads,2);assert.equal(heads,2);
+ assert.deepEqual(Buffer.from(await response.arrayBuffer()),original);
 });

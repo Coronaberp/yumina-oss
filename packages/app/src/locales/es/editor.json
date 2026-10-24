@@ -8,7 +8,13 @@
     "openingBackgrounds": "Inicio: {{name}}",
     "openingNumber": "Inicio {{number}}",
     "globalBackgroundsHint": "Compartida por todos los inicios. Editar los fondos de un inicio no cambia esta colección.",
-    "openingBackgroundsHint": "Se usa al elegir este inicio. Sus escenas coincidentes tienen prioridad; las demás usan los fondos globales."
+    "openingBackgroundsHint": "Se usa al elegir este inicio. Sus escenas coincidentes tienen prioridad; las demás usan los fondos globales.",
+    "addBackground": "Añadir un fondo",
+    "backgroundDropHint": "Indica la escena y la hora del día; después arrastra una imagen aquí o elige un archivo.",
+    "singleBackground": "Añade un fondo a la vez para asignar correctamente la escena y la hora del día.",
+    "searchBackgrounds": "Buscar escenas u horas del día",
+    "backgroundCount_one": "{{count}} fondo",
+    "backgroundCount_other": "{{count}} fondos"
   },
   "twoTapConfirm": "Toca de nuevo para confirmar",
   "shell": {
@@ -1753,5 +1759,15 @@
     "library": "Desde recursos",
     "uploading": "Subiendo…",
     "failed": "No se pudo subir: {{name}}"
+  },
+  "spriteManager": {
+    "addCharacter": "Añadir personaje",
+    "characterName": "Nombre del personaje",
+    "searchCharacters": "Buscar personajes",
+    "noMatches": "Sin resultados. Prueba otro nombre.",
+    "characterHint": "Elige un atuendo y añade las expresiones del personaje.",
+    "outfitDescription": "Qué lleva con este atuendo",
+    "outfitPlaceholder": "Describe la ropa, los accesorios y el calzado…",
+    "outfitHint": "Se usa para {{character}} cuando se selecciona {{type}} en la historia. Conserva los rasgos físicos permanentes en la descripción del personaje."
   }
 }

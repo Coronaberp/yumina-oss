@@ -72,6 +72,18 @@ test("isAnimatedImageRef reads the key out of a /cdn/key/ URL", () => {
   assert.equal(isAnimatedImageRef(null), false);
 });
 
+test("content-addressed image masters retain animation hints independently of filenames", () => {
+  const hash = "a".repeat(64);
+  const url = (suffix: string) => `/cdn/key/${Buffer.from(`users/owner/image-masters/public/${hash}${suffix}`).toString("base64url")}`;
+  for (const suffix of [".gif", ".anim.png", ".anim.webp"]) {
+    assert.equal(isAnimatedImageRef(url(suffix)), true, suffix);
+    assert.match(cardImageUrl(url(suffix), 480, { still: true })!, /anim=false/);
+  }
+  for (const suffix of [".png", ".jpg", ".webp"]) {
+    assert.equal(isAnimatedImageRef(url(suffix)), false, `${suffix} must not trigger a duplicate motion request`);
+  }
+});
+
 test("bundled VN NPC images remain static URLs for editor thumbnails and previews", () => {
   for (const ref of ["/vn-assets/npc/male/male_01.png", "/vn-assets/npc/female/female_15.png"]) {
     assert.equal(resolveImageUrl(ref), ref);

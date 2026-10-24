@@ -17,6 +17,12 @@ export interface Asset {
   createdAt: string;
 }
 
+export interface WorldAssetUploadOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: UploadProgress) => void;
+  silent?: boolean;
+}
+
 interface AssetState {
   assets: Asset[];
   loading: boolean;
@@ -29,7 +35,8 @@ interface AssetState {
   uploadAsset: (
     worldId: string,
     file: File,
-    type: "image" | "video" | "audio" | "font" | "txt" | "other"
+    type: "image" | "video" | "audio" | "font" | "txt" | "other",
+    options?: WorldAssetUploadOptions
   ) => Promise<Asset | null>;
   deleteAsset: (worldId: string, assetId: string) => Promise<void>;
   clear: () => void;
@@ -40,7 +47,18 @@ const apiBase = import.meta.env.VITE_API_URL || "";
 const tr = (key: string, fallback: string) =>
   (i18n.t as (k: string, o?: Record<string, unknown>) => string)(key, { defaultValue: fallback });
 
-export const useAssetStore = create<AssetState>((set) => ({
+export const useAssetStore = create<AssetState>((set) => {
+  let activeWorldId: string | null = null;
+  let scopeVersion = 0;
+  function selectWorld(worldId: string) {
+    if (activeWorldId !== worldId) {
+      activeWorldId = worldId;
+      scopeVersion++;
+      set({ assets: [], loading: false, uploading: false, uploadingCount: 0, uploadProgress: null });
+    }
+    return scopeVersion;
+  }
+  return {
   assets: [],
   loading: false,
   uploading: false,
@@ -49,23 +67,27 @@ export const useAssetStore = create<AssetState>((set) => ({
   storage: { used: 0, limit: null },
 
   fetchAssets: async (worldId) => {
+    const scope = selectWorld(worldId);
     set({ loading: true });
     try {
       const res = await fetch(`${apiBase}/api/worlds/${worldId}/assets`, {
         credentials: "include",
       });
       if (!res.ok) {
-        set({ loading: false });
+        if (scope === scopeVersion) set({ loading: false });
         return;
       }
       const { data } = await res.json();
-      set({ assets: data ?? [], loading: false });
+      if (scope === scopeVersion) set({ assets: data ?? [], loading: false });
     } catch {
-      set({ loading: false });
+      if (scope === scopeVersion) set({ loading: false });
     }
   },
 
-  uploadAsset: async (worldId, file, type) => {
+  uploadAsset: async (worldId, file, type, options = {}) => {
+    if (options.signal?.aborted) return null;
+    const scope = selectWorld(worldId);
+    const current = () => scope === scopeVersion && !options.signal?.aborted;
     set((s) => ({
       uploadingCount: s.uploadingCount + 1,
       uploading: true,
@@ -76,6 +98,7 @@ export const useAssetStore = create<AssetState>((set) => ({
       const asset = await uploadAssetWithPresignedUrl<Asset>({
         file,
         preferredType: type,
+        signal: options.signal,
         prepareUrl: `${apiBase}/api/worlds/${worldId}/assets/upload-url`,
         registerUrl: `${apiBase}/api/worlds/${worldId}/assets`,
         registerBody: ({ key, resolvedType, contentType }) => ({
@@ -85,9 +108,14 @@ export const useAssetStore = create<AssetState>((set) => ({
           mimeType: contentType,
           sizeBytes: file.size,
         }),
-        onProgress: (progress) => set({ uploadProgress: progress }),
+        onProgress: (progress) => {
+          if (!current()) return;
+          set({ uploadProgress: progress });
+          options.onProgress?.(progress);
+        },
       });
 
+      if (!current()) return null;
       set((s) => ({
         assets: [...s.assets, asset],
         storage: { ...s.storage, used: s.storage.used + (asset.sizeBytes ?? file.size ?? 0) },
@@ -96,11 +124,13 @@ export const useAssetStore = create<AssetState>((set) => ({
       // R6/T0: the grid shows a progress bar while this runs and the new asset
       // lands in it — the upload announces itself.
       return asset;
-    } catch {
-      feedback.error(tr("library:assets.uploadFailed", "Couldn't upload the file"));
+    } catch (error) {
+      if (current() && !options.silent && !(error instanceof Error && error.name === "AbortError")) {
+        feedback.error(tr("library:assets.uploadFailed", "Couldn't upload the file"));
+      }
       return null;
     } finally {
-      set((s) => {
+      if (scope === scopeVersion) set((s) => {
         const uploadingCount = Math.max(0, s.uploadingCount - 1);
 
         return {
@@ -140,7 +170,9 @@ export const useAssetStore = create<AssetState>((set) => ({
     }
   },
 
-  clear: () =>
+  clear: () => {
+    scopeVersion++;
+    activeWorldId = null;
     set({
       assets: [],
       loading: false,
@@ -148,5 +180,7 @@ export const useAssetStore = create<AssetState>((set) => ({
       uploadingCount: 0,
       uploadProgress: null,
       storage: { used: 0, limit: null },
-    }),
-}));
+    });
+  },
+  };
+});

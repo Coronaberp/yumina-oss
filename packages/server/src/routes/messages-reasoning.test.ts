@@ -11,8 +11,17 @@ import { OpenRouterProvider } from "../lib/llm/openrouter.js";
 import { env } from "../lib/env.js";
 import type { AppEnv } from "../lib/types.js";
 import { registerStream } from "../lib/stream-registry.js";
+import { kevContentClassifier } from "../lib/kev-content-classifier.js";
+import { createPendingContentFlags } from "../lib/content-flag-policy.js";
 
 test("reply traces survive send, regeneration, reload and continuation without entering future prompts", async t => {
+  // This fixture verifies reasoning persistence, not the CPU classifier or
+  // delayed quest jobs. Keep those dependencies inside the test lifetime.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(kevContentClassifier, "classify", async (role: "user" | "assistant" | "system", content: string, choices: readonly string[] = []) => ({
+    ...createPendingContentFlags(role, content, choices), status: "complete" as const, label: "sfw" as const, routingSafe: true,
+    nsfwProbability: .01, sfwProbability: .99, completedAt: new Date().toISOString(), device: "cpu" as const, model: "fixture-kev",
+  }));
   const priorKey = env.YUMINA_OPENROUTER_KEY;
   env.YUMINA_OPENROUTER_KEY = "synthetic-test-key";
   t.after(() => { env.YUMINA_OPENROUTER_KEY = priorKey; });

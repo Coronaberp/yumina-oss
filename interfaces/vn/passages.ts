@@ -1,10 +1,11 @@
+import { plainDialogue } from "./dialogue-spans";
 import { stripAngleMarkup } from "./angle-markup";
 import { splitSpeakerSections } from "./speaker";
 import { displayCharacterName, canonicalCharacterName, parseLeadingSpeakerTag } from "./speaker-tag";
-import { dialogueSpans, plainDialogue } from "./dialogue-spans";
+import { vnDialogueSpans as dialogueSpans, vnPlainDialogue, vnPlainAction, stripVnSeparators } from "./vn-dialogue-spans";
 import { extractResponseChoices, normalizeChoices } from "./choices";
 import { stripGameStateDump, stripVariableUpdateTags } from "./metadata";
-import { normalizeSpriteExpression } from "./expressions";
+import { normalizeSpriteId, normalizeSpriteSelectionId } from "./expressions";
 import { stripZeroWidthSpaces } from "./text-normalization";
 import { standardizeSpeakerMarkup } from "./presentation-markup";
 import { isPresentationLiteral, presentationLiteralRanges } from "./presentation-literals";
@@ -33,19 +34,22 @@ function pages(text) {
 export function passages(entries, content, rawContent = content, player = null) {
   if (!content) return [];
   const names = (entries || []).filter(entry => entry.role === "character" && entry.enabled !== false).map(entry => displayCharacterName(entry.name));
-  content = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(content))), names);
-  rawContent = standardizeSpeakerMarkup(stripAngleMarkup(stripVariableUpdateTags(stripZeroWidthSpaces(rawContent))), names);
+  content = standardizeSpeakerMarkup(stripAngleMarkup(stripGameStateDump(stripVariableUpdateTags(stripZeroWidthSpaces(content)))), names);
+  rawContent = standardizeSpeakerMarkup(stripAngleMarkup(stripGameStateDump(stripVariableUpdateTags(stripZeroWidthSpaces(rawContent)))), names);
   content = stripVariableUpdateTags(stripGameStateDump(extractResponseChoices(content).text));
+  content = stripVnSeparators(content);
   const legacy = parseLeadingSpeakerTag(rawContent);
   content = parseLeadingSpeakerTag(content).text;
   const candidateLeading = /^\s*\[\s*(?:SPEAKER|Name)\s*:\s*([^:\]\n]+)\s*:\s*([^\]\n]+)\]/i.exec(rawContent);
   const leading = candidateLeading && !isPresentationLiteral(presentationLiteralRanges(rawContent), rawContent.indexOf("[")) ? candidateLeading : null;
   const initialFields = leading?.[2]?.split(":").map(field => field.trim()) || [];
-  let name = legacy.speaker || leading?.[1]?.trim() || "", emotion = normalizeSpriteExpression(initialFields[0]), scene = "", offset = 0, explicit = !!leading,
+  let name = legacy.speaker || leading?.[1]?.trim() || "", emotion = normalizeSpriteId(initialFields[0]), scene = "", offset = 0, explicit = !!leading,
     npcGender = name.toLowerCase() === "npc" && /^(male|female)$/i.test(initialFields[1] || "") ? initialFields[1].toLowerCase() : "";
+  let spriteType = name.toLowerCase() !== "npc" && name.toLowerCase() !== "narrator" && initialFields[1] ? normalizeSpriteId(initialFields[1]) : undefined;
+  let spriteVariant = spriteType && initialFields[2] ? normalizeSpriteId(initialFields[2]) : undefined;
   let npcId = npcGender ? initialFields.slice(2).join(":").toLowerCase() || "unknown" : "";
   const chunks = [];
-  const literals = dialogueSpans(content).filter(span => span.kind === "literal" || span.kind === "dialogue");
+  const literals = dialogueSpans(content, names).filter(span => span.kind === "literal" || span.kind === "dialogue");
   const protectedRanges = presentationLiteralRanges(content);
   const opaque = [...content.matchAll(/!?\[[^\]\n]*\]\([^()\n]*\)|<[^>\n]*>/g)];
   // Some providers emit an invisible separator before the marker keyword.
@@ -55,18 +59,20 @@ export function passages(entries, content, rawContent = content, player = null) 
     if (isPresentationLiteral(protectedRanges, match.index)) continue;
     if (literals.some(span => match.index >= span.end - span.text.length && match.index < span.end)) continue;
     if (opaque.some(span => match.index >= span.index && match.index < span.index + span[0].length)) continue;
-    chunks.push({ text: content.slice(offset, match.index), name, emotion, scene, explicit, npcGender, npcId });
+    chunks.push({ text: content.slice(offset, match.index), name, emotion, spriteType, spriteVariant, scene, explicit, npcGender, npcId });
     if (match[4]) scene = match[4].trim();
     else {
       name = match[2].trim();
       const fields = match[3].split(":").map(field => field.trim());
-      emotion = normalizeSpriteExpression(fields[0]); explicit = true;
+      emotion = normalizeSpriteId(fields[0]); explicit = true;
+      spriteType = name.toLowerCase() !== "npc" && name.toLowerCase() !== "narrator" && fields[1] ? normalizeSpriteId(fields[1]) : undefined;
+      spriteVariant = spriteType && fields[2] ? normalizeSpriteId(fields[2]) : undefined;
       npcGender = name.toLowerCase() === "npc" && /^(male|female)$/i.test(fields[1] || "") ? fields[1].toLowerCase() : "";
       npcId = npcGender ? fields.slice(2).join(":").toLowerCase() || "unknown" : "";
     }
     offset = match.index + match[0].length;
   }
-  chunks.push({ text: content.slice(offset), name, emotion, scene, explicit, npcGender, npcId });
+  chunks.push({ text: content.slice(offset), name, emotion, spriteType, spriteVariant, scene, explicit, npcGender, npcId });
   const playerSpeaker = name => /^(?:\{\{user\}\}|you|user|player)$/i.test(name || "") || !!player?.name && String(name).toLocaleLowerCase() === player.name.toLocaleLowerCase() && !character(entries, name);
   return chunks.flatMap(chunk => {
     const declared = character(entries, chunk.name);
@@ -78,9 +84,9 @@ export function passages(entries, content, rawContent = content, player = null) 
     const tagged = known || explicitSpeaker;
     const speakerEntries = known && !declared ? [...(entries || []), known] : !known && explicitSpeaker ? [...(entries || []), explicitSpeaker] : entries;
     const tag = chunk.name ? `[speaker: ${tagged ? displayCharacterName(tagged.name) : "narrator"}]` : "";
-    const chunkHasQuotes = dialogueSpans(chunk.text).some(span => span.kind === "dialogue");
+    const chunkHasQuotes = dialogueSpans(chunk.text, [...names, chunk.name]).some(span => span.kind === "dialogue");
     return splitSpeakerSections(speakerEntries, chunk.text, tag + chunk.text, chunk.explicit).flatMap(section => {
-      const spans = dialogueSpans(section.content);
+      const spans = section.spans || dialogueSpans(section.content, [...names, chunk.name]);
       const hasQuotes = spans.some(span => span.kind === "dialogue");
       return spans.flatMap(span => {
         let text = span.text.trim();
@@ -89,15 +95,16 @@ export function passages(entries, content, rawContent = content, player = null) 
           (chunk.explicit && chunk.name.toLowerCase() === "narrator" && !section.speaker);
         const spoken = !narratorLabel && (span.kind === "dialogue" || (span.kind === "text" && !hasQuotes && !!(section.speaker || (!chunkHasQuotes && chunk.explicit && tagged))));
         const speaker = spoken ? section.speaker || tagged : null;
-        if (span.kind === "dialogue") text = plainDialogue(text).replace(/^(["'“‘«「『])([\s\S]*?)["'”’»」』]$/, "$2");
-        if (span.kind === "action") text = text.replace(/^(\*{1,3}|_{1,3})([\s\S]*?)\1$/, "$2").replace(/^(?:\*{1,3}|_{1,3})/, "");
+        if (span.kind === "dialogue") text = vnPlainDialogue(text, span);
+        if (span.kind === "action") text = vnPlainAction(text);
+        if (!text.trim()) return [];
         const kind = spoken ? "dialogue" : "narration";
         const isPlayer = spoken && !!speaker && playerSpeaker(speaker.name);
         const definedSpeaker = spoken && speaker && !isPlayer ? character(entries, speaker.name) : null;
         return pages(text).map(text => ({ name: isPlayer ? player?.name ? `${player.name} (You)` : "You" : spoken ? definedSpeaker ? displayCharacterName(definedSpeaker.name) : "NPC" : "", portrait: isPlayer ? player?.avatar || null : definedSpeaker?.portrait || null,
           ...(isPlayer ? { player: true } : {}),
           ...(!spoken && declared && chunk.explicit && span.kind !== "literal" ? { stageName: displayCharacterName(declared.name) } : {}),
-          emotion: chunk.emotion, scene: chunk.scene, kind, text,
+          emotion: chunk.emotion, spriteType: chunk.spriteType, spriteVariant: chunk.spriteVariant, scene: chunk.scene, kind, text,
           ...(spoken && !definedSpeaker && chunk.npcGender ? { npcGender: chunk.npcGender, npcId: chunk.npcId } : {}) }));
       });
     });
@@ -151,7 +158,11 @@ export function segmentPassages(api) {
       const gender = typeof segment.gender === "string" && /^(male|female)$/i.test(segment.gender.trim()) ? segment.gender.trim().toLowerCase() : "";
       const id = typeof segment.npcId === "string" ? segment.npcId.replace(/[\]\r\n]/g, "").trim() : "unknown";
       const metadata = !entry && name === "NPC" && gender ? `:${gender}:${id || "unknown"}` : "";
-      const markup = `[SPEAKER:${name}:${normalizeSpriteExpression(segment.emotion)}${metadata}] ${segment.text}`;
+      const typeId = normalizeSpriteSelectionId(segment.spriteType);
+      const variantId = segment.spriteVariant == null || segment.spriteVariant === "" ? "" : normalizeSpriteSelectionId(segment.spriteVariant);
+      const spriteType = name !== "NPC" && name !== "Narrator" && typeId && variantId !== undefined
+        ? `:${typeId}${variantId ? `:${variantId}` : ""}` : "";
+      const markup = `[SPEAKER:${name}:${normalizeSpriteId(segment.emotion)}${metadata || spriteType}] ${segment.text}`;
       return passages(api.entries, markup, markup, api.user);
     });
   } catch { return []; }

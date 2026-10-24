@@ -18,9 +18,9 @@ describe("story output standardization", () => {
     expect(standardizeSpeakerMarkup(indented)).toBe(indented);
   });
 
-  it("retains the complete existing expression vocabulary", () => {
-    for (const [input, output] of [["warm", "happy"], ["confident", "smug"], ["anxious", "sad"], ["playful", "happy"]]) {
-      expect(standardizeSpeakerMarkup(`[SPEAKER:Maeve:${input}]`)).toBe(`[SPEAKER:Maeve:${output}]`);
+  it("retains raw emotion IDs until the card catalog can resolve legacy aliases", () => {
+    for (const input of ["warm", "confident", "anxious", "playful"]) {
+      expect(standardizeSpeakerMarkup(`[SPEAKER:Maeve:${input}]`)).toBe(`[SPEAKER:Maeve:${input}]`);
     }
   });
 

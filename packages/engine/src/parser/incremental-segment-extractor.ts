@@ -13,6 +13,8 @@ export interface ExtractedSegment {
   variant?: string;
   color?: string;
   emotion?: string;
+  spriteType?: string;
+  spriteVariant?: string;
   bg?: string;
   [key: string]: unknown;
 }

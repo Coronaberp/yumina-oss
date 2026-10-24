@@ -75,3 +75,27 @@ describe("diffWorldSchemas", () => {
     expect(diffWorldSchemas(a, a).changes).toEqual([]);
   });
 });
+
+
+describe("card artwork metadata", () => {
+  it("reports portrait framing, banner artwork and banner framing independently", () => {
+    const before = w({ coverCrop: { x: 0, y: 0, zoom: 1, fit: "cover" }, bannerImageUrl: "@asset:11111111-1111-4111-8111-111111111111", bannerCrop: { x: 0, y: 0, zoom: 1, fit: "contain" } });
+    const after = w({ coverCrop: { x: 5, y: 0, zoom: 0.8, fit: "cover" }, bannerImageUrl: "@asset:22222222-2222-4222-8222-222222222222", bannerCrop: { x: 0, y: 2, zoom: 0.7, fit: "cover" } });
+    const summary = diffWorldSchemas(before, after);
+    expect(summary.counts).toEqual({ added: 0, removed: 0, modified: 3 });
+    expect(summary.changes).toEqual(["coverCrop", "bannerImageUrl", "bannerCrop"].map(field => ({ kind: "meta", op: "modified", id: field, name: field })));
+    const detail = diffWorldSchemas(before, after, { detail: true });
+    for (const field of ["coverCrop", "bannerImageUrl", "bannerCrop"] as const) {
+      expect(detail.changes.find(change => change.id === field)?.fields).toEqual([{ field, before: typeof before[field] === "string" ? before[field] : JSON.stringify(before[field]), after: typeof after[field] === "string" ? after[field] : JSON.stringify(after[field]) }]);
+    }
+  });
+
+  it("reports banner removal and leaves unrelated custom schema content untouched", () => {
+    const before = { ...w({ bannerImageUrl: "@asset:11111111-1111-4111-8111-111111111111" }), customPayload: { retained: ["literal", { foo: "bar" }] } };
+    const original = structuredClone(before);
+    const after = { ...structuredClone(before), bannerImageUrl: "" };
+    expect(diffWorldSchemas(before, after, { detail: true }).changes).toEqual([{ kind: "meta", op: "modified", id: "bannerImageUrl", name: "bannerImageUrl", fields: [{ field: "bannerImageUrl", before: before.bannerImageUrl, after: "" }] }]);
+    expect(before).toEqual(original); expect(after.customPayload).toEqual(original.customPayload);
+    expect(diffWorldSchemas(before, structuredClone(before)).changes).toEqual([]);
+  });
+});

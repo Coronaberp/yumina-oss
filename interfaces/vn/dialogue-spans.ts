@@ -123,7 +123,7 @@ export function plainDialogue(text: string): string {
 /** Recover unmarked legacy quotes only from explicit speech attribution or
  * a single named action subject. Quotes never contribute names, and code,
  * unknown actors and multiple named characters clear the fallback. */
-export function legacyQuoteSpeakers(text: string, names: ReadonlyArray<string>): Map<number, string> {
+export function legacyQuoteSpeakers(text: string, names: ReadonlyArray<string>, spans: readonly DialogueSpan[] = dialogueSpans(text)): Map<number, string> {
   const result = new Map<number, string>();
   let subject: string | null = null, paragraphSpeaker: string | null = null, pendingActor: string | null = null;
   let previousQuoteEnd = 0;
@@ -144,7 +144,7 @@ export function legacyQuoteSpeakers(text: string, names: ReadonlyArray<string>):
     const playerOrPronoun = /^\s*(?:\*{1,3}|_{1,3})?(?:\{\{user\}\}|the player|you|she|he|they)(?=$|\s|['’])/i.test(value);
     return { name: action && !otherActor && !playerOrPronoun ? candidate : null, ambiguous: mentioned.length > 0 || otherActor || unnamedActor || playerOrPronoun };
   };
-  for (const span of dialogueSpans(text)) {
+  for (const span of spans) {
     if (span.kind === "dialogue") {
       const start = span.end - span.text.length;
       const preceding = text.slice(previousQuoteEnd, start);

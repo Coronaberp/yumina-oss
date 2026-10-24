@@ -47,6 +47,10 @@ export function createCharacterGuardTransport(args: {
     const abort = () => controller.abort(args.signal.reason);
     args.signal.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => controller.abort(), Math.min(remaining, request.stage === "review" ? (args.reviewTimeoutMs ?? 60_000) : 120_000));
+    const checkSignal = () => {
+      if (args.signal.aborted) throw new CharacterIdentityError("cancelled");
+      if (controller.signal.aborted) throw new CharacterIdentityError("character_identity_deadline");
+    };
     const prefix = Math.max(0, request.messages.length - 1);
     const messages = [...request.messages.slice(0, prefix), ...request.history, ...request.messages.slice(prefix)];
     let routed: Awaited<ReturnType<typeof prepareContentRoutedRequest>> | undefined;
@@ -57,7 +61,7 @@ export function createCharacterGuardTransport(args: {
       routed = await (args.route ?? prepareContentRoutedRequest)({ userId: args.userId, protectedWorld: args.protectedWorld, selected: args.selected, playerNames: args.playerNames, characterNames: args.characterNames, messages, maxContext: args.maxContext, maxTokens: request.maxTokens,
         fitContext: async (m, model, cap) => fitCharacterGuardMessages(m, prefix, model, cap), trim: { pinnedPrefix: prefix, pinnedSuffix: 1 },
       });
-      if (controller.signal.aborted) throw new CharacterIdentityError("cancelled");
+      checkSignal();
       servedModel = routed.model;
       started = true;
       for await (const chunk of routed.resolved.provider.generateStream({ messages: routed.messages, model: routed.model, maxTokens: request.maxTokens, temperature: 0, reasoningEffortOverride: "low", stream: false, signal: controller.signal,
@@ -66,16 +70,18 @@ export function createCharacterGuardTransport(args: {
         if (chunk.model) servedModel = chunk.model;
         if (chunk.providerRequestId) providerRequestId = chunk.providerRequestId;
         if (chunk.usage) observedUsage = chunk.usage;
-        if (controller.signal.aborted) throw new CharacterIdentityError("cancelled");
+        checkSignal();
         if (chunk.type === "text") raw += chunk.content;
         if (chunk.type === "error") throw new CharacterIdentityError("character_identity_provider_failed");
         if (chunk.type === "done") { done = true; stopReason = chunk.stopReason; break; }
       }
+      checkSignal();
       if (!done || !raw.trim()) throw new CharacterIdentityError("character_identity_provider_incomplete");
       return { raw, stopReason };
     } catch (error) {
+      checkSignal();
       if (error instanceof CharacterIdentityError || error instanceof ContentRoutingError) throw error;
-      throw new CharacterIdentityError(controller.signal.aborted ? "character_identity_deadline" : "character_identity_provider_failed");
+      throw new CharacterIdentityError("character_identity_provider_failed");
     } finally {
       clearTimeout(timer);
       args.signal.removeEventListener("abort", abort);

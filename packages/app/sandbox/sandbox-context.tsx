@@ -204,6 +204,8 @@ export interface SandboxedYuminaAPI {
   openSessionExport: () => void;
   /** Open the shared parent-app model picker used by the play controls. */
   openModelPicker: () => void;
+  /** Open correction settings without changing the story model or starting a reply. */
+  openStateGuardSettings: () => void;
   /** Read the current session's selected Persona when the player chooses to
    * import it. Null means none selected; failures reject. Private notes are
    * excluded. Copy the result into the run's save to keep identity stable. */
@@ -680,6 +682,7 @@ const defaultAPI: SandboxedYuminaAPI = {
   openStoryRoutes: () => {},
   openSessionExport: () => {},
   openModelPicker: () => {},
+  openStateGuardSettings: () => {},
   getPersonaProfile: () => noopPromise(null),
   sharePlaythrough: () => {},
   openSessionManager: () => {},
@@ -1073,6 +1076,9 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     openStoryRoutes: () => { if (sessionApisAvailable) postToParent("openStoryRoutes", []); },
     openSessionExport: () => { if (sessionApisAvailable) postToParent("openSessionExport", []); },
     openModelPicker: () => postToParent("openModelPicker", []),
+    openStateGuardSettings: () => {
+      if ((state.mode ?? "session") === "session" && sessionApisAvailable && !state.readOnly) postToParent("openStateGuardSettings", []);
+    },
     getPersonaProfile: () => callParent("getPersonaProfile", []),
     sharePlaythrough: () => postToParent("sharePlaythrough", []),
     openSessionManager: () => postToParent("openSessionManager", []),

@@ -335,7 +335,7 @@ export function ProfileAiSettings() {
                   checked={streaming}
                   onCheckedChange={() => setConfig("streaming", !streaming)}
                 />
-                <div className="h-5 w-9 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-checked:bg-gold peer-checked:after:translate-x-full peer-checked:after:border-transparent peer-focus:outline-none" />
+                <div className="h-5 w-9 rounded-full border border-white/10 bg-white/10 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-transparent after:bg-white after:transition-all peer-data-[state=checked]:bg-gold peer-data-[state=checked]:after:translate-x-full peer-data-[state=checked]:after:border-transparent peer-focus:outline-none" />
               </label>
             </div>
           </div>

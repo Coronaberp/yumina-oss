@@ -1,18 +1,20 @@
-import { personaPresetsSchema, cardShowcaseSchema } from "@yumina/engine";
+import { assertVnSpriteCatalogUpdate } from "@yumina/engine";
+import { personaPresetsSchema, cardShowcaseSchema, worldDefinitionSchema } from "@yumina/engine";
 import { worldVersionRoutes } from "./world-versions.js";
 import { captureAutomaticVersion, capturePublishVersion, lockVersionDraft } from "../lib/world-version-history.js";
-import { assertWorldEditable, isWorldEditLocked } from "../lib/world-edit-lock.js";
+import { assertWorldEditable, isWorldEditLockedForUser } from "../lib/world-edit-lock.js";
 import { installationSharedWorldIds, isInstallationSharedWorld } from "../lib/installation-shared-worlds.js";
 import { communityMuteMiddleware } from "../middleware/community-mute.js";
 import { Hono } from "hono";
 import { reviewPlaytimeQuery } from "../lib/review-playtime.js";
 import { eq, or, and, desc, ilike, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { db, readDb, readOwn, flagWrite } from "../db/index.js";
-import { worlds, user, assetReferences, userLibrary, worldPendingEdits, worldUpdates, follows, reviews, worldRatings, contentTranslations, worldReviewSubmissions } from "../db/schema.js";
+import { worlds, user, assets, assetReferences, userLibrary, worldPendingEdits, worldVersions, worldUpdates, follows, reviews, worldRatings, contentTranslations, worldReviewSubmissions } from "../db/schema.js";
+import { prepareWorldAssetCopy } from "../lib/world-asset-copy.js";
 import { estimateTokens } from "@yumina/engine";
-import { generateUploadUrl, getObjectBuffer, putObject, deleteObject } from "../lib/s3.js";
-import { optimizeUploadedImage, losslessWebpKey } from "../lib/image-optimization.js";
-import { normalizeAssetMimeType } from "../lib/asset-mime.js";
+import { generateUploadUrl, deleteObject } from "../lib/s3.js";
+import { losslessWebpKey } from "../lib/image-optimization.js";
+import { imageMasters, storeUploadedImage, isImageMasterKey, validSourceSha256, ImageMasterError } from "../lib/image-masters.js";
 import { resolveImageCdn } from "../lib/cdn-url.js";
 import { MAX_REVIEW_CONTENT, clampWorldTags, OFFICIAL_WORLD_TAGS, PLAYED_TAG_FILTER_THRESHOLD, MAX_DYNAMIC_FILTER_TAGS } from "@yumina/shared";
 import { canonicalizeTag } from "@yumina/shared";
@@ -84,6 +86,7 @@ import {
   setPendingEditUpdateNote,
 } from "../lib/pending-edit.js";
 import { isStaleDraftSave } from "../lib/world-save-guard.js";
+import { loadAdminLibraryItems } from "../lib/admin-library-items.js";
 import { computeWorldContextRequirement } from "../lib/context-requirement.js";
 import { hasWorldDmShareGrant } from "../lib/dm-world-grant.js";
 import { WORLD_STATUS_TAKEN_DOWN } from "../lib/fork-orphan.js";
@@ -115,6 +118,9 @@ function normalizeTagsForStorage(tags: string[]): string[] {
 }
 
 const worldRoutes = new Hono<AppEnv>();
+// Inspect only the new display metadata. Never parse/strip the caller's full
+// schema: partial drafts and creator-defined fields must survive unchanged.
+const pageBannerMetadataSchema = worldDefinitionSchema.pick({ bannerImageUrl: true, bannerCrop: true });
 
 /** Compatibility bound for explicit filtered/default feeds. Clean Recommended
  * instead continues through its eligible catalog with bounded page hydration. */
@@ -415,13 +421,15 @@ worldRoutes.get("/", authMiddleware, async (c) => {
   // My Projects is a creator view and shows each primary variant as-is.
   const resolved = await Promise.all(result.map(async (w) => ({
     ...w,
-    editingLocked: await isWorldEditLocked(w.id, w.editingLocked),
+    editingLocked: await isWorldEditLockedForUser(w.id, currentUser.id, w),
     sharedInLibrary: isInstallationSharedWorld(w.id, w.status),
     thumbnailUrl: resolveImageCdn(w.thumbnailUrl),
     pendingEdit: w.creatorId === currentUser.id ? pendingEditMap.get(w.id) ?? null : null,
   })));
 
-  return c.json({ data: resolved });
+  const adminLibrary = await loadAdminLibraryItems(currentUser.id);
+  c.header("Cache-Control", "private, no-store");
+  return c.json({ data: resolved, ...adminLibrary });
 });
 
 // GET /api/worlds/mine/published — the caller's own PUBLISHED worlds, lean
@@ -1374,6 +1382,8 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
         name: worlds.name,
         description: worlds.description,
         cardShowcase: sql<Record<string, unknown> | null>`${worlds.schema}->'cardShowcase'`,
+        bannerImageUrl: sql<string | null>`${worlds.schema}->>'bannerImageUrl'`,
+        bannerCrop: sql<Record<string, unknown> | null>`${worlds.schema}->'bannerCrop'`,
         thumbnailUrl: worlds.thumbnailUrl,
         coverCrop: coverCropCols.coverCrop,
         galleryCoverCrop: coverCropCols.galleryCoverCrop,
@@ -1382,6 +1392,7 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
         submittedForReviewAt: worlds.submittedForReviewAt,
         isNsfw: worlds.isNsfw,
         allowEdit: worlds.allowEdit,
+        editingLocked: worlds.editingLocked,
         allowCustomApi: worlds.allowCustomApi,
         allowReviews: worlds.allowReviews,
         allowSessionSharing: worlds.allowSessionSharing,
@@ -1419,7 +1430,7 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
 
   const world = result[0]!;
 
-  (world as typeof world & { editingLocked: boolean }).editingLocked = await isWorldEditLocked(worldId, (world as { editingLocked?: boolean }).editingLocked);
+  (world as typeof world & { editingLocked: boolean }).editingLocked = await isWorldEditLockedForUser(worldId, currentUser?.id, world);
 
   if (currentUser && currentUser.id !== world.creatorId && (await getBlockStatus(currentUser.id, world.creatorId)).blocked) {
     return c.json({ error: "World not found" }, 404);
@@ -1526,7 +1537,8 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
       (world as any).pendingEdit = summarizePendingEdit(pend);
       if (c.req.query("forEdit") === "1") {
         (world as any).schema = pend.schema;
-        if (pend.thumbnailUrl != null) (world as any).thumbnailUrl = pend.thumbnailUrl;
+        // Holds contain complete proposed material; null explicitly clears the cover.
+        (world as any).thumbnailUrl = pend.thumbnailUrl;
         if (pend.ageRating != null) {
           (world as any).ageRating = pend.ageRating;
           (world as any).isNsfw = pend.ageRating !== "all";
@@ -1546,6 +1558,16 @@ worldRoutes.get("/:id", optionalAuthMiddleware, async (c) => {
 
   // Resolve S3 keys → CDN URLs
   world.thumbnailUrl = resolveImageCdn(world.thumbnailUrl);
+
+  // The preview stays a narrow display DTO. Full/edit reads derive these from
+  // the final authorized schema, including the creator's held working copy.
+  const banner = isPreview
+    ? world as typeof world & { bannerImageUrl?: unknown; bannerCrop?: unknown }
+    : ((world as typeof world & { schema?: Record<string, unknown> }).schema ?? {});
+  const display = world as typeof world & { bannerImageUrl: string | null; bannerCrop: unknown };
+  display.bannerImageUrl = resolveImageCdn(typeof banner.bannerImageUrl === "string" ? banner.bannerImageUrl : null);
+  const parsedBannerCrop = pageBannerMetadataSchema.shape.bannerCrop.safeParse(banner.bannerCrop);
+  display.bannerCrop = parsedBannerCrop.success ? parsedBannerCrop.data ?? null : null;
 
   // Resolve gallery S3 keys to CDN URLs
   if (world.galleryImages && Array.isArray(world.galleryImages)) {
@@ -1641,6 +1663,7 @@ worldRoutes.post("/", authMiddleware, rateLimitMiddleware("content-creation"), a
   }
 
   const body = await c.req.json();
+  if (body?.schema && !pageBannerMetadataSchema.safeParse(body.schema).success) return c.json({ error: "Invalid page banner. Use an uploaded image reference and valid crop framing." }, 400);
   if (body?.schema?.personaPresets !== undefined && !personaPresetsSchema.safeParse(body.schema.personaPresets).success) return c.json({ error: "Invalid creator personas. Personas contain identity details only, without stats or status values." }, 400);
   if (body?.schema?.cardShowcase !== undefined && !cardShowcaseSchema.safeParse(body.schema.cardShowcase).success) return c.json({ error: "Invalid card showcase. Use HTML up to 100,000 characters and CSS up to 30,000 characters." }, 400);
   const parsed = createWorldSchema.safeParse(body);
@@ -1731,6 +1754,7 @@ worldRoutes.patch("/:id", authMiddleware, async (c) => {
       ? ((body as Record<string, unknown>).baseUpdatedAt as string)
       : null;
 
+  if (body?.schema && !pageBannerMetadataSchema.safeParse(body.schema).success) return c.json({ error: "Invalid page banner. Use an uploaded image reference and valid crop framing." }, 400);
   if (body?.schema?.personaPresets !== undefined && !personaPresetsSchema.safeParse(body.schema.personaPresets).success) return c.json({ error: "Invalid creator personas. Personas contain identity details only, without stats or status values." }, 400);
   if (body?.schema?.cardShowcase !== undefined && !cardShowcaseSchema.safeParse(body.schema.cardShowcase).success) return c.json({ error: "Invalid card showcase. Use HTML up to 100,000 characters and CSS up to 30,000 characters." }, 400);
   const parsed = updateWorldSchema.safeParse(body);
@@ -1843,6 +1867,17 @@ worldRoutes.patch("/:id", authMiddleware, async (c) => {
   // the same transaction as the hold write below.
   const isPublishedWorld = liveRow?.status === "published";
   let existingPending = isPublishedWorld ? await getPendingEdit(worldId) : null;
+  if (parsed.data.schema) {
+    const previous = (existingPending?.schema ?? liveRow?.schema ?? {}) as Record<string, any>;
+    const next = parsed.data.schema as Record<string, any>;
+    try {
+      assertVnSpriteCatalogUpdate(previous.rootComponent?.files?.["sprites.ts"], next.rootComponent?.files?.["sprites.ts"]);
+      for (const [key, root] of Object.entries(next.interfaceDrafts ?? {})) {
+        assertVnSpriteCatalogUpdate(previous.interfaceDrafts?.[key]?.files?.["sprites.ts"], (root as any)?.files?.["sprites.ts"]);
+      }
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Invalid sprite catalog." }, 400); }
+  }
+
   const supersededReview = existingPending?.status === "pending";
 
   // Reject saves that INTRODUCE new inline base64 data URIs. Legacy worlds with
@@ -2741,73 +2776,129 @@ worldRoutes.post("/:id/duplicate", authMiddleware, async (c) => {
   const copyMaterial = await resolveWorldCopyMaterial(source, currentUser.id);
 
   const copyTotalTokens = estimateWorldCopyTokens(copyMaterial.schema);
+  const newWorldId = crypto.randomUUID();
+  const [sourceAssets, sourceVersions] = await Promise.all([
+    db.select().from(assets).where(eq(assets.worldId, source.id)),
+    // Version history is private authored material, only copied for its owner.
+    isOwnSource ? db.select().from(worldVersions).where(eq(worldVersions.worldId, source.id)) : Promise.resolve([]),
+  ]);
+  // A public fork may only copy uploads referenced by the visible card. An
+  // owner's full duplicate also includes unused uploads and private history.
+  const visibleMaterial = isOwnSource ? "" : JSON.stringify([copyMaterial.schema, copyMaterial.thumbnailUrl, source.galleryImages]);
+  const copyAssets = isOwnSource ? sourceAssets : sourceAssets.filter(asset => visibleMaterial.includes(asset.id)
+    || visibleMaterial.includes(asset.url)
+    || visibleMaterial.includes(`/cdn/key/${Buffer.from(asset.url).toString("base64url")}`));
+  let prepared: Awaited<ReturnType<typeof prepareWorldAssetCopy>>;
+  try {
+    prepared = await prepareWorldAssetCopy(copyAssets, newWorldId, [
+      ...(copyMaterial.thumbnailUrl ? [copyMaterial.thumbnailUrl] : []),
+      ...(source.galleryImages ?? []),
+      ...sourceVersions.flatMap(version => version.thumbnailUrl ? [version.thumbnailUrl] : []),
+    ]);
+  } catch (error) {
+    console.error("Card asset duplication failed", { worldId, error: error instanceof Error ? error.message : "Storage copy failed" });
+    return c.json({ error: "Could not copy all card assets. The original card is unchanged; please try again." }, 500);
+  }
 
   // Find next available conflict number and insert atomically (#39)
   const baseName = source.name.replace(/\s*\(\d+\)$/, "");
 
-  const result = await db.transaction(async (tx) => {
-    const siblings = await tx
-      .select({ name: worlds.name })
-      .from(worlds)
-      .where(and(eq(worlds.creatorId, currentUser.id), ilike(worlds.name, `${baseName}%`)));
-    const usedNumbers = siblings
-      .map((s) => {
-        const match = (s.name ?? "").match(/\((\d+)\)$/);
-        return match?.[1] ? parseInt(match[1]) : 0;
-      })
-      .filter((n) => n > 0);
-    const nextNum = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1;
+  let result: typeof worlds.$inferSelect;
+  try {
+    result = await db.transaction(async (tx) => {
+      // Serialize name allocation for this owner, including parallel duplicates.
+      await tx.select({ id: user.id }).from(user).where(eq(user.id, currentUser.id)).for("update");
+      const siblings = await tx
+        .select({ name: worlds.name })
+        .from(worlds)
+        .where(and(eq(worlds.creatorId, currentUser.id), ilike(worlds.name, `${baseName}%`)));
+      const usedNumbers = siblings
+        .map((s) => {
+          const match = (s.name ?? "").match(/\((\d+)\)$/);
+          return match?.[1] ? parseInt(match[1]) : 0;
+        })
+        .filter((n) => n > 0);
+      const nextNum = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1;
 
-    // Copy only the clicked variant (independent copy, no languageGroupId)
-    const [newWorld] = await tx
-      .insert(worlds)
-      .values({
-        creatorId: currentUser.id,
-        name: `${baseName} (${nextNum})`,
-        description: source.description,
-        schema: copyMaterial.schema,
-        thumbnailUrl: copyMaterial.thumbnailUrl,
-        tags: clampWorldTags(source.tags ?? []),
-        isPublished: false,
-        isNsfw: copyMaterial.isNsfw ?? false,
-        allowEdit: source.allowEdit ?? true,
-        allowReviews: source.allowReviews ?? true,
-        sourceWorldId: source.id,
-        totalTokens: copyTotalTokens,
-        approxTime: source.approxTime,
-        language: source.language,
-        languageGroupId: null,
-        variantLabel: null,
-        announcement: source.announcement,
-        galleryImages: source.galleryImages,
-        ageRating: copyMaterial.ageRating,
-        blurCover: source.blurCover,
-      })
-      .returning();
+      // Copy only the clicked variant (independent copy, no languageGroupId)
+      const [newWorld] = await tx
+        .insert(worlds)
+        .values({
+          id: newWorldId,
+          creatorId: currentUser.id,
+          name: `${baseName} (${nextNum})`,
+          description: source.description,
+          extendedDescription: source.extendedDescription,
+          schema: { ...prepared.remap(copyMaterial.schema), id: newWorldId, name: `${baseName} (${nextNum})` },
+          thumbnailUrl: prepared.remap(copyMaterial.thumbnailUrl),
+          tags: clampWorldTags(source.tags ?? []),
+          isPublished: false,
+          status: "draft",
+          editingLocked: false,
+          isNsfw: copyMaterial.isNsfw ?? false,
+          allowEdit: source.allowEdit ?? true,
+          allowCustomApi: source.allowCustomApi,
+          allowReviews: source.allowReviews ?? true,
+          allowSessionSharing: source.allowSessionSharing,
+          allowCommunityCitations: source.allowCommunityCitations,
+          targetAudience: source.targetAudience,
+          visibility: source.visibility,
+          sourceWorldId: source.id,
+          totalTokens: copyTotalTokens,
+          approxTime: source.approxTime,
+          language: source.language,
+          languageGroupId: null,
+          variantLabel: null,
+          announcement: source.announcement,
+          galleryImages: prepared.remap(source.galleryImages),
+          coverCrop: source.coverCrop,
+          galleryCoverCrop: source.galleryCoverCrop,
+          ageRating: copyMaterial.ageRating,
+          blurCover: source.blurCover,
+        })
+        .returning();
 
-    // Copy asset references
-    const sourceRefs = await tx
-      .select()
-      .from(assetReferences)
-      .where(eq(assetReferences.worldId, source.id));
+      if (prepared.rows.length) await tx.insert(assets).values(prepared.rows);
+      if (sourceVersions.length) await tx.insert(worldVersions).values(sourceVersions.map(version => ({
+        ...version,
+        id: crypto.randomUUID(),
+        worldId: newWorld!.id,
+        createdBy: currentUser.id,
+        schema: { ...prepared.remap(version.schema), id: newWorld!.id },
+        thumbnailUrl: prepared.remap(version.thumbnailUrl),
+        // Copied snapshots are restorable history, not publication approvals.
+        source: "manual" as const,
+        publishedAt: null,
+      })));
 
-    if (sourceRefs.length > 0) {
-      await tx.insert(assetReferences).values(
-        sourceRefs.map((ref) => ({
-          worldId: newWorld!.id,
-          assetId: ref.assetId,
-        }))
-      );
-    }
+      // Copy asset references
+      const sourceRefs = await tx
+        .select()
+        .from(assetReferences)
+        .where(eq(assetReferences.worldId, source.id));
 
-    // Increment download count on source world
-    await tx
-      .update(worlds)
-      .set({ downloadCount: sql`${worlds.downloadCount} + 1` })
-      .where(eq(worlds.id, worldId));
+      if (sourceRefs.length > 0) {
+        await tx.insert(assetReferences).values(
+          sourceRefs.map((ref) => ({
+            worldId: newWorld!.id,
+            assetId: ref.assetId,
+          }))
+        );
+      }
 
-    return newWorld!;
-  });
+      // Personal duplication does not change the original card or its counters.
+      if (!isOwnSource) await tx
+        .update(worlds)
+        .set({ downloadCount: sql`${worlds.downloadCount} + 1` })
+        .where(eq(worlds.id, worldId));
+
+      return newWorld!;
+    });
+  } catch (error) {
+    await prepared.cleanup();
+    console.error("Card duplication failed", { worldId, error: error instanceof Error ? error.message : "Database copy failed" });
+    return c.json({ error: "Could not duplicate the card. The original card is unchanged; please try again." }, 500);
+  }
 
   // Enrich the response so the optimistic UI in the library detail panel
   // can render correctly without waiting for the next list re-fetch:
@@ -2883,7 +2974,8 @@ worldRoutes.post("/:id/gallery/upload-url", authMiddleware, async (c) => {
     return c.json({ error: "World not found or not authorized" }, 404);
   }
 
-  const body = await c.req.json<{ filename: string; contentType: string; sizeBytes?: number }>();
+  const body = await c.req.json<{ filename: string; contentType: string; sourceSha256?: string; sizeBytes?: number }>();
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
   if (!body.filename || !body.contentType) {
     return c.json({ error: "filename and contentType are required" }, 400);
   }
@@ -2891,6 +2983,13 @@ worldRoutes.post("/:id/gallery/upload-url", authMiddleware, async (c) => {
     return c.json({ error: "Invalid file size" }, 400);
   }
 
+  if (body.sourceSha256) {
+    const master = await imageMasters.find(currentUser.id, "public", body.sourceSha256);
+    if (master) {
+      if (body.sizeBytes !== undefined && body.sizeBytes !== master.originalSize) return c.json({ error: "Image size does not match this source hash" }, 409);
+      return c.json({ data: { key: master.key, reused: true } });
+    }
+  }
   const ext = body.filename.split(".").pop() ?? "png";
   const key = `worlds/${worldId}/gallery/${crypto.randomUUID()}.${ext}`;
 
@@ -2903,9 +3002,9 @@ worldRoutes.post("/:id/gallery/upload-url", authMiddleware, async (c) => {
 worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
   const currentUser = c.get("user");
   const worldId = c.req.param("id");
-  const body = await c.req.json<{ key: string }>();
-
-  if (!body.key || !body.key.startsWith(`worlds/${worldId}/gallery/`)) {
+  const body = await c.req.json<{ key: string; sourceSha256?: string }>();
+  if (!validSourceSha256(body.sourceSha256)) return c.json({ error: "Invalid image source hash" }, 400);
+  if (!body.key || (!isImageMasterKey(body.key) && !body.key.startsWith(`worlds/${worldId}/gallery/`))) {
     return c.json({ error: "Invalid gallery key" }, 400);
   }
 
@@ -2919,23 +3018,37 @@ worldRoutes.post("/:id/gallery/confirm", authMiddleware, async (c) => {
   }
 
   const currentImages = (existing[0]!.galleryImages as string[] | null) ?? [];
-  const alreadyStored = currentImages.find(key => key === body.key || key === losslessWebpKey(body.key));
+  const verified = isImageMasterKey(body.key) ? await imageMasters.findByKey(currentUser.id, "public", body.key) : await imageMasters.findUpload(currentUser.id, "public", body.key);
+  if ((isImageMasterKey(body.key) && !verified) || (verified && body.sourceSha256 && verified.sourceSha256 !== body.sourceSha256.toLowerCase())) return c.json({ error: "Image master not found or upload hash changed" }, 409);
+  const alreadyStored = currentImages.find(key => key === body.key || key === losslessWebpKey(body.key) || key === verified?.key);
   if (alreadyStored) return c.json({ data: { url: resolveImageCdn(alreadyStored) ?? alreadyStored, galleryImages: currentImages } });
-  if (currentImages.length >= 8) {
-    return c.json({ error: "Maximum 8 gallery images allowed" }, 400);
-  }
 
-  const stored = await optimizeUploadedImage({ key: body.key, filename: body.key.split("/").pop()!, mimeType: normalizeAssetMimeType(body.key), sizeBytes: 0 }, { read: getObjectBuffer, write: putObject });
-  const updatedImages = [...currentImages, stored.key];
-
-  await db
-    .update(worlds)
-    .set({ galleryImages: updatedImages, updatedAt: new Date() })
-    .where(eq(worlds.id, worldId));
+  let stored;
+  try { stored = await storeUploadedImage({ userId: currentUser.id, key: body.key, mimeType: verified?.mimeType, sourceSha256: body.sourceSha256 }); }
+  catch (error) { if (error instanceof ImageMasterError) return c.json({ error: error.message }, error.status); throw error; }
+  // One atomic append avoids losing another concurrently confirmed image or
+  // inserting an identical shared master twice after a lost response.
+  const singleton = JSON.stringify([stored.key]);
+  // Both database drivers support this narrow projection. Their update-builder
+  // overload union cannot type selected-column returning without a cast.
+  const result = await db.execute<{ galleryImages: string[] | null }>(sql`
+    UPDATE ${worlds}
+    SET gallery_images = CASE
+      WHEN COALESCE(gallery_images, '[]'::jsonb) @> ${singleton}::jsonb THEN gallery_images
+      ELSE COALESCE(gallery_images, '[]'::jsonb) || ${singleton}::jsonb END,
+      updated_at = now()
+    WHERE id = ${worldId} AND creator_id = ${currentUser.id}
+      AND (jsonb_array_length(COALESCE(gallery_images, '[]'::jsonb)) < 8
+        OR COALESCE(gallery_images, '[]'::jsonb) @> ${singleton}::jsonb)
+    RETURNING gallery_images AS "galleryImages"
+  `);
+  const updated = result.rows[0];
+  if (!updated) return c.json({ error: "Maximum 8 gallery images allowed" }, 400);
+  const updatedImages = updated.galleryImages ?? [];
 
   // Return CDN URL for the new image
   const url = resolveImageCdn(stored.key) ?? stored.key;
-  if (stored.key !== body.key) await deleteObject(body.key).catch(() => {});
+  if (stored.key !== body.key && !isImageMasterKey(body.key)) await deleteObject(body.key).catch(() => {});
 
   return c.json({ data: { url, galleryImages: updatedImages } });
 });
@@ -3524,6 +3637,7 @@ worldRoutes.post("/:id/add-language-variant", authMiddleware, async (c) => {
   if (!VALID_LANGUAGE_CODES.has(body.language)) {
     return c.json({ error: `Invalid language code: "${body.language}"` }, 400);
   }
+  if (!pageBannerMetadataSchema.safeParse(body.schema).success) return c.json({ error: "Invalid page banner. Use an uploaded image reference and valid crop framing." }, 400);
   // Same inline-asset guard the PATCH save enforces — a freshly uploaded variant
   // must not smuggle in base64 data URIs (CDN-defeating bloat).
   const variantInline = scanWorldSchemaForInlineAssets(body.schema);

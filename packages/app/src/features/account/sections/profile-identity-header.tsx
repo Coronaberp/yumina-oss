@@ -4,6 +4,7 @@ import { Camera, Check, Loader2, Settings, X } from "lucide-react";
 import { useUserProfileStore } from "@/stores/user-profile";
 import { useUserAssetStore } from "@/stores/user-assets";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
 import { FieldError } from "@/components/ui/field-error";
 import { resolveImageUrl } from "@/lib/asset-url";
 import { getAvatarInitials } from "@/lib/avatar-initials";
@@ -35,7 +36,11 @@ export function ProfileIdentityHeader() {
   // Every problem prints beside its cause; the header never resets on failure.
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [imageImport, setImageImport] = useState<{ token: number; ownerId: string | undefined } | null>(null);
+  const imageRequest = useRef(0);
+  const ownerId = useRef(profile?.id);
+  ownerId.current = profile?.id;
+  useEffect(() => () => { imageRequest.current++; }, []);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // The draft follows the saved name: filled on first load, reset after a save.
@@ -53,30 +58,28 @@ export function ProfileIdentityHeader() {
   const avatarSrc = resolveImageUrl(profile?.image);
   const initials = getAvatarInitials(profile?.name);
 
-  const handleAvatarUpload = async (file: File) => {
-    setUploadingAvatar(true);
-    setAvatarError(null);
+  const handleAvatarUpload = async (file: File, context: ImageImportContext, target: NonNullable<typeof imageImport>) => {
+    const current = () => imageRequest.current === target.token && ownerId.current === target.ownerId && !context.signal.aborted;
+    if (!current()) return;
+    setUploadingAvatar(true); setAvatarError(null);
     try {
-      const asset = await uploadAsset(file, "image");
-      if (!asset) return;
+      const asset = await uploadAsset(file, "image", undefined, { signal: context.signal, onProgress: context.onProgress, silent: true });
+      if (!current()) return;
+      if (!asset) throw new Error(t("editModal.avatarUploadFailed"));
       const imageRef = (asset as unknown as { key?: string }).key;
       const res = await fetch(`${apiBase}/api/users/me`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", signal: context.signal,
         body: JSON.stringify({ image: imageRef || asset.url }),
       });
-      if (res.ok) {
-        // No pill: the avatar swaps to the new picture.
-        await forceFetchProfile();
-      } else {
-        setAvatarError(t("editModal.avatarUpdateFailed"));
-      }
-    } catch {
-      setAvatarError(t("editModal.avatarUploadFailed"));
-    } finally {
-      setUploadingAvatar(false);
-    }
+      if (!current()) return;
+      if (!res.ok) throw new Error(t("editModal.avatarUpdateFailed"));
+      await forceFetchProfile();
+      if (current()) { setUploadingAvatar(false); imageRequest.current++; }
+    } catch (failure) {
+      if (!current()) return;
+      setAvatarError(failure instanceof Error ? failure.message : t("editModal.avatarUploadFailed"));
+      throw failure;
+    } finally { if (current()) setUploadingAvatar(false); }
   };
 
   const startEditing = () => {
@@ -121,13 +124,14 @@ export function ProfileIdentityHeader() {
   };
 
   return (
+    <>
     <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
         {/* Avatar — the upload control */}
         <div className="flex shrink-0 flex-col items-start gap-2">
           <button
             type="button"
-            onClick={() => avatarInputRef.current?.click()}
+            onClick={() => setImageImport({ token: ++imageRequest.current, ownerId: profile?.id })}
             disabled={uploadingAvatar}
             aria-label={t("editModal.change")}
             className="group/avatar relative h-32 w-32 overflow-hidden rounded-full border-[6px] border-page bg-page shadow-2xl transition-colors hover:border-gold/60 disabled:cursor-wait sm:h-40 sm:w-40"
@@ -151,18 +155,6 @@ export function ProfileIdentityHeader() {
               )}
             </div>
           </button>
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              e.target.value = "";
-              void handleAvatarUpload(file);
-            }}
-          />
           <FieldError message={avatarError} />
         </div>
 
@@ -236,5 +228,9 @@ export function ProfileIdentityHeader() {
         <span className="mb-2 text-xs text-sub/60">{tSettings("account.saving")}</span>
       )}
     </header>
+    {imageImport && <ImageImportDialog preserveOriginal crop="none" maxBytes={Infinity} title={t("persona.modal.avatarUpload")}
+      onImport={(files, context) => handleAvatarUpload(files[0]!, context, imageImport)}
+      onClose={() => { imageRequest.current++; setImageImport(null); setUploadingAvatar(false); }} />}
+    </>
   );
 }

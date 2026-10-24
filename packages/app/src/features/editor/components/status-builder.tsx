@@ -37,14 +37,14 @@ function FieldTile({ field, active, disabled, onSelect, onMove }: { field: Statu
 
 function FieldCanvas({ group, children, disabled }: { group: string; children: React.ReactNode; disabled: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: `canvas:${group}`, disabled });
-  return <div ref={setNodeRef} aria-label="Status arrangement" className={`min-h-24 space-y-2 rounded-xl border border-dashed p-3 ${isOver ? "border-primary bg-primary/5" : "border-border bg-background/40"}`}>{children}</div>;
+  return <div ref={setNodeRef} aria-label="Status arrangement" className={`max-h-[28rem] min-h-24 space-y-2 overflow-y-auto overscroll-contain rounded-xl border border-dashed p-3 ${isOver ? "border-primary bg-primary/5" : "border-border bg-background/40"}`}>{children}</div>;
 }
 
-export function StatusBuilder({ config, variables, selectedId, disabled, onSelect, onDrop }: {
+export function StatusBuilder({ config, variables, selectedId, category, disabled, onCategoryChange, onSelect, onDrop }: {
   config: StatusConfig; variables: Variable[]; selectedId?: string; disabled: boolean;
+  category: string; onCategoryChange: (category: string) => void;
   onSelect: (id: string) => void; onDrop: (active: string, over: string) => void;
 }) {
-  const [category, setCategory] = useState(config.fields.find(field => field.id === selectedId)?.group ?? config.groups[0]!.id);
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -59,7 +59,7 @@ export function StatusBuilder({ config, variables, selectedId, disabled, onSelec
     const active = String(event.active.id), over = String(event.over.id).replace(/^canvas:/, "category:");
     onDrop(active, over);
     const destination = over.startsWith("category:") ? over.slice(9) : config.fields.find(field => field.id === over.slice(6))?.group;
-    if (destination) setCategory(destination);
+    if (destination) onCategoryChange(destination);
     setAnnouncement("Status arrangement updated.");
   }
   return <DndContext sensors={sensors} accessibility={{ screenReaderInstructions: { draggable: "For fields, focus a handle and use Up or Down to reorder. Use the field category control to move between categories. Use the Add button to add a variable." } }} collisionDetection={args => {
@@ -82,7 +82,7 @@ export function StatusBuilder({ config, variables, selectedId, disabled, onSelec
     </section>
     <section className="space-y-3" aria-label="Arrange status fields">
       <div><h3 className="text-sm font-medium">Arrange your screen</h3><p className="mt-1 text-xs text-muted-foreground">Drag the handles to reorder, or focus a handle and use the arrow keys. Drop onto a category to move a field. Click a field to customize it.</p></div>
-      <div className="flex flex-wrap gap-2" aria-label="Builder categories">{config.groups.map(item => <CategoryTab key={item.id} group={item} active={group === item.id} disabled={disabled} onClick={() => { setCategory(item.id); onSelect(config.fields.find(field => field.group === item.id)?.id ?? "__none"); }} />)}</div>
+      <div className="flex flex-wrap gap-2" aria-label="Builder categories">{config.groups.map(item => <CategoryTab key={item.id} group={item} active={group === item.id} disabled={disabled} onClick={() => { onCategoryChange(item.id); onSelect(config.fields.find(field => field.group === item.id)?.id ?? "__none"); }} />)}</div>
       <SortableContext items={fields.map(field => `field:${field.id}`)} strategy={verticalListSortingStrategy}>
         <FieldCanvas group={group} disabled={disabled}>
           {fields.map(field => <FieldTile key={field.id} field={field} active={selectedId === field.id} disabled={disabled} onSelect={() => onSelect(field.id)} onMove={direction => { const next = fields[fields.indexOf(field) + direction]; if (next && !disabled) { onDrop(`field:${field.id}`, `field:${next.id}`); setAnnouncement("Status arrangement updated."); } }} />)}

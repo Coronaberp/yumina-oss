@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { apiKeys, user } from "../db/schema.js";
 import { decryptApiKey } from "./crypto.js";
 import { createByokProvider, createProvider, inferProvider } from "./llm/provider-factory.js";
+import { withProviderAttemptRecording } from "./provider-attempt-log.js";
 import type { ProviderName } from "./llm/provider-factory.js";
 import type { LLMProvider } from "./llm/types.js";
 import type { ApiKeyMetadata } from "@yumina/shared";
@@ -82,7 +83,7 @@ function sanitizeDecrypted(key: string | null): string | null {
 /** Fetch the active (or most recent) custom-key row, including metadata. */
 async function getUserCustomKey(
   userId: string
-): Promise<{ apiKey: string; baseUrl: string; metadata: ApiKeyMetadata | null } | null> {
+): Promise<{ id: string; apiKey: string; baseUrl: string; metadata: ApiKeyMetadata | null } | null> {
   const { activeId, nsfwId } = await getProfileIds(userId);
 
   let row: typeof apiKeys.$inferSelect | undefined;
@@ -111,6 +112,7 @@ async function getUserCustomKey(
   const allowsKeylessStrata = IS_LOCAL_EDITION && isStrataLocalEndpoint(row.baseUrl);
   if (apiKey === null || (!apiKey.trim() && !allowsKeylessStrata)) return null; // corrupted key data
   return {
+    id: row.id,
     apiKey,
     baseUrl: row.baseUrl,
     metadata: (row.metadata as ApiKeyMetadata | null) ?? null,
@@ -230,7 +232,7 @@ export async function resolveProviderForModel(
       const custom = await getUserCustomKey(userId);
       if (custom) {
         return {
-          provider: createByokProvider("custom", custom.apiKey, custom.baseUrl, custom.metadata),
+          provider: withProviderAttemptRecording(createByokProvider("custom", custom.apiKey, custom.baseUrl, custom.metadata), userId, custom.id),
           providerName: "custom" as ProviderName,
           isByok: true,
           apiKeyTier: "byok",
@@ -271,7 +273,7 @@ export async function resolveProviderForModel(
       const custom = await getUserCustomKey(userId);
       if (custom) {
         return {
-          provider: createByokProvider("custom", custom.apiKey, custom.baseUrl, custom.metadata),
+          provider: withProviderAttemptRecording(createByokProvider("custom", custom.apiKey, custom.baseUrl, custom.metadata), userId, custom.id),
           providerName: "custom" as ProviderName,
           isByok: true,
           apiKeyTier: "byok",

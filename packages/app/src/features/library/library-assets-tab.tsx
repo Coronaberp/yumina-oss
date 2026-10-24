@@ -63,6 +63,7 @@ import { BulkActionsBar } from "./bulk-actions-bar";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { ImagePlus } from "lucide-react";
 import { useFeature } from "@/edition/edition";
+import { ImageImportDialog, type ImageImportContext } from "@/components/image-import-dialog";
 import { GenerationPanel } from "@/edition/slots";
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ export function LibraryAssetsTab({
   resourceNav?: React.ReactNode;
 }) {
   const { t } = useTranslation("library");
+  const { t: imageImportT } = useTranslation("editor");
   const { requireAuth, isAuthenticated, session } = useAuthGuard();
   const assets = useUserAssetStore(s => s.assets);
   const folders = useUserAssetStore(s => s.folders);
@@ -145,6 +147,7 @@ export function LibraryAssetsTab({
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const folderUpload = useAssetImportStore(s => s.task?.selection ?? null);
   const importRevision = useAssetImportStore(s => s.revision);
+  const [imageSources, setImageSources] = useState<{ files: File[]; others: File[]; folderId: string | null; ownerId: string | undefined; completed: Set<File> } | null>(null);
   const [readingFolder, setReadingFolder] = useState(false);
   const uploadBatchLock = useRef(false);
   const folderReadLock = useRef(false);
@@ -309,30 +312,50 @@ export function LibraryAssetsTab({
   // ─── Handlers ───────────────────────────────────────────────────
 
   const uploadFiles = useCallback(
-    async (files: File[], folderId: string | null) => {
-      if (files.length === 0 || uploadBatchLock.current) return;
+    async (files: File[], folderId: string | null, context?: ImageImportContext, completed?: Set<File>) => {
+      if (uploadBatchLock.current) {
+        if (context) throw new Error("An upload is already in progress.");
+        return;
+      }
+      const remainingFiles = completed ? files.filter(file => !completed.has(file)) : files;
+      if (remainingFiles.length === 0) return;
 
       uploadBatchLock.current = true;
       const owner = uploadOwner.current;
-      setPendingUploadCount(files.length);
+      setPendingUploadCount(remainingFiles.length);
 
       try {
-        for (const [index, file] of files.entries()) {
-          if (!mounted.current || uploadOwner.current !== owner) break;
+        for (const [index, file] of remainingFiles.entries()) {
+          context?.signal.throwIfAborted();
+          if (!mounted.current || uploadOwner.current !== owner) {
+            if (context) throw new Error("The upload destination changed.");
+            break;
+          }
           const { type } = getUploadMetadata(file);
-          await uploadAsset(file, type, folderId ?? undefined);
-          if (mounted.current && uploadOwner.current === owner) setPendingUploadCount(files.length - index - 1);
+          const asset = await uploadAsset(file, type, folderId ?? undefined, context ? { signal: context.signal, onProgress: context.onProgress, silent: true } : undefined);
+          if (asset) completed?.add(file);
+          context?.signal.throwIfAborted();
+          if (context && !asset) throw new Error(imageImportT("imageImport.failed"));
+          if (mounted.current && uploadOwner.current === owner) setPendingUploadCount(remainingFiles.length - index - 1);
         }
       } finally {
         uploadBatchLock.current = false;
         if (mounted.current && uploadOwner.current === owner) {
           setPendingUploadCount(0);
-          refreshCurrentPage.current();
-          void fetchFolders();
+          if (!context?.signal.aborted) { refreshCurrentPage.current(); void fetchFolders(); }
         }
       }
     },
-    [fetchFolders, uploadAsset]
+    [fetchFolders, uploadAsset, imageImportT]
+  );
+
+  const prepareFilesForUpload = useCallback(
+    async (files: File[], folderId: string | null) => {
+      const images = files.filter(file => file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name));
+      if (images.length) setImageSources({ files: images, others: files.filter(file => !images.includes(file)), folderId, ownerId: uploadOwner.current, completed: new Set() });
+      else await uploadFiles(files, folderId);
+    },
+    [uploadFiles]
   );
 
   const handleUpload = useCallback(
@@ -340,9 +363,9 @@ export function LibraryAssetsTab({
       const files = Array.from(e.target.files ?? []);
       e.target.value = "";
       if (!isAuthenticated) { requireAuth("create worlds"); return; }
-      await uploadFiles(files, currentFolderId);
+      await prepareFilesForUpload(files, currentFolderId);
     },
-    [currentFolderId, isAuthenticated, requireAuth, uploadFiles]
+    [currentFolderId, isAuthenticated, requireAuth, prepareFilesForUpload]
   );
 
   const stageFolderUpload = useCallback((files: { file: File; path: string }[], folderId: string | null) => {
@@ -452,7 +475,7 @@ export function LibraryAssetsTab({
         const result = await readDroppedAssets(e.dataTransfer);
         if (!mounted.current || uploadOwner.current !== owner) return;
         if (result.hasDirectories) stageFolderUpload(result.files, folderId);
-        else await uploadFiles(result.files.map(({ file }) => file), folderId);
+        else await prepareFilesForUpload(result.files.map(({ file }) => file), folderId);
       } catch {
         if (mounted.current && uploadOwner.current === owner) feedback.error(t("assets.readFolderFailed"));
       } finally {
@@ -460,7 +483,7 @@ export function LibraryAssetsTab({
         if (mounted.current) setReadingFolder(false);
       }
     },
-    [moveAsset, resolveFolderIdForDropTarget, uploadFiles, isAuthenticated, requireAuth, folderUpload, uploading, stageFolderUpload, t]
+    [moveAsset, resolveFolderIdForDropTarget, prepareFilesForUpload, isAuthenticated, requireAuth, folderUpload, uploading, stageFolderUpload, t]
   );
 
   const toggleSelectAsset = useCallback((id: string, next: boolean) => {
@@ -746,6 +769,7 @@ export function LibraryAssetsTab({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => { if (!isAuthenticated) { requireAuth("create worlds"); return; } fileInputRef.current?.click(); }}><Upload size={14} />{t("assets.uploadFiles")}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { if (!isAuthenticated) { requireAuth("create worlds"); return; } setImageSources({ files: [], others: [], folderId: currentFolderId, ownerId: uploadOwner.current, completed: new Set() }); }}><ImagePlus size={14} />{imageImportT("imageImport.title")}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => { if (!isAuthenticated) { requireAuth("create worlds"); return; } folderInputRef.current?.click(); }}><FolderUp size={14} />{t("assets.uploadFolder")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -879,6 +903,10 @@ export function LibraryAssetsTab({
           onGenerated={() => { void fetchCurrentPage(); void fetchFolders(); }}
         />
       )}
+      {imageSources && imageSources.ownerId === session?.user.id && <ImageImportDialog multiple initialFiles={imageSources.files} onClose={() => setImageSources(null)} onImport={async (files, context) => {
+        if (imageSources.ownerId !== uploadOwner.current) throw new Error("The upload destination changed.");
+        await uploadFiles([...files, ...imageSources.others], imageSources.folderId, context, imageSources.completed);
+      }} />}
       {/* ─── Preview Dialog ─── */}
       <Dialog
         open={!!previewAsset}

@@ -16,14 +16,22 @@ const old = current.replace('import { VnTextSettings, VnTextStyle } from "./text
       <button className="vn-close vn-menu-close" aria-label="Close menu" onClick={onClose}>Close<MenuIcon api={api} name="close" /></button>`);
 test("saved VN settings upgrade without changing authored art, code or defaults", () => {
   const defaults = 'export const vnTextDefaults = {"dialogue":{"size":30},"narration":{}};';
-  const files = { "__user-root.tsx": old, "index.tsx": "composed root", "sprites.ts": "creator sprites", "text-defaults.ts": defaults };
-  const upgraded = upgradeVnTextFiles(files, helpers);
-  assert.equal(upgraded["__user-root.tsx"], current);
-  assert.equal(upgraded["sprites.ts"], files["sprites.ts"]);
-  assert.equal(upgraded["index.tsx"], "composed root");
-  assert.equal(upgraded["text-defaults.ts"], defaults);
-  assert.equal(upgradeVnTextFiles(upgraded, helpers), upgraded);
-  assert.equal(files["__user-root.tsx"], old);
+  for (const errorAware of [false, true]) {
+    const source = errorAware ? old : old.replace('spriteLimit, error]', 'spriteLimit]');
+    const expected = errorAware ? current : current.replace('spriteLimit, error, JSON.stringify(api.vnTextPreferences)]', 'spriteLimit, JSON.stringify(api.vnTextPreferences)]');
+    const files = { "__user-root.tsx": source, "index.tsx": "composed root", "sprites.ts": "creator sprites", "text-defaults.ts": defaults };
+    const upgraded = upgradeVnTextFiles(files, helpers);
+    const ownImport = 'import { VnTextSettings, VnTextStyle } from "./text-settings";\n';
+    assert.equal(upgraded["__user-root.tsx"].split(ownImport).length, 2, "Add exactly one settings import");
+    // Only this upgrader's added import may move around newer stock imports.
+    // Every other import, handler, layout and authored byte remains exact.
+    assert.equal(upgraded["__user-root.tsx"].replace(ownImport, ""), expected.replace(ownImport, ""), errorAware ? "error-aware layout dependencies retain text preferences" : "older layout dependencies retain text preferences");
+    assert.equal(upgraded["sprites.ts"], files["sprites.ts"]);
+    assert.equal(upgraded["index.tsx"], "composed root");
+    assert.equal(upgraded["text-defaults.ts"], defaults);
+    assert.equal(upgradeVnTextFiles(upgraded, helpers), upgraded);
+    assert.equal(files["__user-root.tsx"], source);
+  }
 });
 test("Chat and custom VN settings remain unchanged", () => {
   const examples: Record<string, string>[] = [{ "index.tsx": "export default function World(){return <Chat/>;}" }, { "index.tsx": old.replace('function Menu({ api,', 'function CustomMenu({ api,') }, { "index.tsx": old, "text-settings.tsx": "creator custom settings" }];

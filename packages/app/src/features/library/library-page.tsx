@@ -26,6 +26,8 @@ import { navigateBackSafely } from "@/lib/safe-back";
 export function LibraryPage() {
   const { t } = useTranslation("library");
   const worlds = useWorldsStore(s => s.worlds);
+  const adminLibraryItems = useWorldsStore(s => s.adminLibraryItems);
+  const adminLibraryViewerId = useWorldsStore(s => s.adminLibraryViewerId);
   const loading = useWorldsStore(s => s.loading);
   const fetchWorlds = useWorldsStore(s => s.fetchWorlds);
   const libraryLoading = useLibraryStore(s => s.loading);
@@ -276,6 +278,7 @@ export function LibraryPage() {
         <LibrarySharedExamples worlds={worlds} userId={userId} searchQuery={searchQuery} onSelectItem={handleSelectItem} />
         <LibraryMyProjects
           worlds={worlds}
+          adminLibraryItems={userId && adminLibraryViewerId === userId ? adminLibraryItems : []}
           userId={userId}
           searchQuery={searchQuery}
           onSelectItem={handleSelectItem}

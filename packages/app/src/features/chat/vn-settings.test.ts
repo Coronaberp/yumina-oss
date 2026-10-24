@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import React, { act, createElement } from "react";
 import { JSDOM } from "jsdom";
 import { bundleAndCompile } from "../studio/lib/tsx-bundler";
+import type { VnTextPreferences } from "@yumina/shared";
 
 test("token statistics default on, can be hidden, and survive reload and other settings changes", async () => {
   const source = fileURLToPath(new URL("../../../../../interfaces/vn/", import.meta.url));
@@ -18,11 +19,14 @@ test("token statistics default on, can be hidden, and survive reload and other s
   let root = createRoot(container);
   // A pre-existing preference has no new key and must retain its old values.
   const stored = new Map([["vn:settings", JSON.stringify({ textSize: 23, autoDelay: 7000 })]]);
+  let personal: VnTextPreferences = { dialogue: { font: "serif", color: "#aabbcc" }, narration: {} };
   const api = {
     sessionId: "settings-test", worldId: "world", worldName: "Academy", entries: [], variables: {},
     readOnly: true, isStreaming: false, messages: [{ id: "reply", role: "assistant", content: "The courtyard is quiet.", tokenCount: 1000, generationTimeMs: 1000 }],
     pendingChoices: [], storage: { get: async (key: string) => stored.get(key) ?? null, set: async (key: string, value: string) => { stored.set(key, value); } },
     renderMarkdown: (value: string) => value, resolveAssetUrl: (value: string) => value, getAudioVolume: () => 0.5,
+    get vnTextPreferences() { return personal; },
+    setVnTextPreferences: async (value: VnTextPreferences) => { personal = value; },
   };
   const compiled = bundleAndCompile({ files, entryFile: "index.tsx" }, () => api);
   assert.equal(compiled.error, null);
@@ -48,13 +52,16 @@ test("token statistics default on, can be hidden, and survive reload and other s
     await act(async () => root.unmount()); root = createRoot(container);
     await render(); await openSettings();
     assert.equal(checkbox().checked, false, "Disabled preference survives remount");
-    const size = container.querySelector<HTMLSelectElement>("select")!;
+    const size = container.querySelector<HTMLSelectElement>('select[aria-label="Messages size"]')!;
     await act(async () => { size.value = "32"; size.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
     assert.equal(JSON.parse(stored.get("vn:settings")!).showTokenStatistics, false, "Other settings preserve the preference");
     await act(async () => checkbox().click());
     await click("Close menu");
     assert.ok(container.querySelector(".vn-reply-metrics"));
-    assert.equal(JSON.parse(stored.get("vn:settings")!).textSize, 32);
+    assert.equal(personal.dialogue.size, 32);
+    assert.equal(personal.dialogue.font, "serif");
+    assert.equal(personal.dialogue.color, "#aabbcc");
+    assert.equal(JSON.parse(stored.get("vn:settings")!).autoDelay, 7000);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of descriptors) {

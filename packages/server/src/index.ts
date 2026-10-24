@@ -33,6 +33,7 @@ import {
   ensureStoryhavenMemoryTables,
   ensureDanbooruTables,
   ensureImageGenerationTables,
+  ensureImageMasterTables,
   ensureWorldReviewControlsColumn,
   ensureSessionPersonaColumn,
   ensureWorldReviewTables,
@@ -635,6 +636,7 @@ async function runSchemaSelfHealOnce(): Promise<void> {
   await ensureTables();
   await ensureDanbooruTables();
   await ensureImageGenerationTables();
+  await ensureImageMasterTables();
   await ensureLifetimePlaytimePending();
   await ensureWorldsSchemaDerived();
   await ensureMessagesSwipeCount();

@@ -6,6 +6,8 @@ import { eligibleStoryCharacters, neededStoryCharacters } from "./story-characte
 import { characterIdentity } from "./story-character-identity.js";
 import { chunkLoreContent, packSentences, splitIntoSentences } from "../memory/retrieval.js";
 
+import { resolveStoryWardrobes, expandWardrobePlaceholder, type WardrobeBranchMessage } from "./story-sprite-wardrobe.js";
+
 const OPEN = "<story-recall>\n", CLOSE = "\n</story-recall>";
 const recalled = (m: ChatMessage) => m.role === "system" && typeof m.content === "string" && m.content.startsWith(OPEN);
 function sceneCastText(state?: GameState) {
@@ -43,6 +45,7 @@ function recentHistory(messages: ChatMessage[], prefix: number, suffix: number, 
  * router before any text-model request. */
 export async function fillTurnRecallRequest(args: {
   turn: TurnMemory; world: WorldDefinition; state?: GameState;
+  branchMessages?: readonly WardrobeBranchMessage[];
   messages: ChatMessage[]; model: string; maxContext: number;
   trim: { pinnedPrefix: number; pinnedSuffix: number; historyTokens?: number };
 }): Promise<ChatMessage[]> {
@@ -51,17 +54,52 @@ export async function fillTurnRecallRequest(args: {
   const text = original.filter(m => m.role !== "system").slice(-2).map(m =>
     typeof m.content === "string" ? m.content : m.content.filter(p => p.type === "text").map(p => p.text).join("\n"));
   const query = [turn.query, ...text, sceneCastText(state)].filter(Boolean).join("\n");
-  const characters = neededStoryCharacters(world, query, state);
+  const wardrobes = resolveStoryWardrobes({ world, state, branchMessages: turn.freshStart ? [] : args.branchMessages ?? [] });
+  const byEntry = new Map(wardrobes.map(item => [item.entry.id, item]));
+  const characters = neededStoryCharacters(world, query, state).map(entry => ({
+    ...entry, content: expandWardrobePlaceholder(entry.content, byEntry.get(entry.id)?.promptDescription || ""),
+  }));
+  const relevantIds = new Set(characters.map(entry => entry.id));
+  const outfitParts = wardrobes.filter(item => relevantIds.has(item.entry.id))
+    .map(item => "[Current wardrobe: " + item.name + "; type=" + item.type + (item.variant ? "; variant=" + item.variant : "; variant=base") + "]\n"
+      + "Available image expression IDs for this exact outfit: " + (item.expressions.length ? item.expressions.join(", ") : "none") + ". Default image expression: " + item.defaultEmotion + ".\n"
+      + item.promptDescription);
+  const outfitHeader = "Current clothing follows the selected opening default and latest accepted valid speaker marker, and overrides conflicting clothing in older biographies, recalled lore, and summaries. Omitting a wardrobe field keeps the current type and variant; an explicit type without a variant selects its base outfit. Use only the selected outfit's authored description; never borrow another wardrobe's or variant's clothes or images. An unspecified description does not authorize inventing an outfit. Available image expressions apply only to this character and exact outfit. Use its default image expression when no matching image exists; use normal for an outfit with no art. Describe emotions freely in prose: the available images do not limit emotions or story choices. Preserve identity and story state.";
+  const outfitReserve = outfitParts.length ? Math.min(1500, estimateTokens([outfitHeader, ...outfitParts].join("\n\n"), model)) : 0;
   const biographyTokens = characters.reduce((n,e) => n + estimateTokens(e.content, model), 0);
-  const reserve = Math.min(Math.floor(maxContext * .25), biographyTokens + (turn.storyhaven && !turn.freshStart ? 1000 : 0) + (characters.length ? 64 : 0));
+  const reserve = Math.min(Math.floor(maxContext * .25), biographyTokens + outfitReserve + (turn.storyhaven && !turn.freshStart ? 1000 : 0) + (characters.length ? 64 : 0));
   const prefix = Math.min(trim.pinnedPrefix, original.length);
   const messages = recentHistory(original, prefix, trim.pinnedSuffix, maxContext - reserve, trim.historyTokens ?? Infinity, model);
   const remaining = maxContext - messages.reduce((n,m) => n + messageCost(m, model), 0);
-  const recallBudget = Math.max(0, remaining - estimateTokens(OPEN + CLOSE, model) - 32);
+  const totalRecallBudget = Math.max(0, remaining - estimateTokens(OPEN + CLOSE, model) - 32);
+  const outfitSelected: string[] = [];
+  const outfitBudget = Math.min(1500, totalRecallBudget);
+  for (const [index, part] of outfitParts.entries()) {
+    const prefixText = [outfitHeader, ...outfitSelected].join("\n\n") + "\n\n";
+    const available = Math.floor((outfitBudget - estimateTokens(prefixText, model)) / (outfitParts.length - index));
+    if (available <= 0) continue;
+    if (estimateTokens(part, model) <= available) { outfitSelected.push(part); continue; }
+    const lineEnd = part.indexOf("\n");
+    const label = part.slice(0, lineEnd + 1), characters = Array.from(part.slice(lineEnd + 1));
+    const shortened = (length: number) => label + characters.slice(0, length).join("") + "… [Description shortened to fit context.]";
+    let low = 0, high = characters.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (estimateTokens(shortened(middle), model) <= available) low = middle;
+      else high = middle - 1;
+    }
+    if (low && estimateTokens(prefixText + shortened(low), model) <= outfitBudget) outfitSelected.push(shortened(low));
+  }
+  const outfitBlock = outfitSelected.length ? [outfitHeader, ...outfitSelected].join("\n\n") : "";
+  const recallBudget = Math.max(0, totalRecallBudget - (outfitBlock ? estimateTokens(outfitBlock + "\n\n", model) : 0));
   let block = "", configured = false;
   if (turn.storyhaven?.input && !turn.freshStart) {
     const result = await turn.storyhaven.adapter.retrieveStoryhavenMemory({
       ...turn.storyhaven.input, query, model, memoryBudgetTokens: recallBudget,
+      // Request-only values; canonical lore hashes and indexed bytes stay intact.
+      loreWardrobeValues: Object.fromEntries(wardrobes.map(item => [
+        world.id + ":" + item.entry.id, item.promptDescription,
+      ])),
       // This is a visibility allowlist, not a name-match shortlist. Semantic
       // search must still be able to find a relevant first-time character.
       characterEntryIds: eligibleStoryCharacters(world, state).map(e => e.id),
@@ -102,6 +140,7 @@ export async function fillTurnRecallRequest(args: {
     }
     block = selected.join("\n\n");
   }
+  block = [outfitBlock, block].filter(Boolean).join("\n\n");
   if (block && estimateTokens(OPEN + block + CLOSE, model) <= remaining) {
     messages.splice(prefix, 0, {role: "system", content: OPEN + block + CLOSE});
   }

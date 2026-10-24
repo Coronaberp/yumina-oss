@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { PGlite } from "@electric-sql/pglite";
+import { db } from "../../db/index.js";
 import { createCodexImageService, selectStudioImageSource, checkStudioImageRequest } from "./codex-service.js";
 import { env } from "../env.js";
 import type { GeneratedStorage } from "./service.js";
 import type { GeneratedAsset } from "./config.js";
 import sharp from "sharp";
 import { normalizeGeneratedRaster, commitGeneratedAsset } from "./asset-store.js";
+
+after(async () => {
+  assert.ok(db.$client instanceof PGlite);
+  // Finish the isolated DB lifecycle before --test-force-exit bypasses beforeExit.
+  await db.$client.close();
+});
 
 function setup(overrides: Partial<GeneratedStorage> = {}) {
   let calls = 0, saved: GeneratedAsset | undefined;

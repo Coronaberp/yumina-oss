@@ -1,7 +1,11 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, ArrowUp, ArrowDown, BookOpen, Plus, Trash2 } from "lucide-react";
-import { chapterSchema, chapterIssues, type StoryChapter } from "@yumina/engine";
+import { chapterSchema, chapterIssues, type StoryChapter, type WorldDefinition } from "@yumina/engine";
 import { useEditorStore } from "@/stores/editor";
+import { useTranslation } from "react-i18next";
+import { Select } from "@/components/ui/select";
+import { interfaceKey } from "../lib/interface-presets";
+import { isVnInterface, readVnSpriteInventory, readVnSpriteChapterDefaults, writeVnSpriteChapterDefault } from "../lib/vn-assets";
 import { cn } from "@/lib/utils";
 import { DebouncedInput, DebouncedTextarea } from "../components/debounced-field";
 import { TwoTapDeleteButton } from "@/components/ui/two-tap-delete-button";
@@ -15,7 +19,7 @@ const description = "Organize eras and alternate histories in one universe. Link
 
 export function ChaptersSection({ compact = false }: { compact?: boolean } = {}) {
   const world = useEditorStore(s => s.worldDraft);
-  const locked = useEditorStore(s => s.guestMode || s.readOnlyInspect);
+  const locked = useEditorStore(s => s.guestMode || s.readOnlyInspect || s.editingLocked);
   const chapters = world.chapters ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Studio shows the first available chapter, including chapters loaded after
@@ -120,6 +124,7 @@ export function ChaptersSection({ compact = false }: { compact?: boolean } = {})
           {(world.worldbooks ?? []).map(book => <label key={book.id} className="flex items-start gap-3 rounded-xl border border-border bg-card/50 p-3 text-sm font-medium transition-colors hover:bg-accent/50"><Checkbox className="mt-0.5" disabled={locked} checked={book.chapterIds?.includes(selected.id) ?? false} onCheckedChange={() => toggleBook(book.id)} /><span className="min-w-0 break-words">{book.name}</span></label>)}
           {!world.worldbooks?.length && <p className="text-xs text-muted-foreground">Create a lorebook in Lorebook, then link it here.</p>}
         </section>
+        <ChapterSpriteDefaults key={selected.id} world={world} chapter={selected} locked={locked} />
         <ChapterEventsEditor key={selected.id} chapterId={selected.id} />
       </fieldset>
     </div>
@@ -166,4 +171,60 @@ export function ChaptersSection({ compact = false }: { compact?: boolean } = {})
       </div>
     </div>
   </div>;
+}
+
+/** Chapter choices live beside sprite data and apply to every linked opening. */
+function ChapterSpriteDefaults({ world, chapter, locked }: { world: WorldDefinition; chapter: StoryChapter; locked: boolean }) {
+  const { t } = useTranslation("editor");
+  const [error, setError] = useState("");
+  const root = world.rootComponent;
+  const source = root?.files["sprites.ts"] ?? "";
+  const data = useMemo(() => {
+    try { return { inventory: readVnSpriteInventory(source, world.entries), defaults: readVnSpriteChapterDefaults(source), error: "" }; }
+    catch (failure) { return { inventory: undefined, defaults: {} as ReturnType<typeof readVnSpriteChapterDefaults>, error: failure instanceof Error ? failure.message : String(failure) }; }
+  }, [source, world.entries]);
+  if (!isVnInterface(root)) return null;
+  const disabled = locked || !chapter.greetingIds.length || !data.inventory;
+  function write(name: string, selection?: { type: string; variant?: string }) {
+    const state = useEditorStore.getState(), currentRoot = state.worldDraft.rootComponent;
+    const liveChapter = state.worldDraft.chapters?.find(value => value.id === chapter.id);
+    if (locked || state.editingLocked || state.guestMode || state.readOnlyInspect || state.worldDraft.id !== world.id || !root || !currentRoot || currentRoot.id !== root.id || interfaceKey(currentRoot) !== interfaceKey(root) || currentRoot.files["sprites.ts"] !== source || !liveChapter || JSON.stringify(liveChapter.greetingIds) !== JSON.stringify(chapter.greetingIds)) {
+      setError(t("visualNovel.settingsChanged")); return;
+    }
+    try {
+      const next = writeVnSpriteChapterDefault(source, chapter.greetingIds, name, selection);
+      state.updateRootComponent({ files: { ...currentRoot.files, "sprites.ts": next } });
+      setError("");
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+  }
+  return <section className="min-w-0 space-y-3 rounded-xl border border-border p-4">
+    <h3 className="text-sm font-bold text-foreground">{t("spriteManager.chapterDefaults")}</h3>
+    <p className="text-xs leading-relaxed text-muted-foreground">{t("spriteManager.chapterDefaultsHint")}</p>
+    {!chapter.greetingIds.length && <p className="text-xs text-muted-foreground">{t("spriteManager.chapterNeedsGreeting")}</p>}
+    {data.inventory?.characters.map(name => {
+      const selections = chapter.greetingIds.map(id => {
+        const opening = data.defaults[id] ?? {};
+        const key = Object.keys(opening).find(value => value.toLowerCase() === name.toLowerCase());
+        return key ? opening[key] : undefined;
+      });
+      const signatures = selections.map(value => JSON.stringify(value ? { type: value.type, variant: value.variant ?? "" } : null));
+      const mixed = new Set(signatures).size > 1;
+      const selected = selections[0];
+      const selectedType = mixed ? "__mixed__" : selected?.type ?? "__inherit__";
+      const variants = selected && !mixed ? data.inventory!.variants[selected.type] ?? {} : {};
+      return <div key={name} className="min-w-0 space-y-2 rounded-lg border border-border bg-card/50 p-3">
+        <p className="break-words text-sm font-medium text-foreground">{name}</p>
+        <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+          <Select aria-label={t("spriteManager.chapterTypeFor", { character: name })} value={selectedType} disabled={disabled} options={[
+            ...(mixed ? [{ value: "__mixed__", label: t("spriteManager.mixedDefaults"), disabled: true }] : []),
+            { value: "__inherit__", label: t("spriteManager.noChapterOverride") },
+            ...Object.entries(data.inventory!.config.types).map(([value, label]) => ({ value, label })),
+          ]} onValueChange={type => write(name, type === "__inherit__" ? undefined : { type })} />
+          {!!Object.keys(variants).length && <Select aria-label={t("spriteManager.chapterVariantFor", { character: name })} value={selected?.variant ?? ""} disabled={disabled} options={[{ value: "", label: t("spriteManager.baseVariant") }, ...Object.entries(variants).map(([value, label]) => ({ value, label: label.trim().toLocaleLowerCase() === t("spriteManager.baseVariant").trim().toLocaleLowerCase() ? `${label} (${value})` : label }))]} onValueChange={variant => { if (selected) write(name, { type: selected.type, ...(variant ? { variant } : {}) }); }} />}
+        </div>
+        {mixed && <p className="text-xs text-muted-foreground">{t("spriteManager.mixedDefaultsHint")}</p>}
+      </div>;
+    })}
+    {(error || data.error) && <p role="alert" className="break-words text-sm text-destructive">{error || data.error}</p>}
+  </section>;
 }

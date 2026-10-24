@@ -5,6 +5,7 @@ import { decryptApiKey } from "./crypto.js";
 import { IS_LOCAL_EDITION } from "./env.js";
 import { isStrataLocalEndpoint } from "./ssrf.js";
 import { createByokProvider, type ProviderName } from "./llm/provider-factory.js";
+import { withProviderAttemptRecording } from "./provider-attempt-log.js";
 import type { ResolvedProvider } from "./resolve-provider.js";
 
 export type ResolvedSavedProfile = ResolvedProvider & { model: string; profileId: string };
@@ -30,8 +31,9 @@ export async function resolveSavedProfileProvider(userId: string, profileId: unk
     if (key === null || (!key.trim() && !allowsKeylessStrata) || ["null", "undefined"].includes(key.trim().toLowerCase())) return null;
     const prefix = `${providerName}/`;
     const model = providerName === "openrouter" || modelName.startsWith(prefix) ? modelName : prefix + modelName;
+    const provider = createByokProvider(providerName, key, profile.baseUrl ?? undefined, profile.metadata);
     return {
-      provider: createByokProvider(providerName, key, profile.baseUrl ?? undefined, profile.metadata),
+      provider: providerName === "custom" ? withProviderAttemptRecording(provider, userId, profile.id) : provider,
       providerName, model, profileId: profile.id, isByok: true, apiKeyTier: "byok",
     };
   } catch {

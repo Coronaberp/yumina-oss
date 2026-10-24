@@ -4,7 +4,8 @@ import { upgradeStatusFiles, upgradeStatusRoot } from "@yumina/engine";
 const cache = new WeakMap<Record<string, string>, Record<string, string>>();
 
 /** Compatibility at load time also covers saved/published cards with old compiled code. */
-export function currentStatusFiles(files: Record<string, string>): Record<string, string> {
+export function currentStatusFiles(files: Record<string, string>, interfaceId?: RootComponent["interfaceId"]): Record<string, string> {
+  if (interfaceId === "classic") return files;
   const cached = cache.get(files);
   if (cached) return cached;
   const upgraded = upgradeStatusFiles(files);

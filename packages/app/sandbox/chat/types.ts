@@ -11,8 +11,10 @@ export interface SandboxMessageAttachment {
 }
 
 export interface SandboxSwipe {
+  model?: string | null;
   contentFlags?: import("@yumina/shared").ContentFlagAudit;
   modelFallback?: import("@yumina/shared").ModelFallbackRecord;
+  modelRouting?: import("@yumina/shared").ModelRoutingRecord;
   content: string;
   /** Full pre-parse LLM output (segments + directives + JSON wrappers).
    *  Optional for backwards-compat with messages persisted before 2026-05.
@@ -41,6 +43,7 @@ export interface SandboxMessage {
   activeSwipeIndex?: number;
   model?: string | null;
   modelFallback?: import("@yumina/shared").ModelFallbackRecord;
+  modelRouting?: import("@yumina/shared").ModelRoutingRecord;
   tokenCount?: number | null;
   generationTimeMs?: number | null;
   creditCost?: number | null;

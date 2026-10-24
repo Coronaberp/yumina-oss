@@ -1,7 +1,7 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, Hash, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, Hash, ArrowLeft, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DOCS_URLS } from "@/lib/docs-urls";
 import { useEditorStore } from "@/stores/editor";
@@ -14,6 +14,10 @@ import { OpeningValuesMatrix } from "../components/opening-values-matrix";
 import { ConditionEditor } from "../components/condition-editor";
 
 import { JsonDefaultValueEditor } from "../components/json-default-value-editor";
+import { StructuredDefaultValue } from "../components/structured-default-value";
+import { VariableChoices, ListChoicesConversion } from "../components/variable-choices";
+import { authoredVariableChoices, variableDataType, variableTypeUpdate, type VariableDataType } from "../lib/variable-data";
+import { isVnInterface } from "../lib/vn-assets";
 
 const TYPE_INDICATORS: Record<
   string,
@@ -44,17 +48,22 @@ const TYPE_INDICATORS: Record<
 export function VariablesSection({ compact, mobileListMode }: { compact?: boolean; mobileListMode?: boolean } = {}) {
   const { t } = useTranslation("editor");
   const worldDraft = useEditorStore(s => s.worldDraft);
+  const vn = isVnInterface(worldDraft.rootComponent);
+  const authoredChoices = useMemo(()=>vn ? authoredVariableChoices(worldDraft.reactions ?? []) : {},[vn,worldDraft.reactions]);
   const addVariable = useEditorStore(s => s.addVariable);
   const updateVariableAt = useEditorStore(s => s.updateVariableAt);
   const removeVariableAt = useEditorStore(s => s.removeVariableAt);
 
   const typeOptions = useMemo(
     () =>
-      (["number", "string", "boolean", "json"] as const).map((value) => ({
+      vn ? [
+        {value:"number",label:"Number"},{value:"string",label:"Text"},{value:"boolean",label:"Yes / No"},
+        {value:"list",label:"List"},{value:"group",label:"Group of fields"},{value:"choice",label:"Text with valid options"},
+      ] : (["number", "string", "boolean", "json"] as const).map((value) => ({
         value,
         label: t(`variables.types.${value}` as any),
       })),
-    [t]
+    [t, vn]
   );
   const aiAccessOptions = useMemo(
     () =>
@@ -85,6 +94,13 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
   // at least one opening to seed.
   const [expandedJsonId, setExpandedJsonId] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "openings">("list");
+  const [search, setSearch] = useState("");
+  const query = vn ? search.trim().toLowerCase() : "";
+  const visibleVariables = useMemo(() => worldDraft.variables
+    .map((variable, idx) => ({ variable, idx }))
+    .filter(({ variable }) => !variable.internal && (!query
+      || variable.name.toLowerCase().includes(query)
+      || variable.id.toLowerCase().includes(query))), [worldDraft.variables, query]);
   // The store silently dedupes colliding ids. This note sits under the ID
   // field so the creator sees why their input didn't land verbatim — a muted
   // hint, not a destructive error: nothing went wrong, the id just moved.
@@ -126,6 +142,7 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
             </div>
             <button
               onClick={() => {
+                setSearch("");
                 addVariable();
                 const vars = useEditorStore.getState().worldDraft.variables;
                 selectVariable(vars.length - 1);
@@ -165,16 +182,49 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
       /* Two-panel body */
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden @[640px]:flex-row">
         {/* Left panel — variable list */}
-        <div className={cn(
+        <aside aria-label={t("variables.title")} className={cn(
           "w-full overflow-y-auto border-b border-border bg-sidebar p-5",
           "@[640px]:w-80 @[640px]:shrink-0 @[640px]:border-b-0 @[640px]:border-r",
           clampedIdx !== null && "hidden @[640px]:flex @[640px]:flex-col"
         )}>
+          {vn && (
+            <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-3 border-b border-border bg-sidebar px-5 py-3">
+              <div className="relative">
+                <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="search"
+                  aria-label={t("variables.searchLabel")}
+                  placeholder={t("variables.searchPlaceholder")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && search) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSearch("");
+                    }
+                  }}
+                  className="w-full min-w-0 rounded-lg border border-border bg-card py-2 pl-9 pr-9 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50 [&::-webkit-search-cancel-button]:hidden"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    aria-label={t("variables.clearSearch")}
+                    onClick={() => setSearch("")}
+                    className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                  >
+                    <X aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {/* Compact add button */}
           {compact && (
             <div className="mb-3 flex items-center justify-end">
               <button
                 onClick={() => {
+                  setSearch("");
                   addVariable();
                   const vars = useEditorStore.getState().worldDraft.variables;
                   selectVariable(vars.length - 1);
@@ -196,13 +246,13 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
               <p className="mt-1.5 max-w-xs mx-auto text-xs text-muted-foreground/60">{t("variables.noVariablesDesc")}</p>
               <a href={DOCS_URLS.variables} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs text-primary hover:underline">{t("variables.learnMore")}</a>
             </div>
+          ) : visibleVariables.length === 0 ? (
+            <p role="status" className="px-2 py-8 text-center text-sm text-muted-foreground">
+              {t("variables.noSearchResults")}
+            </p>
           ) : (
             <div className="flex flex-col gap-2">
-              {worldDraft.variables.map((v, idx) => {
-                // Engine-managed vars (e.g. random-pick cooldown history) are
-                // hidden — the creator shouldn't see or delete them. Return null
-                // to keep the index-based selection below intact.
-                if (v.internal) return null;
+              {visibleVariables.map(({ variable: v, idx }) => {
                 const isActive = clampedIdx === idx;
                 const indicator = TYPE_INDICATORS[v.type] ?? TYPE_INDICATORS.string;
                 return (
@@ -252,7 +302,7 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
               })}
             </div>
           )}
-        </div>
+        </aside>
 
         {/* Right panel — variable form */}
         <div className={cn(
@@ -337,8 +387,10 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                 <div className="space-y-3">
                   <label className="text-sm font-bold text-foreground">{t("variables.type")}</label>
                   <Select
-                    value={selected.type}
+                    aria-label="Variable data type"
+                    value={vn ? variableDataType(selected) : selected.type}
                     onValueChange={(value) => {
+                      if(vn){updateVariableAt(clampedIdx,variableTypeUpdate(value as VariableDataType,selected));return;}
                       const type = value as Variable["type"];
                       const defaultValue =
                         type === "number" ? 0 : type === "boolean" ? false : type === "json" ? {} : "";
@@ -348,6 +400,14 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                     className="py-3"
                   />
                 </div>
+
+                {vn && selected.type === "string" && selected.enumValues !== undefined && <VariableChoices key={selected.id} variable={selected} onChange={updates=>updateVariableAt(clampedIdx,updates)}/>}
+                {vn && selected.type === "string" && selected.enumValues === undefined && authoredChoices[selected.id] && <div className="space-y-3 rounded-xl border border-border p-4">
+                  <h3 className="text-sm font-bold">Options from your progression rules</h3>
+                  <p className="text-xs text-muted-foreground">{authoredChoices[selected.id]!.join(" · ")}</p>
+                  <button type="button" onClick={()=>updateVariableAt(clampedIdx,{enumValues:authoredChoices[selected.id]})} className="min-h-9 rounded-lg border border-border px-3 py-2 text-xs">Use these valid options</button>
+                </div>}
+                {vn && selected.type === "json" && <ListChoicesConversion key={`${selected.id}:${JSON.stringify(selected.defaultValue)}`} variable={selected} onChange={updates=>updateVariableAt(clampedIdx,updates)}/>}
 
                 {/* Default value */}
                 <div data-json-default className="space-y-3">
@@ -379,6 +439,14 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                         })
                       }
                     />
+                  ) : selected.type === "json" && vn ? (
+                    <StructuredDefaultValue
+                      key={selected.id}
+                      variable={selected}
+                      expanded={expandedJsonId === selected.id}
+                      onExpandedChange={expanded=>setExpandedJsonId(expanded ? selected.id : null)}
+                      onChange={updates=>updateVariableAt(clampedIdx,updates)}
+                    />
                   ) : selected.type === "json" ? (
                     <JsonDefaultValueEditor
                       key={selected.id}
@@ -387,6 +455,11 @@ export function VariablesSection({ compact, mobileListMode }: { compact?: boolea
                       onExpandedChange={(expanded) => setExpandedJsonId(expanded ? selected.id : null)}
                       onChange={(updates) => updateVariableAt(clampedIdx, updates)}
                     />
+                  ) : vn && selected.enumValues !== undefined ? (
+                    <Select aria-label="Starting value" value={String(selected.defaultValue)} onValueChange={defaultValue=>updateVariableAt(clampedIdx,{defaultValue})}>
+                      {!selected.enumValues.includes(String(selected.defaultValue)) && <option value={String(selected.defaultValue)} disabled>{selected.defaultValue ? `Current value: ${String(selected.defaultValue)} (choose an option)` : "Choose a starting value"}</option>}
+                      {selected.enumValues.map(value=><option key={value} value={value}>{value || "(empty text)"}</option>)}
+                    </Select>
                   ) : (
                     <input
                       type="text"

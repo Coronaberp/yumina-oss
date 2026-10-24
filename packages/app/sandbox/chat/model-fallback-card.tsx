@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { AlertCircle, ArrowRightLeft, ChevronDown, Loader2 } from "lucide-react";
 import { PLAY_MODELS, PLAN_HIERARCHY, formatModelId, modelFallbackText, type ModelFallbackNotice } from "@yumina/shared";
 import { useYumina } from "../sandbox-context";
+import { useBuiltinChat } from "./builtin-chat-context";
 import { SandboxPlatformOverlay } from "../platform-overlay-portal";
 import { ModelPickerModal } from "./model-picker-modal";
 
@@ -107,6 +108,6 @@ export function ModelFallbackHost() {
 }
 
 export function ModelFallbackBadge({ record }: { record: import("@yumina/shared").ModelFallbackRecord }) {
-  const { language } = useYumina();
+  const { language } = useBuiltinChat();
   return <details className="mt-1 text-[11px] text-muted-foreground/60"><summary className="flex min-h-6 w-fit cursor-pointer items-center gap-1 py-0.5 hover:text-muted-foreground"><ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" />{modelFallbackText(language, "badge")}</summary><p className="pb-1">{modelFallbackText(language, record.automatic ? "autoRecord" : "record", { model: formatModelId(record.requestedModel) })}</p></details>;
 }

@@ -11,7 +11,7 @@ import { localizeChatError } from "@/lib/chat-errors";
 import i18n from "@/lib/i18n";
 import { pickModelFromPool, pickModelExcluding } from "@/lib/model-mix";
 import { floorMushies } from "@/lib/format-mushies";
-import { appendRegenSwipe } from "@/features/chat/turn-swipes";
+import { appendRegenSwipe, swipeStateSnapshot } from "@/features/chat/turn-swipes";
 import { refreshMessageWindow } from "@/features/chat/refresh-message-window";
 import { kimiRepetitionOverride } from "@/lib/kimi-repetition";
 import { useAudioStore } from "./audio";
@@ -23,7 +23,7 @@ import { useConfigStore } from "./config";
 import { useCreditStore, syncCreditsFromMessageResponse, handleStreamCreditError } from "@/edition/slots.state";
 import { useUserProfileStore } from "./user-profile";
 import { fallbackDecision, fallbackRecord, parseFallbackError, type ModelFallbackRetry } from "../lib/model-fallback";
-import { DEFAULT_MODEL_FALLBACK_POLICY, type ModelFallbackNotice, type ModelFallbackRecord } from "@yumina/shared";
+import { DEFAULT_MODEL_FALLBACK_POLICY, type ModelFallbackNotice, type ModelFallbackRecord, type ModelRoutingRecord } from "@yumina/shared";
 import type { WorldDefinition, Effect, StoryProgress } from "@yumina/engine";
 
 type StoryState = { story?: StoryProgress };
@@ -115,6 +115,8 @@ export interface Attachment {
 }
 
 export interface Message {
+  /** Read-only outfit baseline, independent of game-state snapshot retention. */
+  spriteWardrobeSnapshot?: { version: 1; openingId: string | null; activeSwipeIndex: number; before: Record<string, { type: string; variant: string }>; after: Record<string, { type: string; variant: string }> };
   contentFlags?: import("@yumina/shared").ContentFlagAudit | null;
   stateValidation?: import("@yumina/shared").StateValidationAudit | null;
   id: string;
@@ -141,6 +143,7 @@ export interface Message {
     createdAt: string;
     model?: string;
     modelFallback?: ModelFallbackRecord;
+    modelRouting?: ModelRoutingRecord;
     tokenCount?: number;
     creditCost?: number;
     creditBalanceAfter?: number;
@@ -148,6 +151,7 @@ export interface Message {
   activeSwipeIndex?: number;
   model?: string | null;
   modelFallback?: ModelFallbackRecord;
+  modelRouting?: ModelRoutingRecord;
   tokenCount?: number | null;
   generationTimeMs?: number | null;
   creditCost?: number | null;
@@ -1198,6 +1202,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               stateSnapshot: (data.state as Record<string, unknown>) ?? null,
               model: (data.model as string) ?? null,
               modelFallback: data.modelFallback as ModelFallbackRecord | undefined,
+              modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
               tokenCount: (data.tokenCount as number) ?? null,
               generationTimeMs: (data.generationTimeMs as number) ?? null,
               creditCost: credits?.cost ?? null,
@@ -1218,6 +1223,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   createdAt: new Date().toISOString(),
                   model: (data.model as string) ?? undefined,
                     modelFallback: data.modelFallback as ModelFallbackRecord | undefined,
+                  modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
                   tokenCount: (data.tokenCount as number) ?? undefined,
                   creditCost: credits?.cost,
                   creditBalanceAfter: credits?.balance,
@@ -1722,6 +1728,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     createdAt: new Date().toISOString(),
                     model: (data.model as string) ?? undefined,
                     modelFallback: data.modelFallback as ModelFallbackRecord | undefined,
+                  modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
                     tokenCount: (data.tokenCount as number) ?? undefined,
                     creditCost: credits?.cost,
                     creditBalanceAfter: credits?.balance,
@@ -1748,6 +1755,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   activeSwipeIndex,
                   model: (data.model as string) ?? m.model,
                   modelFallback: data.modelFallback as ModelFallbackRecord | undefined,
+                  modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
                   tokenCount: (data.tokenCount as number) ?? m.tokenCount,
                   generationTimeMs:
                     (data.generationTimeMs as number) ?? m.generationTimeMs,
@@ -1962,6 +1970,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               generationTimeMs: data.generationTimeMs as number | undefined,
               model: (data.model as string) ?? useModel,
               modelFallback: data.modelFallback as ModelFallbackRecord | undefined,
+              modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
               creditCost: credits?.cost ?? null,
               creditBalanceAfter: credits?.balance ?? null,
               createdAt: new Date().toISOString(),
@@ -1972,6 +1981,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reasoningContent: (data.reasoningContent as string) || undefined,
                 createdAt: new Date().toISOString(),
                 model: (data.model as string) ?? useModel,
+                modelRouting: data.modelRouting as ModelRoutingRecord | undefined,
               }],
               activeSwipeIndex: 0,
             };
@@ -2334,6 +2344,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         throw new Error("Could not save the checkpoint. Please try again.");
       }
       const { data } = await res.json();
+      if (get().session?.id !== session.id) throw new Error("The story session changed during checkpoint saving.");
       // Add to local checkpoints list
       set((s) => ({
         checkpoints: [
@@ -2348,7 +2359,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     } catch (error) {
       // Named saves have an open modal that owns retry and error feedback.
-      if (name === undefined) fail();
+      if (name === undefined && get().session?.id === session.id) fail();
       throw error;
     }
   },
@@ -2362,17 +2373,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     if (!res.ok) throw new Error("Could not load saved checkpoints. Please try again.");
     const { data } = await res.json();
+    if (get().session?.id !== session.id) throw new Error("The story session changed while loading checkpoints.");
     set({ checkpoints: data ?? [] });
     return data ?? [];
   },
 
   restoreCheckpoint: async (checkpointId: string) => {
-    const { session, isStreaming } = get();
-    if (!session || isStreaming) return;
+    const { session, isStreaming, messages: initialMessages } = get();
+    if (!session || isStreaming) throw new Error("Checkpoint restoration is unavailable right now.");
     const fail = () =>
       feedback.error(
         chatPill("feedback.checkpointRestoreFailed", "Couldn't restore the checkpoint"),
-        retryAction(() => void get().restoreCheckpoint(checkpointId)),
+        retryAction(() => { void get().restoreCheckpoint(checkpointId).catch(() => {}); }),
       );
 
     try {
@@ -2386,10 +2398,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Restore failed" }));
         console.warn("Checkpoint restore failed:", (err as { error: string }).error);
-        fail();
-        return;
+        throw new Error("Could not restore the checkpoint. Please try again.");
       }
       const { data } = await res.json();
+      const current = get();
+      if (current.session?.id !== session.id) throw new Error("The story session changed during checkpoint restoration.");
+      if (current.isStreaming || current.messages !== initialMessages) throw new Error("The story changed during checkpoint restoration. Please try again.");
       const newGameState = ((data.state as Record<string, unknown>)
         ?.variables as Record<string, number | string | boolean | Record<string, unknown> | unknown[]>) ?? {};
       set({
@@ -2398,8 +2412,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         gameState: newGameState,
         storyProgress: ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress,
       });
-    } catch {
+    } catch (error) {
+      if (get().session?.id !== session.id) throw new Error("The story session changed during checkpoint restoration.");
       fail();
+      throw new Error("Could not restore the checkpoint. Please try again.", { cause: error });
     }
   },
 
@@ -2592,7 +2608,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           contentFlags: data.contentFlags ?? null,
           activeSwipeIndex: data.activeSwipeIndex,
           stateChanges: data.stateChanges,
-          stateSnapshot: data.state ?? null,
+          stateSnapshot: swipeStateSnapshot(data),
           model: data.model ?? null,
           tokenCount: data.tokenCount ?? null,
         });
