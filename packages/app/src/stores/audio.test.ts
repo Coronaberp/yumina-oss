@@ -56,7 +56,7 @@ class FakeAudio {
   head: { appendChild(link: unknown) { preloadHints.push(link); } },
 };
 
-const { useAudioStore, onAudioTrackEnded } = await import("./audio");
+const { useAudioStore, onAudioTrackEnded, setWorldAudioEnabled } = await import("./audio");
 
 /** Flush queued microtasks (the `await resolveAssetUrl(...)` hop in playTrack). */
 async function flush() {
@@ -520,4 +520,15 @@ test("nonzero cue start waits for metadata before audible playback or ducking", 
   cue.fire("loadedmetadata");await flush();assert.equal(cue.currentTime,4);assert.equal(cue.paused,false);
   assert.equal(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume,0.2);
   s.setMusicAudioMode("creator");resetStore();
+});
+
+
+test("world audio disable is observable by source adapters and blocks uploaded playback", async () => {
+  resetStore();const s=useAudioStore.getState();s.setPersonalTracks([bgmTrack("music")]);s.setMusicAudioMode("personal");
+  try {
+    setWorldAudioEnabled(false);assert.equal(useAudioStore.getState().worldAudioEnabled,false);
+    s.playPersonalTrack("music",{loop:true,maxDuration:60});await flush();assert.equal(useAudioStore.getState().activeTracks.size,0);
+    setWorldAudioEnabled(true);assert.equal(useAudioStore.getState().worldAudioEnabled,true);
+    s.playPersonalTrack("music",{loop:true,maxDuration:60});await flush();assert.equal(useAudioStore.getState().activeTracks.size,1);
+  } finally {setWorldAudioEnabled(true);resetStore();}
 });

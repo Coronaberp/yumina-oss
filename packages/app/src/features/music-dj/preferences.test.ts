@@ -19,3 +19,10 @@ test('listener mode is scoped by account/session and classic/standard/read-only 
  assert.equal(useMusicDjPreferences.getState().accounts.one.maxBgmSeconds,600);
  assert.equal(useMusicDjPreferences.getState().accounts.two,undefined);
 });
+test('YouTube catalog is account-local and rejects tampered persisted identifiers/ranges',()=>{
+ const p=useMusicDjPreferences.getState();const item={id:'yt-personal',name:'My public test',videoId:'M7lc1UVf-VE',type:'bgm' as const,rangeVerified:false};
+ p.update('one',{youtubeConsent:true,youtubeCatalog:[item,{...item,id:'bad',videoId:'http://localhost/private'}]});
+ assert.deepEqual(useMusicDjPreferences.getState().accounts.one.youtubeCatalog,[item]);
+ assert.equal(useMusicDjPreferences.getState().accounts.two,undefined);
+ assert.equal(useMusicDjPreferences.getState().accounts.one.youtubeConsent,true);
+});

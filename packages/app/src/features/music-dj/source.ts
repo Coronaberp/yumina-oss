@@ -15,7 +15,8 @@ export function sessionAudioSource(tracks: AudioTrack[]): MusicSource {
   return { catalog, tracks: (Array.isArray(tracks) ? tracks : []).filter(t => t && catalog.some(c => c.id === t.id)).map(t => ({ ...t, preload: false })) };
 }
 export const youtubeSource = {
-  available: false as const,
-  reason: "YouTube is unavailable: visible-player, simultaneous autoplay and hosted API credential requirements need a source decision. No key is collected or request sent.",
-  search(): never { throw new Error("YouTube adapter disabled"); },
+  available: true as const,
+  searchAvailable: false as const,
+  reason: "YouTube uses your saved links in one visible official player. Cues interrupt and then resume BGM. Search and API keys are not used.",
+  search(): never { throw new Error("YouTube search disabled; use saved video links"); },
 };

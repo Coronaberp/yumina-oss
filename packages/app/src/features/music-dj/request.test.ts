@@ -20,3 +20,11 @@ test('absent opt-in/source makes no request; missing key/quota/error/malformed d
  assert.equal(count,4);
  }finally{globalThis.fetch=old;}
 });
+test('saved-link mode requires player consent and sends catalog decisions only to the existing model endpoint',async()=>{
+ const old=globalThis.fetch;let count=0;
+ globalThis.fetch=async(url,init)=>{count++;assert.equal(url,'/api/sessions/s/completions');const body=JSON.parse(init!.body as string);assert.equal(body.musicDj.catalog[0].id,'calm');assert.equal(body.musicDj.catalog[0].videoId,undefined);return new Response('event: done\ndata: {"musicDecision":{"bgm":{"action":"keep"}}}\n\n');};
+ try{
+ await assert.rejects(()=>requestMusicDecision('s','Full reply',catalog,{...preferences,source:'youtube',youtubeConsent:false},'m',null,new AbortController().signal));assert.equal(count,0);
+ await requestMusicDecision('s','Full reply',catalog,{...preferences,source:'youtube',youtubeConsent:true},'m',null,new AbortController().signal);assert.equal(count,1);
+ }finally{globalThis.fetch=old;}
+});

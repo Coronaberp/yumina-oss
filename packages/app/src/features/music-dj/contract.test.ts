@@ -14,11 +14,12 @@ test('bounded decision accepts no-change and known cues; rejects URLs, unknown i
  ]) assert.throws(() => validateMusicDecision(value, catalog));
  assert.equal(musicDecisionSchema.safeParse({ bgm: { action: 'keep' }, sfx: { trackId: 'impact', startSeconds: 0, endSeconds: 31 } }).success, false);
 });
-test('session adapter uses asset refs only and requires declared SFX boundaries; YouTube stays disabled', () => {
+test('session adapter uses asset refs only and requires declared SFX boundaries; YouTube search stays disabled', () => {
  const input = [{ id:'b',name:'B',type:'bgm' as const,url:'@asset:music',loop:true }, { id:'s',name:'S',type:'sfx' as const,url:'@asset:cue',maxDuration:3 }, { id:'unbounded',name:'U',type:'sfx' as const,url:'@asset:unknown' }, { id:'external',name:'E',type:'bgm' as const,url:'http://127.0.0.1/x' }];
  const snapshot = JSON.stringify(input);
  assert.deepEqual(createSessionAudioCatalog(input).map(x=>x.id), ['b','s']);
  assert.equal(JSON.stringify(input),snapshot);
- assert.equal(youtubeSource.available,false);
+ assert.equal(youtubeSource.available,true);
+ assert.equal(youtubeSource.searchAvailable,false);
  assert.throws(()=>youtubeSource.search(),/disabled/i);
 });

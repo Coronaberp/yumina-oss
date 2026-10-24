@@ -37,6 +37,7 @@ interface PlayOptions {
 const PERSONAL_AUDIO = Symbol("personal-audio-owner");
 
 interface AudioState {
+  worldAudioEnabled: boolean;
   musicAudioMode: "creator" | "personal" | "off";
   personalTracks: AudioTrack[];
   setMusicAudioMode: (mode: "creator" | "personal" | "off") => void;
@@ -150,6 +151,7 @@ let _worldAudioEnabled = true;
 export function setWorldAudioEnabled(enabled: boolean): void {
   const wasEnabled = _worldAudioEnabled;
   _worldAudioEnabled = enabled;
+  useAudioStore.setState({ worldAudioEnabled: enabled });
   if (wasEnabled && !enabled) {
     useAudioStore.getState().stopAll(PERSONAL_AUDIO);
   }
@@ -308,6 +310,7 @@ function computeVolume(trackVol: number, type: "bgm" | "sfx" | "ambient", state:
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
+  worldAudioEnabled: true,
   musicAudioMode: "creator",
   personalTracks: [],
   setMusicAudioMode: (mode) => {

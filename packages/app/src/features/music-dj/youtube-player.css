@@ -1,0 +1,29 @@
+/* Reserve space for the visible player so it cannot cover VN dialogue controls. */
+.music-dj-youtube-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 480px);
+  gap: 12px;
+}
+.music-dj-youtube-layout:has(.music-dj-youtube-panel[data-expanded="false"]) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.music-dj-youtube-panel {
+  min-width: 0;
+  align-self: end;
+  justify-self: end;
+}
+@media (max-width: 900px) {
+  .music-dj-youtube-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .music-dj-youtube-layout > iframe {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .music-dj-youtube-layout > .music-dj-youtube-panel {
+    align-self: center;
+    max-height: 55dvh !important;
+  }
+}

@@ -1,3 +1,5 @@
+import "../music-dj/youtube-player.css";
+import { YouTubeMusicPlayer } from "../music-dj/youtube-player";
 import { useMusicDj } from "../music-dj/use-music-dj";
 import { upgradeCompatibleVnFiles } from "./vn-compatible-files";
 import { vnCompatibilitySources } from "./vn-compatibility-sources";
@@ -2024,7 +2026,7 @@ export function WorldRenderer({
 
   return (
     <div
-      className={className}
+      className={`${className ?? ""}${musicDj.youtubePlayer ? " music-dj-youtube-layout" : ""}`}
       style={{
         position: "relative",
         background: "var(--color-background, #121316)",
@@ -2055,6 +2057,7 @@ export function WorldRenderer({
           transition: "opacity 150ms ease",
         }}
       />
+      {musicDj.youtubePlayer && <YouTubeMusicPlayer {...musicDj.youtubePlayer} suspended={modelPickerOpen} onPause={() => musicDj.command("pause")} onResume={() => musicDj.command("resume")} onSkip={() => musicDj.command("skip")} onSelection={musicDj.playSelection} />}
       {isActive && modelPickerOpen && (
         <ModelBrowser
           open

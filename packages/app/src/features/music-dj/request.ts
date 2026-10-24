@@ -2,7 +2,7 @@ import { validateMusicDecision, type MusicCatalogEntry } from "@yumina/shared";
 import type { MusicDjPreferences } from "./preferences";
 const apiBase = import.meta.env?.VITE_API_URL || "";
 export async function requestMusicDecision(sessionId: string, reply: string, catalog: MusicCatalogEntry[], preferences: MusicDjPreferences, model: string, currentTrackId: string | null, signal: AbortSignal) {
-  if (!preferences.consent || preferences.source !== "session") throw new Error("Music source is not configured");
+  if (!preferences.consent || (preferences.source !== "session" && !(preferences.source === "youtube" && preferences.youtubeConsent))) throw new Error("Music source is not configured");
   const response = await fetch(`${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/completions`, {
     method: "POST", credentials: "include", signal, headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: preferences.model || model, musicDj: { optIn: true, reply, catalog, preferences: preferences.preferences, currentTrackId } }),

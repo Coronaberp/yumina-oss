@@ -38,3 +38,9 @@ test('30 second dwell, major-scene override with 5 second floor, skip blocks sam
  f.dj.skip();await decide('6','calm',true);assert.equal(f.calls.at(-1),'stop');
  f.advance(6000);await decide('7','combat',true);assert.equal(f.calls.at(-1),'bgm:combat');
 });
+test('manual saved-track selection and native-player hold cancel in-flight decisions',async()=>{
+ const f=fixture();const pending=f.dj.observe(reply('1'));f.dj.playManually('calm');
+ f.pending[0].resolve({bgm:{action:'play',trackId:'combat'}});await pending;assert.equal(f.calls.at(-1),'bgm:calm');
+ f.dj.hold('Player hidden');await f.dj.observe(reply('2'));assert.equal(f.pending.length,1);assert.equal(f.dj.status,'Player hidden');
+ f.dj.playManually('cue');assert.equal(f.calls.at(-1),'sfx:cue');
+});

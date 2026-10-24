@@ -1,3 +1,4 @@
+import { sanitizeYouTubeItems, type YouTubeMusicItem } from "./youtube-catalog";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { MusicAudioMode } from "@yumina/shared";
@@ -7,8 +8,10 @@ export interface MusicDjPreferences {
   model: string;
   preferences: string;
   maxBgmSeconds: number;
+  youtubeConsent?: boolean;
+  youtubeCatalog?: YouTubeMusicItem[];
 }
-export const DEFAULT_MUSIC_DJ: MusicDjPreferences = { consent: false, source: "unconfigured", model: "", preferences: "", maxBgmSeconds: 600 };
+export const DEFAULT_MUSIC_DJ: MusicDjPreferences = { consent: false, source: "unconfigured", model: "", preferences: "", maxBgmSeconds: 600, youtubeConsent: false, youtubeCatalog: [] };
 interface PreferenceState {
   accounts: Record<string, MusicDjPreferences>;
   modes: Record<string, MusicAudioMode>;
@@ -21,6 +24,7 @@ export const useMusicDjPreferences = create<PreferenceState>()(persist((set) => 
   update: (accountId, patch) => {
     if (!accountId) return;
     set(s => ({ accounts: { ...s.accounts, [accountId]: { ...DEFAULT_MUSIC_DJ, ...s.accounts[accountId], ...patch,
+      ...(patch.youtubeCatalog !== undefined ? { youtubeCatalog: sanitizeYouTubeItems(patch.youtubeCatalog) } : {}),
       ...(patch.preferences !== undefined ? { preferences: patch.preferences.slice(0, 500) } : {}),
       ...(patch.maxBgmSeconds !== undefined ? { maxBgmSeconds: Number.isFinite(patch.maxBgmSeconds) ? Math.min(900, Math.max(60, patch.maxBgmSeconds)) : 600 } : {}),
     } } }));

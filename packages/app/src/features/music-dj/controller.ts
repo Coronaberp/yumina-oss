@@ -32,6 +32,21 @@ export class MusicDjController {
   dispose(): void { this.cancel(); this.scope = ""; this.playback.stop(); }
   setLocked(locked: boolean): void { this.cancel(); this.locked = locked; this.status = locked ? "Music locked" : "Ready"; this.notify(); }
   pause(): void { this.cancel(); this.paused = true; this.cueUntil = 0; this.playback.stopSfx(); this.playback.pause(); this.status = "Music paused"; this.notify(); }
+  /** External player/visibility controls already changed transport; cancel only
+   * the DJ so native controls keep their authority. */
+  hold(status: string): void { this.cancel(); this.paused = true; this.cueUntil = 0; this.status = status; this.notify(); }
+  playManually(id: string): void {
+    const item = this.catalog.find(entry => entry.id === id);
+    if (!item) return;
+    this.cancel(); this.paused = false;
+    if (item.type === "bgm") {
+      this.playback.playBgm(id); this.bgmId = id; this.skippedId = null; this.changedAt = this.now();
+    } else if (item.startSeconds !== undefined && item.endSeconds !== undefined) {
+      this.playback.playSfx(id, item.startSeconds, item.endSeconds);
+      this.cueUntil = this.now() + (item.endSeconds - item.startSeconds) * 1000 + 3000;
+    }
+    this.status = this.locked ? "Music locked" : "Ready"; this.notify();
+  }
   resume(): void { this.cancel(); this.paused = false; this.playback.resume(); this.status = this.locked ? "Music locked" : "Ready"; this.notify(); }
   skip(): void { this.cancel(); this.skippedId = this.bgmId; this.bgmId = null; this.cueUntil = 0; this.playback.stop(); this.status = "Track skipped"; this.notify(); }
   async observe(reply: { id: string; content: string }): Promise<void> {
