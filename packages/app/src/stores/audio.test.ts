@@ -14,6 +14,7 @@ class FakeAudio {
   loop = false;
   preload = "";
   paused = true;
+  currentTime = 0;
   private listeners: Record<string, Array<() => void>> = {};
   constructor(src = "") {
     this.src = src;
@@ -37,6 +38,7 @@ class FakeAudio {
   removeEventListener(ev: string, fn: () => void) {
     this.listeners[ev] = (this.listeners[ev] || []).filter((f) => f !== fn);
   }
+  fire(event: string) { (this.listeners[event] || []).slice().forEach(f => f()); }
   /** Test helper: simulate the media element reaching its end. */
   fireEnded() {
     this.paused = true;
@@ -62,6 +64,7 @@ async function flush() {
 }
 
 function resetStore() {
+  useAudioStore.getState().setMusicAudioMode("creator");
   useAudioStore.getState().stopAll();
   useAudioStore.setState({ activeTracks: new Map(), tracks: [], playlist: null, conditionalRules: [], activeConditionalId: null });
   created.length = 0;
@@ -420,4 +423,101 @@ test("large tracks opt out of startup preloading but still play on demand", asyn
   await flush();
   assert.equal(created[0]?.preload,"metadata");
   assert.equal(created[0]?.paused,false);
+});
+
+
+test("personal ownership blocks all creator commands and mode switches clear pending and active playback", async () => {
+  resetStore();
+  const s = useAudioStore.getState();
+  s.setTracks([bgmTrack("creator")]);
+  s.setPersonalTracks([bgmTrack("personal")]);
+  s.setMusicAudioMode("personal");
+  s.playTrack("creator");
+  s.startPlaylist();
+  s.playPersonalTrack("personal", { loop: true, maxDuration: 600 });
+  await flush();
+  assert.deepEqual([...useAudioStore.getState().activeTracks.keys()], ["dj:personal"]);
+  const audio = useAudioStore.getState().activeTracks.get("dj:personal")!.audio;
+  s.stopAll(); s.stopTrack("dj:personal"); s.pauseTrack("dj:personal");
+  s.processAudioEffects([{ trackId:"dj:personal", action:"stop" }]);
+  assert.equal(audio.paused,false);
+  s.setMusicAudioMode("off");
+  s.playPersonalTrack("personal"); s.playTrack("creator");
+  await flush();
+  assert.equal(useAudioStore.getState().activeTracks.size,0);
+  s.setMusicAudioMode("creator");
+  resetStore();
+});
+
+test("personal cues respect exact boundaries and duck to 40% of current volume; cancel/error restore", async () => {
+  resetStore();
+  const s = useAudioStore.getState();
+  s.setPersonalTracks([bgmTrack("music"), { ...bgmTrack("cue"),type:"sfx",loop:false }]);
+  s.setMusicAudioMode("personal");
+  s.setMasterVolume(1); s.setBgmVolume(0.5);
+  s.playPersonalTrack("music", {loop:true,maxDuration:600}); await flush();
+  s.playPersonalTrack("cue", {loop:false,startSeconds:2,endSeconds:5,duckBgm:true,maxDuration:3}); await flush();
+  const bgm = useAudioStore.getState().activeTracks.get("dj:music")!.audio as unknown as FakeAudio;
+  const cue = useAudioStore.getState().activeTracks.get("dj:cue")!.audio as unknown as FakeAudio;
+  cue.fire("loadedmetadata");
+  assert.equal(cue.currentTime,2); assert.equal(cue.loop,false); assert.equal(bgm.volume,0.2);
+  s.setBgmVolume(0.8); assert.ok(Math.abs(bgm.volume-0.32)<0.0001);
+  cue.currentTime=5; cue.fire("timeupdate");
+  assert.equal(cue.paused,true); assert.equal(bgm.volume,0.8);
+  s.playPersonalTrack("cue", {loop:false,maxDuration:3,duckBgm:true}); await flush();
+  const failed=useAudioStore.getState().activeTracks.get("dj:cue")!.audio as unknown as FakeAudio;
+  failed.fire("error"); assert.equal(bgm.volume,0.8);
+  s.playPersonalTrack("cue", {loop:false,maxDuration:3,duckBgm:true}); await flush();
+  s.stopPersonalTrack("cue"); assert.equal(bgm.volume,0.8);
+  failed.fire("ended"); assert.equal(bgm.volume,0.8);
+  s.setMusicAudioMode("creator"); resetStore();
+});
+
+test("autoplay rejection does not leave BGM ducked or resurrect a personal cue on a later gesture", async () => {
+  resetStore(); const s=useAudioStore.getState();
+  s.setPersonalTracks([bgmTrack("music"),{...bgmTrack("cue"),type:"sfx",loop:false}]); s.setMusicAudioMode("personal");
+  s.setMasterVolume(1); s.setBgmVolume(0.6);
+  s.playPersonalTrack("music",{loop:true,maxDuration:600}); await flush();
+  playOutcomes.push("reject");
+  s.playPersonalTrack("cue",{loop:false,maxDuration:3,duckBgm:true}); await flush();
+  assert.equal(useAudioStore.getState().activeTracks.has("dj:cue"),false);
+  assert.equal(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume,0.6);
+  fireDocumentEvent("click"); await flush();
+  assert.equal(useAudioStore.getState().activeTracks.has("dj:cue"),false);
+  s.setMusicAudioMode("creator"); resetStore();
+});
+
+test("personal BGM and cue duration limits stop loops, retire cues and restore current gain", async () => {
+  resetStore(); mock.timers.enable({ apis: ["setTimeout"] });
+  const s=useAudioStore.getState();
+  try {
+    s.setPersonalTracks([bgmTrack("music"),{...bgmTrack("cue"),type:"sfx",loop:false}]);s.setMusicAudioMode("personal");
+    s.setMasterVolume(1);s.setBgmVolume(0.7);
+    s.playPersonalTrack("music",{loop:true,maxDuration:60});await flush();
+    s.playPersonalTrack("cue",{loop:false,maxDuration:2,duckBgm:true});await flush();
+    assert.ok(Math.abs(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume-0.28)<0.0001);
+    mock.timers.tick(2000);assert.equal(useAudioStore.getState().activeTracks.has("dj:cue"),false);
+    assert.equal(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume,0.7);
+    mock.timers.tick(58000);assert.equal(useAudioStore.getState().activeTracks.size,0);
+  } finally {s.setMusicAudioMode("creator");resetStore();mock.timers.reset();}
+});
+
+test("manual pause wins over an in-flight autoplay rejection and cannot be undone by a gesture", async () => {
+  resetStore();const s=useAudioStore.getState();s.setPersonalTracks([bgmTrack("music")]);s.setMusicAudioMode("personal");
+  playOutcomes.push("reject");s.playPersonalTrack("music",{loop:true,maxDuration:60});
+  await Promise.resolve();s.pausePersonalTrack("music");await flush();
+  const audio=useAudioStore.getState().activeTracks.get("dj:music")!.audio;
+  fireDocumentEvent("click");await flush();assert.equal(audio.paused,true);
+  s.setMusicAudioMode("creator");resetStore();
+});
+
+test("nonzero cue start waits for metadata before audible playback or ducking", async () => {
+  resetStore();const s=useAudioStore.getState();s.setPersonalTracks([bgmTrack("music"),{...bgmTrack("cue"),type:"sfx",loop:false}]);s.setMusicAudioMode("personal");
+  s.setMasterVolume(1);s.setBgmVolume(0.5);s.playPersonalTrack("music",{loop:true,maxDuration:60});await flush();
+  s.playPersonalTrack("cue",{loop:false,startSeconds:4,endSeconds:6,maxDuration:2,duckBgm:true});await flush();
+  const cue=useAudioStore.getState().activeTracks.get("dj:cue")!.audio as unknown as FakeAudio;
+  assert.equal(cue.paused,true);assert.equal(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume,0.5);
+  cue.fire("loadedmetadata");await flush();assert.equal(cue.currentTime,4);assert.equal(cue.paused,false);
+  assert.equal(useAudioStore.getState().activeTracks.get("dj:music")!.audio.volume,0.2);
+  s.setMusicAudioMode("creator");resetStore();
 });

@@ -1,0 +1,43 @@
+# Personal Music DJ development status
+
+This development branch implements listener-owned audio decisions and lifecycle. **The desired YouTube-backed feature is not complete. YouTube is disabled and unconfigured.** Nothing was pushed, merged, deployed, or enabled against live credentials/data.
+
+## Implemented
+
+- Personal Settings → AI configuration → Personal Music DJ: explicit complete-reply/model-provider/cost disclosure and opt-in, musical preferences, existing connected model selection, source choice, BGM time cap. Settings are browser-local and keyed by account; VN mode is keyed by account and session. They are not synced to the server.
+- Stock VN Settings receives a runtime-only `Creator audio / My music agent / Off` selector plus pause/resume, skip and lock. Known stock settings are adapted in memory; custom unknown layouts are preserved. No creator file, card, rule, story prompt, export, world definition or standard chat UI is changed.
+- Source starts **unconfigured**. Existing uploaded session audio is an explicitly selectable optional source, never an automatic substitute for YouTube. It accepts only `@asset:` references, at most 100 catalog tracks. BGM uses existing assets. SFX uses only tracks with an authored `maxDuration` of at most 30 seconds, from 0 to that declared limit. That is a playback boundary, not a verified dramatic timestamp.
+- One bounded request reads the complete previous completed assistant reply. Existing authenticated session completions enforce session ownership, provider access, protected-world routing, rate limits, concurrency and billing. Music mode offers exactly one `music_decision` tool, requires exactly one valid result, makes one provider attempt and does not send tool results back for another model turn. Unsupported tool use, absent key, quota, malformed decisions and timeout do not affect dialogue. Replies beyond the server's 40,000-character music input limit are rejected whole, never silently truncated.
+- Music decisions contain catalog IDs only. The schema rejects extra properties, unknown tracks, wrong track types and invented cue boundaries. No tool accepts a network URL; no search receives private dialogue.
+- The existing audio store remains the sole HTML audio engine. Personal mode exclusively owns playback; creator effects, playlists, conditional rules and SDK play/stop/pause/resume commands cannot race it. Raw sandbox media and Web Audio are also suppressed while listener ownership is active. Initial session ownership is selected before creator startup audio.
+- BGM loops until replacement or a hard duration limit (default 10 minutes; selectable 5/10/15; a shorter authored track cap wins). Ordinary replies/keep decisions retain the same element and never refresh that deadline. Normal changes require 30 seconds; a major scene change may bypass dwell after a five-second floor.
+- One SFX at a time, with a three-second gap after its declared end. Cue start/end and duration watchdogs are enforced. Nonzero starts wait for metadata; loops cannot overstay. BGM ducking is a multiplier of **0.4** on the user's current selected volume. End, cancellation, error and blocked autoplay release it without overwriting newer volume changes. Legacy creator ducking retains its existing 0.15 multiplier.
+- Manual pause/skip/lock invalidate in-flight decisions. Skip avoids immediately replaying the skipped track. Deduplication, cancellation, account/session scoping and a renderer lease prevent stale responses or old cached-renderer cleanup from changing the active session.
+
+## YouTube feasibility, checked 2026-10-25 UTC
+
+The [Required Minimum Functionality](https://developers.google.com/youtube/terms/required-minimum-functionality) requires a visible viewport of at least 200×200, sufficient visibility before autoplay, and at most one simultaneously automatically playing YouTube player per screen. Consequently, simultaneous automatically selected YouTube BGM and YouTube SFX cannot be enabled as designed. There is no hidden player, audio extraction, download, ad suppression, or overlapping autoplay workaround here.
+
+The [Developer Policies](https://developers.google.com/youtube/terms/developer-policies), especially III.D and III.I, restrict credential assignment/sharing, require one project for an API client, and prohibit background players and separation of audiovisual components. **Inference:** a shared hosted Yumina installation collecting each listener's Google Cloud key is not established as compliant; the client's ownership/project/credential arrangement needs a concrete approved design. The policy's narrow confidential-agent exception should not be assumed to cover arbitrary hosted BYOK. No credentials were created, requested, collected or tested.
+
+The [IFrame API reference](https://developers.google.com/youtube/iframe_api_reference) supports `startSeconds`/`endSeconds` in object syntax. Start may land on the nearest keyframe, seeking invalidates the configured end limit, and browsers can block autoplay. Segment looping is not a seamless-audio guarantee. Search metadata is not evidence of a dramatic cue's timestamp. No verified timestamps are invented by this implementation.
+
+Decisions still needed:
+
+1. Keep the explicitly selected uploaded-audio source, or choose another source with suitable audio playback rights and catalog-declared cue ranges. No other service has been substituted.
+2. If YouTube remains desired, choose a visible **single-player** experience, with no simultaneous automatic YouTube cue overlay. Define whether a cue replaces/pauses the BGM; that is a product change needing user selection.
+3. Resolve whether a hosted client uses its own single Google project/credentials, or a separately operated personal installation is itself the user's API client. Obtain clarification where needed before adding any key collection/search integration. Visibility and single-autoplay constraints still apply.
+
+## Verification and limitations
+
+Focused Node tests cover decision validation, source filtering/disablement, complete reply delivery, missing key/quota, one-call enforcement, dwell/major changes, deduplication, manual overrides, stale/cancelled responses, ownership, source changes, cue bounds, loops/duration expiry, duck/restore, errors and autoplay rejection. Existing audio and VN compatibility/settings regressions also run. App and server typechecks run sequentially. A local-only Vite harness uses mocked auth/model/media, never the live server, database, provider or YouTube.
+
+Screenshots and browser results are in ignored `output/music-dj-qa/` (390×844 and 1440×1000). The consent control uses the shared bespoke Radix `Checkbox`, verified by mouse and Space-key toggling. The checked flow covers the real settings component and runtime-adapted VN settings, ordinary-reply element identity, a major scene transition, SFX duck/restore with a user volume change, manual cancellation, disabled-source switching, and navigation cleanup. It does not certify real mobile audio hardware, external providers' tool support, YouTube, or real uploaded media delivery.
+
+Final verification: **47 focused tests pass**; app `tsc -b` plus the complete Vite production build pass; server TypeScript check and production `tsup` build pass; the shared package build passes. These builds ran sequentially after the parent released the exclusive build slot. Vite reports its existing large-chunk advisory. An additional sandbox-only TypeScript check reports 23 pre-existing diagnostics; deployed-main comparison confirms the same normalized diagnostic messages and codes, with no added diagnostics. Do not call this source-complete until the YouTube decision and coordinated integration are done.
+
+## Shared-file integration risks
+
+Based on deployed main `fd66ec2c431e2690bdfd4a3763ce3a5c82c1af66`. Keep the canonical dirty checkout untouched. The request-inspector branch may also modify `packages/server/src/routes/completions.ts`, `packages/app/src/features/chat/world-renderer.tsx`, `packages/app/src/features/chat/chat-view.tsx`, `packages/app/src/stores/chat.ts`, `packages/app/sandbox/component-host.tsx`, `packages/app/sandbox/protocol.ts`, and `packages/app/sandbox/sandbox-context.tsx`. Resolve these semantically: retain music's single-tool additions and inspector attempt recording in the same provider call. Preserve both sandbox channel fields and API handlers.
+
+Other shared integration points: `settings-page.tsx`, `vn-compatible-files.ts`/its equivalence test, and `packages/shared/src/index.ts`. The DJ's substantive new code is grouped under `features/music-dj`, shared `music-dj.ts`, and server `lib/music-dj.ts`. No other task branch was checked out or edited.

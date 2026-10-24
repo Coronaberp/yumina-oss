@@ -1,3 +1,4 @@
+import { listenerModeForSession } from "../features/music-dj/preferences";
 import { canSelectStoryOpening } from "@/lib/can-select-story-opening";
 import { findReplyRecoveryAnchor, hasReplyAfterAnchor } from "../features/chat/reply-recovery";
 import { pendingChoicesFromMessages } from "../features/chat/pending-choices";
@@ -894,6 +895,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         number | string | boolean
       >;
 
+      // Resolve listener ownership before any session-start creator rule can play.
+      useAudioStore.getState().setMusicAudioMode(listenerModeForSession(data.currentUser?.id ?? "", sessionId, data.world?.schema, Boolean(data.readOnly)));
       const loadedMessages: Message[] = data.messages ?? [];
       const loadedStory = ((data.state as StoryState | undefined)?.story ?? { status: "playing" }) as StoryProgress;
       const messageTotal: number = typeof data.messageTotal === "number" ? data.messageTotal : loadedMessages.length;

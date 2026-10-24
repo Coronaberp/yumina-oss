@@ -145,6 +145,10 @@ export interface SandboxState {
 
   // ── Audio volume ──
   /** Current BGM volume (0–1) */
+  musicAudioMode?: "creator" | "personal" | "off";
+  musicDjStatus?: string;
+  musicDjPaused?: boolean;
+  musicDjLocked?: boolean;
   bgmVolume: number;
   /** Current SFX volume (0–1) */
   sfxVolume: number;
@@ -241,6 +245,10 @@ export interface UIChannelData {
   hasEarlierMessages: boolean;
   /** True while an older history page is being fetched. */
   isLoadingEarlier: boolean;
+  musicAudioMode?: "creator" | "personal" | "off";
+  musicDjStatus?: string;
+  musicDjPaused?: boolean;
+  musicDjLocked?: boolean;
   bgmVolume: number;
   sfxVolume: number;
   language: string;

@@ -30,7 +30,21 @@ interface PlaylistState {
   shuffleOrder: string[];
 }
 
+interface PlayOptions {
+  volume?: number; fadeDuration?: number; chainTo?: string; maxDuration?: number;
+  duckBgm?: boolean; loop?: boolean; startSeconds?: number; endSeconds?: number;
+}
+const PERSONAL_AUDIO = Symbol("personal-audio-owner");
+
 interface AudioState {
+  musicAudioMode: "creator" | "personal" | "off";
+  personalTracks: AudioTrack[];
+  setMusicAudioMode: (mode: "creator" | "personal" | "off") => void;
+  setPersonalTracks: (tracks: AudioTrack[]) => void;
+  playPersonalTrack: (id: string, opts?: PlayOptions) => void;
+  stopPersonalTrack: (id: string) => void;
+  pausePersonalTrack: (id: string) => void;
+  resumePersonalTrack: (id: string) => void;
   tracks: AudioTrack[];
   activeTracks: Map<string, ActiveTrack>;
   masterVolume: number;
@@ -47,13 +61,13 @@ interface AudioState {
   // Actions
   setTracks: (tracks: AudioTrack[]) => void;
   processAudioEffects: (effects: AudioEffect[]) => void;
-  playTrack: (id: string, opts?: { volume?: number; fadeDuration?: number; chainTo?: string; maxDuration?: number; duckBgm?: boolean; loop?: boolean }) => void;
-  stopTrack: (id: string, fadeDuration?: number) => void;
-  stopAll: () => void;
+  playTrack: (id: string, opts?: PlayOptions, capability?: symbol) => void;
+  stopTrack: (id: string, fadeDuration?: number, capability?: symbol) => void;
+  stopAll: (capability?: symbol) => void;
   /** Pause a track in place, keeping its position so resumeTrack can continue. */
-  pauseTrack: (id: string) => void;
+  pauseTrack: (id: string, capability?: symbol) => void;
   /** Resume a track paused by pauseTrack (no-op if not paused / not active). */
-  resumeTrack: (id: string) => void;
+  resumeTrack: (id: string, capability?: symbol) => void;
   setMasterVolume: (volume: number) => void;
   setBgmVolume: (volume: number) => void;
   setSfxVolume: (volume: number) => void;
@@ -75,7 +89,7 @@ const FADE_INTERVAL = 50;
 const _activeFadeIntervals = new Set<ReturnType<typeof setInterval>>();
 
 // Store event handler references per track so they can be removed (#36)
-const _trackHandlers = new Map<string, { ended?: () => void; error?: () => void }>();
+const _trackHandlers = new Map<string, { ended?: () => void; error?: () => void; loadedmetadata?: () => void; timeupdate?: () => void }>();
 
 // Store maxDuration timers per track for cleanup
 const _maxDurationTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -112,12 +126,19 @@ function emitTrackEnded(trackId: string): void {
   }
 }
 
-// Duck state: when an SFX ducks BGM, save original volumes to restore later
-let _duckState: {
-  originalVolumes: Map<string, number>;  // trackId → original volume
-  restoreTimer?: ReturnType<typeof setTimeout>;
-  activeCount: number;
-} | null = null;
+// Multipliers never overwrite track/user volume, so restore always uses the
+// latest selection. Identity checks on retire prevent stale media events.
+const _duckingTracks = new Map<string, number>();
+function refreshVolumes(): void {
+  const state = useAudioStore.getState();
+  for (const active of state.activeTracks.values()) setElVolume(active.audio, computeVolume(active.volume, active.type, state));
+}
+function releaseDuck(id: string): void {
+  if (_duckingTracks.delete(id)) refreshVolumes();
+}
+function canCommand(mode: AudioState["musicAudioMode"], capability?: symbol): boolean {
+  return mode === "creator" ? capability !== PERSONAL_AUDIO : mode === "personal" && capability === PERSONAL_AUDIO;
+}
 
 // Account-level "world audio" kill switch. When the user turns the setting
 // off, every playTrack call — BGM, ambient, SFX, whether creator TSX,
@@ -130,7 +151,7 @@ export function setWorldAudioEnabled(enabled: boolean): void {
   const wasEnabled = _worldAudioEnabled;
   _worldAudioEnabled = enabled;
   if (wasEnabled && !enabled) {
-    useAudioStore.getState().stopAll();
+    useAudioStore.getState().stopAll(PERSONAL_AUDIO);
   }
 }
 
@@ -142,23 +163,24 @@ export function setWorldAudioEnabled(enabled: boolean): void {
 // return; this makes it explicit instead of incidental.
 const _pendingUnlockAudios = new Set<HTMLAudioElement>();
 const _cancelledAudios = new WeakSet<HTMLAudioElement>();
+const _manuallyPausedAudios = new WeakSet<HTMLAudioElement>();
 let _unlockListenerAttached = false;
 
 // Old Android WebView (Chrome ≤ 49) and some iOS versions return undefined
 // from HTMLAudioElement.play() instead of a Promise. Guard every call site.
-function safePlay(audio: HTMLAudioElement): void {
-  if (_cancelledAudios.has(audio) || !audio.src) return;
+function safePlay(audio: HTMLAudioElement, onRejected?: () => void): void {
+  if (_cancelledAudios.has(audio) || _manuallyPausedAudios.has(audio) || !audio.src) return;
   try {
     const p = audio.play();
     if (p && typeof p.then === "function") {
       void p.then(
-        () => { _pendingUnlockAudios.delete(audio); },
-        () => { registerPendingUnlock(audio); },
+        () => { _pendingUnlockAudios.delete(audio); if (_manuallyPausedAudios.has(audio)) audio.pause(); },
+        () => { if (onRejected) onRejected(); else registerPendingUnlock(audio); },
       );
     } else if (!audio.paused) {
       _pendingUnlockAudios.delete(audio);
     }
-  } catch { registerPendingUnlock(audio); }
+  } catch { if (onRejected) queueMicrotask(onRejected); else registerPendingUnlock(audio); }
 }
 
 function retryPendingUnlocks() {
@@ -176,7 +198,7 @@ function retryPendingUnlocks() {
       const p = audio.play();
       if (p && typeof p.then === "function") {
         void p.then(
-          () => { _pendingUnlockAudios.delete(audio); },
+          () => { _pendingUnlockAudios.delete(audio); if (_manuallyPausedAudios.has(audio)) audio.pause(); },
           () => { registerPendingUnlock(audio); },
         );
       } else if (!audio.paused) {
@@ -191,7 +213,7 @@ function retryPendingUnlocks() {
 }
 
 function registerPendingUnlock(audio: HTMLAudioElement): void {
-  if (_cancelledAudios.has(audio) || !audio.src) return;
+  if (_cancelledAudios.has(audio) || _manuallyPausedAudios.has(audio) || !audio.src) return;
   _pendingUnlockAudios.add(audio);
   if (_unlockListenerAttached) return;
   _unlockListenerAttached = true;
@@ -282,10 +304,22 @@ function getCategoryVolume(type: "bgm" | "sfx" | "ambient", state: { bgmVolume: 
 }
 
 function computeVolume(trackVol: number, type: "bgm" | "sfx" | "ambient", state: { bgmVolume: number; sfxVolume: number; masterVolume: number; muted: boolean }): number {
-  return trackVol * getCategoryVolume(type, state) * state.masterVolume * (state.muted ? 0 : 1);
+  return trackVol * (type === "sfx" ? 1 : Math.min(1, ..._duckingTracks.values())) * getCategoryVolume(type, state) * state.masterVolume * (state.muted ? 0 : 1);
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
+  musicAudioMode: "creator",
+  personalTracks: [],
+  setMusicAudioMode: (mode) => {
+    if (!["creator", "personal", "off"].includes(mode) || mode === get().musicAudioMode) return;
+    get().stopAll(PERSONAL_AUDIO);
+    set({ musicAudioMode: mode });
+  },
+  setPersonalTracks: (tracks) => set({ personalTracks: tracks.map(t => ({ ...t, id: `dj:${t.id}`, preload: false })) }),
+  playPersonalTrack: (id, opts) => get().playTrack(`dj:${id}`, opts, PERSONAL_AUDIO),
+  stopPersonalTrack: (id) => get().stopTrack(`dj:${id}`, 0, PERSONAL_AUDIO),
+  pausePersonalTrack: (id) => get().pauseTrack(`dj:${id}`, PERSONAL_AUDIO),
+  resumePersonalTrack: (id) => get().resumeTrack(`dj:${id}`, PERSONAL_AUDIO),
   tracks: [],
   activeTracks: new Map(),
   masterVolume: 0.7,
@@ -310,6 +344,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   processAudioEffects: (effects) => {
     const state = get();
+    if (state.musicAudioMode !== "creator") return;
     for (const effect of effects) {
       switch (effect.action) {
         case "play":
@@ -337,29 +372,19 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     }
   },
 
-  playTrack: async (id, opts) => {
+  playTrack: async (id, opts, capability) => {
     const state = get();
-    const track = state.tracks.find((t) => t.id === id);
+    if (!canCommand(state.musicAudioMode, capability)) return;
+    const personal = capability === PERSONAL_AUDIO;
+    const track = (personal ? state.personalTracks : state.tracks).find((t) => t.id === id);
     if (!track) return;
     const playIntent = beginPlayIntent(id);
 
     if (!_worldAudioEnabled) return;
 
-    // Remove old event handlers and stop existing audio for this track (#36)
-    const existing = state.activeTracks.get(id);
-    if (existing) {
-      const oldHandlers = _trackHandlers.get(id);
-      if (oldHandlers) {
-        if (oldHandlers.ended) existing.audio.removeEventListener("ended", oldHandlers.ended);
-        if (oldHandlers.error) existing.audio.removeEventListener("error", oldHandlers.error);
-        _trackHandlers.delete(id);
-      }
-      _cancelledAudios.add(existing.audio);
-      _pendingUnlockAudios.delete(existing.audio);
-      existing.audio.pause();
-      existing.audio.src = "";
-    }
-
+    // Clear previous timers, ducking, fades and listeners before same-id replay.
+    get().stopTrack(id, 0, capability);
+    _latestPlayIntents.set(id, playIntent);
     let url = track.url;
     if (url.startsWith("@asset:")) {
       // Static import (above) — no dynamic chunk fetch on this hot path.
@@ -370,7 +395,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
     // stopTrack/stopAll or a newer same-id play may have happened while the
     // asset URL was resolving. Do not resurrect a stale play request.
-    if (_latestPlayIntents.get(id) !== playIntent) return;
+    if (_latestPlayIntents.get(id) !== playIntent || !canCommand(get().musicAudioMode, capability) || !_worldAudioEnabled) return;
 
     const audio = new Audio(url);
     // Tell the browser to download the full media asset immediately rather
@@ -389,61 +414,68 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     audio.loop = shouldLoop;
 
     // Named handlers stored for later removal (#36)
-    const handlers: { ended?: () => void; error?: () => void } = {};
+    const handlers: { ended?: () => void; error?: () => void; loadedmetadata?: () => void; timeupdate?: () => void } = {};
 
-    // Non-looping tracks fire "ended" (looping ones never do). On end: retire
-    // the finished element, notify creator code (api.onAudioEnded), then run the
-    // built-in chain / playlist-advance behavior.
+    const retire = () => {
+      if (get().activeTracks.get(id)?.audio !== audio) return false;
+      get().stopTrack(id, 0, capability);
+      return true;
+    };
     if (!shouldLoop) {
-      const chainTargetId = opts?.chainTo;
       handlers.ended = () => {
-        const s = get();
-        // Clean up the finished track — but only if this element still owns the
-        // slot, so a concurrent re-play of the same id isn't evicted.
-        const cur = s.activeTracks.get(id);
-        if (!cur || cur.audio === audio) {
-          const newMap = new Map(s.activeTracks);
-          newMap.delete(id);
-          set({ activeTracks: newMap });
-        }
-        // Notify subscribers (forwarded to the sandbox as api.onAudioEnded).
+        if (!retire()) return;
         emitTrackEnded(id);
-        if (chainTargetId) {
-          // Chain: auto-play the chained track (e.g. SFX → BGM)
-          s.playTrack(chainTargetId);
-        } else if (track.type === "bgm" && s.playlistState.isPlaying && !s.activeConditionalId) {
-          // Default playlist BGM: advance to the next track
+        if (personal) return;
+        const s = get();
+        if (opts?.chainTo) s.playTrack(opts.chainTo);
+        else if (track.type === "bgm" && s.playlistState.isPlaying && !s.activeConditionalId) {
           const gap = s.playlist?.gapSeconds ?? 0;
           if (gap > 0) {
             const timer = setTimeout(() => s.playNextInPlaylist(), gap * 1000);
             set({ playlistState: { ...get().playlistState, gapTimer: timer } });
-          } else {
-            s.playNextInPlaylist();
-          }
+          } else s.playNextInPlaylist();
         }
       };
       audio.addEventListener("ended", handlers.ended);
     }
-
-    handlers.error = () => {
-      // Only retract the slot if this element still owns it — a newer playTrack
-      // for the same id may have replaced us while the media was loading.
-      const cur = get().activeTracks.get(id);
-      if (cur && cur.audio !== audio) return;
-      const newMap = new Map(get().activeTracks);
-      newMap.delete(id);
-      set({ activeTracks: newMap });
-    };
+    handlers.error = () => { retire(); };
     audio.addEventListener("error", handlers.error);
+    let waitingForCueMetadata = personal && (opts?.startSeconds ?? 0) > 0;
+    if (personal && opts?.startSeconds !== undefined) {
+      const seek = () => {
+        if (get().activeTracks.get(id)?.audio !== audio) return;
+        try {
+          audio.currentTime = opts.startSeconds!;
+          if (waitingForCueMetadata) { waitingForCueMetadata = false; beginPlayback(); }
+        } catch { retire(); }
+      };
+      handlers.loadedmetadata = seek;
+      audio.addEventListener("loadedmetadata", seek);
+      // Also attempt immediately for already-buffered media.
+      try { audio.currentTime = opts.startSeconds; } catch { /* seek on metadata */ }
+    }
+    if (personal && opts?.endSeconds !== undefined) {
+      handlers.timeupdate = () => { if (audio.currentTime >= opts.endSeconds!) retire(); };
+      audio.addEventListener("timeupdate", handlers.timeupdate);
+    }
     _trackHandlers.set(id, handlers);
+    const rejectCue = personal && track.type === "sfx" ? () => { retire(); } : undefined;
+    function beginPlayback() {
+      if (get().activeTracks.get(id)?.audio !== audio || waitingForCueMetadata) return;
+      if (opts?.duckBgm && !shouldLoop) {
+        _duckingTracks.set(id, personal ? 0.4 : 0.15);
+        refreshVolumes();
+      }
+      safePlay(audio, rejectCue);
+    }
 
     if (fadeDuration > 0) {
       setElVolume(audio, 0);
-      safePlay(audio);
       const steps = Math.ceil((fadeDuration * 1000) / FADE_INTERVAL);
       const volumeStep = targetVolume / steps;
       let currentStep = 0;
       const fadeTimer = setInterval(() => {
+        if (_cancelledAudios.has(audio)) { clearInterval(fadeTimer); _activeFadeIntervals.delete(fadeTimer); return; }
         currentStep++;
         const vol = Math.min(targetVolume, volumeStep * currentStep);
         const s = get();
@@ -455,8 +487,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
       }, FADE_INTERVAL);
       _activeFadeIntervals.add(fadeTimer);
     } else {
-      setElVolume(audio, computeVolume(targetVolume, track.type, state));
-      safePlay(audio);
+      setElVolume(audio, computeVolume(targetVolume, track.type, get()));
     }
 
     // Read the LATEST map, not the pre-await `state` snapshot — otherwise a
@@ -477,97 +508,30 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     const newMap = new Map(latest);
     newMap.set(id, { audio, volume: targetVolume, type: track.type });
     set({ activeTracks: newMap });
+    beginPlayback();
 
     // maxDuration: auto-stop after N seconds (from opts or track definition)
-    const effectiveMaxDuration = opts?.maxDuration ?? track.maxDuration;
+    const declaredDuration = opts?.maxDuration ?? track.maxDuration;
+    const effectiveMaxDuration = personal ? Math.min(track.type === "sfx" ? 30 : 900, declaredDuration && Number.isFinite(declaredDuration) && declaredDuration > 0 ? declaredDuration : track.type === "sfx" ? 30 : 600) : declaredDuration;
     if (effectiveMaxDuration && effectiveMaxDuration > 0) {
       // Clear any existing timer for this track
       const existingTimer = _maxDurationTimers.get(id);
       if (existingTimer) clearTimeout(existingTimer);
       const timer = setTimeout(() => {
         _maxDurationTimers.delete(id);
-        get().stopTrack(id, 0.5);
+        if (get().activeTracks.get(id)?.audio === audio) get().stopTrack(id, personal ? 0 : 0.5, capability);
       }, effectiveMaxDuration * 1000);
       _maxDurationTimers.set(id, timer);
     }
 
-    // duckBgm: lower all active BGM tracks while this SFX plays
-    if (opts?.duckBgm) {
-      const currentState = get();
-      const originals = new Map<string, number>();
-      for (const [tid, at] of currentState.activeTracks) {
-        if ((at.type === "bgm" || at.type === "ambient") && tid !== id) {
-          originals.set(tid, at.volume);
-          // Fade to 15% of original volume
-          const duckedVol = at.volume * 0.15;
-          at.volume = duckedVol;
-          setElVolume(at.audio, computeVolume(duckedVol, at.type, currentState));
-        }
-      }
-      if (originals.size > 0) {
-        // Cancel any previous restore
-        if (_duckState?.restoreTimer) clearTimeout(_duckState.restoreTimer);
-        _duckState = { originalVolumes: originals, activeCount: (_duckState?.activeCount ?? 0) + 1 };
-
-        // Restore function — called when SFX ends or maxDuration fires
-        const restoreBgm = () => {
-          if (!_duckState) return;
-          _duckState.activeCount--;
-          if (_duckState.activeCount > 0) return; // other ducking SFX still active
-          const s = get();
-          for (const [tid, origVol] of _duckState.originalVolumes) {
-            const at = s.activeTracks.get(tid);
-            if (at) {
-              at.volume = origVol;
-              // Fade back over 1s
-              const startVol = getElVolume(at.audio);
-              const targetVol = computeVolume(origVol, at.type, s);
-              const steps = Math.ceil(1000 / FADE_INTERVAL);
-              const step = (targetVol - startVol) / steps;
-              let cur = 0;
-              const fadeTimer = setInterval(() => {
-                cur++;
-                setElVolume(at.audio, Math.min(targetVol, startVol + step * cur));
-                if (cur >= steps) {
-                  clearInterval(fadeTimer);
-                  _activeFadeIntervals.delete(fadeTimer);
-                }
-              }, FADE_INTERVAL);
-              _activeFadeIntervals.add(fadeTimer);
-            }
-          }
-          _duckState = null;
-        };
-
-        // Hook into the ended event for this track
-        const origEnded = handlers.ended;
-        const duckEndedHandler = () => {
-          origEnded?.();
-          restoreBgm();
-        };
-        if (origEnded) audio.removeEventListener("ended", origEnded);
-        audio.addEventListener("ended", duckEndedHandler);
-        handlers.ended = duckEndedHandler;
-
-        // Also restore when maxDuration fires (stopTrack removes ended listener)
-        if (opts?.maxDuration && opts.maxDuration > 0) {
-          const existingTimer = _maxDurationTimers.get(id);
-          if (existingTimer) clearTimeout(existingTimer);
-          const timer = setTimeout(() => {
-            _maxDurationTimers.delete(id);
-            get().stopTrack(id, 0.5);
-            restoreBgm();
-          }, opts.maxDuration * 1000);
-          _maxDurationTimers.set(id, timer);
-        }
-      }
-    }
   },
 
-  stopTrack: (id, fadeDuration) => {
+  stopTrack: (id, fadeDuration, capability) => {
+    if (!canCommand(get().musicAudioMode, capability)) return;
     // This must happen before the active-slot lookup: playTrack may still be
     // awaiting resolveAssetUrl and therefore have no active slot yet.
     cancelPlayIntent(id);
+    releaseDuck(id);
     const state = get();
     const active = state.activeTracks.get(id);
     if (!active) return;
@@ -583,6 +547,8 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     if (handlers) {
       if (handlers.ended) active.audio.removeEventListener("ended", handlers.ended);
       if (handlers.error) active.audio.removeEventListener("error", handlers.error);
+      if (handlers.loadedmetadata) active.audio.removeEventListener("loadedmetadata", handlers.loadedmetadata);
+      if (handlers.timeupdate) active.audio.removeEventListener("timeupdate", handlers.timeupdate);
       _trackHandlers.delete(id);
     }
 
@@ -630,8 +596,9 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     }
   },
 
-  stopAll: () => {
+  stopAll: (capability) => {
     const state = get();
+    if (state.musicAudioMode !== "creator" && capability !== PERSONAL_AUDIO) return;
     // Invalidate every in-flight playTrack, including requests that have not
     // created an Audio element or active slot yet.
     _latestPlayIntents.clear();
@@ -642,15 +609,15 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     // Clear maxDuration timers
     for (const timer of _maxDurationTimers.values()) clearTimeout(timer);
     _maxDurationTimers.clear();
-    // Clear duck state
-    if (_duckState?.restoreTimer) clearTimeout(_duckState.restoreTimer);
-    _duckState = null;
+    _duckingTracks.clear();
     // Remove all event handlers (#36)
     for (const [id, active] of state.activeTracks) {
       const handlers = _trackHandlers.get(id);
       if (handlers) {
         if (handlers.ended) active.audio.removeEventListener("ended", handlers.ended);
         if (handlers.error) active.audio.removeEventListener("error", handlers.error);
+      if (handlers.loadedmetadata) active.audio.removeEventListener("loadedmetadata", handlers.loadedmetadata);
+      if (handlers.timeupdate) active.audio.removeEventListener("timeupdate", handlers.timeupdate);
       }
       _cancelledAudios.add(active.audio);
       _pendingUnlockAudios.delete(active.audio);
@@ -666,18 +633,24 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     });
   },
 
-  pauseTrack: (id) => {
+  pauseTrack: (id, capability) => {
+    if (!canCommand(get().musicAudioMode, capability)) return;
     const active = get().activeTracks.get(id);
     if (!active) return;
     // Pause in place — keep the element AND its activeTracks entry so
     // resumeTrack can continue from the same position. (stopTrack, by
     // contrast, destroys the element via src="" and drops the entry.)
+    _pendingUnlockAudios.delete(active.audio);
+    _manuallyPausedAudios.add(active.audio);
+    releaseDuck(id);
     active.audio.pause();
   },
 
-  resumeTrack: (id) => {
+  resumeTrack: (id, capability) => {
+    if (!canCommand(get().musicAudioMode, capability)) return;
     const active = get().activeTracks.get(id);
     if (!active || !active.audio.paused) return;
+    _manuallyPausedAudios.delete(active.audio);
     safePlay(active.audio);
   },
 
@@ -739,8 +712,9 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   cleanup: () => {
     const state = get();
     if (state.playlistState.gapTimer) clearTimeout(state.playlistState.gapTimer);
-    get().stopAll();
+    get().stopAll(PERSONAL_AUDIO);
     set({
+      personalTracks: [],
       tracks: [],
       activeTracks: new Map(),
       playlist: null,
@@ -758,6 +732,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   startPlaylist: () => {
     const state = get();
+    if (state.musicAudioMode !== "creator") return;
     const pl = state.playlist;
     if (!pl || pl.tracks.length === 0) return;
 
@@ -780,6 +755,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   playNextInPlaylist: () => {
     const state = get();
+    if (state.musicAudioMode !== "creator") return;
     const pl = state.playlist;
     const ps = state.playlistState;
     if (!pl || !ps.isPlaying || pl.tracks.length === 0 || state.activeConditionalId) return;
@@ -808,6 +784,7 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
   evaluateConditionalBGM: (context) => {
     const state = get();
+    if (state.musicAudioMode !== "creator") return;
     const rules = state.conditionalRules;
     if (rules.length === 0) return;
 

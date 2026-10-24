@@ -1,3 +1,4 @@
+import { prepareMusicDj, finishMusicDj } from "../lib/music-dj.js";
 import { bodyLimit } from "hono/body-limit";
 import { normalizeImageCompletion, imagePromptChars } from "../lib/chat-images.js";
 import { assertImageModel } from "../lib/llm/image-capability.js";
@@ -41,7 +42,7 @@ import {
   estimateTokensFromChars,
 } from "../lib/credit-service.js";
 import { PLANS } from "../lib/plan-config.js";
-import type { ChatMessage } from "../lib/llm/types.js";
+import type { ChatMessage, ToolCall } from "../lib/llm/types.js";
 import { captureServerEvent } from "../lib/analytics.js";
 import type { AppEnv } from "../lib/types.js";
 import {
@@ -82,11 +83,24 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
 
   const body = await c.req.json<{
     messages: ImageCompletionMessage[];
+    musicDj?: unknown;
     model?: string;
     maxTokens?: number;
     temperature?: number;
     includeLorebook?: IncludeLorebookMode;
   }>();
+
+  // Music mode reuses auth, protected-world routing, rate limits and billing.
+  // It exposes exactly one tool and makes no tool-result follow-up request.
+  let musicDj: ReturnType<typeof prepareMusicDj> | undefined;
+  if (body.musicDj !== undefined) {
+    try { musicDj = prepareMusicDj(body.musicDj); }
+    catch { return c.json({ error: "Invalid or incomplete music DJ input" }, 400); }
+    body.messages = musicDj.messages as ImageCompletionMessage[];
+    body.includeLorebook = false;
+    body.maxTokens = 512;
+    body.temperature = 0;
+  }
 
   // ── Validate input ──
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -261,6 +275,7 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
     stream.onAbort(() => { abortController.abort(); });
 
     let fullContent = "";
+    const musicCalls: ToolCall[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
     let providerCostUsd: number | undefined;
@@ -275,8 +290,13 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
         maxTokens,
         temperature,
         signal: abortController.signal,
+        ...(musicDj ? { tools: [musicDj.tool], toolChoice: { type: "function" as const, function: { name: "music_decision" } }, singleAttempt: true, disableReasoning: true } : {}),
       })) {
-        if (chunk.type === "text") {
+        if (musicDj && chunk.type === "error") throw new Error("Music provider unavailable");
+        if (musicDj && chunk.type === "tool_call_end" && chunk.toolCall) {
+          musicCalls.push(chunk.toolCall);
+        }
+        if (chunk.type === "text" && !musicDj) {
           fullContent += chunk.content;
           await stream.writeSSE({
             event: "text",
@@ -381,10 +401,16 @@ completionRoutes.post("/sessions/:sessionId/completions", bodyLimit({ maxSize: 2
       }
     }
 
+    let musicDecision;
+    if (musicDj && !streamAborted && !abortController.signal.aborted) {
+      try { musicDecision = finishMusicDj(musicCalls, musicDj.catalog); }
+      catch { await stream.writeSSE({ event: "error", data: JSON.stringify({ error: "Music decision unavailable" }) }); return; }
+    }
     await stream.writeSSE({
       event: "done",
       data: JSON.stringify({
         content: fullContent,
+        ...(musicDj ? { musicDecision } : {}),
         usage: { promptTokens, completionTokens },
       }),
     });

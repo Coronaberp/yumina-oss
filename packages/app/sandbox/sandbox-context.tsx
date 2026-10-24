@@ -245,6 +245,13 @@ export interface SandboxedYuminaAPI {
   // Replaces: navigator.clipboard.writeText(text)
   copyToClipboard: (text: string) => void;
 
+  musicAudioMode: "creator" | "personal" | "off";
+  musicDjStatus: string;
+  musicDjPaused: boolean;
+  musicDjLocked: boolean;
+  setMusicAudioMode: (mode: "creator" | "personal" | "off") => void;
+  musicDjCommand: (command: "pause" | "resume" | "skip" | "lock") => void;
+
   // ── Audio (fire-and-forget) ──
   // NOTE: all durations here are in SECONDS (not milliseconds).
   playAudio: (
@@ -690,6 +697,8 @@ const defaultAPI: SandboxedYuminaAPI = {
   fetchAsset: () => noopPromise({ ok: false, error: "unavailable" }),
   switchGreeting: () => {},
   copyToClipboard: () => {},
+  musicAudioMode: "creator", musicDjStatus: "Creator audio", musicDjPaused: false, musicDjLocked: false,
+  setMusicAudioMode: () => {}, musicDjCommand: () => {},
   playAudio: () => {},
   stopAudio: () => {},
   pauseAudio: () => {},
@@ -1099,6 +1108,13 @@ export function buildAPI(state: SandboxState): SandboxedYuminaAPI {
     switchGreeting: (index) => postToParent("switchGreeting", [index]),
     copyToClipboard: (text) => postToParent("copyToClipboard", [text]),
 
+    // Listener-owned audio settings never persist through creator storage.
+    musicAudioMode: state.musicAudioMode ?? "creator",
+    musicDjStatus: state.musicDjStatus ?? "Creator audio",
+    musicDjPaused: state.musicDjPaused ?? false,
+    musicDjLocked: state.musicDjLocked ?? false,
+    setMusicAudioMode: mode => postToParent("setMusicAudioMode", [mode]),
+    musicDjCommand: command => postToParent("musicDjCommand", [command]),
     // Audio
     playAudio: (trackId, opts) => postToParent("playAudio", [trackId, opts]),
     stopAudio: (trackId, fadeDuration) =>

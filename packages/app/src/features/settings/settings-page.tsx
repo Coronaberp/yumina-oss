@@ -1,3 +1,4 @@
+import { MusicDjSettings } from "../music-dj/settings";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   useState,
@@ -429,6 +430,7 @@ function createSettingsSearchItems(
     { id: "prompt-context", sectionId: "ai-config", targetId: "settings-target-prompt-context", title: t("config.overallLimit", { ns: "profile", defaultValue: "Prompt context length" }), category: category.aiConfig, keywords: ["context length", "prompt tokens", "maxContext", "context window"] },
     { id: "memory-context", sectionId: "ai-config", targetId: "settings-target-memory-context", title: t("config.recallMemory", { ns: "profile", defaultValue: "Recalled memory length" }), category: category.aiConfig, keywords: ["memory", "recall", "token budget", "memory context", "context length"] },
     { id: "image-generation", sectionId: "ai-config", targetId: "settings-target-image-generation", title: t("imageGeneration.title", { defaultValue: "Image generation" }), description: t("imageGeneration.description"), category: category.aiConfig, keywords: ["ComfyUI", "OpenAI", "image generation", "sprites", "transparent", "green screen", "workflow"] },
+    { id: "music-dj", sectionId: "ai-config", targetId: "settings-target-music-dj", title: "Personal Music DJ", description: "Listener music agent, sources and preferences", category: category.aiConfig, keywords: ["music", "DJ", "BGM", "SFX", "YouTube"] },
     { id: "danbooru", sectionId: "ai-config", targetId: "settings-target-danbooru", title: t("danbooru.title", { defaultValue: "Danbooru artwork search" }), description: t("danbooru.description"), category: category.aiConfig, keywords: ["Danbooru", "artwork", "sprites", "backgrounds", "images"] },
     { id: "model-fallback", sectionId: "ai-config", targetId: "model-fallback", title: modelFallbackText(language, "settingsTitle"), description: modelFallbackText(language, "settingsBody"), category: category.aiConfig, keywords: ["fallback", modelFallbackText(language, "auto"), modelFallbackText(language, "ask")] },
 
@@ -1113,6 +1115,7 @@ function AiConfigSection() {
       <MemoryEmbeddingsSettings />
       <DanbooruSettings />
       <ImageGenerationSettings />
+      <MusicDjSettings />
       <AiConfigTab />
     </div>
   );

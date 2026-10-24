@@ -434,3 +434,4 @@ export { normalizeStudioVisualAuditPage } from "./studio-visual-audit.js";
 export * from "./vn-text-style.js";
 
 export type { RequestSnapshot, RequestReceipt, ReportedRequestUsage } from "./types/request-inspection.js";
+export * from "./music-dj.js";

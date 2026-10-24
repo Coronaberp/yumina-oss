@@ -1,3 +1,4 @@
+import { useMusicDj } from "../music-dj/use-music-dj";
 import { upgradeCompatibleVnFiles } from "./vn-compatible-files";
 import { vnCompatibilitySources } from "./vn-compatibility-sources";
 import { swipeStateSnapshot } from "./turn-swipes";
@@ -212,6 +213,7 @@ export function WorldRenderer({
     if (!adapted || interfaceId === "classic") return adapted;
     return upgradeCompatibleVnFiles(adapted, interfaceId, vnCompatibilitySources);
   }, [worldId, incomingFiles, interfaceId]);
+  const musicDj = useMusicDj(api.currentUser?.id ?? "", sessionId, isActive && mode === "session" && interfaceId !== "classic" && (interfaceId === "vn" || Object.values(incomingFiles ?? {}).some(source => source.includes('className="vn-stage"'))));
   const bgmVolume = useAudioStore((s) => s.bgmVolume);
   const sfxVolume = useAudioStore((s) => s.sfxVolume);
   const router = useRouter();
@@ -251,6 +253,9 @@ export function WorldRenderer({
     s.detection?.status === "ready" ? s.detection.runtime.label : null,
   );
   const localModels = useModelsStore((s) => s.localModels);
+
+  const musicDjRef = useRef(musicDj);
+  musicDjRef.current = musicDj;
 
   // Stable refs
   const apiRef = useRef(api);
@@ -470,6 +475,12 @@ export function WorldRenderer({
           }).catch(() => {});
           return;
         }
+        case "setMusicAudioMode":
+          musicDjRef.current.setMode(args[0]);
+          return;
+        case "musicDjCommand":
+          musicDjRef.current.command(args[0]);
+          return;
         case "playAudio":
           currentApi.playAudio?.(args[0] as string, args[1] as any);
           return;
@@ -1995,6 +2006,10 @@ export function WorldRenderer({
       isLoadingEarlier: (api as any).isLoadingEarlier ?? false,
       bgmVolume,
       sfxVolume,
+      musicAudioMode: musicDj.mode,
+      musicDjStatus: musicDj.status,
+      musicDjPaused: musicDj.paused,
+      musicDjLocked: musicDj.locked,
       language,
       balance: mushieBalance,
       mode,

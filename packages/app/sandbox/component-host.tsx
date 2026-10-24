@@ -1,3 +1,4 @@
+import { createCreatorAudioGate } from "./creator-audio-gate";
 /**
  * ComponentHost — the sandbox-side runtime.
  *
@@ -26,6 +27,10 @@ import { observeSceneAssets } from './scene-asset-readiness';
  * Only contexts this host suspended are resumed, so a card that deliberately
  * paused its own audio is never restarted behind its back.
  */
+let sandboxMediaSuspended = false;
+let creatorAudioMode = "creator";
+const creatorAudioGate = createCreatorAudioGate({ play: HTMLMediaElement.prototype.play });
+HTMLMediaElement.prototype.play = function () { return creatorAudioGate.play(this); };
 const trackedAudioContexts = new Set<WeakRef<AudioContext>>();
 const hostSuspendedContexts = new WeakSet<AudioContext>();
 
@@ -38,6 +43,10 @@ function trackAudioContexts(): void {
       const ctx = new Original(...args);
       try {
         trackedAudioContexts.add(new WeakRef(ctx));
+        const originalResume = ctx.resume.bind(ctx);
+        ctx.resume = () => creatorAudioGate.allowed() ? originalResume() : Promise.resolve();
+        ctx.addEventListener("statechange", () => { if (!creatorAudioGate.allowed() && ctx.state === "running") void ctx.suspend().catch(() => {}); });
+        if (!creatorAudioGate.allowed()) void ctx.suspend().catch(() => {});
       } catch {}
       return ctx;
     } as unknown as new (...args: unknown[]) => AudioContext;
@@ -311,6 +320,10 @@ function assembleState(channels: ChannelState): SandboxState {
     modelPool: channels.ui?.modelPool ?? [],
     hasEarlierMessages: channels.ui?.hasEarlierMessages ?? false,
     isLoadingEarlier: channels.ui?.isLoadingEarlier ?? false,
+    musicAudioMode: channels.ui?.musicAudioMode ?? "creator",
+    musicDjStatus: channels.ui?.musicDjStatus ?? "Creator audio",
+    musicDjPaused: channels.ui?.musicDjPaused ?? false,
+    musicDjLocked: channels.ui?.musicDjLocked ?? false,
     bgmVolume: channels.ui?.bgmVolume ?? 0.7,
     sfxVolume: channels.ui?.sfxVolume ?? 0.8,
     language: channels.ui?.language ?? "en",
@@ -1220,6 +1233,11 @@ export function ComponentHost() {
           ...prev,
           [channel]: data,
         }));
+        if (channel === "ui") {
+          creatorAudioMode = (data as UIChannelData).musicAudioMode ?? "creator";
+          creatorAudioGate.setOwnership(creatorAudioMode, sandboxMediaSuspended, document.querySelectorAll<HTMLMediaElement>("video, audio"));
+          suspendTrackedAudioContexts(!creatorAudioGate.allowed());
+        }
         // Keep compat shims in sync
         if (channel === "session") {
           const session = data as SessionChannelData;
@@ -1237,6 +1255,8 @@ export function ComponentHost() {
       }
 
       case "suspend-media": {
+        sandboxMediaSuspended = msg.suspended;
+        creatorAudioGate.setOwnership(creatorAudioMode, sandboxMediaSuspended, document.querySelectorAll<HTMLMediaElement>("video, audio"));
         setTranscriptActive(!msg.suspended);
         // Universal pause for raw <video>/<audio> tags in creator TSX.
         // Called when the parent hides the iframe (navigation, theater exit) without
@@ -1255,7 +1275,7 @@ export function ComponentHost() {
         // synth) kept playing after the player navigated away and only stopped on
         // a full refresh. Suspending the tracked contexts covers every card
         // without the creator having to wire anything up.
-        suspendTrackedAudioContexts(msg.suspended);
+        suspendTrackedAudioContexts(msg.suspended || !creatorAudioGate.allowed());
         break;
       }
 
@@ -1357,6 +1377,7 @@ export function ComponentHost() {
           }
         } catch { /* noop */ }
       }
+      if (!creatorAudioGate.allowed()) return;
       const els = document.querySelectorAll<HTMLMediaElement>(
         "video[autoplay], audio[autoplay]"
       );

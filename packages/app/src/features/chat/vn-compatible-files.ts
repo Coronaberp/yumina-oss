@@ -1,3 +1,4 @@
+import { upgradeVnMusicSettings } from "../music-dj/vn-settings";
 import type { RootComponent } from "@yumina/engine";
 import { currentStatusFiles } from "../editor/lib/status-template-upgrade";
 import { upgradeVnLoadingFiles } from "./vn-loading-progress";
@@ -60,5 +61,5 @@ export function upgradeCompatibleVnFiles(
   updated = upgradeVnNpcLabelFiles(updated, sources.npcDisplayName);
   updated = upgradeVnModelRoutingFiles(updated, sources.modelRouting);
   updated = upgradeVnTurnDetailsFiles(updated, sources.turnDetails);
-  return upgradeVnCheckpointFiles(updated, sources.checkpoint);
+  return upgradeVnMusicSettings(upgradeVnCheckpointFiles(updated, sources.checkpoint));
 }

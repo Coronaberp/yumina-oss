@@ -1,3 +1,4 @@
+import { upgradeVnMusicSettings } from "../music-dj/vn-settings";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {existsSync,readFileSync,readdirSync} from 'node:fs';
@@ -79,8 +80,8 @@ test('stock compatibility extraction preserves the complete prior pipeline',asyn
   {name:'unknown custom cut and unrelated content',files:{'index.tsx':'export default function Story(){return <div className="creator-story">Authored story</div>;}','styles.ts':'export const theme="custom colors";','scenes.ts':'export const scenes={custom:"authored-art"};','notes.md':'Do not change custom content'},entry:'index.tsx',compile:true,preserve:['index.tsx','styles.ts','scenes.ts','notes.md']},
  ];
  for(const fixture of cases)await t.test(fixture.name,()=>{
-  const before=JSON.stringify(fixture.files),expected=priorVnCompatibility(fixture.files,undefined,sources),actual=upgradeCompatibleVnFiles(fixture.files,undefined,sources);
-  assert.deepEqual(Object.keys(actual),Object.keys(expected),'File insertion order remains identical');assert.deepEqual(actual,expected,'Every resulting file is byte-for-byte equal');
+  const before=JSON.stringify(fixture.files),expected=upgradeVnMusicSettings(priorVnCompatibility(fixture.files,undefined,sources)),actual=upgradeCompatibleVnFiles(fixture.files,undefined,sources);
+  assert.deepEqual(Object.keys(actual),Object.keys(expected),'File insertion order remains identical');assert.deepEqual(actual,expected,'Prior compatibility output differs only by listener music settings');
   assert.equal(actual===fixture.files,expected===fixture.files,'No-op reference identity matches the prior pipeline');assert.equal(JSON.stringify(fixture.files),before,'Input files are immutable');
   for(const name of fixture.preserve||[])assert.equal(actual[name],fixture.files[name],'Preserve '+name);
   for(const hook of fixture.expectedHooks||[])assert.ok(actual[fixture.entry].includes(hook),'Prerequisite pipeline activated '+hook);

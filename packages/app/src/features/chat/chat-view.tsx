@@ -160,12 +160,12 @@ export function ChatView({
 
   useEffect(() => {
     // Stop audio when hidden (navigated away) or switching sessions
-    if (!isActive) {
+    if (!isActive && useChatStore.getState().session?.id === sessionId) {
       useAudioStore.getState().cleanup();
     }
-    // Also clean up on unmount or sessionId change
+    // Cached hidden views may unmount after a different session owns audio.
     return () => {
-      useAudioStore.getState().cleanup();
+      if (useChatStore.getState().session?.id === sessionId) useAudioStore.getState().cleanup();
     };
   }, [sessionId, isActive]);
 
