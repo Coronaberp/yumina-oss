@@ -1,5 +1,5 @@
 import { Checkbox } from "@/components/ui/checkbox";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   History,
@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Sparkles,
   Radio,
+  GitCompareArrows,
 } from "lucide-react";
 import { FieldError } from "@/components/ui/field-error";
 import { useTransientFlag } from "@/hooks/use-transient-flag";
@@ -24,6 +25,8 @@ import {
 } from "@yumina/shared";
 import { useEditorStore } from "@/stores/editor";
 import { formatTimeAgo } from "@/lib/format-time";
+
+import { VersionComparison } from "./version-comparison";
 
 const apiBase = import.meta.env.VITE_API_URL || "";
 
@@ -59,6 +62,16 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
   const saveDraft = useEditorStore((s) => s.saveDraft);
   const isDirty = useEditorStore((s) => s.isDirty);
 
+  const [comparisonVersion, setComparisonVersion] = useState<WorldVersion | null>(null);
+  const compareTrigger = useRef<string | null>(null);
+  const closeComparison = useCallback(() => setComparisonVersion(null), []);
+  useEffect(() => {
+    if (comparisonVersion || !compareTrigger.current) return;
+    const trigger = [...document.querySelectorAll<HTMLButtonElement>("button[data-version-compare]")]
+      .find(button => button.dataset.versionCompare === compareTrigger.current);
+    trigger?.focus();
+    compareTrigger.current = null;
+  }, [comparisonVersion]);
   const [versions, setVersions] = useState<WorldVersion[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState(() => defaultVersionName(i18n.language));
@@ -109,6 +122,7 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (comparisonVersion) return;
         if (actionsBusy) return;
         if (confirm.kind === "idle") onClose();
         else setConfirm({ kind: "idle" });
@@ -116,7 +130,7 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [confirm.kind, onClose, actionsBusy]);
+  }, [confirm.kind, onClose, actionsBusy, comparisonVersion]);
 
   const trimmedName = name.trim();
   const canSave = !!trimmedName && !saving && busyId === null;
@@ -311,12 +325,15 @@ export function VersionHistoryDialog({ worldId, onClose }: VersionHistoryDialogP
 
   const renderVersion = (v: WorldVersion) => (
     <VersionRow key={v.id} version={v} busy={actionsBusy} locale={i18n.language}
+      onCompare={() => { compareTrigger.current = v.id; setComparisonVersion(v); }}
       onRestore={() => { setConfirmError(null); setConfirm({ kind: "restore", version: v }); }}
       onMakeLive={() => { setConfirmError(null); setConfirm({ kind: "makeLive", version: v }); }}
       onDelete={() => { setConfirmError(null); setConfirm({ kind: "delete", version: v }); }} />
   );
 
   const capColor = capPct >= 90 ? "bg-destructive" : capPct >= 70 ? "bg-amber-500" : "bg-primary";
+
+  if (comparisonVersion) return <VersionComparison worldId={worldId} version={comparisonVersion} versions={versions ?? []} onSelect={setComparisonVersion} onBack={closeComparison} />;
 
   return (
     <div
@@ -524,12 +541,13 @@ interface VersionRowProps {
   version: WorldVersion;
   busy: boolean;
   locale: string;
+  onCompare: () => void;
   onRestore: () => void;
   onMakeLive: () => void;
   onDelete: () => void;
 }
 
-function VersionRow({ version, busy, locale, onRestore, onMakeLive, onDelete }: VersionRowProps) {
+function VersionRow({ version, busy, locale, onCompare, onRestore, onMakeLive, onDelete }: VersionRowProps) {
   const { t } = useTranslation("editor");
   const relative = useMemo(() => formatTimeAgo(String(version.createdAt), locale), [version.createdAt, locale]);
   const source = version.source;
@@ -556,6 +574,9 @@ function VersionRow({ version, busy, locale, onRestore, onMakeLive, onDelete }: 
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1">
+          <button data-version-compare={version.id} onClick={onCompare} disabled={busy} className="flex min-h-9 items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-foreground/80 hover:bg-primary/10 hover:text-primary disabled:opacity-40">
+            <GitCompareArrows className="h-3.5 w-3.5" />{t("versionHistory.compare.action")}
+          </button>
           {version.canMakeLive && !version.isLive && <button onClick={onMakeLive} disabled={busy}
             className="flex min-h-9 items-center gap-1 rounded-lg border border-primary/30 px-2.5 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-40">
             <Radio className="h-3.5 w-3.5" />{t("versionHistory.makeLive")}

@@ -36,11 +36,19 @@ worldVersionRoutes.get("/:id/versions", authMiddleware, async (c) => {
 });
 
 worldVersionRoutes.get("/:id/versions/:versionId", authMiddleware, async (c) => {
-  const [result] = await db.select({ version: worldVersions }).from(worldVersions)
+  const [result] = await db.select({
+    version: worldVersions,
+    // Only metadata: schema comparison uses the unsaved editor draft.
+    currentAgeRating: sql<string>`CASE WHEN ${worlds.status} = 'published'
+      THEN COALESCE(${worldPendingEdits.ageRating}, ${worlds.ageRating}, 'all')
+      ELSE COALESCE(${worlds.ageRating}, 'all') END`,
+  }).from(worldVersions)
     .innerJoin(worlds, eq(worlds.id, worldVersions.worldId))
+    .leftJoin(worldPendingEdits, eq(worldPendingEdits.worldId, worlds.id))
     .where(and(eq(worlds.id, c.req.param("id")), eq(worlds.creatorId, c.get("user").id), eq(worldVersions.id, c.req.param("versionId"))));
   if (!result) return c.json({ error: "Version not found" }, 404);
-  return c.json({ data: result.version });
+  c.header("Cache-Control", "no-store");
+  return c.json({ data: result.version, currentAgeRating: result.currentAgeRating });
 });
 
 worldVersionRoutes.post("/:id/versions", authMiddleware, async (c) => {

@@ -7,6 +7,9 @@ export interface WorldFieldChange {
   field: string;
   before: string;
   after: string;
+  /** Value types are included by complete comparisons, including absent fields. */
+  beforeType?: string;
+  afterType?: string;
 }
 
 export interface WorldChange {
@@ -83,8 +86,11 @@ function diffFields(prev: Row, next: Row, fields: string[]): WorldFieldChange[] 
 export function diffWorldSchemas(
   prev: WorldDefinition,
   next: WorldDefinition,
-  opts: { detail?: boolean } = {},
+  opts: { detail?: boolean; coverage?: "review" | "all" } = {},
 ): WorldDiff {
+  // Review callers retain their existing material-change policy. History must
+  // compare every stored field, including unknown extension/custom content.
+  if (opts.coverage === "all") return diffCompleteSchemas(prev, next, opts.detail === true);
   const detail = opts.detail === true;
   const changes: WorldChange[] = [];
 
@@ -137,5 +143,80 @@ export function diffWorldSchemas(
 
   const counts = { added: 0, removed: 0, modified: 0 };
   for (const c of changes) counts[c.op]++;
+  return { changes, counts };
+}
+
+
+/** JSON object key order is immaterial; array order and value types are not. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => [key, canonical(v)]));
+  }
+  return value;
+}
+
+function completeField(field: string, before: unknown, after: unknown): WorldFieldChange | null {
+  const a = canonical(before);
+  const b = canonical(after);
+  if (JSON.stringify(a) === JSON.stringify(b)) return null;
+  const valueType = (v: unknown) => v === undefined ? "missing" : v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+  const text = (v: unknown) => typeof v === "string" ? v : JSON.stringify(v, null, 2) ?? "";
+  return { field, before: text(a), after: text(b), beforeType: valueType(a), afterType: valueType(b) };
+}
+
+function diffCompleteSchemas(prev: WorldDefinition, next: WorldDefinition, detail: boolean): WorldDiff {
+  const changes: WorldChange[] = [];
+  const addFields = (before: Row, after: Row, change: Omit<WorldChange, "op" | "fields">, op: WorldChange["op"] = "modified") => {
+    const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()
+      .map(field => completeField(field, Object.hasOwn(before, field) ? before[field] : undefined, Object.hasOwn(after, field) ? after[field] : undefined)).filter((f): f is WorldFieldChange => f !== null);
+    if (fields.length) changes.push({ ...change, op, ...(detail ? { fields } : {}) });
+  };
+  const rootBefore = { ...prev } as unknown as Row;
+  const rootAfter = { ...next } as unknown as Row;
+  const collectionKeys = ["entries", "variables", "rules", "reactions", "audioTracks", "routes", "endings"];
+  COLLECTIONS.forEach((spec, index) => {
+    const key = collectionKeys[index]!;
+    const before = rootBefore[key];
+    const after = rootAfter[key];
+    // Invalid/missing/duplicate identities are compared as raw data rather than
+    // disappearing in a Map. This also preserves absent-vs-empty differences.
+    const valid = (value: unknown): value is Row[] => Array.isArray(value) && value.every(row => row && typeof row === "object" && typeof row.id === "string") && new Set(value.map(row => row.id)).size === value.length;
+    if (!valid(before) || !valid(after)) return;
+    delete rootBefore[key];
+    delete rootAfter[key];
+    const a = indexById(before);
+    const b = indexById(after);
+    for (const id of new Set([...a.keys(), ...b.keys()])) {
+      const oldRow = a.get(id);
+      const newRow = b.get(id);
+      addFields(oldRow ?? {}, newRow ?? {}, { kind: spec.kind, id, name: labelOf(newRow ?? oldRow!, id) }, !oldRow ? "added" : !newRow ? "removed" : "modified");
+    }
+    // A pure reorder matters in history even when individual rows are equal.
+    const oldOrder = before.map(row => row.id).filter(id => b.has(id as string));
+    const newOrder = after.map(row => row.id).filter(id => a.has(id as string));
+    const order = completeField("order", oldOrder, newOrder);
+    if (order) changes.push({ kind: "meta", op: "modified", id: `${key}.order`, name: `${key}.order`, ...(detail ? { fields: [order] } : {}) });
+  });
+  const object = (value: unknown): value is Row => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (object(rootBefore.rootComponent) && object(rootAfter.rootComponent)) {
+    const before = { ...rootBefore.rootComponent };
+    const after = { ...rootAfter.rootComponent };
+    if (object(before.files) && object(after.files)) {
+      for (const file of new Set([...Object.keys(before.files), ...Object.keys(after.files)])) {
+        addFields(Object.hasOwn(before.files, file) ? { [file]: before.files[file] } : {}, Object.hasOwn(after.files, file) ? { [file]: after.files[file] } : {}, { kind: "customUI", id: file, name: file }, !Object.hasOwn(before.files, file) ? "added" : !Object.hasOwn(after.files, file) ? "removed" : "modified");
+      }
+      delete before.files;
+      delete after.files;
+    }
+    addFields(before, after, { kind: "customUI", id: "rootComponent", name: "rootComponent" });
+    delete rootBefore.rootComponent;
+    delete rootAfter.rootComponent;
+  }
+  for (const field of new Set([...Object.keys(rootBefore), ...Object.keys(rootAfter)])) {
+    addFields(Object.hasOwn(rootBefore, field) ? { [field]: rootBefore[field] } : {}, Object.hasOwn(rootAfter, field) ? { [field]: rootAfter[field] } : {}, { kind: "meta", id: field, name: field });
+  }
+  const counts = { added: 0, removed: 0, modified: 0 };
+  for (const change of changes) counts[change.op]++;
   return { changes, counts };
 }
