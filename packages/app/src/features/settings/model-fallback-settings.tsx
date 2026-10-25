@@ -86,27 +86,27 @@ export function ModelFallbackSettings() {
         const mode = value as ModelFallbackMode;
         if (!privateMode && mode === "auto" && !model) { setPendingMode(mode); setPickerOpen(true); return; }
         setConfig("modelFallback", { ...policy, mode });
-      }} options={[{value:"ask",label:t("ask")},{value:"auto",label:t("auto")},{value:"stop",label:t("stopMode")}]} triggerClassName="profile-overview-input-surface mt-1.5 border-gold/20 text-main" />
-      {privateMode ? <section className="mt-3 rounded-2xl border border-border bg-card/60 p-4 shadow-sm" aria-labelledby="backup-provider-title">
+      }} options={[{value:"ask",label:t("ask")},{value:"auto",label:t("auto")},{value:"stop",label:t("stopMode")}]} triggerClassName="profile-overview-input-surface mt-1.5 border-gold/20 text-main" contentClassName="profile-overview-dropdown-surface rounded-xl border border-gold/20 p-1.5 text-main shadow-2xl shadow-black/40 backdrop-blur-xl" />
+      {privateMode ? <section className="profile-overview-glass profile-overview-glass--soft mt-3 rounded-2xl p-5" aria-labelledby="backup-provider-title">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h3 id="backup-provider-title" className="flex items-center gap-2 text-sm font-semibold text-foreground"><ShieldCheck className="h-4 w-4 shrink-0 text-primary" />{label("backupTitle", "Backup provider")}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">{label("backupDescription", "Story uses this connection and its model if your selected model is unavailable. Content routing still applies.")}</p>
+            <h3 id="backup-provider-title" className="flex items-center gap-2 text-sm font-semibold text-main"><ShieldCheck className="h-5 w-5 shrink-0 text-primary" />{label("backupTitle", "Backup provider")}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-sub">{label("backupDescription", "Story uses this connection and its model if your selected model is unavailable. Content routing still applies.")}</p>
           </div>
           {current && <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">{label("configured", "Configured")}</span>}
         </div>
         <Select aria-label={label("backupTitle", "Backup provider")} value={current?.id ?? "__none__"} onValueChange={id => assign(profiles.find(profile => profile.id === id) ?? null)} disabled={loading} options={[
           {value:"__none__",label:label("unconfigured", "Not configured")},
           ...(!loading ? profiles : []).map(profile => ({value:profile.id,label:profile.label || profile.id,description:profile.baseUrl || profile.metadata?.defaultModel || profile.provider})),
-        ]} triggerClassName="mt-4 border-border bg-background" />
-        {current ? <div className="mt-3 space-y-1 rounded-xl border border-border/70 bg-background/50 p-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2 font-medium text-foreground"><span className="truncate">{current.label}</span><span className="text-muted-foreground/50">·</span><span>{current.provider}</span></div>
+        ]} triggerClassName="profile-overview-input-surface mt-4 rounded-lg border-white/10 px-3 py-2 text-main" contentClassName="profile-overview-dropdown-surface rounded-xl border border-gold/20 p-1.5 text-main shadow-2xl shadow-black/40 backdrop-blur-xl" />
+        {current ? <div className="mt-3 space-y-1 border-t border-white/10 pt-3 text-xs text-sub [overflow-wrap:anywhere]">
+          <div className="flex items-center gap-2 font-medium text-main"><span className="truncate">{current.label}</span><span className="text-muted-foreground/50">·</span><span className="shrink-0">{current.provider}</span></div>
           {current.baseUrl && <div className="flex items-start gap-1 break-all"><ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />{current.baseUrl}</div>}
-          <div>{label("model", "Model")}: <span className="break-words text-foreground/80">{current.metadata?.defaultModel || formatModelId(model)}</span></div>
-        </div> : <p className="mt-3 text-xs text-muted-foreground">{label("backupEmpty", "No backup provider selected.")}</p>}
+          <div>{label("model", "Model")}: <span className="break-words text-main/80">{current.metadata?.defaultModel || formatModelId(model)}</span></div>
+        </div> : <p className="mt-3 text-xs text-sub">{label("backupEmpty", "No backup provider selected.")}</p>}
         <div className="mt-4 flex flex-wrap gap-2">
-          {current && <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => setEditing(current.id)}><Pencil />{label("edit", "Edit profile")}</Button>}
-          <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => { setCreateProvider("custom"); setCreateOpen(true); }}><Plus />{label("create", "Create profile")}</Button>
+          {current && <Button type="button" variant="outline" size="sm" className="rounded-lg border-white/10 text-main" disabled={loading} onClick={() => setEditing(current.id)}><Pencil />{label("edit", "Edit profile")}</Button>}
+          <Button type="button" variant="outline" size="sm" className="rounded-lg border-white/10 text-main" disabled={loading} onClick={() => { setCreateProvider("custom"); setCreateOpen(true); }}><Plus />{label("create", "Create profile")}</Button>
         </div>
       </section> : <button type="button" onClick={() => setPickerOpen(true)} aria-haspopup="dialog" className="profile-overview-input-surface mt-2 flex min-h-10 w-full items-center justify-between gap-3 rounded-lg border border-gold/20 px-3 py-2 text-left text-main transition-colors hover:border-gold/50">
         <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span className="text-xs text-sub">{t("backup")}</span><span className="break-words text-xs font-medium">{model ? formatModelId(model) : t("empty")}</span></span>
